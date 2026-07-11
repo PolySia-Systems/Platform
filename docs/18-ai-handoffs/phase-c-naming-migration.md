@@ -10,6 +10,9 @@ The active implementation now uses canonical PolySia identity:
 - Editable project root: `C:/Users/Siamak/Documents/PolySia`
 - Operator titles: `PolySia — Polymarket Adapter — ...`
 
+Phase C implementation commit:
+`d8fb60dca0e3e7c7cb09d520f9b31b361deef550`
+
 The active package, unit tests, README, Makefile, package metadata, and current
 operator documents contain no `pm_trader`, `pm-trader`, or
 `polymarket-trading-system` identity. Historical archives, governance migration
