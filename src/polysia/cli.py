@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -18,10 +17,6 @@ from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapterError,
 )
 from polysia.adapters.polymarket.secure import (
-    FUNDER_ADDRESS_ENV,
-    PRIVATE_KEY_ENV,
-    SIGNATURE_TYPE_ENV,
-    WALLET_ADDRESS_ENV,
     PolymarketSecureAdapter,
     PolymarketSecureAdapterError,
 )
@@ -36,8 +31,59 @@ from polysia.backtesting.replay import (
     ReplayError,
     load_market_data_events_jsonl,
 )
-from polysia.bus.events import MarketDataEvent, market_data_event_to_dict
+from polysia.bus.events import market_data_event_to_dict
 from polysia.bus.in_memory_bus import InMemoryEventBus
+from polysia.cli_support import (
+    apply_secure_env_from_settings as _apply_secure_env_from_settings,
+)
+from polysia.cli_support import (
+    build_research_strategy as _build_research_strategy,
+)
+from polysia.cli_support import (
+    intent_to_dict as _intent_to_dict,
+)
+from polysia.cli_support import (
+    local_market_event as _local_market_event,
+)
+from polysia.cli_support import (
+    order_snapshots_from_external as _order_snapshots_from_external,
+)
+from polysia.cli_support import (
+    parse_decimal as _parse_decimal,
+)
+from polysia.cli_support import (
+    parse_optional_decimal as _parse_optional_decimal,
+)
+from polysia.cli_support import (
+    parse_order_type as _parse_order_type,
+)
+from polysia.cli_support import (
+    parse_outcome as _parse_outcome,
+)
+from polysia.cli_support import (
+    parse_side as _parse_side,
+)
+from polysia.cli_support import (
+    position_snapshots_from_external as _position_snapshots_from_external,
+)
+from polysia.cli_support import (
+    read_safe_balance_allowance as _read_safe_balance_allowance,
+)
+from polysia.cli_support import (
+    read_safe_open_orders as _read_safe_open_orders,
+)
+from polysia.cli_support import (
+    read_safe_positions as _read_safe_positions,
+)
+from polysia.cli_support import (
+    safe_cancel_response as _safe_cancel_response,
+)
+from polysia.cli_support import (
+    safe_open_order_to_dict as _safe_open_order_to_dict,
+)
+from polysia.cli_support import (
+    safe_order_response as _safe_order_response,
+)
 from polysia.config.logging import configure_logging
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.automation import run_deployment_automation
@@ -160,8 +206,6 @@ from polysia.reconciliation import (
     ActualAccountState,
     InternalExpectedState,
     KillSwitchSafetyPause,
-    OrderSnapshot,
-    PositionSnapshot,
     ReconciliationInput,
     ReconciliationManager,
     ReconciliationReportConfig,
@@ -172,12 +216,7 @@ from polysia.reconciliation import (
 from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
-from polysia.strategies.base import BaseStrategy, StrategyContext
-from polysia.strategies.passive_market_maker import (
-    PassiveMarketMakerConfig,
-    PassiveMarketMakerStrategy,
-)
-from polysia.strategies.stale_price import StalePriceStrategy, StalePriceStrategyConfig
+from polysia.strategies.base import StrategyContext
 
 app = typer.Typer(
     help="PolySia — Polymarket-first trading platform.",
@@ -2528,329 +2567,6 @@ async def _paper_trade(
         },
         "status": "ok",
     }
-
-
-def _build_research_strategy(
-    *,
-    strategy: str,
-    order_size: Decimal,
-    min_edge: Decimal,
-) -> BaseStrategy:
-    if strategy == "stale-price":
-        return StalePriceStrategy(
-            config=StalePriceStrategyConfig(min_edge=min_edge, order_size=order_size)
-        )
-    if strategy == "passive-market-maker":
-        return PassiveMarketMakerStrategy(
-            config=PassiveMarketMakerConfig(
-                quote_size=order_size,
-                min_spread=min_edge,
-            )
-        )
-    raise ValueError("supported strategies: stale-price, passive-market-maker")
-
-
-def _local_market_event(token_id: str) -> MarketDataEvent:
-    return MarketDataEvent(
-        source="polymarket",
-        event_type="book",
-        token_id=token_id,
-        received_at=datetime.now(UTC),
-        exchange_ts=None,
-        payload={},
-        raw_payload={},
-    )
-
-
-def _intent_to_dict(intent: object) -> dict[str, object]:
-    if not isinstance(intent, OrderIntent):
-        raise TypeError("expected OrderIntent")
-    return {
-        "confidence": str(intent.confidence),
-        "price": str(intent.price),
-        "reason": intent.reason,
-        "side": intent.side,
-        "size": str(intent.size),
-        "strategy_id": intent.strategy_id,
-        "token_id": intent.token_id,
-    }
-
-
-def _parse_decimal(value: str, field_name: str) -> Decimal:
-    try:
-        parsed = Decimal(value)
-    except InvalidOperation as error:
-        raise ValueError(f"{field_name} must be a Decimal string") from error
-    return parsed
-
-
-def _apply_secure_env_from_settings(settings: AppSettings) -> None:
-    if os.environ.get(PRIVATE_KEY_ENV) is None and settings.polymarket_private_key is not None:
-        os.environ[PRIVATE_KEY_ENV] = settings.polymarket_private_key.get_secret_value()
-    if os.environ.get(FUNDER_ADDRESS_ENV) is None and settings.polymarket_funder_address:
-        os.environ[FUNDER_ADDRESS_ENV] = settings.polymarket_funder_address
-    if os.environ.get(WALLET_ADDRESS_ENV) is None and settings.polymarket_wallet_address:
-        os.environ[WALLET_ADDRESS_ENV] = settings.polymarket_wallet_address
-    if (
-        os.environ.get(SIGNATURE_TYPE_ENV) is None
-        and settings.polymarket_signature_type is not None
-    ):
-        os.environ[SIGNATURE_TYPE_ENV] = str(settings.polymarket_signature_type)
-
-
-def _parse_outcome(value: str) -> Literal["YES", "NO"]:
-    normalized = value.upper()
-    if normalized not in ("YES", "NO"):
-        raise ValueError("outcome must be YES or NO")
-    return "YES" if normalized == "YES" else "NO"
-
-
-def _parse_side(value: str) -> Literal["BUY", "SELL"]:
-    normalized = value.upper()
-    if normalized not in ("BUY", "SELL"):
-        raise ValueError("side must be BUY or SELL")
-    return "BUY" if normalized == "BUY" else "SELL"
-
-
-def _parse_order_type(value: str) -> Literal["FAK", "FOK"]:
-    normalized = value.upper()
-    if normalized not in ("FAK", "FOK"):
-        raise ValueError("order_type must be FAK or FOK; GTC and GTD are rejected.")
-    return "FAK" if normalized == "FAK" else "FOK"
-
-
-def _safe_open_order_to_dict(order: object) -> dict[str, object]:
-    return {
-        "created_at": _safe_order_value(_read_field(order, "created_at")),
-        "expires_at": _safe_order_value(
-            _read_field(order, "expires_at") or _read_field(order, "expiration")
-        ),
-        "id": _safe_order_value(_read_field(order, "id")),
-        "market": _safe_order_value(_read_field(order, "market")),
-        "order_type": _safe_order_value(_read_field(order, "order_type")),
-        "original_size": _safe_order_value(_read_field(order, "original_size")),
-        "outcome": _safe_order_value(_read_field(order, "outcome")),
-        "price": _safe_order_value(_read_field(order, "price")),
-        "side": _safe_order_value(_read_field(order, "side")),
-        "size_matched": _safe_order_value(_read_field(order, "size_matched")),
-        "status": _safe_order_value(_read_field(order, "status")),
-        "token_id": _safe_order_value(_read_field(order, "token_id")),
-    }
-
-
-def _safe_position_to_dict(position: object) -> dict[str, object]:
-    return {
-        "avg_price": _safe_order_value(_read_field(position, "avg_price")),
-        "condition_id": _safe_order_value(_read_field(position, "condition_id")),
-        "current_value": _safe_order_value(_read_field(position, "current_value")),
-        "outcome": _safe_order_value(_read_field(position, "outcome")),
-        "size": _safe_order_value(_read_field(position, "size")),
-        "token_id": _safe_order_value(_read_field(position, "token_id")),
-    }
-
-
-def _order_snapshots_from_external(orders: list[object]) -> tuple[OrderSnapshot, ...]:
-    snapshots: list[OrderSnapshot] = []
-    for index, order in enumerate(orders):
-        order_id = _optional_external_text(
-            _read_field(order, "id") or _read_field(order, "order_id")
-        )
-        snapshots.append(
-            OrderSnapshot(
-                order_id=order_id or f"external-order-{index}",
-                status=_optional_external_text(_read_field(order, "status")),
-                token_id=_optional_external_text(_read_field(order, "token_id")),
-                created_by_system=False,
-            )
-        )
-    return tuple(snapshots)
-
-
-def _position_snapshots_from_external(
-    positions: list[object],
-) -> tuple[PositionSnapshot, ...]:
-    snapshots: list[PositionSnapshot] = []
-    for index, position in enumerate(positions):
-        token_id = _optional_external_text(_read_field(position, "token_id"))
-        size = _parse_optional_decimal(_read_field(position, "size")) or Decimal("0")
-        snapshots.append(
-            PositionSnapshot(
-                token_id=token_id or f"external-position-{index}",
-                size=size,
-            )
-        )
-    return tuple(snapshots)
-
-
-def _optional_external_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-async def _read_safe_balance_allowance(
-    adapter: PolymarketSecureAdapter,
-) -> dict[str, object]:
-    try:
-        collateral = await adapter.get_balance_allowance(asset_type="COLLATERAL")
-    except PolymarketSecureAdapterError as error:
-        return {
-            "allowance_count": 0,
-            "approval_readable": False,
-            "balance_configured": False,
-            "balance_readable": False,
-            "error_type": type(error).__name__,
-            "positive_approval_count": 0,
-        }
-    return _safe_balance_allowance(collateral)
-
-
-async def _read_safe_positions(adapter: PolymarketSecureAdapter) -> dict[str, object]:
-    preview_limit = 5
-    try:
-        positions = await adapter.list_positions(size_threshold=0)
-    except PolymarketSecureAdapterError as error:
-        return {
-            "count": 0,
-            "error_type": type(error).__name__,
-            "positions_preview": [],
-            "readable": False,
-            "truncated": False,
-        }
-    preview = positions[:preview_limit]
-    return {
-        "count": len(positions),
-        "positions_preview": [_safe_position_to_dict(position) for position in preview],
-        "readable": True,
-        "truncated": len(positions) > preview_limit,
-    }
-
-
-async def _read_safe_open_orders(adapter: PolymarketSecureAdapter) -> dict[str, object]:
-    try:
-        open_orders = await adapter.get_open_orders()
-    except PolymarketSecureAdapterError as error:
-        return {
-            "count": 0,
-            "error_type": type(error).__name__,
-            "readable": False,
-        }
-    return {
-        "count": len(open_orders),
-        "readable": True,
-    }
-
-
-def _safe_balance_allowance(balance_allowance: object) -> dict[str, object]:
-    data = _model_or_mapping_to_dict(balance_allowance)
-    allowances = data.get("allowances")
-    allowance_count = len(allowances) if isinstance(allowances, dict) else 0
-    positive_allowance_count = 0
-    if isinstance(allowances, dict):
-        for value in allowances.values():
-            parsed = _parse_optional_decimal(value)
-            if parsed is not None and parsed > 0:
-                positive_allowance_count += 1
-    return {
-        "allowance_count": allowance_count,
-        "approval_readable": isinstance(allowances, dict),
-        "balance_configured": data.get("balance") is not None,
-        "balance_readable": data.get("balance") is not None,
-        "positive_allowance_count": positive_allowance_count,
-        "positive_approval_count": positive_allowance_count,
-    }
-
-
-def _parse_optional_decimal(value: object) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except InvalidOperation:
-        return None
-
-
-def _safe_cancel_response(response: object) -> dict[str, object] | None:
-    if response is None:
-        return None
-    if hasattr(response, "model_dump"):
-        data = response.model_dump(mode="json")
-        return {
-            "canceled": list(data.get("canceled", ())),
-            "not_canceled": data.get("not_canceled", {}),
-        }
-    if isinstance(response, dict):
-        return {
-            "canceled": list(response.get("canceled", ())),
-            "not_canceled": response.get("not_canceled", {}),
-        }
-    return {
-        "canceled": list(getattr(response, "canceled", ())),
-        "not_canceled": getattr(response, "not_canceled", {}),
-    }
-
-
-def _safe_order_response(response: object) -> dict[str, object] | None:
-    if response is None:
-        return None
-    data = _model_or_mapping_to_dict(response)
-    payload: dict[str, object] = {}
-    for field_name in (
-        "ok",
-        "order_id",
-        "status",
-        "code",
-        "message",
-        "making_amount",
-        "taking_amount",
-    ):
-        if field_name in data:
-            payload[field_name] = _safe_order_value(data[field_name])
-    if "trade_ids" in data:
-        payload["trade_count"] = _safe_sequence_count(data["trade_ids"])
-    if "transactions_hashes" in data:
-        payload["transaction_count"] = _safe_sequence_count(data["transactions_hashes"])
-    return payload
-
-
-def _safe_sequence_count(value: object) -> int:
-    if isinstance(value, (dict, list, set, tuple)):
-        return len(value)
-    return 0
-
-
-def _model_or_mapping_to_dict(source: object) -> dict[str, object]:
-    if hasattr(source, "model_dump"):
-        return source.model_dump(mode="python")
-    if isinstance(source, dict):
-        return dict(source)
-    return {
-        field_name: getattr(source, field_name)
-        for field_name in dir(source)
-        if not field_name.startswith("_") and not callable(getattr(source, field_name))
-    }
-
-
-def _read_field(source: object, field_name: str) -> object:
-    if hasattr(source, "model_dump"):
-        data = source.model_dump(mode="python")
-        return data.get(field_name)
-    if isinstance(source, dict):
-        return source.get(field_name)
-    return getattr(source, field_name, None)
-
-
-def _safe_order_value(value: object) -> object:
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, (bool, int, str)):
-        return value
-    return str(value)
 
 
 def _print_error_and_exit(error: Exception) -> None:
