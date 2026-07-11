@@ -13,8 +13,8 @@
 
 ## Next release-hardening priorities
 
-1. Run `pip-audit --strict` from an approved network or CI and retain the result.
-2. Validate GitHub Actions on a configured remote and enable branch protection.
+1. Validate GitHub Actions on a configured remote and enable branch protection.
+2. Retain the successful OSV dependency-audit evidence in CI for each release.
 3. Create a portable hash-locked dependency resolution if non-Windows release is required.
 4. Upgrade the Polymarket SDK only through the documented contract/rollback process.
 5. Continue CLI command-group dependency injection and oversized-service extraction.

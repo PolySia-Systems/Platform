@@ -3,7 +3,7 @@
 ## Local gates
 
 - `python -m polysia.security.secret_scan`
-- `python -m pip_audit --strict`
+- `python -m pip_audit --strict --vulnerability-service osv`
 - `python -m build`
 - `cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json`
 - `pre-commit run --all-files`
@@ -18,10 +18,10 @@ echoing matched values, and rejects tracked `.env`, key, and PEM files. Runtime
 - CycloneDX SBOM: generated as specification 1.6 with 121 components at
   `artifacts/sbom.json`; the generated directory is intentionally ignored.
 - Environment integrity: `pip check` passed.
-- Dependency audit: inconclusive locally. `pip-audit` could not query the PyPI
-  advisory endpoint because the workstation proxy closed the connection. No
-  clean or vulnerable result is inferred from that network failure; CI retains
-  the same strict audit gate for a network-enabled run.
+- Dependency audit: passed with `pip-audit --strict` using the OSV advisory
+  service; no known vulnerabilities were reported. The default PyPI advisory
+  endpoint remained unreachable through the workstation proxy, so OSV is the
+  standardized local and CI service.
 
 ## CI
 
@@ -37,6 +37,6 @@ cross-platform hash-locked resolution. Adding a portable lock remains a release
 hardening item. CODEOWNERS and repository protection require the owner's GitHub
 account/repository configuration and cannot be invented locally.
 
-The local dependency-vulnerability result remains open until `pip-audit` can
-reach PyPI or an approved advisory mirror. This does not affect the successful
-package build, SBOM generation, or dependency-consistency check.
+The default PyPI advisory endpoint remains unavailable through the workstation
+proxy. OSV provided the successful strict audit result; future release evidence
+should record the selected advisory service and timestamp.

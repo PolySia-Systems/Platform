@@ -16,7 +16,7 @@ security:
 	python -m polysia.security.secret_scan
 
 dependency-audit:
-	python -m pip_audit --strict
+	python -m pip_audit --strict --vulnerability-service osv
 
 build:
 	python -m build
