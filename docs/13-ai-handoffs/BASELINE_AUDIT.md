@@ -132,7 +132,9 @@ checks. Structural checks and ordinary tests must not use live mutation paths.
 - [x] Baseline checks passed three times.
 - [x] Reproducibility locks added for the verified Windows baseline.
 - [x] Safe source-export path added.
-- [ ] New Git repository initialized and Phase A committed.
+- [x] New Git repository initialized and Phase A committed.
+
+Phase A baseline commit: `dc8ced7d28c9f9e8c44c0d265e12147df020cd22`
 
 ## Remaining work
 
@@ -144,4 +146,3 @@ checks. Structural checks and ordinary tests must not use live mutation paths.
 5. Consolidate and contract-test the Polymarket adapter before SDK upgrade.
 6. Decompose large modules, add layered tests and CI/supply-chain gates, then
    perform read-only and separately authorized controlled validation.
-
