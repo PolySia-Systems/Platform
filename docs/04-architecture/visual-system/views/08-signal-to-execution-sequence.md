@@ -29,7 +29,7 @@ sequenceDiagram
   participant RC as Reconciliation [CURRENT]
   participant MON as Monitoring [CURRENT]
 
-  Note over MDA,MON: Legend: CURRENT implemented; TARGET approved evolution; EXTERNAL outside PolySia
+  Note over MDA,MON: Legend - CURRENT implemented, TARGET approved evolution, EXTERNAL outside PolySia
   MDA-->>EB: normalized MarketDataEvent
   EB-->>OB: book snapshot or update
   OB-->>FP: Decimal book state

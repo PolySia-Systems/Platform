@@ -68,8 +68,9 @@ Use baseline commit `44a8ae0fbccd0de916a0621236ea5931e7c3a256` for this pack.
 ## Transfer method
 
 1. Validate the canonical Mermaid source.
-2. Export SVG only with an available external/documentation renderer.
-3. Import SVG into Figma/FigJam as a reference layer.
+2. Use the validated SVG exports under `rendered/` or regenerate them with an
+   external/documentation renderer.
+3. Import the matching SVG into Figma/FigJam as a reference layer.
 4. Rebuild only high-value presentation frames with reusable components.
 5. Compare labels, arrows, statuses, and legends against the paired Markdown view.
 6. Record the repository commit in frame metadata.
