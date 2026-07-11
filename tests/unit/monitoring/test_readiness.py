@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pm_trader.adapters.geoblock import GeoblockStatus
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.readiness import build_deployment_readiness
+from polysia.adapters.geoblock import GeoblockStatus
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.readiness import build_deployment_readiness
 
 
 def test_deployment_readiness_passes_default_safe_project(tmp_path) -> None:

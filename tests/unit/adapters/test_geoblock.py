@@ -4,7 +4,7 @@ from urllib.error import URLError
 
 import pytest
 
-from pm_trader.adapters.geoblock import (
+from polysia.adapters.geoblock import (
     GeoblockClient,
     GeoblockClientError,
     PreLiveOrderGeoblockCheck,
@@ -28,7 +28,7 @@ class FakeResponse:
 
 def test_geoblock_client_reads_blocked_false(monkeypatch) -> None:
     monkeypatch.setattr(
-        "pm_trader.adapters.geoblock.urlopen",
+        "polysia.adapters.geoblock.urlopen",
         lambda *_args, **_kwargs: FakeResponse(b'{"blocked": false}'),
     )
 
@@ -41,7 +41,7 @@ def test_geoblock_client_reads_blocked_false(monkeypatch) -> None:
 
 def test_geoblock_client_reads_blocked_true(monkeypatch) -> None:
     monkeypatch.setattr(
-        "pm_trader.adapters.geoblock.urlopen",
+        "polysia.adapters.geoblock.urlopen",
         lambda *_args, **_kwargs: FakeResponse(b'{"blocked": true}'),
     )
 
@@ -55,7 +55,7 @@ def test_geoblock_client_rejects_endpoint_errors(monkeypatch) -> None:
     def fail(*_args: object, **_kwargs: object) -> object:
         raise URLError("offline")
 
-    monkeypatch.setattr("pm_trader.adapters.geoblock.urlopen", fail)
+    monkeypatch.setattr("polysia.adapters.geoblock.urlopen", fail)
 
     with pytest.raises(GeoblockClientError):
         GeoblockClient().check_sync()
@@ -66,7 +66,7 @@ async def test_pre_live_geoblock_check_fails_closed_on_error(monkeypatch) -> Non
     def fail(*_args: object, **_kwargs: object) -> object:
         raise URLError("offline")
 
-    monkeypatch.setattr("pm_trader.adapters.geoblock.urlopen", fail)
+    monkeypatch.setattr("polysia.adapters.geoblock.urlopen", fail)
 
     check = PreLiveOrderGeoblockCheck(GeoblockClient())
 
@@ -77,7 +77,7 @@ async def test_pre_live_geoblock_check_fails_closed_on_error(monkeypatch) -> Non
 @pytest.mark.asyncio
 async def test_pre_live_geoblock_check_blocks_when_endpoint_blocks(monkeypatch) -> None:
     monkeypatch.setattr(
-        "pm_trader.adapters.geoblock.urlopen",
+        "polysia.adapters.geoblock.urlopen",
         lambda *_args, **_kwargs: FakeResponse(b'{"blocked": true}'),
     )
 

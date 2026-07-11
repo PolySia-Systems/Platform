@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from pm_trader.monitoring import extended_strategy_evaluation as module
-from pm_trader.monitoring.extended_strategy_evaluation import (
+from polysia.monitoring import extended_strategy_evaluation as module
+from polysia.monitoring.extended_strategy_evaluation import (
     ExtendedStrategyEvaluationConfig,
     ExtendedStrategyEvaluationError,
     build_extended_strategy_evaluation,

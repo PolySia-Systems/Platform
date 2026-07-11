@@ -9,24 +9,24 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from pm_trader.adapters.geoblock import GeoblockStatus
-from pm_trader.adapters.polymarket_public import (
+from polysia.adapters.geoblock import GeoblockStatus
+from polysia.adapters.polymarket_public import (
     MarketDetails,
     MarketOutcomeSummary,
     MarketSummary,
     PolymarketPublicAdapterError,
 )
-from pm_trader.cli import (
+from polysia.cli import (
     _live_account_status,
     _live_limit_order,
     _safe_open_order_to_dict,
     _safe_order_response,
     app,
 )
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.execution.live_broker import LiveBrokerError
-from pm_trader.execution.tiny_live_execution import TinyLiveExecutionReport
-from pm_trader.monitoring.real_data_shadow_run import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.live_broker import LiveBrokerError
+from polysia.execution.tiny_live_execution import TinyLiveExecutionReport
+from polysia.monitoring.real_data_shadow_run import (
     RealDataShadowMetrics,
     RealDataShadowRunReport,
 )
@@ -227,7 +227,7 @@ def test_operator_report_command_prints_markdown(monkeypatch) -> None:
     result = runner.invoke(app, ["operator-report", "--format", "markdown"])
 
     assert result.exit_code == 0
-    assert result.stdout.startswith("# Polymarket Operator Report")
+    assert result.stdout.startswith("# PolySia — Polymarket Adapter — Operator Report")
     assert "## Runtime" in result.stdout
     assert "not-for-output" not in result.stdout
     assert "0xfunder" not in result.stdout
@@ -255,7 +255,7 @@ def test_operator_report_command_writes_html_file(monkeypatch, tmp_path: Path) -
     assert payload["format"] == "html"
     report = output.read_text(encoding="utf-8")
     assert report.startswith("<!doctype html>")
-    assert "Polymarket Operator Report" in report
+    assert "PolySia — Polymarket Adapter — Operator Report" in report
     assert "not-for-output" not in report
     assert "0xfunder" not in report
     assert "0xwallet" not in report
@@ -308,13 +308,13 @@ def test_tiny_live_monitor_command_writes_reports(monkeypatch, tmp_path: Path) -
             encoding="utf-8",
         )
         (config.output_dir / "tiny-live-monitor.md").write_text(
-            "# Polymarket Tiny Live Monitor\n",
+            "# PolySia — Polymarket Adapter — Tiny Live Monitor\n",
             encoding="utf-8",
         )
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "pm_trader.cli.write_tiny_live_monitor_reports",
+        "polysia.cli.write_tiny_live_monitor_reports",
         fake_write_monitor_reports,
     )
 
@@ -349,7 +349,7 @@ def test_controlled_second_tiny_live_command_writes_reports(
             encoding="utf-8",
         )
         (config.output_dir / "controlled-second-tiny-live.md").write_text(
-            "# Polymarket Controlled Second Tiny Live\n",
+            "# PolySia — Polymarket Adapter — Controlled Second Tiny Live\n",
             encoding="utf-8",
         )
         return SimpleNamespace(
@@ -360,7 +360,7 @@ def test_controlled_second_tiny_live_command_writes_reports(
 
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-yes")
     monkeypatch.setattr(
-        "pm_trader.cli.run_controlled_second_tiny_live",
+        "polysia.cli.run_controlled_second_tiny_live",
         fake_run_controlled,
     )
 
@@ -405,7 +405,7 @@ def test_production_gap_audit_command_writes_reports(monkeypatch, tmp_path: Path
             encoding="utf-8",
         )
         (config.output_dir / "production-gap-audit.md").write_text(
-            "# Polymarket Production Gap Audit\n",
+            "# PolySia — Polymarket Adapter — Production Gap Audit\n",
             encoding="utf-8",
         )
         (config.output_dir / "phase-31-freeze-summary.md").write_text(
@@ -415,7 +415,7 @@ def test_production_gap_audit_command_writes_reports(monkeypatch, tmp_path: Path
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "pm_trader.cli.write_production_gap_audit_reports",
+        "polysia.cli.write_production_gap_audit_reports",
         fake_write_production_gap_audit_reports,
     )
 
@@ -443,7 +443,7 @@ def test_main_merge_review_command_writes_reports(monkeypatch, tmp_path: Path) -
             encoding="utf-8",
         )
         (config.output_dir / "main-merge-review.md").write_text(
-            "# Polymarket Main Merge Review\n",
+            "# PolySia — Polymarket Adapter — Main Merge Review\n",
             encoding="utf-8",
         )
         (config.output_dir / "tag-and-merge-checklist.md").write_text(
@@ -453,7 +453,7 @@ def test_main_merge_review_command_writes_reports(monkeypatch, tmp_path: Path) -
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "pm_trader.cli.write_main_merge_review_reports",
+        "polysia.cli.write_main_merge_review_reports",
         fake_write_main_merge_review_reports,
     )
 
@@ -484,13 +484,13 @@ def test_local_release_closeout_command_writes_reports(
             encoding="utf-8",
         )
         (config.output_dir / "local-release-closeout.md").write_text(
-            "# Polymarket Final Local Release Closeout\n",
+            "# PolySia — Polymarket Adapter — Final Local Release Closeout\n",
             encoding="utf-8",
         )
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "pm_trader.cli.write_local_release_closeout_reports",
+        "polysia.cli.write_local_release_closeout_reports",
         fake_write_local_release_closeout_reports,
     )
 
@@ -518,7 +518,7 @@ def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -
             encoding="utf-8",
         )
         (output_dir_arg / "reconciliation-report.md").write_text(
-            "# Polymarket Reconciliation Report\n",
+            "# PolySia — Polymarket Adapter — Reconciliation Report\n",
             encoding="utf-8",
         )
         return SimpleNamespace(
@@ -527,7 +527,7 @@ def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -
             trading_should_pause=False,
         )
 
-    monkeypatch.setattr("pm_trader.cli._reconcile_account", fake_reconcile_account)
+    monkeypatch.setattr("polysia.cli._reconcile_account", fake_reconcile_account)
 
     result = runner.invoke(
         app,
@@ -564,7 +564,7 @@ def test_manual_intervention_live_test_command_writes_dry_run_reports(
             encoding="utf-8",
         )
         (config.output_dir / "manual-intervention-live-test.md").write_text(
-            "# Polymarket Controlled Manual Intervention Live Test\n",
+            "# PolySia — Polymarket Adapter — Controlled Manual Intervention Live Test\n",
             encoding="utf-8",
         )
         assert config.dry_run is True
@@ -583,15 +583,15 @@ def test_manual_intervention_live_test_command_writes_dry_run_reports(
         apply_calls.append(settings)
 
     monkeypatch.setattr(
-        "pm_trader.cli._resolve_live_smoke_selection",
+        "polysia.cli._resolve_live_smoke_selection",
         fake_resolve_live_smoke_selection,
     )
     monkeypatch.setattr(
-        "pm_trader.cli.run_manual_intervention_live_test",
+        "polysia.cli.run_manual_intervention_live_test",
         fake_run_manual_intervention_live_test,
     )
     monkeypatch.setattr(
-        "pm_trader.cli._apply_secure_env_from_settings",
+        "polysia.cli._apply_secure_env_from_settings",
         fake_apply_secure_env_from_settings,
     )
 
@@ -990,7 +990,7 @@ def test_tiny_live_execute_cli_geoblock_blocked_with_mock(
             blocking_reasons=("Polymarket geoblock check failed closed.",),
         )
 
-    monkeypatch.setattr("pm_trader.cli.run_tiny_live_execution", fake_run)
+    monkeypatch.setattr("polysia.cli.run_tiny_live_execution", fake_run)
 
     result = runner.invoke(
         app,
@@ -1055,7 +1055,7 @@ def test_operator_runbook_command_prints_markdown(monkeypatch) -> None:
     result = runner.invoke(app, ["operator-runbook", "--include-live"])
 
     assert result.exit_code == 0
-    assert result.stdout.startswith("# Polymarket Operator Runbook")
+    assert result.stdout.startswith("# PolySia — Polymarket Adapter — Operator Runbook")
     assert "Live Dry-Run Only" in result.stdout
     assert "not-for-output" not in result.stdout
     assert "0xwallet" not in result.stdout
@@ -1072,7 +1072,7 @@ def test_operator_runbook_command_writes_markdown_file(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert payload["include_live"] is False
     runbook = output.read_text(encoding="utf-8")
-    assert runbook.startswith("# Polymarket Operator Runbook")
+    assert runbook.startswith("# PolySia — Polymarket Adapter — Operator Runbook")
     assert "Live Dry-Run Only" not in runbook
 
 
@@ -1088,7 +1088,7 @@ def test_release_manifest_command_prints_sanitized_json(monkeypatch) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["status"] == "ready"
-    assert payload["package"]["cli_entrypoint"] == "pm_trader.cli:app"
+    assert payload["package"]["cli_entrypoint"] == "polysia.cli:app"
     assert payload["readiness"]["status"] == "ready"
     assert "not-for-output" not in result.stdout
     assert "0xwallet" not in result.stdout
@@ -1106,7 +1106,7 @@ def test_release_manifest_command_writes_json_file(tmp_path: Path) -> None:
     assert payload["release_status"] == "ready"
     manifest = json.loads(output.read_text(encoding="utf-8"))
     assert manifest["status"] == "ready"
-    assert manifest["package"]["name"] == "polymarket-trading-system"
+    assert manifest["package"]["name"] == "polysia"
 
 
 def test_deployment_automation_command_writes_artifacts(tmp_path: Path) -> None:
@@ -1154,7 +1154,7 @@ def test_final_handoff_command_writes_markdown(tmp_path: Path) -> None:
     final_handoff = output_dir / "final-handoff.md"
     assert final_handoff.is_file()
     assert final_handoff.read_text(encoding="utf-8").startswith(
-        "# Polymarket Final Handoff"
+        "# PolySia — Polymarket Adapter — Final Handoff"
     )
 
 
@@ -1290,7 +1290,7 @@ def test_shadow_run_real_data_command_writes_sanitized_reports(
     monkeypatch.setenv("POLYMARKET_FUNDER_ADDRESS", "0xfunder")
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-secret")
-    monkeypatch.setattr("pm_trader.cli.build_real_data_shadow_run", fake_build)
+    monkeypatch.setattr("polysia.cli.build_real_data_shadow_run", fake_build)
     output_dir = tmp_path / "real-shadow"
 
     result = runner.invoke(
@@ -1337,7 +1337,7 @@ def test_discover_markets_command_prints_active_markets(monkeypatch) -> None:
                 )
             ]
 
-    monkeypatch.setattr("pm_trader.cli.PolymarketPublicAdapter", FakeAdapter)
+    monkeypatch.setattr("polysia.cli.PolymarketPublicAdapter", FakeAdapter)
 
     result = runner.invoke(app, ["discover-markets", "--limit", "3"])
 
@@ -1353,7 +1353,7 @@ def test_discover_markets_command_handles_adapter_errors(monkeypatch) -> None:
         async def list_active_markets(self, page_size: int = 20) -> list[MarketSummary]:
             raise PolymarketPublicAdapterError("Could not list active Polymarket markets.")
 
-    monkeypatch.setattr("pm_trader.cli.PolymarketPublicAdapter", FakeAdapter)
+    monkeypatch.setattr("polysia.cli.PolymarketPublicAdapter", FakeAdapter)
 
     result = runner.invoke(app, ["discover-markets", "--limit", "3"])
 
@@ -1379,7 +1379,7 @@ def test_stream_market_command_delegates_to_async_runner(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("pm_trader.cli._stream_market", fake_stream_market)
+    monkeypatch.setattr("polysia.cli._stream_market", fake_stream_market)
 
     result = runner.invoke(
         app,
@@ -1437,8 +1437,8 @@ def test_live_smoke_test_auto_btc_5m_selects_market(monkeypatch) -> None:
         calls.append(config)
         return SimpleNamespace(final_result="PASS")
 
-    monkeypatch.setattr("pm_trader.cli.PolymarketPublicAdapter", FakePublicAdapter)
-    monkeypatch.setattr("pm_trader.cli.run_live_smoke_test", fake_run_live_smoke_test)
+    monkeypatch.setattr("polysia.cli.PolymarketPublicAdapter", FakePublicAdapter)
+    monkeypatch.setattr("polysia.cli.run_live_smoke_test", fake_run_live_smoke_test)
 
     result = runner.invoke(
         app,
@@ -1474,7 +1474,7 @@ def test_live_smoke_test_requires_selection_without_auto() -> None:
 @pytest.mark.asyncio
 async def test_live_account_status_reports_signer_funder_diagnostics(monkeypatch) -> None:
     FakeAccountStatusAdapter.instances.clear()
-    monkeypatch.setattr("pm_trader.cli.PolymarketSecureAdapter", FakeAccountStatusAdapter)
+    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeAccountStatusAdapter)
     settings = AppSettings(
         TRADING_MODE=TradingMode.LIVE,
         POLYMARKET_PRIVATE_KEY="not-for-output",
@@ -1536,7 +1536,7 @@ def test_live_open_orders_command_delegates_to_async_runner(monkeypatch) -> None
             "status": "ok",
         }
 
-    monkeypatch.setattr("pm_trader.cli._live_open_orders", fake_live_open_orders)
+    monkeypatch.setattr("polysia.cli._live_open_orders", fake_live_open_orders)
 
     result = runner.invoke(
         app,
@@ -1569,7 +1569,7 @@ def test_live_cancel_order_command_defaults_to_dry_run(monkeypatch) -> None:
             "submitted": False,
         }
 
-    monkeypatch.setattr("pm_trader.cli._live_cancel_order", fake_live_cancel_order)
+    monkeypatch.setattr("polysia.cli._live_cancel_order", fake_live_cancel_order)
 
     result = runner.invoke(
         app,
@@ -1607,7 +1607,7 @@ def test_live_cancel_market_orders_command_delegates_token(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "pm_trader.cli._live_cancel_market_orders",
+        "polysia.cli._live_cancel_market_orders",
         fake_live_cancel_market_orders,
     )
 
@@ -1675,7 +1675,7 @@ def test_live_limit_order_command_defaults_to_dry_run(monkeypatch) -> None:
             "submitted": False,
         }
 
-    monkeypatch.setattr("pm_trader.cli._live_limit_order", fake_live_limit_order)
+    monkeypatch.setattr("polysia.cli._live_limit_order", fake_live_limit_order)
 
     result = runner.invoke(
         app,
@@ -1703,7 +1703,7 @@ def test_live_limit_order_command_defaults_to_dry_run(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_live_limit_order_dry_run_does_not_connect(monkeypatch) -> None:
     FakeSecureAdapter.instances.clear()
-    monkeypatch.setattr("pm_trader.cli.PolymarketSecureAdapter", FakeSecureAdapter)
+    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeSecureAdapter)
     settings = AppSettings(
         TRADING_MODE=TradingMode.LIVE,
         LIVE_TRADING_ENABLED=True,
@@ -1748,9 +1748,9 @@ async def test_live_limit_order_dry_run_does_not_connect(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_live_limit_order_submit_uses_allowlisted_fake_adapter(monkeypatch) -> None:
     FakeSecureAdapter.instances.clear()
-    monkeypatch.setattr("pm_trader.cli.PolymarketSecureAdapter", FakeSecureAdapter)
+    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeSecureAdapter)
     monkeypatch.setattr(
-        "pm_trader.execution.live_broker.PreLiveOrderGeoblockCheck",
+        "polysia.execution.live_broker.PreLiveOrderGeoblockCheck",
         lambda: AllowGeoblock(),
     )
     settings = AppSettings(
@@ -1818,7 +1818,7 @@ class AllowGeoblock:
 @pytest.mark.asyncio
 async def test_live_limit_order_rejects_size_above_tiny_cap(monkeypatch) -> None:
     FakeSecureAdapter.instances.clear()
-    monkeypatch.setattr("pm_trader.cli.PolymarketSecureAdapter", FakeSecureAdapter)
+    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeSecureAdapter)
     settings = AppSettings(
         TRADING_MODE=TradingMode.LIVE,
         LIVE_TRADING_ENABLED=True,

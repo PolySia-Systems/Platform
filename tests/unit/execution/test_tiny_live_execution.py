@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from pm_trader.adapters.geoblock import GeoblockStatus
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.execution.tiny_live_execution import (
+from polysia.adapters.geoblock import GeoblockStatus
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.tiny_live_execution import (
     TinyLiveExecutionConfig,
     render_tiny_live_execution_json,
     run_tiny_live_execution,
 )
-from pm_trader.risk.checks import RiskEngine
-from pm_trader.risk.kill_switch import KillSwitch
-from pm_trader.risk.limits import RiskLimits
+from polysia.risk.checks import RiskEngine
+from polysia.risk.kill_switch import KillSwitch
+from polysia.risk.limits import RiskLimits
 
 
 class FakeTinyAdapter:

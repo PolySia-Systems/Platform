@@ -6,18 +6,18 @@ from decimal import Decimal
 
 import pytest
 
-from pm_trader.backtesting.replay import (
+from polysia.backtesting.replay import (
     BacktestConfig,
     BacktestEngine,
     ReplayError,
     load_market_data_events_jsonl,
     market_data_event_from_dict,
 )
-from pm_trader.strategies.passive_market_maker import (
+from polysia.strategies.passive_market_maker import (
     PassiveMarketMakerConfig,
     PassiveMarketMakerStrategy,
 )
-from pm_trader.strategies.stale_price import StalePriceStrategy, StalePriceStrategyConfig
+from polysia.strategies.stale_price import StalePriceStrategy, StalePriceStrategyConfig
 
 
 def book_event(*, bid_size: str = "10", ask_size: str = "1") -> dict[str, object]:

@@ -5,9 +5,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring import main_merge_review as module
-from pm_trader.monitoring.main_merge_review import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring import main_merge_review as module
+from polysia.monitoring.main_merge_review import (
     MainMergeReviewConfig,
     build_main_merge_review,
     write_main_merge_review_reports,
@@ -142,7 +142,7 @@ def ready_project(tmp_path: Path) -> Path:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 """.strip(),

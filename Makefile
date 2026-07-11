@@ -13,19 +13,19 @@ typecheck:
 	python -m mypy src
 
 health:
-	python -m pm_trader.cli health
+	python -m polysia.cli health
 
 readiness:
-	python -m pm_trader.cli deployment-readiness
+	python -m polysia.cli deployment-readiness
 
 runbook:
-	python -m pm_trader.cli operator-runbook
+	python -m polysia.cli operator-runbook
 
 release-manifest:
-	python -m pm_trader.cli release-manifest
+	python -m polysia.cli release-manifest
 
 deploy-check:
-	python -m pm_trader.cli deployment-automation
+	python -m polysia.cli deployment-automation
 
 final-handoff:
-	python -m pm_trader.cli final-handoff
+	python -m polysia.cli final-handoff

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pm_trader.monitoring.strategy_evaluation import (
+from polysia.monitoring.strategy_evaluation import (
     StrategyEvaluationConfig,
     StrategyEvaluationError,
     build_strategy_evaluation,

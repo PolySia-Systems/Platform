@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.execution.intents import OrderIntent
-from pm_trader.execution.live_broker import LiveBroker, LiveBrokerError
-from pm_trader.risk.checks import RiskContext, RiskEngine
-from pm_trader.risk.kill_switch import KillSwitch
-from pm_trader.risk.limits import RiskLimits
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.intents import OrderIntent
+from polysia.execution.live_broker import LiveBroker, LiveBrokerError
+from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.kill_switch import KillSwitch
+from polysia.risk.limits import RiskLimits
 
 
 class FakeLiveAdapter:
@@ -63,7 +63,7 @@ class FakeGeoblockCheck:
     async def assert_allowed(self) -> object:
         self.calls += 1
         if not self.allowed:
-            from pm_trader.adapters.geoblock import PreLiveOrderGeoblockError
+            from polysia.adapters.geoblock import PreLiveOrderGeoblockError
 
             raise PreLiveOrderGeoblockError("blocked")
         return object()

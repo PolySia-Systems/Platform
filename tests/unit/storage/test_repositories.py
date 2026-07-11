@@ -5,11 +5,11 @@ from decimal import Decimal
 
 import pytest
 
-from pm_trader.adapters.polymarket_public import MarketOutcomeSummary, MarketSummary
-from pm_trader.bus.events import MarketDataEvent
-from pm_trader.orderbook.book import LocalOrderBook
-from pm_trader.storage.db import connect_sqlite, initialize_database
-from pm_trader.storage.repositories import (
+from polysia.adapters.polymarket_public import MarketOutcomeSummary, MarketSummary
+from polysia.bus.events import MarketDataEvent
+from polysia.orderbook.book import LocalOrderBook
+from polysia.storage.db import connect_sqlite, initialize_database
+from polysia.storage.repositories import (
     DecisionRepository,
     EventRepository,
     FillRepository,

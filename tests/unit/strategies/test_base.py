@@ -5,9 +5,9 @@ from decimal import Decimal
 
 import pytest
 
-from pm_trader.bus.events import MarketDataEvent
-from pm_trader.execution.intents import OrderIntent
-from pm_trader.strategies.base import BaseStrategy, StrategyContext
+from polysia.bus.events import MarketDataEvent
+from polysia.execution.intents import OrderIntent
+from polysia.strategies.base import BaseStrategy, StrategyContext
 
 
 class FakeLogger:

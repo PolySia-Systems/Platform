@@ -8,15 +8,15 @@ from typing import Any
 
 import pytest
 
-from pm_trader.adapters.polymarket_secure import PolymarketSecureAdapterError
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.post_live_reconciliation import (
+from polysia.adapters.polymarket_secure import PolymarketSecureAdapterError
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.post_live_reconciliation import (
     PostLiveReconciliationConfig,
     build_post_live_reconciliation,
     render_post_live_reconciliation,
     write_post_live_reconciliation_reports,
 )
-from pm_trader.risk.kill_switch import KillSwitch
+from polysia.risk.kill_switch import KillSwitch
 
 
 class FakePostLiveAdapter:
@@ -310,7 +310,7 @@ def ready_project(tmp_path: Path) -> Path:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 """.strip(),

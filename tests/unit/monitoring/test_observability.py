@@ -4,14 +4,14 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.observability import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.observability import (
     ObservabilitySnapshotConfig,
     build_observability_snapshot,
     render_observability_snapshot,
     write_observability_snapshot,
 )
-from pm_trader.risk.kill_switch import KillSwitch
+from polysia.risk.kill_switch import KillSwitch
 
 
 def fixed_clock() -> datetime:
@@ -93,7 +93,7 @@ def test_observability_snapshot_writes_json_markdown_and_html(tmp_path: Path) ->
     assert snapshot.status == "ready"
     assert json.loads(json_path.read_text(encoding="utf-8"))["status"] == "ready"
     assert markdown_path.read_text(encoding="utf-8").startswith(
-        "# Polymarket Observability Snapshot"
+        "# PolySia — Polymarket Adapter — Observability Snapshot"
     )
     assert html_path.read_text(encoding="utf-8").startswith("<!doctype html>")
 
@@ -231,7 +231,7 @@ def ready_project(tmp_path: Path) -> Path:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 """.strip(),

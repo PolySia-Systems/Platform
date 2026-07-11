@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from pm_trader.adapters.geoblock import GeoblockStatus
-from pm_trader.adapters.polymarket_secure import PolymarketSecureAdapterError
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.tiny_live_monitor import (
+from polysia.adapters.geoblock import GeoblockStatus
+from polysia.adapters.polymarket_secure import PolymarketSecureAdapterError
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.tiny_live_monitor import (
     TinyLiveMonitorConfig,
     build_tiny_live_monitor,
     render_tiny_live_monitor,
     write_tiny_live_monitor_reports,
 )
-from pm_trader.risk.kill_switch import KillSwitch
+from polysia.risk.kill_switch import KillSwitch
 
 
 class FakeTinyLiveMonitorAdapter:
@@ -350,7 +350,7 @@ def ready_project(tmp_path: Path) -> Path:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 """.strip(),

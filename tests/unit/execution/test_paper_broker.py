@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from pm_trader.execution.intents import ApprovedOrderIntent, OrderIntent
-from pm_trader.execution.order_state import OrderStatus
-from pm_trader.execution.paper_broker import PaperBroker
-from pm_trader.orderbook.book import LocalOrderBook
-from pm_trader.portfolio.positions import Position, PositionLedger
+from polysia.execution.intents import ApprovedOrderIntent, OrderIntent
+from polysia.execution.order_state import OrderStatus
+from polysia.execution.paper_broker import PaperBroker
+from polysia.orderbook.book import LocalOrderBook
+from polysia.portfolio.positions import Position, PositionLedger
 
 
 def make_book(*, bid_size: str = "10", ask_size: str = "10") -> LocalOrderBook:

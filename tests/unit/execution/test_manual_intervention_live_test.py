@@ -9,10 +9,10 @@ from typing import Any
 
 import pytest
 
-from pm_trader.adapters.geoblock import GeoblockStatus
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.execution import manual_intervention_live_test as module
-from pm_trader.execution.manual_intervention_live_test import (
+from polysia.adapters.geoblock import GeoblockStatus
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution import manual_intervention_live_test as module
+from polysia.execution.manual_intervention_live_test import (
     ManualInterventionLiveTestConfig,
     render_manual_intervention_live_test,
     run_manual_intervention_live_test,

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pm_trader.portfolio.pnl import calculate_portfolio_pnl, calculate_unrealized_pnl
-from pm_trader.portfolio.positions import Position, PositionLedger
+from polysia.portfolio.pnl import calculate_portfolio_pnl, calculate_unrealized_pnl
+from polysia.portfolio.positions import Position, PositionLedger
 
 
 def test_calculate_unrealized_pnl_uses_available_marks_only() -> None:

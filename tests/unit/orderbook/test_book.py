@@ -5,8 +5,8 @@ from typing import cast
 
 import pytest
 
-from pm_trader.orderbook.book import BookSide, LocalOrderBook
-from pm_trader.orderbook.validators import OrderBookValidationError
+from polysia.orderbook.book import BookSide, LocalOrderBook
+from polysia.orderbook.validators import OrderBookValidationError
 
 
 def test_snapshot_computes_top_of_book_metrics() -> None:

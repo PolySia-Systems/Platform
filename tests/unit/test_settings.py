@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pm_trader.config.settings import AppSettings, TradingMode
+from polysia.config.settings import AppSettings, TradingMode
 
 
 def test_defaults_are_data_only(monkeypatch) -> None:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pm_trader.features.microstructure import calculate_microstructure_features
-from pm_trader.orderbook.book import LocalOrderBook
+from polysia.features.microstructure import calculate_microstructure_features
+from polysia.orderbook.book import LocalOrderBook
 
 
 def test_calculate_microstructure_features_from_orderbook() -> None:

@@ -4,8 +4,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.tiny_live_readiness import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.tiny_live_readiness import (
     TinyLiveReadinessConfig,
     build_tiny_live_readiness,
     render_tiny_live_readiness_html,
@@ -165,8 +165,8 @@ def ready_artifacts(tmp_path: Path) -> Path:
 
 def ready_project(tmp_path: Path) -> Path:
     (tmp_path / "docs").mkdir(exist_ok=True)
-    (tmp_path / "src" / "pm_trader" / "execution").mkdir(parents=True)
-    (tmp_path / "src" / "pm_trader" / "strategies").mkdir(parents=True)
+    (tmp_path / "src" / "polysia" / "execution").mkdir(parents=True)
+    (tmp_path / "src" / "polysia" / "strategies").mkdir(parents=True)
     (tmp_path / "README.md").write_text(
         "POLYMARKET_PRIVATE_KEY signer\nPOLYMARKET_FUNDER_ADDRESS funder\n",
         encoding="utf-8",
@@ -208,27 +208,27 @@ def ready_project(tmp_path: Path) -> Path:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 
 [project.scripts]
-pm-trader = "pm_trader.cli:app"
+polysia = "polysia.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pm_trader"]
+packages = ["src/polysia"]
 """.strip(),
         encoding="utf-8",
     )
-    (tmp_path / "src" / "pm_trader" / "execution" / "live_broker.py").write_text(
+    (tmp_path / "src" / "polysia" / "execution" / "live_broker.py").write_text(
         "i_understand_this_places_real_orders\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "pm_trader" / "execution" / "live_smoke_test.py").write_text(
+    (tmp_path / "src" / "polysia" / "execution" / "live_smoke_test.py").write_text(
         "i-understand-this-places-a-real-order\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "pm_trader" / "strategies" / "safe.py").write_text(
+    (tmp_path / "src" / "polysia" / "strategies" / "safe.py").write_text(
         "class SafeStrategy: pass\n",
         encoding="utf-8",
     )

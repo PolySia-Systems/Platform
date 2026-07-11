@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from polymarket import PolymarketError
 
-from pm_trader.adapters.polymarket_public import (
+from polysia.adapters.polymarket_public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
 )

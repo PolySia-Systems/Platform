@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.reconciliation import detectors, manager, reports
-from pm_trader.reconciliation.manager import ReconciliationManager
-from pm_trader.reconciliation.models import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.reconciliation import detectors, manager, reports
+from polysia.reconciliation.manager import ReconciliationManager
+from polysia.reconciliation.models import (
     ActualAccountState,
     InternalExpectedState,
     OrderSnapshot,
@@ -18,12 +18,12 @@ from pm_trader.reconciliation.models import (
     ReconciliationInput,
     ReconciliationStatus,
 )
-from pm_trader.reconciliation.reports import (
+from polysia.reconciliation.reports import (
     ReconciliationReportConfig,
     write_reconciliation_reports,
 )
-from pm_trader.reconciliation.safety_pause import KillSwitchSafetyPause
-from pm_trader.risk.kill_switch import KillSwitch
+from polysia.reconciliation.safety_pause import KillSwitchSafetyPause
+from polysia.risk.kill_switch import KillSwitch
 
 CHECKED_AT = datetime(2026, 7, 2, 15, 0, tzinfo=UTC)
 

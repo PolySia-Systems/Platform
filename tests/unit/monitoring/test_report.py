@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.metrics import build_operator_status
-from pm_trader.monitoring.report import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.metrics import build_operator_status
+from polysia.monitoring.report import (
     render_operator_report,
     render_operator_report_html,
     render_operator_report_json,
@@ -40,7 +40,7 @@ def test_json_report_is_sanitized_and_parseable() -> None:
 def test_markdown_report_includes_operator_sections() -> None:
     report = render_operator_report_markdown(live_status())
 
-    assert "# Polymarket Operator Report" in report
+    assert "# PolySia — Polymarket Adapter — Operator Report" in report
     assert "## Warnings" in report
     assert "## Runtime" in report
     assert "not-for-output" not in report
@@ -52,7 +52,7 @@ def test_html_report_is_sanitized_dashboard_markup() -> None:
     report = render_operator_report_html(live_status())
 
     assert report.startswith("<!doctype html>")
-    assert "Polymarket Operator Report" in report
+    assert "PolySia — Polymarket Adapter — Operator Report" in report
     assert "Tiny Live Orders Ready" in report
     assert "not-for-output" not in report
     assert "0xwallet" not in report
@@ -63,7 +63,7 @@ def test_render_operator_report_dispatches_formats() -> None:
     status = live_status()
 
     assert render_operator_report(status, "json").startswith("{")
-    assert render_operator_report(status, "markdown").startswith("# Polymarket")
+    assert render_operator_report(status, "markdown").startswith("# PolySia")
     assert render_operator_report(status, "html").startswith("<!doctype html>")
 
 

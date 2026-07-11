@@ -5,9 +5,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring import local_release_closeout as module
-from pm_trader.monitoring.local_release_closeout import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring import local_release_closeout as module
+from polysia.monitoring.local_release_closeout import (
     FINAL_LOCAL_RELEASE_TAG,
     LocalReleaseCloseoutConfig,
     build_local_release_closeout,

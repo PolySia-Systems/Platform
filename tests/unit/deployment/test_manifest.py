@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.deployment.manifest import build_release_manifest
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.deployment.manifest import build_release_manifest
 
 
 def test_release_manifest_passes_ready_project(tmp_path) -> None:
@@ -20,8 +20,8 @@ def test_release_manifest_passes_ready_project(tmp_path) -> None:
     assert payload["status"] == "ready"
     assert payload["timestamp"] == "2026-01-01T00:00:00+00:00"
     assert payload["summary"] == {"fail": 0, "pass": 4, "warn": 0}
-    assert payload["package"]["name"] == "polymarket-trading-system"
-    assert payload["package"]["cli_entrypoint"] == "pm_trader.cli:app"
+    assert payload["package"]["name"] == "polysia"
+    assert payload["package"]["cli_entrypoint"] == "polysia.cli:app"
     assert payload["git"]["clean"] is True
     assert payload["readiness"]["status"] == "ready"
 
@@ -34,12 +34,12 @@ def test_release_manifest_blocks_missing_cli_entrypoint(tmp_path) -> None:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pm_trader"]
+packages = ["src/polysia"]
 """.strip(),
         encoding="utf-8",
     )
@@ -126,15 +126,15 @@ def ready_project(tmp_path):
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 
 [project.scripts]
-pm-trader = "pm_trader.cli:app"
+polysia = "polysia.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pm_trader"]
+packages = ["src/polysia"]
 """.strip(),
         encoding="utf-8",
     )

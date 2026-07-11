@@ -5,9 +5,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring import production_gap_audit as module
-from pm_trader.monitoring.production_gap_audit import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring import production_gap_audit as module
+from polysia.monitoring.production_gap_audit import (
     ProductionGapAuditConfig,
     build_production_gap_audit,
     write_production_gap_audit_reports,
@@ -152,7 +152,7 @@ def ready_project(tmp_path: Path) -> Path:
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 """.strip(),

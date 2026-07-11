@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.metrics import build_operator_status
-from pm_trader.monitoring.readiness import build_deployment_readiness
-from pm_trader.monitoring.runbook import render_operator_runbook_markdown
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.metrics import build_operator_status
+from polysia.monitoring.readiness import build_deployment_readiness
+from polysia.monitoring.runbook import render_operator_runbook_markdown
 
 
 def test_operator_runbook_includes_safe_default_sections(tmp_path) -> None:
@@ -15,7 +15,7 @@ def test_operator_runbook_includes_safe_default_sections(tmp_path) -> None:
         ),
     )
 
-    assert runbook.startswith("# Polymarket Operator Runbook")
+    assert runbook.startswith("# PolySia — Polymarket Adapter — Operator Runbook")
     assert "## 1. Start Of Day" in runbook
     assert "## 2. Data Collection" in runbook
     assert "## 3. Research Loop" in runbook

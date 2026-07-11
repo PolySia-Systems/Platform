@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from pm_trader.bus.events import MarketDataEvent
-from pm_trader.bus.in_memory_bus import InMemoryEventBus
+from polysia.bus.events import MarketDataEvent
+from polysia.bus.in_memory_bus import InMemoryEventBus
 
 
 def make_event(token_id: str = "token-1") -> MarketDataEvent:

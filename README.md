@@ -1,6 +1,6 @@
-# Polymarket Trading System
+# PolySia — Polymarket Adapter
 
-Professional, data-first Polymarket trading system.
+Professional, data-first prediction-market platform with a Polymarket adapter.
 
 Current scope includes project structure, safe configuration, public market
 discovery, realtime market stream ingestion, an in-memory event bus, a local
@@ -38,7 +38,7 @@ release artifacts.
 Use the existing conda environment:
 
 ```powershell
-conda activate polymarket
+conda activate PolySia
 python -m pip install -e ".[dev]"
 ```
 
@@ -48,7 +48,7 @@ secrets out of git.
 ## First Run
 
 ```powershell
-python -m pm_trader.cli health
+python -m polysia.cli health
 ```
 
 Expected result: a JSON health response with `status` set to `ok`.
@@ -56,7 +56,7 @@ Expected result: a JSON health response with `status` set to `ok`.
 ## Public Market Discovery
 
 ```powershell
-python -m pm_trader.cli discover-markets --limit 10
+python -m polysia.cli discover-markets --limit 10
 ```
 
 This command uses the official public Polymarket SDK and does not require keys.
@@ -64,7 +64,7 @@ This command uses the official public Polymarket SDK and does not require keys.
 ## Realtime Market Stream
 
 ```powershell
-python -m pm_trader.cli stream-market --token-id YOUR_TOKEN_ID --max-events 1
+python -m polysia.cli stream-market --token-id YOUR_TOKEN_ID --max-events 1
 ```
 
 The stream command subscribes to public market events, normalizes SDK messages,
@@ -73,7 +73,7 @@ and prints JSON lines. It does not trade.
 ## Paper Trading Demo
 
 ```powershell
-python -m pm_trader.cli paper-trade --token-id YOUR_TOKEN_ID --order-size 1
+python -m polysia.cli paper-trade --token-id YOUR_TOKEN_ID --order-size 1
 ```
 
 This command runs a deterministic local simulation from a synthetic orderbook:
@@ -95,8 +95,8 @@ live-account acknowledgement. Actual cancellations also require
 `LIVE_TRADING_ENABLED=true` and an allowlisted token.
 
 ```powershell
-python -m pm_trader.cli live-open-orders --token-id YOUR_TOKEN_ID --i-understand-this-uses-live-account
-python -m pm_trader.cli live-cancel-market-orders --token-id YOUR_TOKEN_ID --dry-run --i-understand-this-modifies-live-orders
+python -m polysia.cli live-open-orders --token-id YOUR_TOKEN_ID --i-understand-this-uses-live-account
+python -m polysia.cli live-cancel-market-orders --token-id YOUR_TOKEN_ID --dry-run --i-understand-this-modifies-live-orders
 ```
 
 ## Tiny Live Limit Orders
@@ -107,7 +107,7 @@ allowlist membership, the tiny live caps, `--submit`, and
 `--i-understand-this-places-real-orders`.
 
 ```powershell
-python -m pm_trader.cli live-limit-order --token-id YOUR_TOKEN_ID --side BUY --price 0.01 --size 1 --dry-run --i-understand-this-places-real-orders
+python -m polysia.cli live-limit-order --token-id YOUR_TOKEN_ID --side BUY --price 0.01 --size 1 --dry-run --i-understand-this-places-real-orders
 ```
 
 ## Live Connectivity Smoke Test
@@ -127,9 +127,9 @@ it. If the SDK or exchange rejects the tiny order, the report records the
 rejection instead of retrying.
 
 ```powershell
-python -m pm_trader.cli live-smoke-test --market-slug BTC_5M_MARKET_SLUG --condition-id CONDITION_ID --token-id TOKEN_ID --outcome YES --side BUY --max-notional 1.00 --order-type FAK --dry-run
-python -m pm_trader.cli live-smoke-test --auto-btc-5m --outcome YES --side BUY --max-notional 1.00 --order-type FAK --dry-run
-python -m pm_trader.cli live-account-status --redact-secrets
+python -m polysia.cli live-smoke-test --market-slug BTC_5M_MARKET_SLUG --condition-id CONDITION_ID --token-id TOKEN_ID --outcome YES --side BUY --max-notional 1.00 --order-type FAK --dry-run
+python -m polysia.cli live-smoke-test --auto-btc-5m --outcome YES --side BUY --max-notional 1.00 --order-type FAK --dry-run
+python -m polysia.cli live-account-status --redact-secrets
 ```
 
 Troubleshooting and the verified signer/funder pattern are documented in
@@ -144,8 +144,8 @@ paper intents, risk evaluation, paper fills, position/PnL updates, and confirms
 that no live broker is used.
 
 ```powershell
-python -m pm_trader.cli acceptance-audit
-python -m pm_trader.cli acceptance-audit --require-clean-git --output-dir .\release-artifacts
+python -m polysia.cli acceptance-audit
+python -m polysia.cli acceptance-audit --require-clean-git --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_20_ACCEPTANCE_AUDIT.md`.
@@ -158,8 +158,8 @@ strategy intents, risk decisions, paper fills, position/PnL, drawdown, and
 decision latency. It does not use the live broker.
 
 ```powershell
-python -m pm_trader.cli shadow-run
-python -m pm_trader.cli shadow-run --max-events 6 --output-dir .\release-artifacts
+python -m polysia.cli shadow-run
+python -m polysia.cli shadow-run --max-events 6 --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_21_SHADOW_RUN.md`.
@@ -173,7 +173,7 @@ probability buckets. It does not use the live broker and never approves actual
 live trading.
 
 ```powershell
-python -m pm_trader.cli strategy-evaluation --input .\release-artifacts\shadow_run.json --output-dir .\release-artifacts
+python -m polysia.cli strategy-evaluation --input .\release-artifacts\shadow_run.json --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_22_STRATEGY_EVALUATION.md`.
@@ -186,7 +186,7 @@ against orderbook conditions, including partial fills, missed fills, slippage,
 paper PnL, and optimistic-model warnings. It does not use the live broker.
 
 ```powershell
-python -m pm_trader.cli fill-simulation-audit --input .\backtest_result.json --output-dir .\release-artifacts
+python -m polysia.cli fill-simulation-audit --input .\backtest_result.json --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_23_FILL_SIMULATION.md`.
@@ -200,7 +200,7 @@ diagnostics, kill switch availability, allowlist status, tiny caps, and secret
 redaction. It does not place or approve live orders.
 
 ```powershell
-python -m pm_trader.cli tiny-live-readiness --output-dir .\release-artifacts
+python -m polysia.cli tiny-live-readiness --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_24_TINY_LIVE_READINESS.md`.
@@ -215,7 +215,7 @@ configured, balance/approval readable, risk approval, and exactly one submit
 attempt maximum.
 
 ```powershell
-python -m pm_trader.cli tiny-live-execute --token-id TOKEN_ID_FROM_ALLOWLIST --side BUY --outcome YES --max-notional 1.00 --order-type FAK --market-slug btc-updown-5m-example --dry-run --output-dir .\release-artifacts
+python -m polysia.cli tiny-live-execute --token-id TOKEN_ID_FROM_ALLOWLIST --side BUY --outcome YES --max-notional 1.00 --order-type FAK --market-slug btc-updown-5m-example --dry-run --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_25_TINY_LIVE_EXECUTION.md`.
@@ -229,7 +229,7 @@ open order count, signer/funder booleans, allowlist count, and geoblock status.
 It never submits or cancels orders.
 
 ```powershell
-python -m pm_trader.cli post-live-reconciliation --output-dir .\release-artifacts
+python -m polysia.cli post-live-reconciliation --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_26_POST_LIVE_RECONCILIATION.md`.
@@ -244,7 +244,7 @@ result, latency metrics, warning counts, and blocking counts. It is read-only
 and never submits or cancels live orders.
 
 ```powershell
-python -m pm_trader.cli observability-snapshot --output-dir .\release-artifacts
+python -m polysia.cli observability-snapshot --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_27_OBSERVABILITY.md`.
@@ -258,8 +258,8 @@ uses the paper broker only. It never calls the live broker, never submits live
 orders, and never cancels live orders.
 
 ```powershell
-python -m pm_trader.cli shadow-run-real-data --auto-btc-5m --max-events 100 --output-dir .\release-artifacts
-python -m pm_trader.cli shadow-run-real-data --market-slug MARKET_SLUG --strategy passive-market-maker --max-events 100 --output-dir .\release-artifacts
+python -m polysia.cli shadow-run-real-data --auto-btc-5m --max-events 100 --output-dir .\release-artifacts
+python -m polysia.cli shadow-run-real-data --market-slug MARKET_SLUG --strategy passive-market-maker --max-events 100 --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_28_REAL_DATA_SHADOW_RUN.md`.
@@ -272,7 +272,7 @@ PnL, drawdown, and calibration metrics without using the live broker or writing
 secret identifiers to artifacts.
 
 ```powershell
-python -m pm_trader.cli strategy-evaluation-extended --input .\release-artifacts\shadow-run-real-data.json --output-dir .\release-artifacts
+python -m polysia.cli strategy-evaluation-extended --input .\release-artifacts\shadow-run-real-data.json --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_29_EXTENDED_STRATEGY_EVALUATION.md`.
@@ -285,7 +285,7 @@ approval readability, open-order count, and the latest safety artifacts without
 submitting or canceling any live order.
 
 ```powershell
-python -m pm_trader.cli tiny-live-monitor --output-dir .\release-artifacts --redact-secrets
+python -m polysia.cli tiny-live-monitor --output-dir .\release-artifacts --redact-secrets
 ```
 
 Details are documented in `docs/PHASE_30_TINY_LIVE_MONITOR.md`.
@@ -299,7 +299,7 @@ signer/funder, account readability, risk approval, and the one-attempt guard all
 pass.
 
 ```powershell
-python -m pm_trader.cli controlled-second-tiny-live --auto-btc-5m --side BUY --outcome YES --max-notional 1.00 --order-type FOK --dry-run --output-dir .\release-artifacts
+python -m polysia.cli controlled-second-tiny-live --auto-btc-5m --side BUY --outcome YES --max-notional 1.00 --order-type FOK --dry-run --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_31_CONTROLLED_SECOND_TINY_LIVE.md`.
@@ -312,7 +312,7 @@ blocked-for-live, or requires-human-review, and documents the merge plan and
 operator decision before any main merge.
 
 ```powershell
-python -m pm_trader.cli production-gap-audit --output-dir .\release-artifacts
+python -m polysia.cli production-gap-audit --output-dir .\release-artifacts
 ```
 
 Details are documented in
@@ -325,7 +325,7 @@ controlled merge to `main`. Missing GitHub remote is reported as a warning only
 and does not block local review.
 
 ```powershell
-python -m pm_trader.cli main-merge-review --output-dir .\release-artifacts
+python -m polysia.cli main-merge-review --output-dir .\release-artifacts
 ```
 
 Details are documented in
@@ -339,7 +339,7 @@ live tests, capital scaling, live market making, or live strategy automation.
 Missing GitHub remote remains a warning only for local finalization.
 
 ```powershell
-python -m pm_trader.cli local-release-closeout --output-dir .\release-artifacts
+python -m polysia.cli local-release-closeout --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/FINAL_LOCAL_RELEASE_CLOSEOUT.md`.
@@ -353,7 +353,7 @@ trading and require manual acknowledgement; the command never places, cancels,
 modifies, retries, or automates live orders.
 
 ```powershell
-python -m pm_trader.cli reconcile-account --output-dir .\release-artifacts
+python -m polysia.cli reconcile-account --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_35_RECONCILIATION_MANAGER.md`.
@@ -367,7 +367,7 @@ order or close the resulting position from the Polymarket website. Detection
 pauses trading and reports `MANUAL_INTERVENTION_DETECTED`.
 
 ```powershell
-python -m pm_trader.cli manual-intervention-live-test --auto-btc-5m --outcome YES --side BUY --max-notional 1.00 --order-type FOK --dry-run --output-dir .\release-artifacts
+python -m polysia.cli manual-intervention-live-test --auto-btc-5m --outcome YES --side BUY --max-notional 1.00 --order-type FOK --dry-run --output-dir .\release-artifacts
 ```
 
 Details are documented in `docs/PHASE_36_CONTROLLED_MANUAL_INTERVENTION_LIVE_TEST.md`.
@@ -380,7 +380,7 @@ and whether tiny live orders are ready. It reports only whether keys/wallets are
 configured, never their values.
 
 ```powershell
-python -m pm_trader.cli operator-status
+python -m polysia.cli operator-status
 ```
 
 ## Operator Reports
@@ -390,8 +390,8 @@ HTML output is a local file-friendly dashboard and still includes only safe
 status fields, counts, caps, and warnings.
 
 ```powershell
-python -m pm_trader.cli operator-report --format html --output .\operator-report.html
-python -m pm_trader.cli operator-report --format markdown
+python -m polysia.cli operator-report --format html --output .\operator-report.html
+python -m polysia.cli operator-report --format markdown
 ```
 
 ## Replay Backtesting
@@ -401,8 +401,8 @@ local books, runs the selected strategy, applies the risk engine, and uses only
 the conservative paper broker. It never calls live trading APIs.
 
 ```powershell
-python -m pm_trader.cli backtest-jsonl --input .\events.jsonl --strategy stale-price --initial-cash 100
-python -m pm_trader.cli backtest-jsonl --input .\events.jsonl --strategy passive-market-maker --min-edge 0.05
+python -m polysia.cli backtest-jsonl --input .\events.jsonl --strategy stale-price --initial-cash 100
+python -m polysia.cli backtest-jsonl --input .\events.jsonl --strategy passive-market-maker --min-edge 0.05
 ```
 
 ## Market-Making Research
@@ -421,8 +421,8 @@ geoblock enforcement status, and optionally a clean git worktree. It never
 prints secrets, wallet addresses, or allowlisted token values.
 
 ```powershell
-python -m pm_trader.cli deployment-readiness
-python -m pm_trader.cli deployment-readiness --require-clean-git
+python -m polysia.cli deployment-readiness
+python -m polysia.cli deployment-readiness --require-clean-git
 ```
 
 ## Operator Runbook
@@ -434,8 +434,8 @@ day, public data collection, research loops, reporting, live dry-runs, and
 emergency stop.
 
 ```powershell
-python -m pm_trader.cli operator-runbook
-python -m pm_trader.cli operator-runbook --include-live --output .\operator-runbook.md
+python -m polysia.cli operator-runbook
+python -m polysia.cli operator-runbook --include-live --output .\operator-runbook.md
 ```
 
 ## Release Manifest
@@ -446,8 +446,8 @@ CLI entrypoint configuration, git commit/clean status, deployment readiness, and
 release-blocking checks without printing secrets or account values.
 
 ```powershell
-python -m pm_trader.cli release-manifest
-python -m pm_trader.cli release-manifest --require-clean-git --output .\release-manifest.json
+python -m polysia.cli release-manifest
+python -m polysia.cli release-manifest --require-clean-git --output .\release-manifest.json
 ```
 
 ## Deployment Automation
@@ -458,8 +458,8 @@ runbook generation, then writes sanitized ignored artifacts under
 `release-artifacts/`.
 
 ```powershell
-python -m pm_trader.cli deployment-automation
-python -m pm_trader.cli deployment-automation --require-clean-git --include-live-runbook
+python -m polysia.cli deployment-automation
+python -m polysia.cli deployment-automation --require-clean-git --include-live-runbook
 ```
 
 ## Final Handoff
@@ -470,8 +470,8 @@ manifest, operator runbook, automation result, and final handoff summary under
 `release-artifacts/`.
 
 ```powershell
-python -m pm_trader.cli final-handoff
-python -m pm_trader.cli final-handoff --require-clean-git
+python -m polysia.cli final-handoff
+python -m polysia.cli final-handoff --require-clean-git
 ```
 
 ## Checks

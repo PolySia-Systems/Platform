@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pm_trader.risk.kill_switch import KillSwitch
+from polysia.risk.kill_switch import KillSwitch
 
 
 def test_kill_switch_activates_and_deactivates() -> None:

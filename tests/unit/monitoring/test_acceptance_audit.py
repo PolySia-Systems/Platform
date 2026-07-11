@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.acceptance_audit import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.acceptance_audit import (
     AcceptanceAuditCheck,
     AcceptanceAuditConfig,
     ShadowProductionMetrics,
@@ -141,7 +141,7 @@ async def test_acceptance_audit_reports_are_sanitized() -> None:
     html_report = render_acceptance_audit_html(report)
 
     assert json.loads(json_report)["final_result"] == report.final_result
-    assert markdown_report.startswith("# Polymarket Acceptance Audit")
+    assert markdown_report.startswith("# PolySia — Polymarket Adapter — Acceptance Audit")
     assert html_report.startswith("<!doctype html>")
     combined = json_report + markdown_report + html_report
     assert "not-for-output" not in combined

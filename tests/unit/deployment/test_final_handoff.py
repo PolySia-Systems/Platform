@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.deployment.automation import run_deployment_automation
-from pm_trader.deployment.final_handoff import render_final_handoff_markdown
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.deployment.automation import run_deployment_automation
+from polysia.deployment.final_handoff import render_final_handoff_markdown
 
 
 def test_final_handoff_markdown_is_sanitized(tmp_path) -> None:
@@ -25,7 +25,7 @@ def test_final_handoff_markdown_is_sanitized(tmp_path) -> None:
 
     handoff = render_final_handoff_markdown(result)
 
-    assert handoff.startswith("# Polymarket Final Handoff")
+    assert handoff.startswith("# PolySia — Polymarket Adapter — Final Handoff")
     assert "Final handoff status: ready" in handoff
     assert "Geoblock readiness: pass" in handoff
     assert "python -m pytest" in handoff
@@ -86,15 +86,15 @@ def ready_project(tmp_path):
 build-backend = "hatchling.build"
 
 [project]
-name = "polymarket-trading-system"
+name = "polysia"
 version = "0.1.0"
 requires-python = ">=3.11"
 
 [project.scripts]
-pm-trader = "pm_trader.cli:app"
+polysia = "polysia.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pm_trader"]
+packages = ["src/polysia"]
 """.strip(),
         encoding="utf-8",
     )

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from pm_trader.execution.intents import OrderIntent
+from polysia.execution.intents import OrderIntent
 
 
 def test_order_intent_accepts_valid_decimal_values() -> None:

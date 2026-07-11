@@ -3,16 +3,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.metrics import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.metrics import (
     build_operator_status,
     build_orderbook_metrics,
     build_portfolio_metrics,
     build_runtime_safety_metrics,
 )
-from pm_trader.orderbook.book import LocalOrderBook
-from pm_trader.portfolio.positions import PositionLedger
-from pm_trader.risk.kill_switch import KillSwitch
+from polysia.orderbook.book import LocalOrderBook
+from polysia.portfolio.positions import PositionLedger
+from polysia.risk.kill_switch import KillSwitch
 
 
 def test_runtime_safety_metrics_are_sanitized() -> None:

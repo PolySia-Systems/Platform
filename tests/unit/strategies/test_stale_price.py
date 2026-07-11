@@ -5,10 +5,10 @@ from decimal import Decimal
 
 import pytest
 
-from pm_trader.bus.events import MarketDataEvent
-from pm_trader.orderbook.book import LocalOrderBook
-from pm_trader.strategies.base import StrategyContext
-from pm_trader.strategies.stale_price import StalePriceStrategy, StalePriceStrategyConfig
+from polysia.bus.events import MarketDataEvent
+from polysia.orderbook.book import LocalOrderBook
+from polysia.strategies.base import StrategyContext
+from polysia.strategies.stale_price import StalePriceStrategy, StalePriceStrategyConfig
 
 
 def make_event(event_type: str = "book", token_id: str = "token-1") -> MarketDataEvent:

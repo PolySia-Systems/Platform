@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.monitoring.shadow_run import (
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.monitoring.shadow_run import (
     ShadowRunConfig,
     ShadowRunMetrics,
     build_shadow_run,
@@ -118,7 +118,7 @@ async def test_shadow_run_reports_and_timeseries_are_sanitized() -> None:
     timeseries = render_shadow_run_timeseries_jsonl(report)
 
     assert json.loads(json_report)["classification"] == "SHADOW_HEALTHY"
-    assert markdown_report.startswith("# Polymarket Shadow Run")
+    assert markdown_report.startswith("# PolySia — Polymarket Adapter — Shadow Run")
     assert html_report.startswith("<!doctype html>")
     assert len(timeseries.splitlines()) == 2
     combined = json_report + markdown_report + html_report + timeseries

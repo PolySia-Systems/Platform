@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from polymarket.models.clob.market_events import parse_market_event
 
-from pm_trader.bus.in_memory_bus import InMemoryEventBus
-from pm_trader.streams.market_stream import (
+from polysia.bus.in_memory_bus import InMemoryEventBus
+from polysia.streams.market_stream import (
     MarketStream,
     MarketStreamConfig,
     StaleStreamError,

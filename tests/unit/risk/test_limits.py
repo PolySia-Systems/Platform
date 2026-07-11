@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from pm_trader.risk.limits import RiskLimits
+from polysia.risk.limits import RiskLimits
 
 
 @pytest.mark.parametrize(

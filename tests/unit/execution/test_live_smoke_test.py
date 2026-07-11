@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from pm_trader.adapters.geoblock import GeoblockStatus
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.execution.live_smoke_test import (
+from polysia.adapters.geoblock import GeoblockStatus
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.live_smoke_test import (
     LiveSmokeTestConfig,
     OneOrderAttemptGuard,
     run_live_smoke_test,

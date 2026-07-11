@@ -8,17 +8,17 @@ from typing import Any
 
 import pytest
 
-from pm_trader.adapters.polymarket_public import MarketDetails, MarketOutcomeSummary, MarketSummary
-from pm_trader.bus.events import MarketDataEvent
-from pm_trader.config.settings import AppSettings, TradingMode
-from pm_trader.execution.intents import OrderIntent
-from pm_trader.monitoring.real_data_shadow_run import (
+from polysia.adapters.polymarket_public import MarketDetails, MarketOutcomeSummary, MarketSummary
+from polysia.bus.events import MarketDataEvent
+from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.intents import OrderIntent
+from polysia.monitoring.real_data_shadow_run import (
     RealDataShadowRunConfig,
     build_real_data_shadow_run,
     render_real_data_shadow_run,
     render_real_data_shadow_run_events_jsonl,
 )
-from pm_trader.risk.checks import RiskContext, RiskDecision, RiskEngine
+from polysia.risk.checks import RiskContext, RiskDecision, RiskEngine
 
 
 class FakePublicAdapter:

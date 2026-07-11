@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pm_trader.config.settings import TradingMode
-from pm_trader.execution.intents import OrderIntent
-from pm_trader.risk.checks import RiskContext, RiskEngine
-from pm_trader.risk.kill_switch import KillSwitch
-from pm_trader.risk.limits import RiskLimits
+from polysia.config.settings import TradingMode
+from polysia.execution.intents import OrderIntent
+from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.kill_switch import KillSwitch
+from polysia.risk.limits import RiskLimits
 
 
 def make_intent(*, side: str = "BUY", price: str = "0.50", size: str = "10") -> OrderIntent:

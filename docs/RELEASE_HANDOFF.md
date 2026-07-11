@@ -6,7 +6,7 @@ packages or submit live orders from this checklist.
 ## Required Commands
 
 ```powershell
-python -m pm_trader.cli final-handoff --require-clean-git
+python -m polysia.cli final-handoff --require-clean-git
 ```
 
 ## Expected Result
