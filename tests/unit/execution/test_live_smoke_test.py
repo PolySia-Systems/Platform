@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from polysia.adapters.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.geoblock import GeoblockStatus
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.execution.live_smoke_test import (
     LiveSmokeTestConfig,

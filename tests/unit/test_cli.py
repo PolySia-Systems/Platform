@@ -9,13 +9,8 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from polysia.adapters.geoblock import GeoblockStatus
-from polysia.adapters.polymarket_public import (
-    MarketDetails,
-    MarketOutcomeSummary,
-    MarketSummary,
-    PolymarketPublicAdapterError,
-)
+from polysia.adapters.polymarket.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.public import PolymarketPublicAdapterError
 from polysia.cli import (
     _live_account_status,
     _live_limit_order,
@@ -24,6 +19,7 @@ from polysia.cli import (
     app,
 )
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.domain.market import MarketDetails, MarketOutcomeSummary, MarketSummary
 from polysia.execution.live_broker import LiveBrokerError
 from polysia.execution.tiny_live_execution import TinyLiveExecutionReport
 from polysia.monitoring.real_data_shadow_run import (

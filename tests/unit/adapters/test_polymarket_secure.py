@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from polymarket import PolymarketError
 
-from polysia.adapters.polymarket_secure import (
+from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
     PolymarketSecureAdapterError,
     sanitize_order_request,

@@ -63,7 +63,7 @@ class FakeGeoblockCheck:
     async def assert_allowed(self) -> object:
         self.calls += 1
         if not self.allowed:
-            from polysia.adapters.geoblock import PreLiveOrderGeoblockError
+            from polysia.adapters.polymarket.geoblock import PreLiveOrderGeoblockError
 
             raise PreLiveOrderGeoblockError("blocked")
         return object()

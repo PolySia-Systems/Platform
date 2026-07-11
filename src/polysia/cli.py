@@ -11,22 +11,24 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
-from polymarket import PolymarketError
 
-from polysia.adapters.geoblock import PreLiveOrderGeoblockCheck
-from polysia.adapters.polymarket_public import (
-    MarketDetails,
-    MarketSummary,
+from polysia.adapters.polymarket.geoblock import PreLiveOrderGeoblockCheck
+from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
 )
-from polysia.adapters.polymarket_secure import (
+from polysia.adapters.polymarket.secure import (
     FUNDER_ADDRESS_ENV,
     PRIVATE_KEY_ENV,
     SIGNATURE_TYPE_ENV,
     WALLET_ADDRESS_ENV,
     PolymarketSecureAdapter,
     PolymarketSecureAdapterError,
+)
+from polysia.adapters.polymarket.stream import (
+    MarketStream,
+    MarketStreamConfig,
+    MarketStreamError,
 )
 from polysia.backtesting.replay import (
     BacktestConfig,
@@ -41,6 +43,7 @@ from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.automation import run_deployment_automation
 from polysia.deployment.final_handoff import render_final_handoff_markdown
 from polysia.deployment.manifest import build_release_manifest
+from polysia.domain.market import MarketDetails, MarketSummary
 from polysia.execution.controlled_second_tiny_live import (
     ControlledSecondTinyLiveConfig,
     controlled_second_tiny_live_filename,
@@ -175,11 +178,6 @@ from polysia.strategies.passive_market_maker import (
     PassiveMarketMakerStrategy,
 )
 from polysia.strategies.stale_price import StalePriceStrategy, StalePriceStrategyConfig
-from polysia.streams.market_stream import (
-    MarketStream,
-    MarketStreamConfig,
-    MarketStreamError,
-)
 
 app = typer.Typer(
     help="PolySia — Polymarket-first trading platform.",
@@ -1231,7 +1229,7 @@ def stream_market(
                 stale_after_seconds=stale_after_seconds,
             )
         )
-    except (MarketStreamError, PolymarketError, OSError) as error:
+    except MarketStreamError as error:
         error_payload = {
             "message": str(error),
             "status": "error",

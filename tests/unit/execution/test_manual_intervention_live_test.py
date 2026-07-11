@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from polysia.adapters.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.geoblock import GeoblockStatus
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.execution import manual_intervention_live_test as module
 from polysia.execution.manual_intervention_live_test import (

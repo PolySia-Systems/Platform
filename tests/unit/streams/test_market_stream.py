@@ -7,13 +7,13 @@ from typing import Any
 import pytest
 from polymarket.models.clob.market_events import parse_market_event
 
-from polysia.bus.in_memory_bus import InMemoryEventBus
-from polysia.streams.market_stream import (
+from polysia.adapters.polymarket.stream import (
     MarketStream,
     MarketStreamConfig,
     StaleStreamError,
     normalize_market_event,
 )
+from polysia.bus.in_memory_bus import InMemoryEventBus
 
 
 class FakeStream:

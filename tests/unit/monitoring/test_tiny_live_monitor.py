@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from polysia.adapters.geoblock import GeoblockStatus
-from polysia.adapters.polymarket_secure import PolymarketSecureAdapterError
+from polysia.adapters.polymarket.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.secure import PolymarketSecureAdapterError
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.monitoring.tiny_live_monitor import (
     TinyLiveMonitorConfig,

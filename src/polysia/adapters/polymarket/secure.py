@@ -8,7 +8,9 @@ from typing import Any, Literal, Protocol
 
 from polymarket import AsyncSecureClient, PolymarketError
 
+from polysia.adapters.polymarket.capabilities import POLYMARKET_CAPABILITIES
 from polysia.config.logging import get_logger
+from polysia.domain.market import VenueCapabilityProfile
 
 OrderSide = Literal["BUY", "SELL"]
 MarketOrderType = Literal["FAK", "FOK"]
@@ -99,6 +101,10 @@ class PolymarketSecureAdapter:
             "sdk_default"
         )
         self._configured_signature_type: int | None = None
+
+    @property
+    def capabilities(self) -> VenueCapabilityProfile:
+        return POLYMARKET_CAPABILITIES
 
     @property
     def is_connected(self) -> bool:

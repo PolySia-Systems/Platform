@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from polysia.adapters.polymarket_public import MarketOutcomeSummary, MarketSummary
 from polysia.bus.events import MarketDataEvent
+from polysia.domain.market import MarketOutcomeSummary, MarketSummary
 from polysia.orderbook.book import LocalOrderBook
 from polysia.storage.db import connect_sqlite, initialize_database
 from polysia.storage.repositories import (

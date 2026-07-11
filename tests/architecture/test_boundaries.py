@@ -45,3 +45,17 @@ def test_strategy_and_storage_layers_do_not_import_venue_adapters() -> None:
                 findings[path.relative_to(ROOT).as_posix()] = forbidden
 
     assert findings == {}
+
+
+def test_official_sdk_imports_are_confined_to_polymarket_adapter() -> None:
+    adapter_root = PACKAGE / "adapters" / "polymarket"
+    findings: dict[str, list[str]] = {}
+
+    for path in PACKAGE.rglob("*.py"):
+        if path.is_relative_to(adapter_root):
+            continue
+        forbidden = sorted(name for name in _imports(path) if name.startswith("polymarket"))
+        if forbidden:
+            findings[path.relative_to(ROOT).as_posix()] = forbidden
+
+    assert findings == {}

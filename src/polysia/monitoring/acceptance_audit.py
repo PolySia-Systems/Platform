@@ -10,6 +10,7 @@ from html import escape
 from pathlib import Path
 from typing import Literal
 
+from polysia.adapters.polymarket.stream import MarketStreamConfig
 from polysia.bus.events import MarketDataEvent
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.manifest import build_release_manifest
@@ -22,7 +23,6 @@ from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.strategies.base import BaseStrategy, StrategyContext
 from polysia.strategies.passive_market_maker import PassiveMarketMakerStrategy
 from polysia.strategies.stale_price import StalePriceStrategy
-from polysia.streams.market_stream import MarketStreamConfig
 
 Clock = Callable[[], datetime]
 GitStatusReader = Callable[[Path], str]

@@ -10,15 +10,15 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Literal, Protocol
 
-from polysia.adapters.polymarket_public import (
-    MarketDetails,
-    MarketSummary,
+from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
 )
+from polysia.adapters.polymarket.stream import MarketStream, MarketStreamConfig, MarketStreamError
 from polysia.bus.events import MarketDataEvent
 from polysia.bus.in_memory_bus import InMemoryEventBus
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.domain.market import MarketDetails, MarketSummary
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.order_state import OrderStatus
 from polysia.execution.paper_broker import PaperBroker
@@ -31,7 +31,6 @@ from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.strategies.base import BaseStrategy, StrategyContext
 from polysia.strategies.passive_market_maker import PassiveMarketMakerStrategy
 from polysia.strategies.stale_price import StalePriceStrategy
-from polysia.streams.market_stream import MarketStream, MarketStreamConfig, MarketStreamError
 
 Clock = Callable[[], datetime]
 EventSource = Callable[[str, int], Awaitable[tuple[tuple[MarketDataEvent, ...], tuple[str, ...]]]]

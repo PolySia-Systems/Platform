@@ -9,12 +9,12 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from polysia.adapters.geoblock import (
+from polysia.adapters.polymarket.geoblock import (
     GeoblockStatus,
     PreLiveOrderGeoblockCheck,
     PreLiveOrderGeoblockError,
 )
-from polysia.adapters.polymarket_secure import (
+from polysia.adapters.polymarket.secure import (
     BalanceAssetType,
     MarketOrderType,
     OrderSide,

@@ -8,8 +8,8 @@ from html import escape
 from pathlib import Path
 from typing import Literal
 
-from polysia.adapters.geoblock import PreLiveOrderGeoblockCheck
-from polysia.adapters.polymarket_secure import PolymarketSecureAdapter
+from polysia.adapters.polymarket.geoblock import PreLiveOrderGeoblockCheck
+from polysia.adapters.polymarket.secure import PolymarketSecureAdapter
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.manifest import GitRunner, build_release_manifest
 from polysia.execution.live_broker import LiveBroker

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from polysia.adapters.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.geoblock import GeoblockStatus
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.monitoring.readiness import build_deployment_readiness
 

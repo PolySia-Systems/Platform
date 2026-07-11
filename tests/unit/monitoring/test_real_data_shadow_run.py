@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from polysia.adapters.polymarket_public import MarketDetails, MarketOutcomeSummary, MarketSummary
 from polysia.bus.events import MarketDataEvent
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.domain.market import MarketDetails, MarketOutcomeSummary, MarketSummary
 from polysia.execution.intents import OrderIntent
 from polysia.monitoring.real_data_shadow_run import (
     RealDataShadowRunConfig,

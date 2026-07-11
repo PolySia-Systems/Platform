@@ -6,12 +6,12 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
-from polysia.adapters.geoblock import (
+from polysia.adapters.polymarket.geoblock import (
     GeoblockStatus,
     PreLiveOrderGeoblockCheck,
     PreLiveOrderGeoblockError,
 )
-from polysia.adapters.polymarket_secure import (
+from polysia.adapters.polymarket.secure import (
     MarketOrderType,
     PolymarketSecureAdapter,
     sanitize_order_request,

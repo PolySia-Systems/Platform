@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Venue(BaseModel):
@@ -27,7 +27,7 @@ class VenueCapabilityProfile(BaseModel):
     supports_order_cancellation: bool
     supports_live_execution: bool
     requires_geoblock_check: bool = False
-    metadata: dict[str, str] = {}
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class MarketIdentifier(BaseModel):
@@ -80,4 +80,3 @@ class MarketDetails(MarketSummary):
     minimum_order_size: Decimal | None = None
     minimum_tick_size: Decimal | None = None
     tags: tuple[str, ...] = ()
-

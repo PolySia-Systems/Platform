@@ -157,7 +157,11 @@ class MarketStream:
                         event_count=self.event_count,
                         reconnect_count=reconnect_count,
                     )
-                    raise
+                    if isinstance(error, MarketStreamError):
+                        raise
+                    raise MarketStreamError(
+                        "Polymarket market stream failed after reconnect attempts."
+                    ) from error
 
                 delay = self._next_backoff(reconnect_count)
                 reconnect_count += 1

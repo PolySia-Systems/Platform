@@ -12,7 +12,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from polysia.adapters.polymarket_secure import (
+from polysia.adapters.polymarket.secure import (
     FUNDER_ADDRESS_ENV,
     PRIVATE_KEY_ENV,
     SIGNATURE_TYPE_ENV,

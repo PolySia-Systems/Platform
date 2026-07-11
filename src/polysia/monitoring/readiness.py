@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from polysia.adapters.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.geoblock import GeoblockStatus
 from polysia.config.settings import AppSettings, TradingMode
 
 Clock = Callable[[], datetime]
