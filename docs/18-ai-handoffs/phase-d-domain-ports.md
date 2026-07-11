@@ -1,5 +1,7 @@
 # Phase D Domain and Ports Handoff
 
+Implementation commit: `0fe96ca034fd994baf802abe2e96ab3d3fd989e0`
+
 ## Outcome
 
 PolySia now has venue-neutral domain packages for markets/venues, events,
@@ -41,4 +43,3 @@ safety gates.
 ## Rollback
 
 Revert the Phase D commit. Phase C commit `d8fb60d` remains the identity baseline.
-
