@@ -1,5 +1,7 @@
 # Phase E Polymarket Adapter Handoff
 
+Implementation commit: `ff7860e743501d800133d29dceca3e9dc75f863f`
+
 ## Outcome
 
 Public, secure, stream, geoblock, mapper, and capability code is consolidated
@@ -40,4 +42,3 @@ the external backup remain available.
 Add CI/pre-commit/supply-chain gates and the missing integration/property test
 layers, then perform controlled read-only validation before any owner-approved
 state-changing test.
-
