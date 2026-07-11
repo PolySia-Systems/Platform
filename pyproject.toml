@@ -23,7 +23,7 @@ dev = [
     "build==1.5.1",
     "cyclonedx-bom==7.3.0",
     "hypothesis==6.156.6",
-    "mypy==2.1.0",
+    "mypy==2.2.0",
     "pip-audit==2.10.1",
     "pre-commit==4.6.0",
     "pytest==9.1.1",
