@@ -1,0 +1,12 @@
+Original file: Polymarket Python SDK/.git
+Observed: 2026-07-11
+SHA-256: BDECE3EBDB861C2021DB7B5B427B5685B7C59E4BD276C3C743E02BF5870FEF0E
+Status: invalid; target path is absent
+
+Original content:
+gitdir: C:/Users/Siamak/Documents/Polymarket/.git/worktrees/Polymarket-Python-SDK
+
+Historical release artifacts report branch delivery/phase-36-python-sdk and
+commit c81c084. Those values are evidence only; repository history was not
+available and must not be reconstructed as invented commits.
+

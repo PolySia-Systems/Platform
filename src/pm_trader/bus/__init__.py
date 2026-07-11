@@ -1,0 +1,1 @@
+"""Internal event bus primitives."""

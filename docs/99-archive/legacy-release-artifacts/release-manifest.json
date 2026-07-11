@@ -1,0 +1,101 @@
+{
+  "checks": [
+    {
+      "message": "Package metadata and CLI entrypoint are configured.",
+      "name": "package-metadata",
+      "remediation": null,
+      "status": "pass"
+    },
+    {
+      "message": "Wheel config includes the pm_trader source package.",
+      "name": "wheel-package-config",
+      "remediation": null,
+      "status": "pass"
+    },
+    {
+      "message": "Release operator artifacts are present.",
+      "name": "operator-artifacts",
+      "remediation": null,
+      "status": "pass"
+    },
+    {
+      "message": "Git metadata is available and worktree is clean.",
+      "name": "git-snapshot",
+      "remediation": null,
+      "status": "pass"
+    }
+  ],
+  "git": {
+    "available": true,
+    "branch": "delivery/phase-36-python-sdk",
+    "clean": true,
+    "commit": "c81c084"
+  },
+  "package": {
+    "build_backend": "hatchling.build",
+    "cli_entrypoint": "pm_trader.cli:app",
+    "name": "polymarket-trading-system",
+    "requires_python": ">=3.11",
+    "version": "0.1.0"
+  },
+  "readiness": {
+    "checks": [
+      {
+        "message": "Required project metadata files are present.",
+        "name": "project-files",
+        "remediation": null,
+        "status": "pass"
+      },
+      {
+        "message": ".env.example keeps live trading disabled and secrets empty.",
+        "name": "env-example",
+        "remediation": null,
+        "status": "pass"
+      },
+      {
+        "message": ".gitignore protects local env files, keys, and database artifacts.",
+        "name": "secret-ignore-patterns",
+        "remediation": null,
+        "status": "pass"
+      },
+      {
+        "message": "Live order submission is disabled by runtime settings.",
+        "name": "live-guardrails",
+        "remediation": null,
+        "status": "pass"
+      },
+      {
+        "message": "Tiny live caps are configured while live submission remains disabled.",
+        "name": "tiny-live-caps",
+        "remediation": null,
+        "status": "pass"
+      },
+      {
+        "message": "Mandatory pre-live-order geoblock enforcement is configured; endpoint status was not checked during this offline readiness run.",
+        "name": "geoblock",
+        "remediation": null,
+        "status": "pass"
+      },
+      {
+        "message": "Repository worktree is clean.",
+        "name": "clean-git",
+        "remediation": null,
+        "status": "pass"
+      }
+    ],
+    "status": "ready",
+    "summary": {
+      "fail": 0,
+      "pass": 7,
+      "warn": 0
+    },
+    "timestamp": "2026-07-06T09:08:17.765825+00:00"
+  },
+  "status": "ready",
+  "summary": {
+    "fail": 0,
+    "pass": 4,
+    "warn": 0
+  },
+  "timestamp": "2026-07-06T09:08:17.766169+00:00"
+}
