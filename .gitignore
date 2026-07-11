@@ -46,6 +46,7 @@ tiny_live_execution.json
 tiny_live_execution.md
 tiny_live_execution.html
 release-artifacts/
+artifacts/
 /release-manifest.json
 *.key
 *.pem

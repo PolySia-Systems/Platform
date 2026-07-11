@@ -1,0 +1,23 @@
+repos:
+  - repo: local
+    hooks:
+      - id: polysia-secret-scan
+        name: PolySia secret scan
+        entry: python -m polysia.security.secret_scan
+        language: system
+        pass_filenames: false
+      - id: ruff
+        name: Ruff
+        entry: python -m ruff check .
+        language: system
+        pass_filenames: false
+      - id: mypy
+        name: Mypy
+        entry: python -m mypy src
+        language: system
+        pass_filenames: false
+      - id: pytest
+        name: Pytest
+        entry: python -m pytest -q
+        language: system
+        pass_filenames: false
