@@ -1,0 +1,49 @@
+sequenceDiagram
+  autonumber
+  participant MDA as Market Data Adapter [CURRENT]
+  participant EB as Event Bus [CURRENT]
+  participant OB as Order Book [CURRENT]
+  participant FP as Feature Pipeline [CURRENT]
+  participant S as Strategy [CURRENT]
+  participant PA as Portfolio / Allocator [TARGET]
+  participant R as Risk Engine [CURRENT]
+  participant OMS as OMS / Transaction Manager [TARGET]
+  participant EP as Execution Port [TARGET over CURRENT]
+  participant PM as Polymarket Adapter [CURRENT]
+  participant V as Venue [EXTERNAL]
+  participant LP as Ledger / Positions [CURRENT]
+  participant RC as Reconciliation [CURRENT]
+  participant MON as Monitoring [CURRENT]
+
+  Note over MDA,MON: Legend: CURRENT implemented; TARGET approved evolution; EXTERNAL outside PolySia
+  MDA-->>EB: normalized MarketDataEvent
+  EB-->>OB: book snapshot or update
+  OB-->>FP: Decimal book state
+  FP-->>S: read-only features and context
+  S->>PA: pre-risk OrderIntent
+  alt duplicate, conflict, or no capital [TARGET]
+    PA-->>MON: declined intent with reason
+  else allocatable intent
+    PA->>R: intent plus portfolio context
+    alt risk rejects or kill switch active
+      R-->>S: rejection / reduction reason
+      R-->>MON: risk decision
+    else risk approves
+      R->>OMS: ApprovedOrderIntent
+      OMS->>EP: idempotent execution command
+      EP->>PM: venue-neutral request
+      PM->>V: guarded API request
+      alt venue rejects or times out
+        V-->>PM: rejection / uncertain state
+        PM-->>OMS: error or unknown response
+        OMS->>RC: reconciliation required
+      else venue accepts and fills
+        V-->>PM: order and fill events
+        PM-->>OMS: normalized execution result
+        OMS->>LP: order state and fill
+        LP->>RC: internal expected state
+        RC-->>MON: ready, warning, or blocked
+      end
+    end
+  end
+  Note over S,V: No direct Strategy-to-Venue call is permitted

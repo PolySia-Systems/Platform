@@ -1,0 +1,61 @@
+flowchart LR
+  Core["Canonical Domain Contracts\nmarkets, events, intents, orders, fills, ledger, reconciliation\n[CURRENT]"]:::domain
+  Ports["Application Ports\ncatalog, data, execution, account reads, repository, bus, emergency\n[CURRENT protocols]"]:::application
+  Registry["Adapter Registry / Capability Discovery\n[TARGET]"]:::target
+
+  subgraph CONTRACT["Adapter responsibilities"]
+    Capability["Capability Profile"]:::adapter
+    Public["Public Data and Discovery"]:::adapter
+    Auth["Authenticated Account Reads"]:::adapter
+    Exec["Execution and Cancellation"]:::adapter
+    Map["Mapping and Venue Rules"]:::adapter
+    Settle["Settlement / Reconciliation Mapping"]:::adapter
+  end
+
+  Polymarket["Polymarket Adapter\n[CURRENT]"]:::current
+  Prediction["Another prediction market\n[FUTURE]"]:::future
+  Exchange["Centralized exchange\n[FUTURE]"]:::future
+  Broker["Broker\n[FUTURE]"]:::future
+  Web3["Web3 protocol / chain\n[FUTURE]"]:::future
+  External["Venue-specific APIs and SDKs\n[EXTERNAL]"]:::external
+
+  Core --> Ports
+  Ports --> Registry
+  Registry --> Capability
+  Capability --> Public
+  Capability --> Auth
+  Capability --> Exec
+  Public --> Map
+  Auth --> Map
+  Exec --> Map
+  Map --> Settle
+  Settle --> Polymarket
+  Settle -.-> Prediction
+  Settle -.-> Exchange
+  Settle -.-> Broker
+  Settle -.-> Web3
+  Polymarket --> External
+  Prediction -.-> External
+  Exchange -.-> External
+  Broker -.-> External
+  Web3 -.-> External
+
+  subgraph RULE["Extension rule"]
+    Add["Add adapter + capability metadata + mappers + contract tests\nDo not rewrite strategy or risk core"]:::safe
+  end
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT"]:::current
+    L2["TARGET"]:::target
+    L3["FUTURE"]:::future
+    L4["EXTERNAL"]:::external
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef domain fill:#FFFFFF,stroke:#0F766E,stroke-width:2px,color:#0F172A;
+  classDef application fill:#FFFFFF,stroke:#2563EB,stroke-width:2px,color:#0F172A;
+  classDef adapter fill:#FFFFFF,stroke:#4F46E5,stroke-width:2px,color:#0F172A;
+  classDef safe fill:#F0FDF4,stroke:#16A34A,stroke-width:2px,color:#0F172A;

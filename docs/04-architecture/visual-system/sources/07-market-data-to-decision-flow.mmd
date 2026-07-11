@@ -1,0 +1,46 @@
+flowchart LR
+  Venue["Polymarket public data\n[EXTERNAL]"]:::external
+  Ingest["Public / Stream Adapter\n[CURRENT]"]:::adapter
+  Normalize["Mapper + MarketDataEvent\nsource, event type, received and exchange timestamps\n[CURRENT]"]:::data
+  Bus["In-Memory Event Bus\n[CURRENT]"]:::data
+  Builder["BookBuilder + Validators\n[CURRENT]"]:::data
+  Book["Local Decimal Order Book\n[CURRENT]"]:::data
+  Features["Microstructure Features\n[CURRENT]"]:::data
+  Strategy["Research Strategy Evaluation\nread-only context\n[CURRENT]"]:::strategy
+  Intent["OrderIntent\npre-risk, not an order\n[CURRENT]"]:::strategy
+  Context["Position, market exposure, P&L, open orders, age, edge\n[CURRENT]"]:::portfolio
+  Risk["Independent RiskEngine\n[CURRENT]"]:::risk
+  Approved["ApprovedOrderIntent\n[CURRENT]"]:::safe
+  Rejected["Rejected / no execution\n[CURRENT]"]:::danger
+
+  Venue -.->|public event| Ingest
+  Ingest -.-> Normalize
+  Normalize -.-> Bus
+  Bus -.-> Builder
+  Builder --> Book
+  Book --> Features
+  Book -.-> Strategy
+  Features -.-> Strategy
+  Strategy --> Intent
+  Intent --> Risk
+  Context --> Risk
+  Risk -->|approved or size retained| Approved
+  Risk -->|first failed check| Rejected
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT"]:::current
+    L2["EXTERNAL"]:::external
+    L3["APPROVED"]:::safe
+    L4["REJECTED"]:::danger
+    L5["Dashed arrow = event / data"]:::data
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef adapter fill:#FFFFFF,stroke:#4F46E5,stroke-width:2px,color:#0F172A;
+  classDef data fill:#FFFFFF,stroke:#0D9488,stroke-width:2px,color:#0F172A;
+  classDef strategy fill:#FFFFFF,stroke:#7C3AED,stroke-width:2px,color:#0F172A;
+  classDef portfolio fill:#EFF6FF,stroke:#1D4ED8,stroke-width:2px,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;
+  classDef safe fill:#F0FDF4,stroke:#16A34A,stroke-width:2px,color:#0F172A;
+  classDef danger fill:#FEF2F2,stroke:#DC2626,stroke-width:2px,color:#0F172A;

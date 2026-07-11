@@ -1,0 +1,38 @@
+flowchart LR
+  Operator["Owner / Operator\n[CURRENT]"]:::current
+  GitHost["Git provider / CI runtime\nconfiguration present; remote run unverified\n[EXTERNAL]"]:::external
+  PublicAPI["Polymarket public endpoints\n[EXTERNAL]"]:::external
+  SecureAPI["Polymarket authenticated endpoints\n[EXTERNAL]"]:::external
+
+  subgraph WORKSTATION["Owner Windows workstation [CURRENT]"]
+    Repo["Local Git repository\nmain branch"]:::storage
+    Conda["Conda environment: PolySia\nPython 3.13 workstation baseline"]:::current
+    Process["One local Python process\npolysia CLI / modular monolith"]:::application
+    Secrets["Ignored local .env\nsecret boundary; values never diagrammed"]:::risk
+    SQLite[("SQLite databases / local files\nignored runtime state")]:::storage
+    Reports["Ignored artifacts and reports\nlocal operator evidence"]:::observability
+  end
+
+  Operator --> Process
+  Repo --> Conda
+  Conda --> Process
+  Secrets -->|configuration at runtime| Process
+  Process ==>|persistent state| SQLite
+  Process ==>|sanitized output| Reports
+  Process -->|public reads / stream| PublicAPI
+  Process -->|acknowledged reads or guarded action| SecureAPI
+  Repo -.->|push / workflow source when configured| GitHost
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT local deployment"]:::current
+    L2["EXTERNAL"]:::external
+    L3["SECRET / SAFETY boundary"]:::risk
+    L4["Persistent local state"]:::storage
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef application fill:#FFFFFF,stroke:#2563EB,stroke-width:2px,color:#0F172A;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;
+  classDef storage fill:#FFFFFF,stroke:#475569,stroke-width:2px,color:#0F172A;
+  classDef observability fill:#FFFFFF,stroke:#9333EA,stroke-width:2px,color:#0F172A;

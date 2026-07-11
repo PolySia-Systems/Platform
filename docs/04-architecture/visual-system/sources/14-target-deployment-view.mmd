@@ -1,0 +1,37 @@
+flowchart LR
+  Developer["Developer Workstation\n[TARGET]"]:::target
+  Operator["Operator Access\nstrong authentication and explicit live state\n[TARGET]"]:::target
+  CI["CI Pipeline\nquality, security, package, signed evidence\n[TARGET]"]:::target
+
+  subgraph HOST["Controlled single host or VPS [TARGET]"]
+    Runtime["PolySia modular-monolith runtime\nseparate paper / shadow / limited-live profiles"]:::target
+    SecretStore["Secrets boundary\nleast privilege, no research access"]:::risk
+    Database[("Persistent database\ntransactional state and audit")]:::target
+    Monitor["Monitoring and alerting\nhealth, risk, reconciliation"]:::target
+    Backup["Encrypted backup and restore evidence"]:::target
+  end
+
+  Venue["Venue APIs\n[EXTERNAL]"]:::external
+  HA["High-availability / failover boundary\n[FUTURE only after measured need]"]:::future
+
+  Developer -->|versioned change| CI
+  CI -->|approved package| Runtime
+  Operator -->|controlled commands and approvals| Runtime
+  SecretStore -->|runtime-only credentials| Runtime
+  Runtime ==>|orders, fills, ledger, audit| Database
+  Runtime -.->|metrics and alerts| Monitor
+  Database ==>|backup| Backup
+  Runtime --> Venue
+  Runtime -.->|later replication / failover| HA
+
+  subgraph LEGEND["Legend"]
+    L1["TARGET dashed"]:::target
+    L2["FUTURE dotted"]:::future
+    L3["EXTERNAL"]:::external
+    L4["SECRET / SAFETY"]:::risk
+  end
+
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,stroke-dasharray:6 4,color:#0F172A;

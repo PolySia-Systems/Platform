@@ -1,0 +1,46 @@
+flowchart LR
+  subgraph MODES["Implemented runtime controls"]
+    DataOnly["DATA_ONLY\nCURRENT enum; orders blocked"]:::current
+    PaperMode["PAPER\nCURRENT enum; local paper broker"]:::current
+    LiveMode["LIVE\nCURRENT enum; disabled by default and gated"]:::risk
+  end
+
+  subgraph WORKFLOWS["Implemented workflows"]
+    Replay["Focused Backtest / Replay\nCURRENT"]:::current
+    Paper["Paper Run\nCURRENT"]:::current
+    Shadow["Shadow Workflow\nCURRENT workflow, not enum"]:::current
+    Limited["Tiny / Limited Live Tooling\nCURRENT experimental, explicit authorization"]:::risk
+  end
+
+  subgraph MATURITY["Evidence-based maturity path"]
+    Research["Research"]:::current
+    OOS["Out-of-Sample Check\n[TARGET discipline]"]:::target
+    Micro["Micro-Capital Live\n[TARGET promotion gate]"]:::target
+    Scale["Controlled Scaling\n[FUTURE]"]:::future
+  end
+
+  Research --> Replay
+  Replay --> OOS
+  OOS --> Paper
+  Paper --> Shadow
+  Shadow --> Micro
+  Micro -.-> Scale
+
+  DataOnly -->|permits reads/research| Research
+  PaperMode --> Paper
+  PaperMode --> Shadow
+  LiveMode -->|flag + allowlist + caps + geoblock + ack + risk + kill switch| Limited
+  Limited -.->|evidence only; owner-approved promotion| Micro
+  DataOnly -->|rejects intents| LiveMode
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT solid"]:::current
+    L2["TARGET dashed"]:::target
+    L3["FUTURE dotted"]:::future
+    L4["GATED LIVE / SAFETY"]:::risk
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;

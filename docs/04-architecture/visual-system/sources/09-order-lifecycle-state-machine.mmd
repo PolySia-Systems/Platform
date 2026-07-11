@@ -1,0 +1,61 @@
+stateDiagram-v2
+  state "OrderIntent [CURRENT pre-state]" as Intent
+  state "Risk Evaluation [CURRENT pre-state]" as RiskEval
+  state "Risk Rejected [CURRENT outcome]" as RiskRejected
+  state "NEW [CURRENT]" as New
+  state "ACCEPTED [CURRENT]" as Accepted
+  state "PARTIALLY_FILLED [CURRENT]" as Partial
+  state "FILLED [CURRENT]" as Filled
+  state "CANCELLED [CURRENT enum]" as Cancelled
+  state "REJECTED [CURRENT]" as Rejected
+
+  [*] --> Intent
+  Intent --> RiskEval
+  RiskEval --> RiskRejected: failed check / kill switch
+  RiskEval --> New: ApprovedOrderIntent
+  New --> Accepted: accepted without immediate fill
+  New --> Partial: partial paper fill
+  New --> Filled: full immediate paper fill
+  New --> Rejected: invalid or unfillable request
+  Accepted --> Partial: partial fill
+  Accepted --> Filled: full fill
+  Accepted --> Cancelled: cancellation observed
+  Partial --> Partial: additional partial fill
+  Partial --> Filled: remaining quantity filled
+  Partial --> Cancelled: remainder canceled
+  RiskRejected --> [*]
+  Filled --> [*]
+  Cancelled --> [*]
+  Rejected --> [*]
+
+  state "TARGET lifecycle extensions" as TargetGroup {
+    state "SUBMITTED / ACKNOWLEDGED [TARGET]" as Acknowledged
+    state "CANCEL_REQUESTED [TARGET]" as CancelRequested
+    state "EXPIRED [TARGET]" as Expired
+    state "UNKNOWN / RECONCILIATION_REQUIRED [TARGET]" as Unknown
+    Acknowledged --> CancelRequested
+    CancelRequested --> Unknown
+    Acknowledged --> Expired
+  }
+
+  note right of New
+    Current OrderStatus enum:
+    NEW, ACCEPTED, PARTIALLY_FILLED,
+    FILLED, CANCELLED, REJECTED
+  end note
+  note right of TargetGroup
+    Dashed/TARGET concepts are not
+    current OrderStatus enum values.
+  end note
+  note left of TargetGroup
+    Legend: CURRENT = implemented state;
+    TARGET = approved extension;
+    red = rejected before order creation.
+  end note
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef danger fill:#FEF2F2,stroke:#DC2626,stroke-width:2px,color:#0F172A;
+  class Intent,RiskEval,New,Accepted,Partial,Filled,Cancelled,Rejected current
+  class RiskRejected danger
+  class Acknowledged,CancelRequested,Expired,Unknown target

@@ -1,0 +1,43 @@
+flowchart LR
+  subgraph PEOPLE["People"]
+    Owner["Project Owner / Operator\n[CURRENT]"]:::current
+    Researcher["Researcher\n[CURRENT]"]:::current
+    Reviewer["Risk Reviewer / Auditor\n[TARGET]"]:::target
+  end
+
+  PolySia["PolySia\nPrediction and event-market platform\n[CURRENT]"]:::current
+
+  subgraph EXT["External ecosystem"]
+    Polymarket["Polymarket APIs\n[EXTERNAL]"]:::external
+    PublicData["Public market data\n[EXTERNAL]"]:::external
+    GitCI["Git and CI/CD providers\n[EXTERNAL]"]:::external
+    Custody["Wallet / custody boundary\n[EXTERNAL]"]:::external
+    FutureMarkets["Other prediction markets\n[FUTURE]"]:::future
+    Exchanges["Exchanges and brokers\n[FUTURE]"]:::future
+    Web3["Web3 protocols and chains\n[FUTURE]"]:::future
+    Notify["Notification systems\n[FUTURE]"]:::future
+  end
+
+  Owner -->|operate, approve, stop| PolySia
+  Researcher -->|research, replay, paper| PolySia
+  Reviewer -.->|review limits and evidence| PolySia
+  PolySia -->|public and authenticated API calls| Polymarket
+  PublicData -.->|market events| PolySia
+  PolySia -->|versioned source and checks| GitCI
+  PolySia -->|signing remains outside core| Custody
+  PolySia -.->|adapter extension| FutureMarkets
+  PolySia -.->|adapter extension| Exchanges
+  PolySia -.->|future signer / protocol ports| Web3
+  PolySia -.->|optional alerts| Notify
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT"]:::current
+    L2["TARGET"]:::target
+    L3["FUTURE"]:::future
+    L4["EXTERNAL"]:::external
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;

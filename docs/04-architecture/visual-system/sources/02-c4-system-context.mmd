@@ -1,0 +1,37 @@
+flowchart LR
+  Operator["Person: Owner / Operator\nRuns commands, reviews evidence, controls live gates\n[CURRENT]"]:::current
+  Researcher["Person: Researcher\nEvaluates strategies in replay, paper, and shadow\n[CURRENT]"]:::current
+  Auditor["Person: Risk Reviewer / Auditor\nIndependent review\n[TARGET]"]:::target
+
+  PolySia["Software System: PolySia\nNormalizes market data, produces pre-risk intents,\ncontrols execution, state, reconciliation, and reporting\n[CURRENT]"]:::current
+
+  Polymarket["Software System: Polymarket\nMarket data, account reads, order endpoints\n[EXTERNAL]"]:::external
+  GitProvider["Software System: Git / CI provider\nVersion control and configured quality workflow\n[EXTERNAL]"]:::external
+  LocalOS["System boundary: Owner workstation\nConda, local files, SQLite, secrets\n[EXTERNAL]"]:::external
+  FutureVenues["Software Systems: Additional venues\n[FUTURE]"]:::future
+
+  Operator -->|CLI commands and explicit approvals| PolySia
+  Researcher -->|data, configurations, research runs| PolySia
+  PolySia -->|sanitized reports and stop status| Operator
+  Auditor -.->|reviews traceability and risk evidence| PolySia
+  PolySia -->|public reads, authenticated reads, guarded execution| Polymarket
+  PolySia -->|source and CI configuration| GitProvider
+  LocalOS -->|hosts one Python process and persistent files| PolySia
+  PolySia -.->|future generic adapter contracts| FutureVenues
+
+  subgraph RESPONSIBILITY["PolySia responsibility boundary"]
+    R1["Owns: intent, risk gates, execution control, state, reconciliation"]:::current
+    R2["Does not own: venue availability, custody, resolution, external CI service"]:::external
+  end
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT solid"]:::current
+    L2["TARGET dashed"]:::target
+    L3["FUTURE dotted"]:::future
+    L4["EXTERNAL gray"]:::external
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;

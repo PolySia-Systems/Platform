@@ -1,0 +1,48 @@
+flowchart LR
+  Operator["Person: Operator / Reviewer\n[TARGET]"]:::target
+  Venues["External Systems: Venue APIs\n[EXTERNAL]"]:::external
+
+  subgraph PS["PolySia target modular monolith — logical containers, not microservices"]
+    Console["Operator Console\n[TARGET]"]:::target
+    DataPlatform["Market Data and Normalization\n[CURRENT foundation]"]:::current
+    Registry["Strategy Registry and Orchestrator\n[TARGET]"]:::target
+    Intent["Intent Aggregator / Conflict Resolver\n[TARGET]"]:::target
+    Allocator["Portfolio and Capital Allocation\n[TARGET]"]:::target
+    Risk["Independent Risk and Emergency Control\n[CURRENT foundation]"]:::risk
+    OMS["OMS / Transaction Manager\n[TARGET]"]:::target
+    Exec["Execution Ports and Router\n[TARGET over CURRENT execution]"]:::target
+    AdapterRegistry["Adapter Registry / Capability Discovery\n[TARGET]"]:::target
+    Ledger["Generalized Ledger and Reconciliation\n[TARGET over CURRENT state]"]:::target
+    Ops["Monitoring, Audit, and Recovery\n[CURRENT foundation]"]:::current
+  end
+
+  DB[("Persistent database boundary\n[TARGET]")]:::target
+
+  Operator --> Console
+  DataPlatform -.-> Registry
+  Registry -.->|strategy instances| Intent
+  Intent --> Allocator
+  Allocator --> Risk
+  Risk -->|approved intents| OMS
+  Risk -->|reject / pause| Console
+  OMS --> Exec
+  Exec --> AdapterRegistry
+  AdapterRegistry --> Venues
+  Venues -.->|fills and venue events| Ledger
+  OMS ==>|orders and transitions| Ledger
+  Ledger --> Risk
+  Ledger --> Ops
+  Ops --> Console
+  Ledger ==>|durable state| DB
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT foundation"]:::current
+    L2["TARGET dashed"]:::target
+    L3["EXTERNAL gray"]:::external
+    L4["SAFETY amber"]:::risk
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;

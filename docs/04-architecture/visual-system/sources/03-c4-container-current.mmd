@@ -1,0 +1,74 @@
+flowchart LR
+  Actor["Person: Owner / Researcher\n[CURRENT]"]:::current
+  Venue["External System: Polymarket APIs\n[EXTERNAL]"]:::external
+  DB[("SQLite / local files\n[CURRENT]")]:::storage
+
+  subgraph PS["Software System: PolySia — one deployable Python modular monolith [CURRENT]"]
+    CLI["Container: CLI and Safe Output\nTyper commands, parsing, redaction"]:::application
+    Config["Container: Configuration and Safety Defaults\nDATA_ONLY / PAPER / gated LIVE"]:::risk
+
+    subgraph DATA["Market-data path"]
+      Adapter["Container: Polymarket Adapter\npublic, stream, secure, mapping, geoblock"]:::adapter
+      Bus["Container: Events and In-Memory Bus\nnormalized market events"]:::data
+      Book["Container: Order Book and Features\nDecimal book, microstructure"]:::data
+    end
+
+    subgraph DECISION["Decision and control"]
+      DomainPorts["Container: Domain Models and Application Ports\nvenue-neutral contracts"]:::domain
+      Strategies["Container: Strategy Framework\nstale-price, passive market maker"]:::strategy
+      Risk["Container: Independent Risk and Kill Switch\napprove, reduce, reject, stop"]:::risk
+    end
+
+    subgraph STATE["Execution and state"]
+      Execution["Container: Execution\npaper broker and guarded live broker"]:::execution
+      Portfolio["Container: Positions and P&L\noperational ledger"]:::portfolio
+      Storage["Container: Storage Repositories\nSQLite repositories"]:::storage
+      Recon["Container: Reconciliation and Safety Pause\ninternal vs external"]:::risk
+    end
+
+    Ops["Container: Monitoring, Backtesting, Deployment\nreports, replay, readiness, handoff"]:::observability
+  end
+
+  Actor -->|commands| CLI
+  CLI --> Config
+  CLI --> Ops
+  CLI --> Adapter
+  Adapter -.->|normalized events| Bus
+  Bus -.-> Book
+  Book --> Strategies
+  DomainPorts --> Strategies
+  Strategies -->|OrderIntent| Risk
+  Config --> Risk
+  Risk -->|ApprovedOrderIntent| Execution
+  Risk -->|reject / kill| CLI
+  Execution --> Adapter
+  Adapter -->|API calls| Venue
+  Execution ==>|fills / state update| Portfolio
+  Portfolio ==>|state| Storage
+  Bus ==>|events| Storage
+  Adapter -.->|account and order state| Recon
+  Portfolio --> Recon
+  Recon -->|safety pause| Risk
+  Recon --> Ops
+  Storage ==>|persistent records| DB
+  Ops --> CLI
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT logical container"]:::current
+    L2["EXTERNAL"]:::external
+    L3["SAFETY"]:::risk
+    L4["Persistent update ==>"]:::storage
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef domain fill:#FFFFFF,stroke:#0F766E,stroke-width:2px,color:#0F172A;
+  classDef application fill:#FFFFFF,stroke:#2563EB,stroke-width:2px,color:#0F172A;
+  classDef strategy fill:#FFFFFF,stroke:#7C3AED,stroke-width:2px,color:#0F172A;
+  classDef portfolio fill:#FFFFFF,stroke:#1D4ED8,stroke-width:2px,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2px,color:#0F172A;
+  classDef execution fill:#FFFFFF,stroke:#0891B2,stroke-width:2px,color:#0F172A;
+  classDef adapter fill:#FFFFFF,stroke:#4F46E5,stroke-width:2px,color:#0F172A;
+  classDef data fill:#FFFFFF,stroke:#0D9488,stroke-width:2px,color:#0F172A;
+  classDef storage fill:#FFFFFF,stroke:#475569,stroke-width:2px,color:#0F172A;
+  classDef observability fill:#FFFFFF,stroke:#9333EA,stroke-width:2px,color:#0F172A;

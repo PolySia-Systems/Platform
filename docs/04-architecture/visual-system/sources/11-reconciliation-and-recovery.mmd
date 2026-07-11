@@ -1,0 +1,43 @@
+flowchart LR
+  Internal["Internal Expected State\nopen orders, positions, last states, fills, timestamps\n[CURRENT]"]:::portfolio
+  External["External Account State\nreadability, orders, positions, geoblock\n[EXTERNAL data]"]:::external
+  Compare["ReconciliationManager + Detectors\n[CURRENT]"]:::risk
+  Events["Reconciliation Events\nmanual cancel/close, unexpected fill/order, missing order, stale/read failure\n[CURRENT]"]:::observability
+  Ready["READY\ncontinue under existing controls"]:::safe
+  Warning["WARNING\noperator review"]:::risk
+  Blocked["BLOCKED\ntrading_should_pause"]:::danger
+  Pause["Safety Pause / Kill Switch\n[CURRENT]"]:::danger
+  Operator["Operator Review and Manual Acknowledgement\n[CURRENT]"]:::current
+  Recover["Correct state, restore readability, or rollback\n[CURRENT operational action]"]:::current
+  Audit["Reports, audit evidence, monitoring\n[CURRENT]"]:::observability
+
+  Internal --> Compare
+  External --> Compare
+  Compare --> Events
+  Events -->|no blocking event| Ready
+  Events -->|non-blocking discrepancy| Warning
+  Events -->|blocking or live uncertainty| Blocked
+  Blocked --> Pause
+  Pause --> Operator
+  Warning --> Operator
+  Operator --> Recover
+  Recover -->|new snapshot| Compare
+  Ready --> Audit
+  Warning --> Audit
+  Blocked --> Audit
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT"]:::current
+    L2["EXTERNAL STATE"]:::external
+    L3["WARNING / SAFETY"]:::risk
+    L4["BLOCK / PAUSE"]:::danger
+    L5["HEALTHY"]:::safe
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
+  classDef portfolio fill:#EFF6FF,stroke:#1D4ED8,stroke-width:2px,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;
+  classDef observability fill:#FFFFFF,stroke:#9333EA,stroke-width:2px,color:#0F172A;
+  classDef safe fill:#F0FDF4,stroke:#16A34A,stroke-width:2px,color:#0F172A;
+  classDef danger fill:#FEF2F2,stroke:#DC2626,stroke-width:2.5px,color:#0F172A;

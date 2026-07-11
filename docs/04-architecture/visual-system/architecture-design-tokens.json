@@ -1,0 +1,76 @@
+{
+  "version": "1.0.0",
+  "color": {
+    "canvas": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "ink": "#0F172A",
+    "mutedText": "#475569",
+    "border": "#CBD5E1",
+    "external": "#64748B",
+    "domain": "#0F766E",
+    "application": "#2563EB",
+    "strategy": "#7C3AED",
+    "portfolio": "#1D4ED8",
+    "risk": "#D97706",
+    "execution": "#0891B2",
+    "adapter": "#4F46E5",
+    "data": "#0D9488",
+    "storage": "#475569",
+    "observability": "#9333EA",
+    "safe": "#16A34A",
+    "warning": "#F59E0B",
+    "danger": "#DC2626",
+    "futureFill": "#F1F5F9"
+  },
+  "typography": {
+    "primary": "Inter",
+    "code": "JetBrains Mono",
+    "title": {"size": 32, "weight": 700, "lineHeight": 40},
+    "section": {"size": 20, "weight": 650, "lineHeight": 28},
+    "component": {"size": 16, "weight": 600, "lineHeight": 24},
+    "body": {"size": 14, "weight": 400, "lineHeight": 20},
+    "caption": {"size": 12, "weight": 500, "lineHeight": 16},
+    "codeLabel": {"size": 12, "weight": 500, "lineHeight": 16}
+  },
+  "spacing": {
+    "unit": 8,
+    "componentGap": 24,
+    "groupPadding": 32,
+    "framePadding": 48,
+    "legendGap": 16
+  },
+  "radius": {"component": 12, "group": 16, "badge": 999},
+  "stroke": {
+    "standard": 1.5,
+    "emphasis": 2.5,
+    "currentPattern": "solid",
+    "targetPattern": "6 4",
+    "futurePattern": "2 5"
+  },
+  "arrow": {
+    "command": {"style": "solid", "width": 1.5},
+    "event": {"style": "dashed", "width": 1.5},
+    "stateUpdate": {"style": "double-or-labeled", "width": 2.0},
+    "emergency": {"style": "solid", "width": 2.5, "color": "#DC2626"},
+    "approved": {"style": "solid", "width": 2.0, "color": "#16A34A"},
+    "optional": {"style": "dashed", "width": 1.0, "color": "#64748B"}
+  },
+  "status": {
+    "current": {"border": "solid", "fill": "#FFFFFF"},
+    "target": {"border": "dashed", "fill": "#F1F5F9"},
+    "future": {"border": "dotted", "fill": "#F1F5F9"},
+    "external": {"border": "solid", "fill": "#F1F5F9"},
+    "safety": {"border": "solid", "accent": "#D97706"},
+    "emergency": {"border": "solid", "accent": "#DC2626"},
+    "healthy": {"border": "solid", "accent": "#16A34A"}
+  },
+  "diagram": {
+    "standardFrame": {"width": 1600, "height": 900},
+    "presentationFrame": {"width": 1920, "height": 1080},
+    "maxPrimaryGroups": 9,
+    "preferredFlow": "left-to-right",
+    "hierarchyFlow": "top-to-bottom",
+    "minimumComponentWidth": 200,
+    "minimumComponentHeight": 88
+  }
+}

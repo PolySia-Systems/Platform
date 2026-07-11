@@ -1,0 +1,56 @@
+flowchart LR
+  Intent["OrderIntent\n[CURRENT]"]:::strategy
+  Context["RiskContext\nmode, live flag, positions, P&L, open orders, data age, edge\n[CURRENT]"]:::portfolio
+  Limits["RiskLimits\nnotional, token/market position, loss, open orders, staleness, edge\n[CURRENT]"]:::risk
+  Kill["Independent Kill Switch\n[CURRENT]"]:::danger
+  Recon["Reconciliation Safety Pause\n[CURRENT]"]:::danger
+  Engine["RiskEngine\nordered fail-fast checks\n[CURRENT]"]:::risk
+  Approved["ApprovedOrderIntent\n[CURRENT]"]:::safe
+  Rejected["Reject with reason\n[CURRENT]"]:::danger
+
+  subgraph LIVE["Additional guarded live path [CURRENT]"]
+    Mode["TRADING_MODE=LIVE"]:::risk
+    Flag["LIVE_TRADING_ENABLED=true"]:::risk
+    Allow["Token allowlist and hard caps"]:::risk
+    Geo["Fail-closed geoblock check"]:::risk
+    Ack["Explicit operator acknowledgement"]:::risk
+    Once["One-attempt constraint"]:::risk
+    Broker["Guarded LiveBroker / tiny-live command"]:::execution
+  end
+
+  Intent --> Engine
+  Context --> Engine
+  Limits --> Engine
+  Kill -->|active: emergency stop| Engine
+  Recon -->|mismatch: pause| Kill
+  Engine -->|all checks pass| Approved
+  Engine -->|first failure| Rejected
+  Approved --> Mode
+  Mode --> Flag
+  Flag --> Allow
+  Allow --> Geo
+  Geo --> Ack
+  Ack --> Once
+  Once --> Broker
+  Mode -->|not LIVE| Rejected
+  Flag -->|false| Rejected
+  Allow -->|not allowed / over cap| Rejected
+  Geo -->|blocked / unreadable| Rejected
+  Ack -->|missing| Rejected
+  Kill -->|active| Broker
+  Broker -->|no retry| Rejected
+
+  subgraph LEGEND["Legend"]
+    L1["CURRENT"]:::current
+    L2["SAFETY CONTROL"]:::risk
+    L3["EMERGENCY / BLOCK"]:::danger
+    L4["APPROVED"]:::safe
+  end
+
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
+  classDef strategy fill:#FFFFFF,stroke:#7C3AED,stroke-width:2px,color:#0F172A;
+  classDef portfolio fill:#EFF6FF,stroke:#1D4ED8,stroke-width:2px,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;
+  classDef execution fill:#FFFFFF,stroke:#0891B2,stroke-width:2px,color:#0F172A;
+  classDef safe fill:#F0FDF4,stroke:#16A34A,stroke-width:2px,color:#0F172A;
+  classDef danger fill:#FEF2F2,stroke:#DC2626,stroke-width:2.5px,color:#0F172A;
