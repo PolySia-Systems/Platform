@@ -2,62 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime
-from decimal import Decimal
 from typing import Any, cast
 
 from polymarket import AsyncPublicClient, PolymarketError
-from pydantic import BaseModel, ConfigDict
 
 from polysia.config.logging import get_logger
+from polysia.domain.market import MarketDetails, MarketOutcomeSummary, MarketSummary
 
 ClientFactory = Callable[[], AbstractAsyncContextManager[Any]]
 
 
 class PolymarketPublicAdapterError(RuntimeError):
     """Raised when a public Polymarket read fails."""
-
-
-class MarketOutcomeSummary(BaseModel):
-    """Normalized tradable outcome metadata."""
-
-    model_config = ConfigDict(frozen=True)
-
-    label: str
-    token_id: str | None = None
-    price: Decimal | None = None
-
-
-class MarketSummary(BaseModel):
-    """Normalized market fields used by the rest of the system."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-    slug: str | None = None
-    question: str | None = None
-    category: str | None = None
-    active: bool | None = None
-    closed: bool | None = None
-    accepting_orders: bool | None = None
-    end_date: datetime | None = None
-    liquidity: Decimal | None = None
-    volume: Decimal | None = None
-    best_bid: Decimal | None = None
-    best_ask: Decimal | None = None
-    outcomes: tuple[MarketOutcomeSummary, ...] = ()
-
-
-class MarketDetails(MarketSummary):
-    """Normalized market details for one specific market."""
-
-    condition_id: str | None = None
-    description: str | None = None
-    image: str | None = None
-    icon: str | None = None
-    minimum_order_size: Decimal | None = None
-    minimum_tick_size: Decimal | None = None
-    tags: tuple[str, ...] = ()
 
 
 def _default_client_factory() -> AbstractAsyncContextManager[Any]:

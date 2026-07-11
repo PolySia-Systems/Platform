@@ -1,23 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 
-
-@dataclass(frozen=True, slots=True)
-class MarketDataEvent:
-    """Normalized market-data event consumed by internal systems."""
-
-    source: Literal["polymarket"]
-    event_type: str
-    token_id: str
-    received_at: datetime
-    exchange_ts: datetime | None
-    payload: dict[str, Any]
-    raw_payload: dict[str, Any]
+from polysia.domain.events import MarketDataEvent
 
 
 def market_data_event_to_dict(event: MarketDataEvent) -> dict[str, Any]:

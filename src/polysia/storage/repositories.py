@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from polysia.adapters.polymarket_public import MarketSummary
 from polysia.bus.events import MarketDataEvent, market_data_event_to_dict
+from polysia.domain.market import MarketSummary
 from polysia.orderbook.book import LocalOrderBook
 from polysia.storage.db import transaction
 

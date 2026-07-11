@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from polysia.adapters.polymarket_public import MarketSummary
 from polysia.bus.events import MarketDataEvent
 from polysia.config.logging import get_logger
+from polysia.domain.market import MarketSummary
 from polysia.execution.intents import OrderIntent
 from polysia.orderbook.book import LocalOrderBook
 
