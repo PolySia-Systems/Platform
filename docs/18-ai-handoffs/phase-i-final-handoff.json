@@ -1,7 +1,7 @@
 {
   "handoff_id": "POLYSIA-PHASE-I-20260711",
   "status": "ready_with_external_owner_gates",
-  "delivery_baseline_commit": "663dcc10d7080cdcf469e4d562353359efee8ba1",
+  "git_ref": "HEAD",
   "canonical_identity": "polysia",
   "tests_collected": 351,
   "quality_gates": "passed",

@@ -1,6 +1,6 @@
 # Phase I Final Verification and Handoff
 
-Delivery baseline commit: `663dcc10d7080cdcf469e4d562353359efee8ba1`
+Canonical Git reference: `HEAD` (resolve with `git rev-parse HEAD` at verification time).
 
 ## Final state
 
