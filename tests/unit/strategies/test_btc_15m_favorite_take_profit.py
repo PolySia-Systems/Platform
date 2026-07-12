@@ -71,7 +71,7 @@ def normal_books() -> tuple[MarketOrderBookSnapshot, ...]:
     )
 
 
-def test_selects_current_executable_favorite_and_emits_intent() -> None:
+def test_selects_current_executable_favorite_at_minimum_valid_quantity() -> None:
     strategy = Btc15mFavoriteTakeProfitStrategy()
 
     decision = strategy.decide(market(), normal_books(), now=NOW)
@@ -80,12 +80,12 @@ def test_selects_current_executable_favorite_and_emits_intent() -> None:
     assert decision.status == "TRADE"
     assert decision.selected_label == "Up"
     assert decision.entry_price == Decimal("0.60")
-    assert decision.entry_size == Decimal("16.666666")
+    assert decision.entry_size == Decimal("1")
     assert intent.token_id == "token-up"
     assert intent.strategy_id == "btc-15m-favorite-take-profit"
 
 
-def test_fee_aware_size_keeps_total_spend_within_ten() -> None:
+def test_minimum_quantity_all_in_cost_stays_below_ten() -> None:
     strategy = Btc15mFavoriteTakeProfitStrategy()
     active_market = market(fee_enabled=True)
 
@@ -99,7 +99,20 @@ def test_fee_aware_size_keeps_total_spend_within_ten() -> None:
         size=decision.entry_size,
     )
     assert decision.entry_notional is not None
-    assert decision.entry_notional + expected_fee <= Decimal("10.00")
+    assert decision.entry_notional + expected_fee == Decimal("0.66000")
+
+
+def test_minimum_quantity_allows_fak_partial_liquidity() -> None:
+    books = (
+        book("token-up", bid="0.58", ask="0.60", ask_size="2", minimum="5"),
+        book("token-down", bid="0.38", ask="0.40", minimum="5"),
+    )
+
+    decision = Btc15mFavoriteTakeProfitStrategy().decide(market(), books, now=NOW)
+
+    assert decision.status == "TRADE"
+    assert decision.entry_size == Decimal("5")
+    assert decision.entry_notional == Decimal("3.00")
 
 
 @pytest.mark.parametrize(
@@ -135,13 +148,6 @@ def test_fee_aware_size_keeps_total_spend_within_ten() -> None:
                 book("token-down", bid="0.38", ask="0.40"),
             ),
             "ahead of the system clock",
-        ),
-        (
-            (
-                book("token-up", bid="0.58", ask="0.60", ask_size="1"),
-                book("token-down", bid="0.38", ask="0.40"),
-            ),
-            "liquidity",
         ),
         (
             (

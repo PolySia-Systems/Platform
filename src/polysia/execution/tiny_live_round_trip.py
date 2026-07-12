@@ -78,7 +78,7 @@ Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
 GitReader = Callable[[Path, tuple[str, ...]], str]
 
-AUTHORIZATION_ID = "POLYSIA-LIVE-003"
+AUTHORIZATION_ID = "POLYSIA-LIVE-004"
 MAXIMUM_ENTRY_NOTIONAL = Decimal("10.00")
 BASE_UNITS = Decimal("1000000")
 APPROVED_SDK_VERSION = "0.1.0b11"
@@ -353,9 +353,12 @@ class RoundTripOrderManager:
         self.entry_attempts = 0
         self.exit_attempts = 0
 
-    async def submit_entry(self, intent: OrderIntent) -> Any:
+    async def submit_entry(self, intent: OrderIntent, *, all_in_cost: Decimal) -> Any:
         if self.entry_attempts != 0:
             raise TinyLiveRoundTripError("one-entry-attempt invariant violated")
+        requested_notional = intent.price * intent.size
+        if all_in_cost < requested_notional or all_in_cost > MAXIMUM_ENTRY_NOTIONAL:
+            raise TinyLiveRoundTripError("entry all-in cost violates the authorized cap")
         claimed = self._attempts.claim(
             authorization_id=self._authorization_id,
             run_id=self._run_id,
@@ -370,10 +373,10 @@ class RoundTripOrderManager:
             response = await self._adapter.place_market_order(
                 token_id=intent.token_id,
                 side="BUY",
-                amount=MAXIMUM_ENTRY_NOTIONAL,
-                max_spend=MAXIMUM_ENTRY_NOTIONAL,
+                amount=requested_notional,
+                max_spend=all_in_cost,
                 max_price=intent.price,
-                order_type="FOK",
+                order_type="FAK",
             )
         except Exception as error:
             self._attempts.update_state(
@@ -583,6 +586,7 @@ async def run_tiny_live_round_trip(
                 price=intent.price,
                 size=intent.size,
             )
+            intended_all_in_cost = (intent.price * intent.size) + expected_fee
             fee_evidence = _fee_evidence(market, expected_fee=expected_fee)
 
             conflicting_orders = _conflicting_orders(open_orders, market, books)
@@ -656,8 +660,8 @@ async def run_tiny_live_round_trip(
                         selected_book.tick_size,
                     ),
                     order_size_valid=(
-                        intent.size >= selected_book.minimum_order_size
-                        and intent.size <= selected_book.best_ask.size
+                        intent.size == selected_book.minimum_order_size
+                        and selected_book.best_ask.size > 0
                         if selected_book.best_ask is not None
                         else False
                     ),
@@ -684,8 +688,10 @@ async def run_tiny_live_round_trip(
             entry_order = {
                 "actual_fill": None,
                 "attempted": False,
-                "maximum_spend": str(MAXIMUM_ENTRY_NOTIONAL),
-                "order_type": "FOK",
+                "intended_all_in_cost": str(intended_all_in_cost),
+                "maximum_authorized_all_in_cost": str(MAXIMUM_ENTRY_NOTIONAL),
+                "maximum_spend": str(intended_all_in_cost),
+                "order_type": "FAK",
                 "requested_notional": str(intent.price * intent.size),
                 "requested_price": str(intent.price),
                 "requested_size": str(intent.size),
@@ -715,7 +721,10 @@ async def run_tiny_live_round_trip(
                 )
                 try:
                     try:
-                        response = await manager.submit_entry(intent)
+                        response = await manager.submit_entry(
+                            intent,
+                            all_in_cost=intended_all_in_cost,
+                        )
                     except TinyLiveRoundTripError as error:
                         reconciliation_result = await _reconcile_without_entry(
                             active_execution_port,
@@ -738,8 +747,10 @@ async def run_tiny_live_round_trip(
                         "client_correlation_id": config.run_id,
                         "client_order_id": manager.entry_client_order_id,
                         "client_order_id_sent_to_venue": False,
-                        "maximum_spend": str(MAXIMUM_ENTRY_NOTIONAL),
-                        "order_type": "FOK",
+                        "intended_all_in_cost": str(intended_all_in_cost),
+                        "maximum_authorized_all_in_cost": str(MAXIMUM_ENTRY_NOTIONAL),
+                        "maximum_spend": str(intended_all_in_cost),
+                        "order_type": "FAK",
                         "requested_notional": str(intent.price * intent.size),
                         "requested_price": str(intent.price),
                         "requested_size": str(intent.size),
@@ -1497,7 +1508,7 @@ def _assert_runtime_settings(config: TinyLiveRoundTripConfig, kill_switch: KillS
     if not config.settings.live_trading_enabled:
         raise TinyLiveRoundTripError("real run requires LIVE_TRADING_ENABLED=true")
     if not config.acknowledgement:
-        raise TinyLiveRoundTripError("real run requires POLYSIA-LIVE-003 acknowledgement")
+        raise TinyLiveRoundTripError("real run requires POLYSIA-LIVE-004 acknowledgement")
     if config.settings.polymarket_private_key is None:
         raise TinyLiveRoundTripError("real run requires configured test signer")
     if not config.settings.polymarket_funder_address:
