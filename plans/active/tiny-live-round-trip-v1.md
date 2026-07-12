@@ -5,13 +5,18 @@
 | Field | Value |
 |---|---|
 | Task ID | `POLYSIA-LIVE-001` |
-| Status | ACTIVE — implementation and gated one-time validation |
+| Status | COMPLETE - `NO_TRADE`; pre-entry venue-minimum stop |
 | Baseline | `main` at `bfc7eaddbde21271c5f9856e1962030e8c4959ff` |
 | Strategy | `btc-15m-favorite-take-profit` version `0.1.0` |
 | Authorization | At most one entry attempt, maximum 1.00 collateral unit, then at most one exit order for the confirmed position |
 
 This plan validates execution plumbing, not profitability. Any failed or
 unreadable gate produces `NO_TRADE` or `SAFETY_STOP`; no retry is permitted.
+
+The merged-code read-only preflight completed on 2026-07-12. The active market
+minimum could not be satisfied within the owner-authorized `1.00` cap, so the
+required outcome was zero live attempts and `NO_TRADE`. This authorization is
+closed and must not be reused.
 
 ## Required path
 
