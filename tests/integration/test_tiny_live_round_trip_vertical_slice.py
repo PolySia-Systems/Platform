@@ -76,7 +76,7 @@ class MarketPort:
             market_id="condition",
             timestamp=NOW,
             bids=(OrderBookLevel(price=Decimal(bid), size=Decimal("5")),),
-            asks=(OrderBookLevel(price=Decimal(ask), size=Decimal("5")),),
+            asks=(OrderBookLevel(price=Decimal(ask), size=Decimal("25")),),
             minimum_order_size=Decimal("1"),
             tick_size=Decimal("0.01"),
         )
@@ -114,9 +114,9 @@ class ExecutionPort:
 
     async def get_balance_allowance(self, **kwargs: Any) -> dict[str, object]:
         if kwargs["asset_type"] == "COLLATERAL":
-            return {"balance": 2_000_000, "allowances": {"exchange": 2_000_000}}
-        balance = 1_666_666 if self.filled and kwargs.get("token_id") == "up" else 0
-        return {"balance": balance, "allowances": {"exchange": 2_000_000}}
+            return {"balance": 20_000_000, "allowances": {"exchange": 20_000_000}}
+        balance = 16_666_666 if self.filled and kwargs.get("token_id") == "up" else 0
+        return {"balance": balance, "allowances": {"exchange": 20_000_000}}
 
     async def get_open_orders(self, **kwargs: Any) -> list[Any]:
         if self.exit_open and kwargs.get("token_id") == "up":
@@ -126,7 +126,7 @@ class ExecutionPort:
     async def list_positions(self, **kwargs: Any) -> list[Any]:
         if not self.filled:
             return []
-        return [{"condition_id": "condition", "size": "1.666666", "token_id": "up"}]
+        return [{"condition_id": "condition", "size": "16.666666", "token_id": "up"}]
 
     async def list_account_trades(self, **kwargs: Any) -> list[Any]:
         if not self.filled:
@@ -135,21 +135,21 @@ class ExecutionPort:
             {
                 "maker_orders": [],
                 "price": "0.60",
-                "size": "1.666666",
+                "size": "16.666666",
                 "status": "CONFIRMED",
                 "taker_order_id": "entry",
             }
         ]
 
     async def place_market_order(self, **kwargs: Any) -> dict[str, object]:
-        assert kwargs["max_spend"] == Decimal("1.00")
+        assert kwargs["max_spend"] == Decimal("10.00")
         self.entry_calls += 1
         self.filled = True
         return {"ok": True, "order_id": "entry", "status": "MATCHED"}
 
     async def place_limit_order(self, **kwargs: Any) -> dict[str, object]:
         assert kwargs["price"] == Decimal("0.66")
-        assert kwargs["size"] == Decimal("1.666666")
+        assert kwargs["size"] == Decimal("16.666666")
         self.exit_calls += 1
         self.exit_open = True
         return {"ok": True, "order_id": "exit", "status": "LIVE"}
@@ -181,7 +181,8 @@ async def test_full_registered_risked_persisted_round_trip_slice(tmp_path: Path)
         POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
         POLYMARKET_SIGNATURE_TYPE=3,
         POLYMARKET_LIVE_TOKEN_ALLOWLIST="up",
-        POLYMARKET_LIVE_MAX_ORDER_SIZE="2",
+        POLYMARKET_LIVE_MAX_ORDER_SIZE="20",
+        POLYMARKET_LIVE_MAX_ORDER_NOTIONAL="10",
         **{"POLYMARKET_PRIVATE_KEY": "integration-key"},
     )
 

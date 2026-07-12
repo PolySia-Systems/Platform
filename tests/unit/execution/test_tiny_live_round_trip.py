@@ -134,7 +134,7 @@ class CandidateFallbackMarketPort(FakeMarketPort):
 
     async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
         book = await super().get_order_book(token_id)
-        minimum = Decimal("5") if self.current_slug == self.first.slug else Decimal("1")
+        minimum = Decimal("20") if self.current_slug == self.first.slug else Decimal("1")
         return book.model_copy(update={"minimum_order_size": minimum})
 
 
@@ -144,7 +144,7 @@ class FakeExecutionPort:
         *,
         entry: Literal["reject", "no_fill", "fill", "error"] = "fill",
         exit_order: Literal["open", "reject", "fill", "partial", "error"] = "open",
-        position_size: str = "1.666666",
+        position_size: str = "16.666666",
     ) -> None:
         self.connected = False
         self.closed = False
@@ -189,13 +189,13 @@ class FakeExecutionPort:
     ) -> dict[str, object]:
         if asset_type == "COLLATERAL":
             self.collateral_read_count += 1
-            return {"balance": 5_000_000, "allowances": {"exchange": 5_000_000}}
+            return {"balance": 20_000_000, "allowances": {"exchange": 20_000_000}}
         balance = (
             int(self.position_size * Decimal("1000000"))
             if self.entry_filled and token_id == "token-up"
             else 0
         )
-        return {"balance": balance, "allowances": {"exchange": 5_000_000}}
+        return {"balance": balance, "allowances": {"exchange": 20_000_000}}
 
     async def get_open_orders(
         self,
@@ -252,7 +252,7 @@ class FakeExecutionPort:
                 {
                     "maker_orders": [],
                     "price": "0.60",
-                    "size": "1.666666",
+                    "size": "16.666666",
                     "status": "CONFIRMED",
                     "taker_order_id": "entry-1",
                 }
@@ -356,7 +356,7 @@ def order_book(
         market_id="condition-1",
         timestamp=NOW,
         bids=(OrderBookLevel(price=Decimal(bid), size=Decimal("5")),),
-        asks=(OrderBookLevel(price=Decimal(ask), size=Decimal("5")),),
+        asks=(OrderBookLevel(price=Decimal(ask), size=Decimal("25")),),
         minimum_order_size=Decimal(minimum_size),
         tick_size=Decimal("0.01"),
     )
@@ -370,8 +370,8 @@ def live_settings() -> AppSettings:
         POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
         POLYMARKET_SIGNATURE_TYPE=3,
         POLYMARKET_LIVE_TOKEN_ALLOWLIST="token-up",
-        POLYMARKET_LIVE_MAX_ORDER_SIZE="2",
-        POLYMARKET_LIVE_MAX_ORDER_NOTIONAL="1",
+        POLYMARKET_LIVE_MAX_ORDER_SIZE="20",
+        POLYMARKET_LIVE_MAX_ORDER_NOTIONAL="10",
         **{"POLYMARKET_PRIVATE_KEY": "unit-test-private-key"},
     )
 
@@ -421,7 +421,7 @@ async def test_dry_run_reads_preflight_and_never_submits(tmp_path: Path) -> None
 
     assert report.final_result == "NO_TRADE"
     assert report.risk_decision["approved"] is True
-    assert report.account_snapshot["available_balance"] == "5"
+    assert report.account_snapshot["available_balance"] == "20"
     assert report.live_entry_attempt_count == 0
     assert adapter.entry_attempts == []
     assert adapter.exit_attempts == []
@@ -447,11 +447,11 @@ async def test_real_entry_fill_places_one_actual_position_sized_exit(tmp_path: P
     assert len(adapter.entry_attempts) == 1
     assert adapter.collateral_read_count == 2
     assert geoblock.check_count == 2
-    assert adapter.entry_attempts[0]["amount"] == Decimal("1.00")
-    assert adapter.entry_attempts[0]["max_spend"] == Decimal("1.00")
+    assert adapter.entry_attempts[0]["amount"] == Decimal("10.00")
+    assert adapter.entry_attempts[0]["max_spend"] == Decimal("10.00")
     assert adapter.entry_attempts[0]["order_type"] == "FOK"
     assert len(adapter.exit_attempts) == 1
-    assert adapter.exit_attempts[0]["size"] == Decimal("1.666666")
+    assert adapter.exit_attempts[0]["size"] == Decimal("16.666666")
     assert adapter.exit_attempts[0]["price"] == Decimal("0.66")
     assert report.reconciliation["status"] == "ready"
     assert len(report.ledger_entries) == 2
@@ -513,7 +513,7 @@ async def test_exit_rejection_preserves_and_reconciles_position(tmp_path: Path) 
     )
 
     assert report.final_result == "ENTRY_FILLED_EXIT_REJECTED"
-    assert report.position_state["available_size"] == "1.666666"
+    assert report.position_state["available_size"] == "16.666666"
     assert report.reconciliation["status"] == "ready"
     assert len(adapter.exit_attempts) == 1
 
@@ -540,7 +540,7 @@ async def test_immediate_exit_fill_records_completed_round_trip(tmp_path: Path) 
         assert len(LedgerEventRepository(database.connection).list_for_run("completed")) == 4
         performance = StrategyRegistryRepository(database.connection).get_performance(
             "btc-15m-favorite-take-profit",
-            "0.1.0",
+            "0.2.0",
         )
         assert performance is not None
         assert performance.trade_count == 2
@@ -562,7 +562,7 @@ async def test_partial_exit_fill_retains_remaining_position_and_open_order(
     )
 
     assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
-    assert report.position_state["available_size"] == "1.166666"
+    assert report.position_state["available_size"] == "16.166666"
     assert report.position_state["exit_filled_size"] == "0.5"
     assert report.exit_order["status"] == "PARTIALLY_FILLED_OPEN"
     assert report.reconciliation["status"] == "ready"
@@ -571,7 +571,7 @@ async def test_partial_exit_fill_retains_remaining_position_and_open_order(
     with SQLiteDatabase(tmp_path / "round-trip.sqlite3") as database:
         position = PositionRepository(database.connection).get("token-up")
         assert position is not None
-        assert position.size == Decimal("1.166666")
+        assert position.size == Decimal("16.166666")
         assert position.realized_pnl == Decimal("0.03")
         assert len(LedgerEventRepository(database.connection).list_for_run("partial-exit")) == 4
 
@@ -609,7 +609,7 @@ async def test_market_minimum_above_cap_is_no_trade_without_account_or_order(
     adapter = FakeExecutionPort()
     report = await run_tiny_live_round_trip(
         config(tmp_path, dry_run=False, run_id="minimum"),
-        market_port=FakeMarketPort(minimum_size="5"),
+        market_port=FakeMarketPort(minimum_size="20"),
         execution_port=adapter,
         geoblock_port=FakeGeoblock(),
         clock=lambda: NOW,

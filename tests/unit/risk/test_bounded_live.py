@@ -31,7 +31,7 @@ def intent(*, price: str = "0.60", size: str = "1") -> OrderIntent:
 
 def portfolio_context(**updates: object) -> PortfolioAdmissionContext:
     values: dict[str, object] = {
-        "available_balance": Decimal("1.00"),
+        "available_balance": Decimal("20.00"),
         "reserved_balance": Decimal("0.25"),
         "existing_market_positions": 0,
         "conflicting_open_orders": 0,
@@ -47,7 +47,7 @@ def bounded_context() -> BoundedLiveRiskContext:
         entry_attempt_count=0,
         selected_market_count=1,
         existing_position_count=0,
-        available_balance=Decimal("1.00"),
+        available_balance=Decimal("20.00"),
         expected_fee=Decimal("0.01"),
         order_price_valid=True,
         order_size_valid=True,
@@ -77,9 +77,9 @@ def risk_engine(*, kill_switch: KillSwitch | None = None) -> BoundedLiveRiskEngi
             kill_switch=kill_switch,
             limits=RiskLimits(
                 allow_live_trading=True,
-                max_order_notional=Decimal("1"),
-                max_position_per_token=Decimal("3"),
-                max_position_per_market=Decimal("3"),
+                max_order_notional=Decimal("10"),
+                max_position_per_token=Decimal("20"),
+                max_position_per_market=Decimal("20"),
                 max_open_orders=1,
             ),
         )
@@ -160,7 +160,7 @@ def test_bounded_risk_rejects_each_authorization_invariant(
 
 def test_risk_enforces_notional_and_kill_switch() -> None:
     above_cap = risk_engine().evaluate_entry(
-        intent(price="0.60", size="2"),
+        intent(price="0.60", size="20"),
         risk_context(),
         bounded_context(),
     )
@@ -180,9 +180,9 @@ def test_risk_enforces_notional_and_kill_switch() -> None:
 
 def test_risk_enforces_all_in_notional_plus_fee_cap() -> None:
     decision = risk_engine().evaluate_entry(
-        intent(price="0.99", size="1"),
+        intent(price="0.99", size="10"),
         risk_context(),
-        replace(bounded_context(), expected_fee=Decimal("0.02")),
+        replace(bounded_context(), expected_fee=Decimal("0.20")),
     )
 
     assert decision.approved is False

@@ -50,7 +50,7 @@ def book(
     *,
     bid: str,
     ask: str,
-    ask_size: str = "5",
+    ask_size: str = "25",
     minimum: str = "1",
     timestamp: datetime = NOW,
 ) -> MarketOrderBookSnapshot:
@@ -80,12 +80,12 @@ def test_selects_current_executable_favorite_and_emits_intent() -> None:
     assert decision.status == "TRADE"
     assert decision.selected_label == "Up"
     assert decision.entry_price == Decimal("0.60")
-    assert decision.entry_size == Decimal("1.666666")
+    assert decision.entry_size == Decimal("16.666666")
     assert intent.token_id == "token-up"
     assert intent.strategy_id == "btc-15m-favorite-take-profit"
 
 
-def test_fee_aware_size_keeps_total_spend_within_one() -> None:
+def test_fee_aware_size_keeps_total_spend_within_ten() -> None:
     strategy = Btc15mFavoriteTakeProfitStrategy()
     active_market = market(fee_enabled=True)
 
@@ -99,7 +99,7 @@ def test_fee_aware_size_keeps_total_spend_within_one() -> None:
         size=decision.entry_size,
     )
     assert decision.entry_notional is not None
-    assert decision.entry_notional + expected_fee <= Decimal("1.00")
+    assert decision.entry_notional + expected_fee <= Decimal("10.00")
 
 
 @pytest.mark.parametrize(
@@ -145,7 +145,7 @@ def test_fee_aware_size_keeps_total_spend_within_one() -> None:
         ),
         (
             (
-                book("token-up", bid="0.58", ask="0.60", minimum="2"),
+                book("token-up", bid="0.58", ask="0.60", minimum="20"),
                 book("token-down", bid="0.38", ask="0.40"),
             ),
             "minimum order",
@@ -177,6 +177,6 @@ def test_rejects_ambiguous_token_mapping() -> None:
     assert "distinct token ids" in decision.reason
 
 
-def test_configuration_never_allows_more_than_one_collateral_unit() -> None:
-    with pytest.raises(ValueError, match="1.00"):
-        FavoriteTakeProfitConfig(maximum_entry_notional=Decimal("1.01"))
+def test_configuration_never_allows_more_than_ten_collateral_units() -> None:
+    with pytest.raises(ValueError, match="10.00"):
+        FavoriteTakeProfitConfig(maximum_entry_notional=Decimal("10.01"))
