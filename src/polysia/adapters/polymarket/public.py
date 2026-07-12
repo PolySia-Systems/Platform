@@ -9,7 +9,12 @@ from polymarket import AsyncPublicClient, PolymarketError
 from polysia.adapters.polymarket.capabilities import POLYMARKET_CAPABILITIES
 from polysia.adapters.polymarket.mappers import PolymarketMarketMapper
 from polysia.config.logging import get_logger
-from polysia.domain.market import MarketDetails, MarketSummary, VenueCapabilityProfile
+from polysia.domain.market import (
+    MarketDetails,
+    MarketOrderBookSnapshot,
+    MarketSummary,
+    VenueCapabilityProfile,
+)
 
 ClientFactory = Callable[[], AbstractAsyncContextManager[Any]]
 
@@ -80,6 +85,19 @@ class PolymarketPublicAdapter:
         except PolymarketError as error:
             self._log_sdk_error("search_markets", error, query=query)
             raise PolymarketPublicAdapterError("Could not search Polymarket markets.") from error
+
+    async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
+        """Fetch and normalize one public CLOB order book."""
+        try:
+            async with self._client_factory() as client:
+                book = await client.get_order_book(token_id=token_id)
+                return self._mapper.to_order_book(book)
+        except (PolymarketError, ValueError) as error:
+            if isinstance(error, PolymarketError):
+                self._log_sdk_error("get_order_book", error, token_id=token_id)
+            raise PolymarketPublicAdapterError(
+                "Could not fetch a valid Polymarket order book."
+            ) from error
 
     def _log_sdk_error(self, operation: str, error: PolymarketError, **context: str) -> None:
         self._logger.warning(

@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Task | First evidence-oriented vertical slice |
-| Status | Approved plan; implementation not started |
+| Status | SUPERSEDED BY POLYSIA-LIVE-001 |
 | Prepared | 2026-07-11 |
 | Repository baseline | `main` at `b641e14cdb371d8e3ae4e1d700ca4c76cf93d622` |
 | Runtime mode | Public data plus paper execution only |
@@ -14,6 +14,10 @@
 
 This plan extends verified behavior. It does not approve live order submission,
 claim profitability, or promote TARGET architecture to CURRENT.
+
+The StalePrice Paper Sprint is deferred, not rejected. `POLYSIA-LIVE-001` is
+the active owner-authorized task and is defined in
+`plans/active/tiny-live-round-trip-v1.md`.
 
 ## Hypothesis and economic mechanism
 

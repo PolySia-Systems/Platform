@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
+from uuid import uuid4
 
 import typer
 
@@ -114,6 +115,11 @@ from polysia.execution.tiny_live_execution import (
     run_tiny_live_execution,
     tiny_live_execution_filename,
 )
+from polysia.execution.tiny_live_round_trip import (
+    AUTHORIZATION_ID,
+    TinyLiveRoundTripConfig,
+    run_tiny_live_round_trip,
+)
 from polysia.monitoring.acceptance_audit import (
     AcceptanceAuditConfig,
     acceptance_report_filename,
@@ -198,6 +204,9 @@ from polysia.monitoring.tiny_live_readiness import (
     normalize_tiny_live_readiness_formats,
     render_tiny_live_readiness,
     tiny_live_readiness_filename,
+)
+from polysia.monitoring.tiny_live_round_trip_report import (
+    write_tiny_live_round_trip_reports,
 )
 from polysia.orderbook.book import LocalOrderBook
 from polysia.portfolio.pnl import calculate_portfolio_pnl
@@ -1694,6 +1703,64 @@ def tiny_live_execute(
     }
     typer.echo(json.dumps(payload, sort_keys=True))
     if report.blocking_reasons:
+        raise typer.Exit(code=1)
+
+
+@app.command("tiny-live-round-trip")
+def tiny_live_round_trip(
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Base directory for immutable run evidence."),
+    ] = Path("release-artifacts/tiny-live-round-trip"),
+    submit: Annotated[
+        bool,
+        typer.Option("--submit/--dry-run", help="Submit only after every merged-code gate."),
+    ] = False,
+    acknowledge: Annotated[
+        str | None,
+        typer.Option("--acknowledge", help=f"Required live acknowledgement: {AUTHORIZATION_ID}"),
+    ] = None,
+    verified_ci_commit: Annotated[
+        str | None,
+        typer.Option("--verified-ci-commit", help="Exact green-CI commit required for submit."),
+    ] = None,
+) -> None:
+    """Discover and validate one BTC 15m favorite round trip; dry-run by default."""
+
+    settings = AppSettings()
+    configure_logging(settings)
+    _apply_secure_env_from_settings(settings)
+    run_id = str(uuid4())
+    run_output_dir = output_dir / run_id
+    try:
+        report = asyncio.run(
+            run_tiny_live_round_trip(
+                TinyLiveRoundTripConfig(
+                    settings=settings,
+                    project_root=Path("."),
+                    output_dir=run_output_dir,
+                    database_path=Path("data/polysia.sqlite3"),
+                    dry_run=not submit,
+                    acknowledgement=acknowledge == AUTHORIZATION_ID,
+                    verified_ci_commit=verified_ci_commit,
+                    run_id=run_id,
+                )
+            )
+        )
+        artifacts = write_tiny_live_round_trip_reports(report, run_output_dir)
+    except (OSError, ValueError) as error:
+        _print_error_and_exit(error)
+
+    safe_results = {"COMPLETED_ROUND_TRIP", "ENTRY_FILLED_EXIT_OPEN"}
+    payload = {
+        "artifacts": {name: str(path) for name, path in artifacts.items()},
+        "final_result": report.final_result,
+        "live_entry_attempt_count": report.live_entry_attempt_count,
+        "run_id": report.run_id,
+        "status": "ok" if report.final_result in safe_results else "blocked",
+    }
+    typer.echo(json.dumps(payload, sort_keys=True))
+    if report.final_result not in safe_results:
         raise typer.Exit(code=1)
 
 

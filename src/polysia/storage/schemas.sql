@@ -109,3 +109,66 @@ CREATE TABLE IF NOT EXISTS positions (
     payload_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS strategy_definitions (
+    strategy_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    lifecycle_status TEXT NOT NULL,
+    definition_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_runs (
+    run_id TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    runtime_mode TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    market TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    run_json TEXT NOT NULL,
+    FOREIGN KEY (strategy_id, strategy_version)
+        REFERENCES strategy_definitions(strategy_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_runs_identity_started
+    ON strategy_runs (strategy_id, strategy_version, started_at);
+
+CREATE TABLE IF NOT EXISTS strategy_performance (
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, strategy_version),
+    FOREIGN KEY (strategy_id, strategy_version)
+        REFERENCES strategy_definitions(strategy_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS live_entry_attempts (
+    authorization_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    attempted_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ledger_events (
+    event_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    instrument_id TEXT,
+    amount TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    order_id TEXT,
+    fill_id TEXT,
+    payload_json TEXT NOT NULL,
+    occurred_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_events_run_occurred
+    ON ledger_events (run_id, occurred_at, event_id);

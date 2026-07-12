@@ -38,14 +38,17 @@ class FakeClient:
         *,
         markets: tuple[Any, ...] = (),
         market: Any | None = None,
+        order_book: Any | None = None,
         search_results: tuple[Any, ...] = (),
     ) -> None:
         self.markets = markets
         self.market = market
+        self.order_book = order_book
         self.search_results = search_results
         self.list_markets_kwargs: dict[str, Any] | None = None
         self.get_market_kwargs: dict[str, Any] | None = None
         self.search_kwargs: dict[str, Any] | None = None
+        self.order_book_token_id: str | None = None
 
     def list_markets(self, **kwargs: Any) -> FakePaginator:
         self.list_markets_kwargs = kwargs
@@ -58,6 +61,10 @@ class FakeClient:
     def search(self, **kwargs: Any) -> FakePaginator:
         self.search_kwargs = kwargs
         return FakePaginator(self.search_results)
+
+    async def get_order_book(self, *, token_id: str) -> Any:
+        self.order_book_token_id = token_id
+        return self.order_book
 
 
 def make_market(
@@ -153,6 +160,30 @@ async def test_search_markets_flattens_event_markets_and_deduplicates() -> None:
         "page_size": 10,
     }
     assert [market.slug for market in markets] == ["open-market"]
+
+
+@pytest.mark.asyncio
+async def test_get_order_book_returns_canonical_rules_and_depth() -> None:
+    client = FakeClient(
+        order_book=SimpleNamespace(
+            token_id="token",
+            market="condition",
+            timestamp="1783771200000",
+            bids=(SimpleNamespace(price="0.48", size="5"),),
+            asks=(SimpleNamespace(price="0.50", size="4"),),
+            min_order_size="1",
+            tick_size="0.01",
+            neg_risk=False,
+            hash="hash",
+        )
+    )
+    adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
+
+    book = await adapter.get_order_book("token")
+
+    assert client.order_book_token_id == "token"
+    assert book.tick_size == Decimal("0.01")
+    assert book.best_ask is not None and book.best_ask.price == Decimal("0.50")
 
 
 @pytest.mark.asyncio

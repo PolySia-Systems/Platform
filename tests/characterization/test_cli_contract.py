@@ -1,3 +1,5 @@
+import inspect
+
 import typer
 
 from polysia import cli
@@ -42,6 +44,7 @@ EXPECTED_COMMANDS = {
     "stream-market",
     "tiny-live-execute",
     "tiny-live-monitor",
+    "tiny-live-round-trip",
     "tiny-live-readiness",
 }
 
@@ -56,3 +59,10 @@ def test_legacy_cli_helper_imports_delegate_to_support_modules() -> None:
     assert cli._apply_secure_env_from_settings is apply_secure_env_from_settings
     assert cli._safe_open_order_to_dict is safe_open_order_to_dict
     assert cli._safe_order_response is safe_order_response
+
+
+def test_tiny_live_round_trip_command_is_dry_run_by_default() -> None:
+    signature = inspect.signature(cli.tiny_live_round_trip)
+
+    assert signature.parameters["submit"].default is False
+    assert signature.parameters["verified_ci_commit"].default is None

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from polysia.domain.market import MarketDetails, MarketOutcomeSummary, MarketSummary
+from polysia.domain.market import (
+    MarketDetails,
+    MarketFeeSchedule,
+    MarketOrderBookSnapshot,
+    MarketOutcomeSummary,
+    MarketSummary,
+    OrderBookLevel,
+)
 
 
 class PolymarketMarketMapper:
@@ -35,6 +44,18 @@ class PolymarketMarketMapper:
     def to_details(self, market: Any) -> MarketDetails:
         summary = self.to_summary(market)
         trading = getattr(market, "trading", None)
+        state = getattr(market, "state", None)
+        fees_enabled = getattr(trading, "fees_enabled", None)
+        raw_fee_schedule = getattr(trading, "fee_schedule", None)
+        fee_schedule = None
+        if isinstance(fees_enabled, bool):
+            fee_schedule = MarketFeeSchedule(
+                enabled=fees_enabled,
+                rate=getattr(raw_fee_schedule, "rate", None),
+                exponent=getattr(raw_fee_schedule, "exponent", None),
+                taker_only=getattr(raw_fee_schedule, "taker_only", None),
+                rebate_rate=getattr(raw_fee_schedule, "rebate_rate", None),
+            )
 
         return MarketDetails(
             **summary.model_dump(),
@@ -44,7 +65,35 @@ class PolymarketMarketMapper:
             icon=self.optional_str(getattr(market, "icon", None)),
             minimum_order_size=getattr(trading, "minimum_order_size", None),
             minimum_tick_size=getattr(trading, "minimum_tick_size", None),
+            enable_order_book=getattr(state, "enable_order_book", None),
+            archived=getattr(state, "archived", None),
+            start_date=getattr(state, "start_date", None),
+            fee_schedule=fee_schedule,
+            fee_type=self.optional_str(getattr(trading, "fee_type", None)),
+            seconds_delay=getattr(trading, "seconds_delay", None),
             tags=self.to_tag_labels(market),
+        )
+
+    def to_order_book(self, book: Any) -> MarketOrderBookSnapshot:
+        return MarketOrderBookSnapshot(
+            token_id=str(book.token_id),
+            market_id=self.optional_str(getattr(book, "market", None)),
+            timestamp=self.to_datetime(getattr(book, "timestamp", None)),
+            bids=self.to_levels(getattr(book, "bids", ())),
+            asks=self.to_levels(getattr(book, "asks", ())),
+            minimum_order_size=self.to_decimal(getattr(book, "min_order_size", None)),
+            tick_size=self.to_decimal(getattr(book, "tick_size", None)),
+            negative_risk=bool(getattr(book, "neg_risk", False)),
+            book_hash=self.optional_str(getattr(book, "hash", None)),
+        )
+
+    def to_levels(self, levels: Any) -> tuple[OrderBookLevel, ...]:
+        return tuple(
+            OrderBookLevel(
+                price=self.to_decimal(getattr(level, "price", None)),
+                size=self.to_decimal(getattr(level, "size", None)),
+            )
+            for level in levels
         )
 
     def to_outcomes(self, market: Any) -> tuple[MarketOutcomeSummary, ...]:
@@ -83,3 +132,23 @@ class PolymarketMarketMapper:
         text = str(value)
         return text or None
 
+    @staticmethod
+    def to_decimal(value: object) -> Decimal:
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("Polymarket numeric field is missing or invalid") from error
+        return parsed
+
+    @staticmethod
+    def to_datetime(value: object) -> datetime:
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        if isinstance(value, (int, str)) and str(value).isdigit():
+            raw = int(value)
+            seconds = raw / 1000 if raw >= 100_000_000_000 else raw
+            return datetime.fromtimestamp(seconds, tz=UTC)
+        if isinstance(value, str):
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+        raise ValueError("Polymarket order-book timestamp is missing or invalid")
