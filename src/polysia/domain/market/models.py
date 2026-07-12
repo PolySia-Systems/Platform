@@ -50,6 +50,63 @@ class MarketOutcomeSummary(BaseModel):
     price: Decimal | None = None
 
 
+class OrderBookLevel(BaseModel):
+    """Canonical executable price level."""
+
+    model_config = ConfigDict(frozen=True)
+
+    price: Decimal
+    size: Decimal
+
+
+class MarketOrderBookSnapshot(BaseModel):
+    """Venue-neutral order-book snapshot with venue trading rules."""
+
+    model_config = ConfigDict(frozen=True)
+
+    token_id: str
+    market_id: str | None = None
+    timestamp: datetime
+    bids: tuple[OrderBookLevel, ...] = ()
+    asks: tuple[OrderBookLevel, ...] = ()
+    minimum_order_size: Decimal
+    tick_size: Decimal
+    negative_risk: bool = False
+    book_hash: str | None = None
+
+    @property
+    def best_bid(self) -> OrderBookLevel | None:
+        return max(self.bids, key=lambda level: level.price, default=None)
+
+    @property
+    def best_ask(self) -> OrderBookLevel | None:
+        return min(self.asks, key=lambda level: level.price, default=None)
+
+    @property
+    def midpoint(self) -> Decimal | None:
+        if self.best_bid is None or self.best_ask is None:
+            return None
+        return (self.best_bid.price + self.best_ask.price) / Decimal("2")
+
+    @property
+    def spread(self) -> Decimal | None:
+        if self.best_bid is None or self.best_ask is None:
+            return None
+        return self.best_ask.price - self.best_bid.price
+
+
+class MarketFeeSchedule(BaseModel):
+    """Canonical per-market fee inputs reported by the venue."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool
+    rate: Decimal | None = None
+    exponent: Decimal | None = None
+    taker_only: bool | None = None
+    rebate_rate: Decimal | None = None
+
+
 class MarketSummary(BaseModel):
     """Venue-neutral market fields used by the core."""
 
@@ -79,4 +136,10 @@ class MarketDetails(MarketSummary):
     icon: str | None = None
     minimum_order_size: Decimal | None = None
     minimum_tick_size: Decimal | None = None
+    enable_order_book: bool | None = None
+    archived: bool | None = None
+    start_date: datetime | None = None
+    fee_schedule: MarketFeeSchedule | None = None
+    fee_type: str | None = None
+    seconds_delay: int | None = None
     tags: tuple[str, ...] = ()

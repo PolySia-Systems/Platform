@@ -9,7 +9,14 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 
 from polysia.bus.events import MarketDataEvent, market_data_event_to_dict
+from polysia.domain.ledger import LedgerEvent
 from polysia.domain.market import MarketSummary
+from polysia.domain.strategy import (
+    StrategyDefinition,
+    StrategyLifecycleStatus,
+    StrategyPerformanceSummary,
+    StrategyRun,
+)
 from polysia.orderbook.book import LocalOrderBook
 from polysia.storage.db import transaction
 
@@ -475,6 +482,340 @@ class PositionRepository:
             (token_id,),
         ).fetchone()
         return _row_to_position(row) if row is not None else None
+
+
+class StrategyRegistryRepository:
+    """SQLite serialization for strategy definitions, runs, and evaluations."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def add_definition(self, definition: StrategyDefinition) -> None:
+        timestamp = datetime.now(UTC)
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                INSERT INTO strategy_definitions (
+                    strategy_id, version, lifecycle_status, definition_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    definition.strategy_id,
+                    definition.version,
+                    definition.lifecycle_status.value,
+                    _json_dumps(definition.model_dump(mode="json")),
+                    _datetime_to_text(definition.created_at),
+                    _datetime_to_text(timestamp),
+                ),
+            )
+
+    def get_definition(self, strategy_id: str, version: str) -> StrategyDefinition | None:
+        row = self._connection.execute(
+            """
+            SELECT definition_json FROM strategy_definitions
+            WHERE strategy_id = ? AND version = ?
+            """,
+            (strategy_id, version),
+        ).fetchone()
+        if row is None:
+            return None
+        return StrategyDefinition.model_validate_json(str(row["definition_json"]))
+
+    def list_definitions(self) -> list[StrategyDefinition]:
+        rows = self._connection.execute(
+            """
+            SELECT definition_json FROM strategy_definitions
+            ORDER BY strategy_id, version
+            """
+        ).fetchall()
+        return [
+            StrategyDefinition.model_validate_json(str(row["definition_json"]))
+            for row in rows
+        ]
+
+    def update_lifecycle(
+        self,
+        strategy_id: str,
+        version: str,
+        status: StrategyLifecycleStatus,
+    ) -> StrategyDefinition:
+        definition = self.get_definition(strategy_id, version)
+        if definition is None:
+            raise KeyError(f"strategy {strategy_id}@{version} is not registered")
+        updated = definition.model_copy(update={"lifecycle_status": status})
+        timestamp = datetime.now(UTC)
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                UPDATE strategy_definitions
+                SET lifecycle_status = ?, definition_json = ?, updated_at = ?
+                WHERE strategy_id = ? AND version = ?
+                """,
+                (
+                    status.value,
+                    _json_dumps(updated.model_dump(mode="json")),
+                    _datetime_to_text(timestamp),
+                    strategy_id,
+                    version,
+                ),
+            )
+        return updated
+
+    def add_run(self, run: StrategyRun) -> None:
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                INSERT INTO strategy_runs (
+                    run_id, strategy_id, strategy_version, runtime_mode, venue,
+                    market, started_at, ended_at, run_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.run_id,
+                    run.strategy_id,
+                    run.strategy_version,
+                    run.runtime_mode,
+                    run.venue,
+                    run.market,
+                    _datetime_to_text(run.started_at),
+                    _optional_datetime_to_text(run.ended_at),
+                    _json_dumps(run.model_dump(mode="json")),
+                ),
+            )
+
+    def list_runs(self, strategy_id: str, version: str) -> list[StrategyRun]:
+        rows = self._connection.execute(
+            """
+            SELECT run_json FROM strategy_runs
+            WHERE strategy_id = ? AND strategy_version = ?
+            ORDER BY started_at, run_id
+            """,
+            (strategy_id, version),
+        ).fetchall()
+        return [StrategyRun.model_validate_json(str(row["run_json"])) for row in rows]
+
+    def upsert_performance(self, summary: StrategyPerformanceSummary) -> None:
+        timestamp = datetime.now(UTC)
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                INSERT INTO strategy_performance (
+                    strategy_id, strategy_version, summary_json, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(strategy_id, strategy_version) DO UPDATE SET
+                    summary_json = excluded.summary_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    summary.strategy_id,
+                    summary.strategy_version,
+                    _json_dumps(summary.model_dump(mode="json")),
+                    _datetime_to_text(timestamp),
+                ),
+            )
+
+    def get_performance(
+        self,
+        strategy_id: str,
+        version: str,
+    ) -> StrategyPerformanceSummary | None:
+        row = self._connection.execute(
+            """
+            SELECT summary_json FROM strategy_performance
+            WHERE strategy_id = ? AND strategy_version = ?
+            """,
+            (strategy_id, version),
+        ).fetchone()
+        if row is None:
+            return None
+        return StrategyPerformanceSummary.model_validate_json(str(row["summary_json"]))
+
+
+class LiveEntryAttemptRepository:
+    """Persistent one-attempt claim for an owner authorization identifier."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def claim(
+        self,
+        *,
+        authorization_id: str,
+        run_id: str,
+        strategy_id: str,
+        market_id: str,
+        attempted_at: datetime,
+    ) -> bool:
+        try:
+            with transaction(self._connection) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO live_entry_attempts (
+                        authorization_id, run_id, strategy_id, market_id, state,
+                        attempted_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        authorization_id,
+                        run_id,
+                        strategy_id,
+                        market_id,
+                        "CLAIMED_BEFORE_SUBMIT",
+                        _datetime_to_text(attempted_at),
+                        _datetime_to_text(attempted_at),
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def update_state(self, authorization_id: str, state: str, *, updated_at: datetime) -> None:
+        with transaction(self._connection) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE live_entry_attempts SET state = ?, updated_at = ?
+                WHERE authorization_id = ?
+                """,
+                (state, _datetime_to_text(updated_at), authorization_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(f"live authorization {authorization_id} has no attempt claim")
+
+    def get(self, authorization_id: str) -> dict[str, str] | None:
+        row = self._connection.execute(
+            "SELECT * FROM live_entry_attempts WHERE authorization_id = ?",
+            (authorization_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "authorization_id": str(row["authorization_id"]),
+            "run_id": str(row["run_id"]),
+            "strategy_id": str(row["strategy_id"]),
+            "market_id": str(row["market_id"]),
+            "state": str(row["state"]),
+            "attempted_at": str(row["attempted_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+
+class LedgerEventRepository:
+    """Append-only persistence for run-scoped canonical ledger events."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def add(
+        self,
+        *,
+        run_id: str,
+        event: LedgerEvent,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                INSERT INTO ledger_events (
+                    event_id, run_id, event_type, instrument_id, amount,
+                    currency, order_id, fill_id, payload_json, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.event_id,
+                    run_id,
+                    event.event_type,
+                    event.instrument_id,
+                    str(event.amount),
+                    event.currency,
+                    event.order_id,
+                    event.fill_id,
+                    _json_dumps(dict(payload or {})),
+                    _datetime_to_text(event.occurred_at),
+                ),
+            )
+
+    def list_for_run(self, run_id: str) -> list[LedgerEvent]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM ledger_events
+            WHERE run_id = ? ORDER BY occurred_at, event_id
+            """,
+            (run_id,),
+        ).fetchall()
+        return [
+            LedgerEvent(
+                event_id=str(row["event_id"]),
+                event_type=str(row["event_type"]),
+                instrument_id=_optional_str(row["instrument_id"]),
+                amount=Decimal(str(row["amount"])),
+                currency=str(row["currency"]),
+                occurred_at=_text_to_datetime(str(row["occurred_at"])),
+                order_id=_optional_str(row["order_id"]),
+                fill_id=_optional_str(row["fill_id"]),
+            )
+            for row in rows
+        ]
+
+
+class LiveOrderCheckpointRepository:
+    """Durable transition checkpoints written before the next external step."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def upsert(
+        self,
+        *,
+        run_id: str,
+        phase: str,
+        client_order_id: str,
+        venue_order_id: str | None,
+        payload: Mapping[str, Any],
+        persisted_at: datetime,
+    ) -> None:
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                INSERT INTO live_order_checkpoints (
+                    run_id, phase, client_order_id, venue_order_id,
+                    payload_json, persisted_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, phase) DO UPDATE SET
+                    client_order_id = excluded.client_order_id,
+                    venue_order_id = excluded.venue_order_id,
+                    payload_json = excluded.payload_json,
+                    persisted_at = excluded.persisted_at
+                """,
+                (
+                    run_id,
+                    phase,
+                    client_order_id,
+                    venue_order_id,
+                    _json_dumps(dict(payload)),
+                    _datetime_to_text(persisted_at),
+                ),
+            )
+
+    def list_for_run(self, run_id: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM live_order_checkpoints
+            WHERE run_id = ? ORDER BY persisted_at, phase
+            """,
+            (run_id,),
+        ).fetchall()
+        return [
+            {
+                "client_order_id": str(row["client_order_id"]),
+                "payload": _json_loads(str(row["payload_json"])),
+                "persisted_at": str(row["persisted_at"]),
+                "phase": str(row["phase"]),
+                "run_id": str(row["run_id"]),
+                "venue_order_id": _optional_str(row["venue_order_id"]),
+            }
+            for row in rows
+        ]
 
 
 def _row_to_event(row: sqlite3.Row) -> StoredMarketEvent:

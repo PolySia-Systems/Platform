@@ -21,9 +21,15 @@ def test_initialize_database_creates_expected_tables() -> None:
         "fills",
         "market_events",
         "markets",
+        "ledger_events",
         "orderbook_snapshots",
         "orders",
         "positions",
+        "strategy_definitions",
+        "strategy_performance",
+        "strategy_runs",
+        "live_entry_attempts",
+        "live_order_checkpoints",
     }.issubset(table_names)
 
 
