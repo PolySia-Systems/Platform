@@ -10,7 +10,7 @@ from polysia.domain.strategy import StrategyDefinition, StrategyLifecycleStatus
 from polysia.execution.intents import OrderIntent
 
 STRATEGY_ID = "btc-15m-favorite-take-profit"
-STRATEGY_VERSION = "0.3.0"
+STRATEGY_VERSION = "0.4.0"
 DecisionStatus = Literal["TRADE", "NO_TRADE"]
 
 
@@ -19,7 +19,7 @@ class FavoriteTakeProfitConfig:
     maximum_entry_notional: Decimal = Decimal("10.00")
     maximum_data_age_ms: int = 5_000
     maximum_spread: Decimal = Decimal("0.10")
-    maximum_future_clock_skew_ms: int = 3_000
+    maximum_future_clock_skew_ms: int = 5_000
     exit_target_multiple: Decimal = Decimal("1.10")
 
     def __post_init__(self) -> None:
@@ -27,8 +27,8 @@ class FavoriteTakeProfitConfig:
             raise ValueError("maximum_entry_notional must be within (0, 10.00]")
         if self.maximum_data_age_ms < 0:
             raise ValueError("maximum_data_age_ms must not be negative")
-        if not 0 <= self.maximum_future_clock_skew_ms <= 3_000:
-            raise ValueError("maximum_future_clock_skew_ms must be within [0, 3000]")
+        if not 0 <= self.maximum_future_clock_skew_ms <= 5_000:
+            raise ValueError("maximum_future_clock_skew_ms must be within [0, 5000]")
         if self.maximum_spread <= 0:
             raise ValueError("maximum_spread must be positive")
         if self.exit_target_multiple != Decimal("1.10"):
@@ -149,7 +149,7 @@ class Btc15mFavoriteTakeProfitStrategy:
             parameter_schema={
                 "exit_target_multiple": {"const": "1.10", "type": "decimal"},
                 "maximum_future_clock_skew_ms": {
-                    "maximum": 3000,
+                    "maximum": 5000,
                     "minimum": 0,
                     "type": "integer",
                 },

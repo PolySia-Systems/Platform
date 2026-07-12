@@ -130,7 +130,7 @@ def test_fee_aware_size_keeps_total_spend_within_ten() -> None:
                     "token-up",
                     bid="0.58",
                     ask="0.60",
-                    timestamp=NOW + timedelta(seconds=4),
+                    timestamp=NOW + timedelta(seconds=6),
                 ),
                 book("token-down", bid="0.38", ask="0.40"),
             ),
@@ -183,7 +183,7 @@ def test_accepts_bounded_venue_clock_lead() -> None:
             "token-up",
             bid="0.58",
             ask="0.60",
-            timestamp=NOW + timedelta(seconds=2),
+            timestamp=NOW + timedelta(seconds=4),
         ),
         book("token-down", bid="0.38", ask="0.40"),
     )
@@ -199,5 +199,5 @@ def test_configuration_never_allows_more_than_ten_collateral_units() -> None:
 
 
 def test_configuration_caps_future_clock_skew() -> None:
-    with pytest.raises(ValueError, match="3000"):
-        FavoriteTakeProfitConfig(maximum_future_clock_skew_ms=3_001)
+    with pytest.raises(ValueError, match="5000"):
+        FavoriteTakeProfitConfig(maximum_future_clock_skew_ms=5_001)

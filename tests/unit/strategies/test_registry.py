@@ -24,11 +24,11 @@ def test_registry_registers_stable_version_with_unrated_performance() -> None:
 
     registry.register(definition)
 
-    assert registry.get(definition.strategy_id, "0.3.0") == definition
+    assert registry.get(definition.strategy_id, "0.4.0") == definition
     assert registry.list() == (definition,)
-    assert registry.performance(definition.strategy_id, "0.3.0").score_status == "unrated"
+    assert registry.performance(definition.strategy_id, "0.4.0").score_status == "unrated"
     assert (
-        registry.performance(definition.strategy_id, "0.3.0").evidence_sufficiency
+        registry.performance(definition.strategy_id, "0.4.0").evidence_sufficiency
         == "insufficient"
     )
 
