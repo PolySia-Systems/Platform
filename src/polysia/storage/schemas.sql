@@ -172,3 +172,16 @@ CREATE TABLE IF NOT EXISTS ledger_events (
 
 CREATE INDEX IF NOT EXISTS idx_ledger_events_run_occurred
     ON ledger_events (run_id, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS live_order_checkpoints (
+    run_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    venue_order_id TEXT,
+    payload_json TEXT NOT NULL,
+    persisted_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, phase)
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_order_checkpoints_client
+    ON live_order_checkpoints (client_order_id, persisted_at);

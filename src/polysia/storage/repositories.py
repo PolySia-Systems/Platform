@@ -758,6 +758,66 @@ class LedgerEventRepository:
         ]
 
 
+class LiveOrderCheckpointRepository:
+    """Durable transition checkpoints written before the next external step."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def upsert(
+        self,
+        *,
+        run_id: str,
+        phase: str,
+        client_order_id: str,
+        venue_order_id: str | None,
+        payload: Mapping[str, Any],
+        persisted_at: datetime,
+    ) -> None:
+        with transaction(self._connection) as connection:
+            connection.execute(
+                """
+                INSERT INTO live_order_checkpoints (
+                    run_id, phase, client_order_id, venue_order_id,
+                    payload_json, persisted_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, phase) DO UPDATE SET
+                    client_order_id = excluded.client_order_id,
+                    venue_order_id = excluded.venue_order_id,
+                    payload_json = excluded.payload_json,
+                    persisted_at = excluded.persisted_at
+                """,
+                (
+                    run_id,
+                    phase,
+                    client_order_id,
+                    venue_order_id,
+                    _json_dumps(dict(payload)),
+                    _datetime_to_text(persisted_at),
+                ),
+            )
+
+    def list_for_run(self, run_id: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM live_order_checkpoints
+            WHERE run_id = ? ORDER BY persisted_at, phase
+            """,
+            (run_id,),
+        ).fetchall()
+        return [
+            {
+                "client_order_id": str(row["client_order_id"]),
+                "payload": _json_loads(str(row["payload_json"])),
+                "persisted_at": str(row["persisted_at"]),
+                "phase": str(row["phase"]),
+                "run_id": str(row["run_id"]),
+                "venue_order_id": _optional_str(row["venue_order_id"]),
+            }
+            for row in rows
+        ]
+
+
 def _row_to_event(row: sqlite3.Row) -> StoredMarketEvent:
     event = MarketDataEvent(
         source="polymarket",

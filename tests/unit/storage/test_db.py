@@ -29,6 +29,7 @@ def test_initialize_database_creates_expected_tables() -> None:
         "strategy_performance",
         "strategy_runs",
         "live_entry_attempts",
+        "live_order_checkpoints",
     }.issubset(table_names)
 
 

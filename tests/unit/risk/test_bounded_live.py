@@ -176,3 +176,14 @@ def test_risk_enforces_notional_and_kill_switch() -> None:
     )
     assert killed.approved is False
     assert "kill switch" in killed.reason
+
+
+def test_risk_enforces_all_in_notional_plus_fee_cap() -> None:
+    decision = risk_engine().evaluate_entry(
+        intent(price="0.99", size="1"),
+        risk_context(),
+        replace(bounded_context(), expected_fee=Decimal("0.02")),
+    )
+
+    assert decision.approved is False
+    assert "plus expected fee" in decision.reason

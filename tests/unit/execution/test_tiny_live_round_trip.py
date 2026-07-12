@@ -34,8 +34,13 @@ from polysia.monitoring.tiny_live_round_trip_report import (
 from polysia.risk.kill_switch import KillSwitch
 from polysia.storage.db import SQLiteDatabase
 from polysia.storage.repositories import (
+    FillRepository,
     LedgerEventRepository,
     LiveEntryAttemptRepository,
+    LiveOrderCheckpointRepository,
+    OrderRepository,
+    PositionRepository,
+    StrategyRegistryRepository,
 )
 
 NOW = datetime(2026, 7, 11, 12, tzinfo=UTC)
@@ -82,12 +87,48 @@ class StaleOnRefreshMarketPort(FakeMarketPort):
         return book
 
 
+class CandidateFallbackMarketPort(FakeMarketPort):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = self.details.model_copy(
+            update={
+                "id": "market-first",
+                "slug": "btc-updown-15m-first",
+                "end_date": NOW + timedelta(minutes=8),
+            }
+        )
+        self.second = self.details.model_copy(
+            update={
+                "id": "market-second",
+                "slug": "btc-updown-15m-second",
+                "end_date": NOW + timedelta(minutes=10),
+            }
+        )
+        self.current_slug = self.first.slug
+
+    async def search_markets(self, query: str, page_size: int = 20) -> list[MarketSummary]:
+        del query, page_size
+        return [
+            MarketSummary(**self.first.model_dump()),
+            MarketSummary(**self.second.model_dump()),
+        ]
+
+    async def get_market_by_slug(self, slug: str) -> MarketDetails:
+        self.current_slug = slug
+        return self.first if slug == self.first.slug else self.second
+
+    async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
+        book = await super().get_order_book(token_id)
+        minimum = Decimal("5") if self.current_slug == self.first.slug else Decimal("1")
+        return book.model_copy(update={"minimum_order_size": minimum})
+
+
 class FakeExecutionPort:
     def __init__(
         self,
         *,
         entry: Literal["reject", "no_fill", "fill", "error"] = "fill",
-        exit_order: Literal["open", "reject", "fill", "error"] = "open",
+        exit_order: Literal["open", "reject", "fill", "partial", "error"] = "open",
         position_size: str = "1.666666",
     ) -> None:
         self.connected = False
@@ -99,7 +140,8 @@ class FakeExecutionPort:
         self.exit_attempts: list[dict[str, Any]] = []
         self.entry_filled = False
         self.exit_submitted = False
-        self.exit_filled = False
+        self.exit_filled_size = Decimal("0")
+        self.collateral_read_count = 0
 
     @property
     def is_connected(self) -> bool:
@@ -131,6 +173,7 @@ class FakeExecutionPort:
         token_id: str | None = None,
     ) -> dict[str, object]:
         if asset_type == "COLLATERAL":
+            self.collateral_read_count += 1
             return {"balance": 5_000_000, "allowances": {"exchange": 5_000_000}}
         balance = (
             int(self.position_size * Decimal("1000000"))
@@ -147,7 +190,11 @@ class FakeExecutionPort:
         market: str | None = None,
     ) -> list[Any]:
         del order_id, market
-        if self.exit_submitted and self.exit_mode == "open" and token_id == "token-up":
+        if (
+            self.exit_submitted
+            and self.exit_mode in {"open", "partial"}
+            and token_id == "token-up"
+        ):
             return [
                 {
                     "id": "exit-1",
@@ -165,12 +212,15 @@ class FakeExecutionPort:
         size_threshold: float | None = None,
     ) -> list[Any]:
         del market, size_threshold
-        if not self.entry_filled or self.exit_filled:
+        if not self.entry_filled:
+            return []
+        remaining = self.position_size - self.exit_filled_size
+        if remaining <= 0:
             return []
         return [
             {
                 "condition_id": "condition-1",
-                "size": str(self.position_size),
+                "size": str(remaining),
                 "token_id": "token-up",
             }
         ]
@@ -192,12 +242,12 @@ class FakeExecutionPort:
                     "taker_order_id": "entry-1",
                 }
             ]
-            if self.exit_filled:
+            if self.exit_filled_size > 0:
                 trades.append(
                     {
                         "maker_orders": [],
                         "price": "0.66",
-                        "size": "1.666666",
+                        "size": str(self.exit_filled_size),
                         "status": "CONFIRMED",
                         "taker_order_id": "exit-1",
                     }
@@ -223,16 +273,33 @@ class FakeExecutionPort:
         if self.exit_mode == "reject":
             return {"ok": False, "message": "exit rejected", "status": "REJECTED"}
         if self.exit_mode == "fill":
-            self.exit_filled = True
+            self.exit_filled_size = self.position_size
             return {"ok": True, "order_id": "exit-1", "status": "MATCHED"}
+        if self.exit_mode == "partial":
+            self.exit_filled_size = Decimal("0.5")
+            return {"ok": True, "order_id": "exit-1", "status": "LIVE"}
         return {"ok": True, "order_id": "exit-1", "status": "LIVE"}
+
+
+class CrashAfterConfirmedFillExecutionPort(FakeExecutionPort):
+    async def list_positions(
+        self,
+        *,
+        market: tuple[str, ...] | None = None,
+        size_threshold: float | None = None,
+    ) -> list[Any]:
+        if self.entry_filled:
+            raise RuntimeError("simulated process interruption after confirmed fill")
+        return await super().list_positions(market=market, size_threshold=size_threshold)
 
 
 class FakeGeoblock:
     def __init__(self, *, blocked: bool = False) -> None:
         self.blocked = blocked
+        self.check_count = 0
 
     async def check(self) -> GeoblockStatus:
+        self.check_count += 1
         return GeoblockStatus(
             status="blocked" if self.blocked else "allowed",
             checked_at=NOW,
@@ -348,18 +415,23 @@ async def test_dry_run_reads_preflight_and_never_submits(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_real_entry_fill_places_one_actual_position_sized_exit(tmp_path: Path) -> None:
     adapter = FakeExecutionPort()
+    geoblock = FakeGeoblock()
     report = await run_tiny_live_round_trip(
         config(tmp_path, dry_run=False, run_id="filled"),
         market_port=FakeMarketPort(),
         execution_port=adapter,
-        geoblock_port=FakeGeoblock(),
+        geoblock_port=geoblock,
         clock=lambda: NOW,
         git_reader=fake_git,
     )
 
     assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
     assert report.live_entry_attempt_count == 1
+    assert report.entry_order["client_order_id"] == "filled:entry"
+    assert report.exit_order["client_order_id"] == "filled:exit"
     assert len(adapter.entry_attempts) == 1
+    assert adapter.collateral_read_count == 2
+    assert geoblock.check_count == 2
     assert adapter.entry_attempts[0]["amount"] == Decimal("1.00")
     assert adapter.entry_attempts[0]["max_spend"] == Decimal("1.00")
     assert adapter.entry_attempts[0]["order_type"] == "FOK"
@@ -375,6 +447,15 @@ async def test_real_entry_fill_places_one_actual_position_sized_exit(tmp_path: P
         attempt = LiveEntryAttemptRepository(database.connection).get(AUTHORIZATION_ID)
         assert attempt is not None
         assert attempt["state"] == "ENTRY_FILLED_EXIT_OPEN"
+        checkpoints = LiveOrderCheckpointRepository(database.connection).list_for_run(
+            "filled"
+        )
+        assert {item["phase"] for item in checkpoints} >= {
+            "ENTRY_RESPONSE",
+            "ENTRY_FILL_CONFIRMED",
+            "ENTRY_POSITION_RECONCILED",
+            "EXIT_RESPONSE",
+        }
 
 
 @pytest.mark.asyncio
@@ -442,6 +523,42 @@ async def test_immediate_exit_fill_records_completed_round_trip(tmp_path: Path) 
 
     with SQLiteDatabase(tmp_path / "round-trip.sqlite3") as database:
         assert len(LedgerEventRepository(database.connection).list_for_run("completed")) == 4
+        performance = StrategyRegistryRepository(database.connection).get_performance(
+            "btc-15m-favorite-take-profit",
+            "0.1.0",
+        )
+        assert performance is not None
+        assert performance.trade_count == 2
+        assert performance.fees == Decimal("0.00000")
+
+
+@pytest.mark.asyncio
+async def test_partial_exit_fill_retains_remaining_position_and_open_order(
+    tmp_path: Path,
+) -> None:
+    adapter = FakeExecutionPort(exit_order="partial")
+    report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=False, run_id="partial-exit"),
+        market_port=FakeMarketPort(),
+        execution_port=adapter,
+        geoblock_port=FakeGeoblock(),
+        clock=lambda: NOW,
+        git_reader=fake_git,
+    )
+
+    assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
+    assert report.position_state["available_size"] == "1.166666"
+    assert report.position_state["exit_filled_size"] == "0.5"
+    assert report.exit_order["status"] == "PARTIALLY_FILLED_OPEN"
+    assert report.reconciliation["status"] == "ready"
+    assert len(report.ledger_entries) == 4
+
+    with SQLiteDatabase(tmp_path / "round-trip.sqlite3") as database:
+        position = PositionRepository(database.connection).get("token-up")
+        assert position is not None
+        assert position.size == Decimal("1.166666")
+        assert position.realized_pnl == Decimal("0.03")
+        assert len(LedgerEventRepository(database.connection).list_for_run("partial-exit")) == 4
 
 
 @pytest.mark.asyncio
@@ -571,6 +688,73 @@ async def test_refresh_rejects_books_that_became_stale_during_preflight(
 
 
 @pytest.mark.asyncio
+async def test_discovery_skips_invalid_candidate_before_selecting_one_market(
+    tmp_path: Path,
+) -> None:
+    adapter = FakeExecutionPort(entry="reject")
+    report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=False, run_id="candidate-fallback"),
+        market_port=CandidateFallbackMarketPort(),
+        execution_port=adapter,
+        geoblock_port=FakeGeoblock(),
+        clock=lambda: NOW,
+        git_reader=fake_git,
+    )
+
+    assert report.market_snapshot["market_id"] == "market-second"
+    assert len(adapter.entry_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmed_fill_is_durable_before_next_external_read(
+    tmp_path: Path,
+) -> None:
+    adapter = CrashAfterConfirmedFillExecutionPort()
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        await run_tiny_live_round_trip(
+            config(tmp_path, dry_run=False, run_id="crash-checkpoint"),
+            market_port=FakeMarketPort(),
+            execution_port=adapter,
+            geoblock_port=FakeGeoblock(),
+            clock=lambda: NOW,
+            git_reader=fake_git,
+        )
+
+    with SQLiteDatabase(tmp_path / "round-trip.sqlite3") as database:
+        assert OrderRepository(database.connection).get("entry-1") is not None
+        assert FillRepository(database.connection).get("crash-checkpoint:entry") is not None
+        assert (
+            len(
+                LedgerEventRepository(database.connection).list_for_run(
+                    "crash-checkpoint"
+                )
+            )
+            == 2
+        )
+        phases = {
+            item["phase"]
+            for item in LiveOrderCheckpointRepository(database.connection).list_for_run(
+                "crash-checkpoint"
+            )
+        }
+        assert {"ENTRY_RESPONSE", "ENTRY_FILL_CONFIRMED"} <= phases
+
+    restarted_adapter = FakeExecutionPort()
+    restarted_report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=False, run_id="crash-checkpoint"),
+        market_port=FakeMarketPort(),
+        execution_port=restarted_adapter,
+        geoblock_port=FakeGeoblock(),
+        clock=lambda: NOW,
+        git_reader=fake_git,
+    )
+
+    assert restarted_report.final_result == "NO_TRADE"
+    assert "one-entry-attempt limit reached" in str(restarted_report.stop_reason)
+    assert restarted_adapter.entry_attempts == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("entry_mode", "exit_mode"),
     [("error", "open"), ("fill", "error")],
@@ -648,6 +832,7 @@ async def test_order_manager_claim_is_written_before_adapter_submission(tmp_path
         manager = RoundTripOrderManager(
             adapter=adapter,
             attempts=attempts,
+            checkpoints=LiveOrderCheckpointRepository(database.connection),
             authorization_id="auth",
             run_id="run",
             strategy_id="strategy",

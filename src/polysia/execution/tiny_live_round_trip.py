@@ -51,6 +51,7 @@ from polysia.storage.repositories import (
     FillRepository,
     LedgerEventRepository,
     LiveEntryAttemptRepository,
+    LiveOrderCheckpointRepository,
     OrderRepository,
     PositionRepository,
     StrategyRegistryRepository,
@@ -209,12 +210,14 @@ class AccountPreflight:
     open_order_count: int
     position_count: int
     outcome_token_state: dict[str, dict[str, str]]
+    checked_at: datetime
 
     def to_dict(self) -> dict[str, object]:
         return {
             "allowance": str(self.allowance),
             "available_balance": str(self.available_balance),
             "balance": str(self.balance),
+            "checked_at": self.checked_at.isoformat(),
             "identity": self.identity,
             "maximum_expected_bounded_loss": str(MAXIMUM_ENTRY_NOTIONAL),
             "open_order_count": self.open_order_count,
@@ -330,6 +333,7 @@ class RoundTripOrderManager:
         *,
         adapter: RoundTripExecutionPort,
         attempts: LiveEntryAttemptRepository,
+        checkpoints: LiveOrderCheckpointRepository,
         authorization_id: str,
         run_id: str,
         strategy_id: str,
@@ -338,11 +342,14 @@ class RoundTripOrderManager:
     ) -> None:
         self._adapter = adapter
         self._attempts = attempts
+        self._checkpoints = checkpoints
         self._authorization_id = authorization_id
         self._run_id = run_id
         self._strategy_id = strategy_id
         self._market_id = market_id
         self._clock = clock
+        self.entry_client_order_id = f"{run_id}:entry"
+        self.exit_client_order_id = f"{run_id}:exit"
         self.entry_attempts = 0
         self.exit_attempts = 0
 
@@ -377,11 +384,25 @@ class RoundTripOrderManager:
             raise TinyLiveRoundTripError(
                 "entry submission failed after the persistent attempt claim"
             ) from error
-        self._attempts.update_state(
-            self._authorization_id,
-            "ENTRY_SUBMITTED",
-            updated_at=self._clock(),
-        )
+        persisted_at = self._clock()
+        try:
+            self._checkpoints.upsert(
+                run_id=self._run_id,
+                phase="ENTRY_RESPONSE",
+                client_order_id=self.entry_client_order_id,
+                venue_order_id=_safe(_read(response, "order_id")),
+                payload=_mapping(response),
+                persisted_at=persisted_at,
+            )
+            self._attempts.update_state(
+                self._authorization_id,
+                "ENTRY_SUBMITTED",
+                updated_at=persisted_at,
+            )
+        except Exception as error:
+            raise TinyLiveRoundTripError(
+                "entry response could not be checkpointed; no next external step is allowed"
+            ) from error
         return response
 
     async def submit_exit(self, *, token_id: str, price: Decimal, size: Decimal) -> Any:
@@ -409,11 +430,25 @@ class RoundTripOrderManager:
             raise TinyLiveRoundTripError(
                 "exit submission failed; no replacement exit is permitted"
             ) from error
-        self._attempts.update_state(
-            self._authorization_id,
-            "EXIT_SUBMITTED",
-            updated_at=self._clock(),
-        )
+        persisted_at = self._clock()
+        try:
+            self._checkpoints.upsert(
+                run_id=self._run_id,
+                phase="EXIT_RESPONSE",
+                client_order_id=self.exit_client_order_id,
+                venue_order_id=_safe(_read(response, "order_id")),
+                payload=_mapping(response),
+                persisted_at=persisted_at,
+            )
+            self._attempts.update_state(
+                self._authorization_id,
+                "EXIT_SUBMITTED",
+                updated_at=persisted_at,
+            )
+        except Exception as error:
+            raise TinyLiveRoundTripError(
+                "exit response could not be checkpointed; no replacement exit is allowed"
+            ) from error
         return response
 
 
@@ -479,6 +514,7 @@ async def run_tiny_live_round_trip(
             definition = registry.register(strategy.definition(created_at=started_at))
         performance = registry.performance(STRATEGY_ID, STRATEGY_VERSION)
         attempt_repository = LiveEntryAttemptRepository(database.connection)
+        checkpoint_repository = LiveOrderCheckpointRepository(database.connection)
 
         try:
             _assert_sdk_compatible()
@@ -496,6 +532,7 @@ async def run_tiny_live_round_trip(
             account, open_orders, positions = await _read_account_preflight(
                 active_execution_port,
                 token_ids=tuple(book.token_id for book in books),
+                checked_at=_aware_datetime(clock()),
             )
             geoblock_status = await active_geoblock.check()
             geoblock = geoblock_status.to_safe_dict()
@@ -520,6 +557,15 @@ async def run_tiny_live_round_trip(
             if decision.status != "TRADE":
                 stop_reason = decision.reason
                 raise TinyLiveRoundTripError(decision.reason)
+            account, open_orders, positions = await _read_account_preflight(
+                active_execution_port,
+                token_ids=tuple(book.token_id for book in books),
+                checked_at=_aware_datetime(clock()),
+            )
+            geoblock_status = await active_geoblock.check()
+            geoblock = geoblock_status.to_safe_dict()
+            _assert_identity(account.identity)
+            _assert_geoblock(geoblock_status)
             _assert_account_funded(
                 account,
                 selected_token_id=decision.selected_token_id,
@@ -582,6 +628,7 @@ async def run_tiny_live_round_trip(
                     max_stale_data_age_ms=config.maximum_book_age_ms,
                 ),
             )
+            risk_checked_at = _aware_datetime(clock())
             risk_decision = BoundedLiveRiskEngine(base_risk).evaluate_entry(
                 intent,
                 RiskContext(
@@ -592,7 +639,8 @@ async def run_tiny_live_round_trip(
                     daily_pnl=Decimal("0"),
                     open_orders_count=len(conflicting_orders),
                     market_data_age_ms=max(
-                        quote.freshness_ms for quote in decision.quotes
+                        _data_age_ms(quote.timestamp, risk_checked_at)
+                        for quote in decision.quotes
                     ),
                 ),
                 BoundedLiveRiskContext(
@@ -658,6 +706,7 @@ async def run_tiny_live_round_trip(
                 manager = RoundTripOrderManager(
                     adapter=active_execution_port,
                     attempts=attempt_repository,
+                    checkpoints=checkpoint_repository,
                     authorization_id=AUTHORIZATION_ID,
                     run_id=config.run_id,
                     strategy_id=STRATEGY_ID,
@@ -687,7 +736,8 @@ async def run_tiny_live_round_trip(
                 entry_order.update(
                     {
                         "client_correlation_id": config.run_id,
-                        "client_order_id": None,
+                        "client_order_id": manager.entry_client_order_id,
+                        "client_order_id_sent_to_venue": False,
                         "maximum_spend": str(MAXIMUM_ENTRY_NOTIONAL),
                         "order_type": "FOK",
                         "requested_notional": str(intent.price * intent.size),
@@ -695,6 +745,12 @@ async def run_tiny_live_round_trip(
                         "requested_size": str(intent.size),
                         "submitted_at": clock().isoformat(),
                     }
+                )
+                _persist_entry_order_state(
+                    database.connection,
+                    entry_order=entry_order,
+                    token_id=intent.token_id,
+                    timestamp=clock(),
                 )
                 if entry_order.get("accepted") is not True:
                     stop_reason = str(entry_order.get("rejection_reason") or "entry rejected")
@@ -753,17 +809,51 @@ async def run_tiny_live_round_trip(
                             else "ENTRY_NOT_FILLED"
                         )
                     else:
-                        attempt_repository.update_state(
-                            AUTHORIZATION_ID,
-                            "ENTRY_FILLED",
-                            updated_at=clock(),
-                        )
                         entry_order["actual_fill"] = fill.to_dict()
                         entry_order["status"] = "CONFIRMED_FILL"
                         fee_evidence["actual_entry_fee"] = str(fill.fee)
                         fee_evidence["actual_fee_source"] = (
                             "confirmed fill size/price and verified market fee schedule; "
                             "venue fee_rate_bps retained when supplied"
+                        )
+                        entry_ledger_entries = _entry_ledger_entries(
+                            run_id=config.run_id,
+                            token_id=intent.token_id,
+                            fill=fill,
+                        )
+                        ledger_entries.extend(entry_ledger_entries)
+                        checkpoint_repository.upsert(
+                            run_id=config.run_id,
+                            phase="ENTRY_FILL_CONFIRMED",
+                            client_order_id=manager.entry_client_order_id,
+                            venue_order_id=fill.order_id,
+                            payload=fill.to_dict(),
+                            persisted_at=fill.confirmed_at,
+                        )
+                        _persist_entry_order_state(
+                            database.connection,
+                            entry_order=entry_order,
+                            token_id=intent.token_id,
+                            timestamp=fill.confirmed_at,
+                        )
+                        _persist_fill_state(
+                            database.connection,
+                            run_id=config.run_id,
+                            side="BUY",
+                            token_id=intent.token_id,
+                            fill=fill.to_dict(),
+                            order_id=fill.order_id,
+                            timestamp=fill.confirmed_at,
+                        )
+                        _persist_ledger_entries(
+                            database.connection,
+                            run_id=config.run_id,
+                            entries=entry_ledger_entries,
+                        )
+                        attempt_repository.update_state(
+                            AUTHORIZATION_ID,
+                            "ENTRY_FILLED",
+                            updated_at=fill.confirmed_at,
                         )
                         try:
                             reconciled_size, _ = await _reconciled_position_size(
@@ -794,12 +884,21 @@ async def run_tiny_live_round_trip(
                             "entry_fill_size": str(fill.size),
                             "token_id": intent.token_id,
                         }
-                        ledger_entries.extend(
-                            _entry_ledger_entries(
-                                run_id=config.run_id,
-                                token_id=intent.token_id,
-                                fill=fill,
-                            )
+                        position_checked_at = clock()
+                        checkpoint_repository.upsert(
+                            run_id=config.run_id,
+                            phase="ENTRY_POSITION_RECONCILED",
+                            client_order_id=manager.entry_client_order_id,
+                            venue_order_id=fill.order_id,
+                            payload=position_state,
+                            persisted_at=position_checked_at,
+                        )
+                        _persist_position_state(
+                            database.connection,
+                            market_id=market.id,
+                            position_state=position_state,
+                            average_entry_price=fill.weighted_average_price,
+                            timestamp=position_checked_at,
                         )
                         actual_exit_target = normalize_exit_target(
                             fill.weighted_average_price,
@@ -848,6 +947,8 @@ async def run_tiny_live_round_trip(
                             exit_order = _safe_order_response(exit_response, attempted=True)
                             exit_order.update(
                                 {
+                                    "client_order_id": manager.exit_client_order_id,
+                                    "client_order_id_sent_to_venue": False,
                                     "normalized_target": str(actual_exit_target),
                                     "raw_target": str(
                                         fill.weighted_average_price * Decimal("1.10")
@@ -856,6 +957,12 @@ async def run_tiny_live_round_trip(
                                     "submitted_at": clock().isoformat(),
                                     "target_formula": "actual_weighted_average_fill_price * 1.10",
                                 }
+                            )
+                            _persist_exit_order_state(
+                                database.connection,
+                                exit_order=exit_order,
+                                token_id=intent.token_id,
+                                timestamp=clock(),
                             )
                             if exit_order.get("accepted") is not True:
                                 stop_reason = str(
@@ -889,6 +996,7 @@ async def run_tiny_live_round_trip(
                                     result,
                                     reconciliation_result,
                                     exit_fill,
+                                    remaining_position,
                                 ) = await _classify_and_reconcile_exit(
                                     active_execution_port,
                                     market=market,
@@ -903,24 +1011,81 @@ async def run_tiny_live_round_trip(
                                 )
                                 if exit_fill is not None:
                                     exit_order["actual_fill"] = exit_fill.to_dict()
-                                    exit_order["status"] = "CONFIRMED_FILL"
+                                    exit_order["status"] = (
+                                        "CONFIRMED_FILL"
+                                        if remaining_position == 0
+                                        else "PARTIALLY_FILLED_OPEN"
+                                        if result == "ENTRY_FILLED_EXIT_OPEN"
+                                        else "PARTIALLY_FILLED_UNKNOWN"
+                                    )
                                     fee_evidence["actual_exit_fee"] = str(exit_fill.fee)
                                     fee_evidence["actual_total_fees"] = str(
                                         fill.fee + exit_fill.fee
                                     )
-                                    position_state["available_size"] = "0"
+                                    position_state["available_size"] = str(
+                                        remaining_position
+                                    )
+                                    position_state["exit_filled_size"] = str(
+                                        exit_fill.size
+                                    )
+                                    allocated_entry_fee = (
+                                        fill.fee * exit_fill.size / fill.size
+                                    )
                                     position_state["realized_pnl"] = str(
                                         (exit_fill.weighted_average_price * exit_fill.size)
                                         - exit_fill.fee
-                                        - (fill.weighted_average_price * fill.size)
-                                        - fill.fee
+                                        - (fill.weighted_average_price * exit_fill.size)
+                                        - allocated_entry_fee
                                     )
-                                    ledger_entries.extend(
-                                        _exit_ledger_entries(
-                                            run_id=config.run_id,
-                                            token_id=intent.token_id,
-                                            fill=exit_fill,
-                                        )
+                                    exit_ledger_entries = _exit_ledger_entries(
+                                        run_id=config.run_id,
+                                        token_id=intent.token_id,
+                                        fill=exit_fill,
+                                    )
+                                    ledger_entries.extend(exit_ledger_entries)
+                                    checkpoint_repository.upsert(
+                                        run_id=config.run_id,
+                                        phase="EXIT_FILL_CONFIRMED",
+                                        client_order_id=manager.exit_client_order_id,
+                                        venue_order_id=exit_fill.order_id,
+                                        payload=exit_fill.to_dict(),
+                                        persisted_at=exit_fill.confirmed_at,
+                                    )
+                                    _persist_exit_order_state(
+                                        database.connection,
+                                        exit_order=exit_order,
+                                        token_id=intent.token_id,
+                                        timestamp=exit_fill.confirmed_at,
+                                    )
+                                    _persist_fill_state(
+                                        database.connection,
+                                        run_id=config.run_id,
+                                        side="SELL",
+                                        token_id=intent.token_id,
+                                        fill=exit_fill.to_dict(),
+                                        order_id=exit_fill.order_id,
+                                        timestamp=exit_fill.confirmed_at,
+                                    )
+                                    _persist_ledger_entries(
+                                        database.connection,
+                                        run_id=config.run_id,
+                                        entries=exit_ledger_entries,
+                                    )
+                                    position_checked_at = clock()
+                                    checkpoint_repository.upsert(
+                                        run_id=config.run_id,
+                                        phase="EXIT_POSITION_RECONCILED",
+                                        client_order_id=manager.exit_client_order_id,
+                                        venue_order_id=exit_fill.order_id,
+                                        payload=position_state,
+                                        persisted_at=position_checked_at,
+                                    )
+                                    _persist_position_state(
+                                        database.connection,
+                                        market_id=market.id,
+                                        position_state=position_state,
+                                        average_entry_price=fill.weighted_average_price,
+                                        timestamp=position_checked_at,
                                     )
                                 if reconciliation_result.trading_should_pause:
                                     result = "SAFETY_STOP"
@@ -1044,12 +1209,18 @@ async def run_tiny_live_round_trip(
                 orders=tuple(
                     item for item in (report.entry_order, report.exit_order) if item
                 ),
-                fills=(
-                    (cast(dict[str, Any], report.entry_order["actual_fill"]),)
-                    if isinstance(report.entry_order.get("actual_fill"), dict)
-                    else ()
+                fills=tuple(
+                    cast(dict[str, Any], fill_payload)
+                    for fill_payload in (
+                        report.entry_order.get("actual_fill"),
+                        report.exit_order.get("actual_fill"),
+                    )
+                    if isinstance(fill_payload, dict)
                 ),
-                fees=_decimal_or_zero(report.fees.get("actual_entry_fee")),
+                fees=(
+                    _decimal_or_zero(report.fees.get("actual_entry_fee"))
+                    + _decimal_or_zero(report.fees.get("actual_exit_fee"))
+                ),
                 position_outcome=report.position_state,
                 reconciliation_result=report.reconciliation,
                 errors=report.errors,
@@ -1073,33 +1244,51 @@ async def _select_market_and_decide(
     candidates.sort(key=lambda market: market.end_date or datetime.max.replace(tzinfo=UTC))
     if not candidates:
         raise TinyLiveRoundTripError("no active BTC Up/Down 15m market")
-    summary = candidates[0]
-    if summary.slug is None:
-        raise TinyLiveRoundTripError("selected BTC Up/Down 15m market has no slug")
-    market = await market_port.get_market_by_slug(summary.slug)
-    try:
-        _assert_market_ready(market, config=config, now=now)
-    except TinyLiveRoundTripError as error:
-        return (
-            market,
-            (),
-            strategy.no_trade_decision(market, now=now, reason=str(error)),
-        )
-    token_ids = tuple(
-        outcome.token_id for outcome in market.outcomes if outcome.token_id is not None
-    )
-    if len(token_ids) != 2 or len(set(token_ids)) != 2:
-        return (
-            market,
-            (),
-            strategy.no_trade_decision(
+    first_rejection: (
+        tuple[MarketDetails, tuple[MarketOrderBookSnapshot, ...], FavoriteDecision]
+        | None
+    ) = None
+    for summary in candidates:
+        if summary.slug is None:
+            continue
+        market = await market_port.get_market_by_slug(summary.slug)
+        try:
+            _assert_market_ready(market, config=config, now=now)
+        except TinyLiveRoundTripError as error:
+            candidate = (
                 market,
-                now=now,
-                reason="two distinct token ids are required",
-            ),
+                (),
+                strategy.no_trade_decision(market, now=now, reason=str(error)),
+            )
+            first_rejection = first_rejection or candidate
+            continue
+        token_ids = tuple(
+            outcome.token_id
+            for outcome in market.outcomes
+            if outcome.token_id is not None
         )
-    books = tuple([await market_port.get_order_book(token_id) for token_id in token_ids])
-    return market, books, strategy.decide(market, books, now=now)
+        if len(token_ids) != 2 or len(set(token_ids)) != 2:
+            candidate = (
+                market,
+                (),
+                strategy.no_trade_decision(
+                    market,
+                    now=now,
+                    reason="two distinct token ids are required",
+                ),
+            )
+            first_rejection = first_rejection or candidate
+            continue
+        books = tuple(
+            [await market_port.get_order_book(token_id) for token_id in token_ids]
+        )
+        decision = strategy.decide(market, books, now=now)
+        if decision.status == "TRADE":
+            return market, books, decision
+        first_rejection = first_rejection or (market, books, decision)
+    if first_rejection is not None:
+        return first_rejection
+    raise TinyLiveRoundTripError("no readable BTC Up/Down 15m market candidate")
 
 
 async def _refresh_selected_market_and_decide(
@@ -1180,6 +1369,7 @@ async def _read_account_preflight(
     adapter: RoundTripExecutionPort,
     *,
     token_ids: tuple[str, ...],
+    checked_at: datetime,
 ) -> tuple[AccountPreflight, list[Any], list[Any]]:
     identity = _safe_identity(adapter.identity())
     collateral = _mapping(await adapter.get_balance_allowance(asset_type="COLLATERAL"))
@@ -1223,6 +1413,7 @@ async def _read_account_preflight(
                 [position for position in positions if _position_size(position) > 0]
             ),
             outcome_token_state=outcome_token_state,
+            checked_at=checked_at,
         ),
         open_orders,
         positions,
@@ -1440,7 +1631,7 @@ async def _classify_and_reconcile_exit(
     expected_position: Decimal,
     clock: Clock,
     kill_switch: KillSwitch,
-) -> tuple[RoundTripResult, ReconciliationResult, FilledExit | None]:
+) -> tuple[RoundTripResult, ReconciliationResult, FilledExit | None, Decimal]:
     open_orders = await adapter.get_open_orders(token_id=token_id)
     positions = await adapter.list_positions(
         market=(market.condition_id,) if market.condition_id else None,
@@ -1453,17 +1644,34 @@ async def _classify_and_reconcile_exit(
         if _trade_matches_order(trade, exit_order_id)
         and str(_read(trade, "status") or "").upper() == "CONFIRMED"
     ]
-    exit_confirmed = bool(confirmed_exit_trades)
+    checked_at = clock()
+    exit_fill = _summarize_exit_fill(
+        confirmed_exit_trades,
+        order_id=exit_order_id,
+        market=market,
+        confirmed_at=checked_at,
+    )
     exit_open = any(str(_read(order, "id")) == exit_order_id for order in open_orders)
     actual_position = _position_for_token(positions, token_id)
-    checked_at = clock()
-    if exit_confirmed and actual_position == 0:
+    confirmed_size = exit_fill.size if exit_fill is not None else Decimal("0")
+    expected_remaining = expected_position - confirmed_size
+    tolerance = Decimal("0.000001")
+    overfilled = expected_remaining < -tolerance
+    normalized_remaining = max(Decimal("0"), expected_remaining)
+    position_matches = abs(actual_position - normalized_remaining) <= tolerance
+    fully_closed = (
+        exit_fill is not None
+        and not overfilled
+        and normalized_remaining == 0
+        and abs(actual_position) <= tolerance
+    )
+    if fully_closed:
         internal = InternalExpectedState(
             last_successful_account_read_at=checked_at,
             updated_at=checked_at,
         )
         result: RoundTripResult = "COMPLETED_ROUND_TRIP"
-    elif exit_open and actual_position == expected_position:
+    elif exit_open and not overfilled and position_matches:
         internal = InternalExpectedState(
             last_successful_account_read_at=checked_at,
             open_orders=(
@@ -1475,17 +1683,42 @@ async def _classify_and_reconcile_exit(
                 ),
             ),
             positions=(
-                PositionSnapshot(token_id=token_id, size=expected_position, updated_at=checked_at),
-            ),
+                PositionSnapshot(
+                    token_id=token_id,
+                    size=normalized_remaining,
+                    updated_at=checked_at,
+                ),
+            )
+            if normalized_remaining > 0
+            else (),
             updated_at=checked_at,
         )
         result = "ENTRY_FILLED_EXIT_OPEN"
     else:
+        expected_internal_size = (
+            expected_position if overfilled else normalized_remaining
+        )
         internal = InternalExpectedState(
             last_successful_account_read_at=checked_at,
+            open_orders=(
+                OrderSnapshot(
+                    order_id=exit_order_id,
+                    status="OPEN",
+                    token_id=token_id,
+                    updated_at=checked_at,
+                ),
+            )
+            if expected_internal_size > 0
+            else (),
             positions=(
-                PositionSnapshot(token_id=token_id, size=expected_position, updated_at=checked_at),
-            ),
+                PositionSnapshot(
+                    token_id=token_id,
+                    size=expected_internal_size,
+                    updated_at=checked_at,
+                ),
+            )
+            if expected_internal_size > 0
+            else (),
             updated_at=checked_at,
         )
         result = "SAFETY_STOP"
@@ -1507,13 +1740,7 @@ async def _classify_and_reconcile_exit(
             live_mode=True,
         )
     )
-    exit_fill = _summarize_exit_fill(
-        confirmed_exit_trades,
-        order_id=exit_order_id,
-        market=market,
-        confirmed_at=checked_at,
-    )
-    return result, reconciliation, exit_fill
+    return result, reconciliation, exit_fill, actual_position
 
 
 async def _reconcile_without_entry(
@@ -1623,84 +1850,172 @@ def _reconcile_snapshots(
 
 
 def _persist_execution_evidence(connection: Any, report: TinyLiveRoundTripReport) -> None:
-    entry = report.entry_order
-    if entry.get("attempted") is True and entry.get("order_id"):
-        token_id = str(report.strategy_decision.get("selected_token_id") or "unknown")
-        OrderRepository(connection).upsert(
-            order_id=str(entry["order_id"]),
-            broker="polymarket-live",
-            strategy_id=STRATEGY_ID,
-            token_id=token_id,
-            side="BUY",
-            price=_decimal_or_zero(entry.get("requested_price")),
-            size=_decimal_or_zero(entry.get("requested_size")),
-            status=str(entry.get("status") or "UNKNOWN"),
-            payload=entry,
-            timestamp=report.generated_at,
-        )
-        fill = entry.get("actual_fill")
-        if isinstance(fill, dict):
-            FillRepository(connection).add(
-                fill_id=f"{report.run_id}:entry",
-                order_id=str(entry["order_id"]),
-                token_id=token_id,
-                side="BUY",
-                price=_decimal_or_zero(fill.get("weighted_average_price")),
-                size=_decimal_or_zero(fill.get("size")),
-                fee=_decimal_or_zero(fill.get("fee")),
-                liquidity_role="TAKER",
-                payload=fill,
-                created_at=report.generated_at,
-            )
-    exit_order = report.exit_order
-    if exit_order.get("attempted") is True and exit_order.get("order_id"):
-        token_id = str(report.strategy_decision.get("selected_token_id") or "unknown")
-        OrderRepository(connection).upsert(
-            order_id=str(exit_order["order_id"]),
-            broker="polymarket-live",
-            strategy_id=STRATEGY_ID,
-            token_id=token_id,
-            side="SELL",
-            price=_decimal_or_zero(exit_order.get("normalized_target")),
-            size=_decimal_or_zero(exit_order.get("sell_quantity")),
-            status=str(exit_order.get("status") or "UNKNOWN"),
-            payload=exit_order,
-            timestamp=report.generated_at,
-        )
-        exit_fill = exit_order.get("actual_fill")
-        if isinstance(exit_fill, dict):
-            FillRepository(connection).add(
-                fill_id=f"{report.run_id}:exit",
-                order_id=str(exit_order["order_id"]),
-                token_id=token_id,
-                side="SELL",
-                price=_decimal_or_zero(exit_fill.get("weighted_average_price")),
-                size=_decimal_or_zero(exit_fill.get("size")),
-                fee=_decimal_or_zero(exit_fill.get("fee")),
-                liquidity_role="MAKER",
-                payload=exit_fill,
-                created_at=report.generated_at,
-            )
-    if report.position_state.get("token_id"):
-        PositionRepository(connection).upsert(
-            token_id=str(report.position_state["token_id"]),
-            market_id=str(report.market_snapshot.get("market_id") or "") or None,
-            size=_decimal_or_zero(report.position_state.get("available_size")),
-            avg_price=_decimal_or_zero(
-                cast(dict[str, object], report.entry_order.get("actual_fill") or {}).get(
-                    "weighted_average_price"
-                )
-            ),
-            realized_pnl=_decimal_or_zero(report.position_state.get("realized_pnl")),
-            payload=report.position_state,
-            updated_at=report.generated_at,
-        )
-    ledger_repository = LedgerEventRepository(connection)
-    for item in report.ledger_entries:
-        ledger_repository.add(
+    token_id = str(report.strategy_decision.get("selected_token_id") or "unknown")
+    _persist_entry_order_state(
+        connection,
+        entry_order=report.entry_order,
+        token_id=token_id,
+        timestamp=report.generated_at,
+    )
+    entry_fill = report.entry_order.get("actual_fill")
+    if isinstance(entry_fill, dict) and report.entry_order.get("order_id"):
+        _persist_fill_state(
+            connection,
             run_id=report.run_id,
+            side="BUY",
+            token_id=token_id,
+            fill=entry_fill,
+            order_id=str(report.entry_order["order_id"]),
+            timestamp=report.generated_at,
+        )
+    _persist_exit_order_state(
+        connection,
+        exit_order=report.exit_order,
+        token_id=token_id,
+        timestamp=report.generated_at,
+    )
+    exit_fill = report.exit_order.get("actual_fill")
+    if isinstance(exit_fill, dict) and report.exit_order.get("order_id"):
+        _persist_fill_state(
+            connection,
+            run_id=report.run_id,
+            side="SELL",
+            token_id=token_id,
+            fill=exit_fill,
+            order_id=str(report.exit_order["order_id"]),
+            timestamp=report.generated_at,
+        )
+    average_entry_price = _decimal_or_zero(
+        cast(dict[str, object], report.entry_order.get("actual_fill") or {}).get(
+            "weighted_average_price"
+        )
+    )
+    _persist_position_state(
+        connection,
+        market_id=str(report.market_snapshot.get("market_id") or "") or None,
+        position_state=report.position_state,
+        average_entry_price=average_entry_price,
+        timestamp=report.generated_at,
+    )
+    _persist_ledger_entries(
+        connection,
+        run_id=report.run_id,
+        entries=report.ledger_entries,
+    )
+
+
+def _persist_entry_order_state(
+    connection: Any,
+    *,
+    entry_order: dict[str, object],
+    token_id: str,
+    timestamp: datetime,
+) -> None:
+    if entry_order.get("attempted") is not True or not entry_order.get("order_id"):
+        return
+    OrderRepository(connection).upsert(
+        order_id=str(entry_order["order_id"]),
+        broker="polymarket-live",
+        strategy_id=STRATEGY_ID,
+        token_id=token_id,
+        side="BUY",
+        price=_decimal_or_zero(entry_order.get("requested_price")),
+        size=_decimal_or_zero(entry_order.get("requested_size")),
+        status=str(entry_order.get("status") or "UNKNOWN"),
+        payload=entry_order,
+        timestamp=timestamp,
+    )
+
+
+def _persist_exit_order_state(
+    connection: Any,
+    *,
+    exit_order: dict[str, object],
+    token_id: str,
+    timestamp: datetime,
+) -> None:
+    if exit_order.get("attempted") is not True or not exit_order.get("order_id"):
+        return
+    OrderRepository(connection).upsert(
+        order_id=str(exit_order["order_id"]),
+        broker="polymarket-live",
+        strategy_id=STRATEGY_ID,
+        token_id=token_id,
+        side="SELL",
+        price=_decimal_or_zero(exit_order.get("normalized_target")),
+        size=_decimal_or_zero(exit_order.get("sell_quantity")),
+        status=str(exit_order.get("status") or "UNKNOWN"),
+        payload=exit_order,
+        timestamp=timestamp,
+    )
+
+
+def _persist_fill_state(
+    connection: Any,
+    *,
+    run_id: str,
+    side: OrderSide,
+    token_id: str,
+    fill: dict[str, object],
+    order_id: str,
+    timestamp: datetime,
+) -> None:
+    phase = "entry" if side == "BUY" else "exit"
+    fill_id = f"{run_id}:{phase}"
+    repository = FillRepository(connection)
+    if repository.get(fill_id) is not None:
+        return
+    repository.add(
+        fill_id=fill_id,
+        order_id=order_id,
+        token_id=token_id,
+        side=side,
+        price=_decimal_or_zero(fill.get("weighted_average_price")),
+        size=_decimal_or_zero(fill.get("size")),
+        fee=_decimal_or_zero(fill.get("fee")),
+        liquidity_role="TAKER" if side == "BUY" else None,
+        payload=fill,
+        created_at=timestamp,
+    )
+
+
+def _persist_position_state(
+    connection: Any,
+    *,
+    market_id: str | None,
+    position_state: dict[str, object],
+    average_entry_price: Decimal,
+    timestamp: datetime,
+) -> None:
+    if not position_state.get("token_id"):
+        return
+    PositionRepository(connection).upsert(
+        token_id=str(position_state["token_id"]),
+        market_id=market_id,
+        size=_decimal_or_zero(position_state.get("available_size")),
+        avg_price=average_entry_price,
+        realized_pnl=_decimal_or_zero(position_state.get("realized_pnl")),
+        payload=position_state,
+        updated_at=timestamp,
+    )
+
+
+def _persist_ledger_entries(
+    connection: Any,
+    *,
+    run_id: str,
+    entries: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> None:
+    repository = LedgerEventRepository(connection)
+    existing = {event.event_id for event in repository.list_for_run(run_id)}
+    for item in entries:
+        event_id = str(item["event_id"])
+        if event_id in existing:
+            continue
+        repository.add(
+            run_id=run_id,
             event=LedgerEvent(
-                event_id=str(item["event_id"]),
+                event_id=event_id,
                 event_type=str(item["event_type"]),
                 instrument_id=_safe(item.get("instrument_id")),
                 amount=_decimal(item["amount"]),
@@ -1711,6 +2026,7 @@ def _persist_execution_evidence(connection: Any, report: TinyLiveRoundTripReport
             ),
             payload=item,
         )
+        existing.add(event_id)
 
 
 def _entry_ledger_entries(
@@ -1881,6 +2197,11 @@ def _remaining_seconds(end_date: datetime | None, as_of: datetime) -> int | None
 
 def _aware_datetime(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _data_age_ms(timestamp: datetime, now: datetime) -> int:
+    normalized_timestamp = _aware_datetime(timestamp)
+    return max(0, int((now - normalized_timestamp).total_seconds() * 1000))
 
 
 def _safe_order_response(response: Any, *, attempted: bool) -> dict[str, object]:

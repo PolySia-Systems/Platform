@@ -55,6 +55,11 @@ class BoundedLiveRiskEngine:
                 notional <= MAXIMUM_AUTHORIZED_ENTRY_NOTIONAL,
                 "entry notional exceeds owner-authorized 1.00 cap",
             ),
+            (
+                notional + bounded.expected_fee
+                <= MAXIMUM_AUTHORIZED_ENTRY_NOTIONAL,
+                "entry notional plus expected fee exceeds owner-authorized 1.00 cap",
+            ),
             (bounded.entry_attempt_count == 0, "one-entry-attempt limit reached"),
             (bounded.selected_market_count == 1, "exactly one selected market is required"),
             (bounded.existing_position_count == 0, "one-position limit reached"),
