@@ -47,8 +47,8 @@ NOW = datetime(2026, 7, 11, 12, tzinfo=UTC)
 COMMIT = "a" * 40
 
 
-def test_uses_distinct_live_003_authorization() -> None:
-    assert AUTHORIZATION_ID == "POLYSIA-LIVE-003"
+def test_uses_distinct_live_004_authorization() -> None:
+    assert AUTHORIZATION_ID == "POLYSIA-LIVE-004"
 
 
 class FakeMarketPort:
@@ -146,15 +146,18 @@ class FakeExecutionPort:
     def __init__(
         self,
         *,
-        entry: Literal["reject", "no_fill", "fill", "error"] = "fill",
+        entry: Literal["reject", "no_fill", "partial", "fill", "error"] = "fill",
         exit_order: Literal["open", "reject", "fill", "partial", "error"] = "open",
-        position_size: str = "16.666666",
+        position_size: str | None = None,
     ) -> None:
         self.connected = False
         self.closed = False
         self.entry_mode = entry
         self.exit_mode = exit_order
-        self.position_size = Decimal(position_size)
+        self.entry_fill_size = Decimal("0.4") if entry == "partial" else Decimal("1")
+        self.position_size = (
+            Decimal(position_size) if position_size is not None else self.entry_fill_size
+        )
         self.entry_attempts: list[dict[str, Any]] = []
         self.exit_attempts: list[dict[str, Any]] = []
         self.entry_filled = False
@@ -256,7 +259,7 @@ class FakeExecutionPort:
                 {
                     "maker_orders": [],
                     "price": "0.60",
-                    "size": "16.666666",
+                    "size": str(self.entry_fill_size),
                     "status": "CONFIRMED",
                     "taker_order_id": "entry-1",
                 }
@@ -280,7 +283,7 @@ class FakeExecutionPort:
             raise RuntimeError("unknown submit state")
         if self.entry_mode == "reject":
             return {"ok": False, "message": "venue rejected", "status": "REJECTED"}
-        if self.entry_mode == "fill":
+        if self.entry_mode in {"partial", "fill"}:
             self.entry_filled = True
         return {"ok": True, "order_id": "entry-1", "status": "MATCHED"}
 
@@ -451,11 +454,11 @@ async def test_real_entry_fill_places_one_actual_position_sized_exit(tmp_path: P
     assert len(adapter.entry_attempts) == 1
     assert adapter.collateral_read_count == 2
     assert geoblock.check_count == 2
-    assert adapter.entry_attempts[0]["amount"] == Decimal("10.00")
-    assert adapter.entry_attempts[0]["max_spend"] == Decimal("10.00")
-    assert adapter.entry_attempts[0]["order_type"] == "FOK"
+    assert adapter.entry_attempts[0]["amount"] == Decimal("0.60")
+    assert adapter.entry_attempts[0]["max_spend"] == Decimal("0.60000")
+    assert adapter.entry_attempts[0]["order_type"] == "FAK"
     assert len(adapter.exit_attempts) == 1
-    assert adapter.exit_attempts[0]["size"] == Decimal("16.666666")
+    assert adapter.exit_attempts[0]["size"] == Decimal("1")
     assert adapter.exit_attempts[0]["price"] == Decimal("0.66")
     assert report.reconciliation["status"] == "ready"
     assert len(report.ledger_entries) == 2
@@ -482,7 +485,7 @@ async def test_real_entry_fill_places_one_actual_position_sized_exit(tmp_path: P
     ("entry_mode", "expected"),
     [("reject", "ENTRY_NOT_FILLED"), ("no_fill", "ENTRY_NOT_FILLED")],
 )
-async def test_entry_rejection_or_no_fill_never_retries_or_exits(
+async def test_fak_zero_fill_never_retries_or_exits(
     tmp_path: Path,
     entry_mode: Literal["reject", "no_fill"],
     expected: str,
@@ -500,8 +503,28 @@ async def test_entry_rejection_or_no_fill_never_retries_or_exits(
     assert report.final_result == expected
     assert report.live_entry_attempt_count == 1
     assert len(adapter.entry_attempts) == 1
+    assert adapter.entry_attempts[0]["order_type"] == "FAK"
     assert adapter.exit_attempts == []
     assert report.reconciliation["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_fak_partial_fill_exits_only_actual_confirmed_quantity(tmp_path: Path) -> None:
+    adapter = FakeExecutionPort(entry="partial")
+    report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=False, run_id="partial-entry"),
+        market_port=FakeMarketPort(),
+        execution_port=adapter,
+        geoblock_port=FakeGeoblock(),
+        clock=lambda: NOW,
+        git_reader=fake_git,
+    )
+
+    assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
+    assert adapter.entry_attempts[0]["order_type"] == "FAK"
+    assert report.entry_order["actual_fill"]["size"] == "0.4"
+    assert adapter.exit_attempts[0]["size"] == Decimal("0.4")
+    assert report.position_state["available_size"] == "0.4"
 
 
 @pytest.mark.asyncio
@@ -517,7 +540,7 @@ async def test_exit_rejection_preserves_and_reconciles_position(tmp_path: Path) 
     )
 
     assert report.final_result == "ENTRY_FILLED_EXIT_REJECTED"
-    assert report.position_state["available_size"] == "16.666666"
+    assert report.position_state["available_size"] == "1"
     assert report.reconciliation["status"] == "ready"
     assert len(adapter.exit_attempts) == 1
 
@@ -544,7 +567,7 @@ async def test_immediate_exit_fill_records_completed_round_trip(tmp_path: Path) 
         assert len(LedgerEventRepository(database.connection).list_for_run("completed")) == 4
         performance = StrategyRegistryRepository(database.connection).get_performance(
             "btc-15m-favorite-take-profit",
-            "0.4.0",
+            "0.5.0",
         )
         assert performance is not None
         assert performance.trade_count == 2
@@ -566,7 +589,7 @@ async def test_partial_exit_fill_retains_remaining_position_and_open_order(
     )
 
     assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
-    assert report.position_state["available_size"] == "16.166666"
+    assert report.position_state["available_size"] == "0.5"
     assert report.position_state["exit_filled_size"] == "0.5"
     assert report.exit_order["status"] == "PARTIALLY_FILLED_OPEN"
     assert report.reconciliation["status"] == "ready"
@@ -575,7 +598,7 @@ async def test_partial_exit_fill_retains_remaining_position_and_open_order(
     with SQLiteDatabase(tmp_path / "round-trip.sqlite3") as database:
         position = PositionRepository(database.connection).get("token-up")
         assert position is not None
-        assert position.size == Decimal("16.166666")
+        assert position.size == Decimal("0.5")
         assert position.realized_pnl == Decimal("0.03")
         assert len(LedgerEventRepository(database.connection).list_for_run("partial-exit")) == 4
 
@@ -888,7 +911,8 @@ async def test_order_manager_claim_is_written_before_adapter_submission(tmp_path
                 size=Decimal("1"),
                 reason="test",
                 confidence=Decimal("1"),
-            )
+            ),
+            all_in_cost=Decimal("0.60"),
         )
         assert attempts.get("auth") is not None
         with pytest.raises(TinyLiveRoundTripError, match="one-entry-attempt"):
@@ -901,5 +925,6 @@ async def test_order_manager_claim_is_written_before_adapter_submission(tmp_path
                     size=Decimal("1"),
                     reason="test",
                     confidence=Decimal("1"),
-                )
+                ),
+                all_in_cost=Decimal("0.60"),
             )

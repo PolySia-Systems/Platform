@@ -115,7 +115,7 @@ class ExecutionPort:
     async def get_balance_allowance(self, **kwargs: Any) -> dict[str, object]:
         if kwargs["asset_type"] == "COLLATERAL":
             return {"balance": 20_000_000, "allowances": {"exchange": 20_000_000}}
-        balance = 16_666_666 if self.filled and kwargs.get("token_id") == "up" else 0
+        balance = 1_000_000 if self.filled and kwargs.get("token_id") == "up" else 0
         return {"balance": balance, "allowances": {"exchange": 20_000_000}}
 
     async def get_open_orders(self, **kwargs: Any) -> list[Any]:
@@ -126,7 +126,7 @@ class ExecutionPort:
     async def list_positions(self, **kwargs: Any) -> list[Any]:
         if not self.filled:
             return []
-        return [{"condition_id": "condition", "size": "16.666666", "token_id": "up"}]
+        return [{"condition_id": "condition", "size": "1", "token_id": "up"}]
 
     async def list_account_trades(self, **kwargs: Any) -> list[Any]:
         if not self.filled:
@@ -135,21 +135,23 @@ class ExecutionPort:
             {
                 "maker_orders": [],
                 "price": "0.60",
-                "size": "16.666666",
+                "size": "1",
                 "status": "CONFIRMED",
                 "taker_order_id": "entry",
             }
         ]
 
     async def place_market_order(self, **kwargs: Any) -> dict[str, object]:
-        assert kwargs["max_spend"] == Decimal("10.00")
+        assert kwargs["amount"] == Decimal("0.60")
+        assert kwargs["max_spend"] == Decimal("0.60000")
+        assert kwargs["order_type"] == "FAK"
         self.entry_calls += 1
         self.filled = True
         return {"ok": True, "order_id": "entry", "status": "MATCHED"}
 
     async def place_limit_order(self, **kwargs: Any) -> dict[str, object]:
         assert kwargs["price"] == Decimal("0.66")
-        assert kwargs["size"] == Decimal("16.666666")
+        assert kwargs["size"] == Decimal("1")
         self.exit_calls += 1
         self.exit_open = True
         return {"ok": True, "order_id": "exit", "status": "LIVE"}

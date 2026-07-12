@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import ROUND_FLOOR, Decimal
+from decimal import Decimal
 from typing import Literal
 
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
@@ -10,7 +10,7 @@ from polysia.domain.strategy import StrategyDefinition, StrategyLifecycleStatus
 from polysia.execution.intents import OrderIntent
 
 STRATEGY_ID = "btc-15m-favorite-take-profit"
-STRATEGY_VERSION = "0.4.0"
+STRATEGY_VERSION = "0.5.0"
 DecisionStatus = Literal["TRADE", "NO_TRADE"]
 
 
@@ -253,42 +253,27 @@ class Btc15mFavoriteTakeProfitStrategy:
                 now,
                 "market fee schedule is missing or invalid",
             )
-        entry_size = (
-            self.config.maximum_entry_notional / (selected.best_ask + fee_per_share)
-        ).quantize(
-            Decimal("0.000001"),
-            rounding=ROUND_FLOOR,
-        )
+        entry_size = selected.minimum_order_size
         entry_notional = entry_size * selected.best_ask
         expected_fee = self.expected_fee(
             market,
             price=selected.best_ask,
             size=entry_size,
         )
-        while entry_size > 0 and entry_notional + expected_fee > self.config.maximum_entry_notional:
-            entry_size -= Decimal("0.000001")
-            entry_notional = entry_size * selected.best_ask
-            expected_fee = self.expected_fee(
-                market,
-                price=selected.best_ask,
-                size=entry_size,
-            )
-        if entry_size < selected.minimum_order_size:
+        if entry_notional + expected_fee > self.config.maximum_entry_notional:
             return self._no_trade(
                 market,
                 tuple(quotes),
                 now,
                 "venue minimum order size cannot be satisfied within the 10.00 cap",
             )
-        if selected.ask_size < entry_size:
+        if selected.ask_size <= 0:
             return self._no_trade(
                 market,
                 tuple(quotes),
                 now,
-                "favorite ask liquidity is insufficient for a full bounded fill",
+                "favorite ask has no executable liquidity",
             )
-        if entry_notional + expected_fee > self.config.maximum_entry_notional:
-            return self._no_trade(market, tuple(quotes), now, "entry notional exceeds cap")
 
         confidence = min(Decimal("1"), selected.midpoint - other.midpoint)
         return FavoriteDecision(
