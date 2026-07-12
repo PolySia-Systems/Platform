@@ -540,7 +540,7 @@ async def test_immediate_exit_fill_records_completed_round_trip(tmp_path: Path) 
         assert len(LedgerEventRepository(database.connection).list_for_run("completed")) == 4
         performance = StrategyRegistryRepository(database.connection).get_performance(
             "btc-15m-favorite-take-profit",
-            "0.2.0",
+            "0.3.0",
         )
         assert performance is not None
         assert performance.trade_count == 2

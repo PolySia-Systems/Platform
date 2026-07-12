@@ -7,7 +7,7 @@
 | Task ID | `POLYSIA-LIVE-002` |
 | Status | IMPLEMENTATION AND PREFLIGHT |
 | Baseline | `main` at `4a8632bf268e664f8191dfacfeeedcfe8a13dbe1` |
-| Strategy | `btc-15m-favorite-take-profit` version `0.2.0` |
+| Strategy | `btc-15m-favorite-take-profit` version `0.3.0` |
 | Owner authorization | One real BTC 15-minute entry attempt, all-in cap `10.00`, then one GTC exit at actual fill price times `1.10` |
 
 ## Scope and safety
@@ -17,6 +17,11 @@ venue minimum can be satisfied. Preserve the one-market, one-position,
 one-entry-attempt, FOK entry, actual-fill reconciliation, one GTC exit, dynamic
 allowlist, geoblock, account, kill-switch, synchronized-main, green-CI, and
 durable checkpoint gates.
+
+Authenticated preflight evidence found the venue order-book clock about two
+seconds ahead while Windows NTP offset remained below 0.14 seconds. Version
+`0.3.0` therefore accepts at most three seconds of future venue timestamp skew
+while retaining the five-second maximum data-age limit.
 
 The real attempt occurs only after focused and full validation, deliberate
 second-pass review, merge, synchronized `main`, authenticated read-only preflight, and an

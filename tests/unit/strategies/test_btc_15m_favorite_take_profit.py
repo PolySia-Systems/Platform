@@ -130,7 +130,7 @@ def test_fee_aware_size_keeps_total_spend_within_ten() -> None:
                     "token-up",
                     bid="0.58",
                     ask="0.60",
-                    timestamp=NOW + timedelta(seconds=2),
+                    timestamp=NOW + timedelta(seconds=4),
                 ),
                 book("token-down", bid="0.38", ask="0.40"),
             ),
@@ -177,6 +177,27 @@ def test_rejects_ambiguous_token_mapping() -> None:
     assert "distinct token ids" in decision.reason
 
 
+def test_accepts_bounded_venue_clock_lead() -> None:
+    books = (
+        book(
+            "token-up",
+            bid="0.58",
+            ask="0.60",
+            timestamp=NOW + timedelta(seconds=2),
+        ),
+        book("token-down", bid="0.38", ask="0.40"),
+    )
+
+    decision = Btc15mFavoriteTakeProfitStrategy().decide(market(), books, now=NOW)
+
+    assert decision.status == "TRADE"
+
+
 def test_configuration_never_allows_more_than_ten_collateral_units() -> None:
     with pytest.raises(ValueError, match="10.00"):
         FavoriteTakeProfitConfig(maximum_entry_notional=Decimal("10.01"))
+
+
+def test_configuration_caps_future_clock_skew() -> None:
+    with pytest.raises(ValueError, match="3000"):
+        FavoriteTakeProfitConfig(maximum_future_clock_skew_ms=3_001)
