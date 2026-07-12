@@ -6,7 +6,7 @@ from decimal import Decimal
 from polysia.execution.intents import OrderIntent
 from polysia.risk.checks import RiskContext, RiskDecision, RiskEngine
 
-MAXIMUM_AUTHORIZED_ENTRY_NOTIONAL = Decimal("1.00")
+MAXIMUM_AUTHORIZED_ENTRY_NOTIONAL = Decimal("10.00")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +53,12 @@ class BoundedLiveRiskEngine:
         checks: tuple[tuple[bool, str], ...] = (
             (
                 notional <= MAXIMUM_AUTHORIZED_ENTRY_NOTIONAL,
-                "entry notional exceeds owner-authorized 1.00 cap",
+                "entry notional exceeds owner-authorized 10.00 cap",
             ),
             (
                 notional + bounded.expected_fee
                 <= MAXIMUM_AUTHORIZED_ENTRY_NOTIONAL,
-                "entry notional plus expected fee exceeds owner-authorized 1.00 cap",
+                "entry notional plus expected fee exceeds owner-authorized 10.00 cap",
             ),
             (bounded.entry_attempt_count == 0, "one-entry-attempt limit reached"),
             (bounded.selected_market_count == 1, "exactly one selected market is required"),

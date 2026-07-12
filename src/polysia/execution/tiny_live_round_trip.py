@@ -78,8 +78,8 @@ Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
 GitReader = Callable[[Path, tuple[str, ...]], str]
 
-AUTHORIZATION_ID = "POLYSIA-LIVE-001"
-MAXIMUM_ENTRY_NOTIONAL = Decimal("1.00")
+AUTHORIZATION_ID = "POLYSIA-LIVE-002"
+MAXIMUM_ENTRY_NOTIONAL = Decimal("10.00")
 BASE_UNITS = Decimal("1000000")
 APPROVED_SDK_VERSION = "0.1.0b11"
 
@@ -189,7 +189,7 @@ class TinyLiveRoundTripConfig:
 
     def __post_init__(self) -> None:
         if self.maximum_entry_notional != MAXIMUM_ENTRY_NOTIONAL:
-            raise ValueError("maximum_entry_notional is fixed at 1.00")
+            raise ValueError("maximum_entry_notional is fixed at 10.00")
         if self.minimum_remaining_seconds < 180:
             raise ValueError("minimum_remaining_seconds must be at least 180")
         if self.maximum_book_age_ms < 0 or self.maximum_spread <= 0:
@@ -1497,7 +1497,7 @@ def _assert_runtime_settings(config: TinyLiveRoundTripConfig, kill_switch: KillS
     if not config.settings.live_trading_enabled:
         raise TinyLiveRoundTripError("real run requires LIVE_TRADING_ENABLED=true")
     if not config.acknowledgement:
-        raise TinyLiveRoundTripError("real run requires POLYSIA-LIVE-001 acknowledgement")
+        raise TinyLiveRoundTripError("real run requires POLYSIA-LIVE-002 acknowledgement")
     if config.settings.polymarket_private_key is None:
         raise TinyLiveRoundTripError("real run requires configured test signer")
     if not config.settings.polymarket_funder_address:

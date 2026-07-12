@@ -10,21 +10,21 @@ from polysia.domain.strategy import StrategyDefinition, StrategyLifecycleStatus
 from polysia.execution.intents import OrderIntent
 
 STRATEGY_ID = "btc-15m-favorite-take-profit"
-STRATEGY_VERSION = "0.1.0"
+STRATEGY_VERSION = "0.2.0"
 DecisionStatus = Literal["TRADE", "NO_TRADE"]
 
 
 @dataclass(frozen=True, slots=True)
 class FavoriteTakeProfitConfig:
-    maximum_entry_notional: Decimal = Decimal("1.00")
+    maximum_entry_notional: Decimal = Decimal("10.00")
     maximum_data_age_ms: int = 5_000
     maximum_spread: Decimal = Decimal("0.10")
     maximum_future_clock_skew_ms: int = 1_000
     exit_target_multiple: Decimal = Decimal("1.10")
 
     def __post_init__(self) -> None:
-        if self.maximum_entry_notional <= 0 or self.maximum_entry_notional > Decimal("1.00"):
-            raise ValueError("maximum_entry_notional must be within (0, 1.00]")
+        if self.maximum_entry_notional <= 0 or self.maximum_entry_notional > Decimal("10.00"):
+            raise ValueError("maximum_entry_notional must be within (0, 10.00]")
         if self.maximum_data_age_ms < 0:
             raise ValueError("maximum_data_age_ms must not be negative")
         if self.maximum_future_clock_skew_ms < 0:
@@ -148,7 +148,7 @@ class Btc15mFavoriteTakeProfitStrategy:
             risk_class="bounded-micro-live",
             parameter_schema={
                 "exit_target_multiple": {"const": "1.10", "type": "decimal"},
-                "maximum_entry_notional": {"maximum": "1.00", "type": "decimal"},
+                "maximum_entry_notional": {"maximum": "10.00", "type": "decimal"},
                 "maximum_entry_attempts": {"const": 1, "type": "integer"},
             },
             tags=("btc", "15m", "execution-validation", "bounded-live"),
@@ -273,7 +273,7 @@ class Btc15mFavoriteTakeProfitStrategy:
                 market,
                 tuple(quotes),
                 now,
-                "venue minimum order size cannot be satisfied within the 1.00 cap",
+                "venue minimum order size cannot be satisfied within the 10.00 cap",
             )
         if selected.ask_size < entry_size:
             return self._no_trade(
