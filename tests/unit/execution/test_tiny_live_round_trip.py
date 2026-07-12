@@ -47,6 +47,10 @@ NOW = datetime(2026, 7, 11, 12, tzinfo=UTC)
 COMMIT = "a" * 40
 
 
+def test_uses_distinct_live_003_authorization() -> None:
+    assert AUTHORIZATION_ID == "POLYSIA-LIVE-003"
+
+
 class FakeMarketPort:
     def __init__(self, *, minimum_size: str = "1", end_seconds: int = 600) -> None:
         self.details = market_details(end_seconds=end_seconds)
