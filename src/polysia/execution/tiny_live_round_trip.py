@@ -524,7 +524,7 @@ async def run_tiny_live_round_trip(
                 active_market_port,
                 strategy,
                 config=config,
-                now=started_at,
+                clock=clock,
             )
             if not active_execution_port.is_connected:
                 await active_execution_port.connect()
@@ -1237,10 +1237,15 @@ async def _select_market_and_decide(
     strategy: Btc15mFavoriteTakeProfitStrategy,
     *,
     config: TinyLiveRoundTripConfig,
-    now: datetime,
+    clock: Clock,
 ) -> tuple[MarketDetails, tuple[MarketOrderBookSnapshot, ...], FavoriteDecision]:
     markets = await market_port.search_markets("Bitcoin Up or Down 15m", page_size=40)
-    candidates = [market for market in markets if _is_candidate(market, config=config, now=now)]
+    discovery_checked_at = _aware_datetime(clock())
+    candidates = [
+        market
+        for market in markets
+        if _is_candidate(market, config=config, now=discovery_checked_at)
+    ]
     candidates.sort(key=lambda market: market.end_date or datetime.max.replace(tzinfo=UTC))
     if not candidates:
         raise TinyLiveRoundTripError("no active BTC Up/Down 15m market")
@@ -1252,13 +1257,18 @@ async def _select_market_and_decide(
         if summary.slug is None:
             continue
         market = await market_port.get_market_by_slug(summary.slug)
+        market_checked_at = _aware_datetime(clock())
         try:
-            _assert_market_ready(market, config=config, now=now)
+            _assert_market_ready(market, config=config, now=market_checked_at)
         except TinyLiveRoundTripError as error:
             candidate = (
                 market,
                 (),
-                strategy.no_trade_decision(market, now=now, reason=str(error)),
+                strategy.no_trade_decision(
+                    market,
+                    now=market_checked_at,
+                    reason=str(error),
+                ),
             )
             first_rejection = first_rejection or candidate
             continue
@@ -1273,7 +1283,7 @@ async def _select_market_and_decide(
                 (),
                 strategy.no_trade_decision(
                     market,
-                    now=now,
+                    now=market_checked_at,
                     reason="two distinct token ids are required",
                 ),
             )
@@ -1282,7 +1292,11 @@ async def _select_market_and_decide(
         books = tuple(
             [await market_port.get_order_book(token_id) for token_id in token_ids]
         )
-        decision = strategy.decide(market, books, now=now)
+        decision = strategy.decide(
+            market,
+            books,
+            now=_aware_datetime(clock()),
+        )
         if decision.status == "TRADE":
             return market, books, decision
         first_rejection = first_rejection or (market, books, decision)

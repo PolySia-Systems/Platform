@@ -87,6 +87,21 @@ class StaleOnRefreshMarketPort(FakeMarketPort):
         return book
 
 
+class BookTimestampAfterRunStartMarketPort(FakeMarketPort):
+    async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
+        book = await super().get_order_book(token_id)
+        return book.model_copy(update={"timestamp": NOW + timedelta(seconds=2)})
+
+
+class AdvancingClock:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> datetime:
+        self.calls += 1
+        return NOW if self.calls == 1 else NOW + timedelta(seconds=2)
+
+
 class CandidateFallbackMarketPort(FakeMarketPort):
     def __init__(self) -> None:
         super().__init__()
@@ -685,6 +700,25 @@ async def test_refresh_rejects_books_that_became_stale_during_preflight(
     assert report.final_result == "NO_TRADE"
     assert "stale" in str(report.stop_reason)
     assert adapter.entry_attempts == []
+
+
+@pytest.mark.asyncio
+async def test_discovery_uses_fresh_time_for_books_fetched_after_run_start(
+    tmp_path: Path,
+) -> None:
+    clock = AdvancingClock()
+    report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=True, run_id="fresh-discovery-clock"),
+        market_port=BookTimestampAfterRunStartMarketPort(),
+        execution_port=FakeExecutionPort(),
+        geoblock_port=FakeGeoblock(),
+        clock=clock,
+        git_reader=fake_git,
+    )
+
+    assert report.strategy_decision["status"] == "TRADE"
+    assert report.risk_decision["approved"] is True
+    assert clock.calls > 1
 
 
 @pytest.mark.asyncio
