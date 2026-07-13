@@ -20,8 +20,7 @@ currently known.
 - Final runtime commit: `b7dce82976a5b4ff624d8efef687c7d0d3776732`.
 - Documentation Git reference: `HEAD` on
   `codex/polysia-phase-close-005`.
-- Pull Request: pending creation at this candidate revision; the next commit on
-  this branch records the exact Draft PR URL.
+- Draft Pull Request: `https://github.com/Movafeghm/polysia/pull/25`.
 - Runtime implementation PRs: #20 reconciliation, #21 terminal-order fallback,
   #22 lifecycle monitoring, #23 fee-aware targets, #24 runtime hardening.
 
@@ -123,7 +122,8 @@ temporary restore was removed safely.
   strict OSV audit, and SBOM upload.
 - PRs #20-#24 passed their required quality and supply-chain checks.
 - Backup restore smoke: passed.
-- Documentation checks and closure-PR CI: pending in this candidate revision.
+- Documentation checks passed locally; Draft PR #25 CI and final review/merge
+  remain pending.
 
 ## Safety confirmation
 
