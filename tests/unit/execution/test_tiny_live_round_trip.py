@@ -24,7 +24,7 @@ from polysia.execution.tiny_live_round_trip import (
     TinyLiveRoundTripConfig,
     TinyLiveRoundTripError,
     _assert_market_ready,
-    normalize_exit_target,
+    calculate_fee_aware_exit_target,
     run_tiny_live_round_trip,
 )
 from polysia.monitoring.tiny_live_round_trip_report import (
@@ -52,8 +52,17 @@ def test_uses_distinct_live_004_authorization() -> None:
 
 
 class FakeMarketPort:
-    def __init__(self, *, minimum_size: str = "1", end_seconds: int = 600) -> None:
-        self.details = market_details(end_seconds=end_seconds)
+    def __init__(
+        self,
+        *,
+        minimum_size: str = "1",
+        end_seconds: int = 600,
+        fee_enabled: bool = False,
+    ) -> None:
+        self.details = market_details(
+            end_seconds=end_seconds,
+            fee_enabled=fee_enabled,
+        )
         self.books = {
             "token-up": order_book(
                 "token-up",
@@ -329,7 +338,7 @@ class FakeGeoblock:
         )
 
 
-def market_details(*, end_seconds: int = 600) -> MarketDetails:
+def market_details(*, end_seconds: int = 600, fee_enabled: bool = False) -> MarketDetails:
     return MarketDetails(
         id="market-1",
         slug="btc-updown-15m-123",
@@ -347,7 +356,12 @@ def market_details(*, end_seconds: int = 600) -> MarketDetails:
             MarketOutcomeSummary(label="Up", token_id="token-up"),
             MarketOutcomeSummary(label="Down", token_id="token-down"),
         ),
-        fee_schedule=MarketFeeSchedule(enabled=False, taker_only=True),
+        fee_schedule=MarketFeeSchedule(
+            enabled=fee_enabled,
+            rate=Decimal("0.25") if fee_enabled else None,
+            exponent=Decimal("1") if fee_enabled else None,
+            taker_only=True,
+        ),
     )
 
 
@@ -509,7 +523,9 @@ async def test_fak_zero_fill_never_retries_or_exits(
 
 
 @pytest.mark.asyncio
-async def test_fak_partial_fill_exits_only_actual_confirmed_quantity(tmp_path: Path) -> None:
+async def test_fak_partial_fill_below_exit_minimum_stops_without_invalid_order(
+    tmp_path: Path,
+) -> None:
     adapter = FakeExecutionPort(entry="partial")
     report = await run_tiny_live_round_trip(
         config(tmp_path, dry_run=False, run_id="partial-entry"),
@@ -520,11 +536,36 @@ async def test_fak_partial_fill_exits_only_actual_confirmed_quantity(tmp_path: P
         git_reader=fake_git,
     )
 
-    assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
+    assert report.final_result == "SAFETY_STOP"
     assert adapter.entry_attempts[0]["order_type"] == "FAK"
     assert report.entry_order["actual_fill"]["size"] == "0.4"
-    assert adapter.exit_attempts[0]["size"] == Decimal("0.4")
+    assert adapter.exit_attempts == []
+    assert report.exit_order["status"] == "UNACHIEVABLE"
+    assert report.exit_order["target_calculation"]["achievable"] is False
     assert report.position_state["available_size"] == "0.4"
+
+
+@pytest.mark.asyncio
+async def test_confirmed_fill_uses_fee_aware_target_and_actual_quantity(
+    tmp_path: Path,
+) -> None:
+    adapter = FakeExecutionPort()
+    report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=False, run_id="fee-aware-target"),
+        market_port=FakeMarketPort(fee_enabled=True),
+        execution_port=adapter,
+        geoblock_port=FakeGeoblock(),
+        clock=lambda: NOW,
+        git_reader=fake_git,
+    )
+
+    calculation = report.exit_order["target_calculation"]
+    assert report.final_result == "ENTRY_FILLED_EXIT_OPEN"
+    assert adapter.exit_attempts[0]["price"] == Decimal("0.78")
+    assert adapter.exit_attempts[0]["size"] == Decimal("1")
+    assert calculation["all_in_entry_cost"] == "0.66000"
+    assert calculation["expected_exit_fee"] == "0.04290"
+    assert Decimal(str(calculation["expected_net_return"])) >= Decimal("0.10")
 
 
 @pytest.mark.asyncio
@@ -567,7 +608,7 @@ async def test_immediate_exit_fill_records_completed_round_trip(tmp_path: Path) 
         assert len(LedgerEventRepository(database.connection).list_for_run("completed")) == 4
         performance = StrategyRegistryRepository(database.connection).get_performance(
             "btc-15m-favorite-take-profit",
-            "0.5.0",
+            "0.6.0",
         )
         assert performance is not None
         assert performance.trade_count == 2
@@ -842,11 +883,59 @@ async def test_unknown_submission_state_stops_without_retry(
     assert report.reconciliation["status"] == "ready"
 
 
-def test_target_rounding_and_maximum_price_rejection() -> None:
-    assert normalize_exit_target(Decimal("0.55"), tick_size=Decimal("0.01")) == Decimal(
-        "0.61"
+def test_fee_aware_target_delivers_ten_percent_net_after_fees() -> None:
+    target = calculate_fee_aware_exit_target(
+        market_details(fee_enabled=True),
+        entry_price=Decimal("0.60"),
+        quantity=Decimal("5"),
+        entry_fee=Decimal("0.30000"),
+        tick_size=Decimal("0.01"),
+        minimum_order_size=Decimal("5"),
     )
-    assert normalize_exit_target(Decimal("0.91"), tick_size=Decimal("0.01")) is None
+
+    assert target.achievable is True
+    assert target.target_price == Decimal("0.78")
+    assert target.expected_exit_fee == Decimal("0.21450")
+    assert target.expected_net_exit_proceeds == Decimal("3.68550")
+    assert target.expected_net_profit == Decimal("0.38550")
+    assert target.expected_net_return is not None
+    assert target.expected_net_return >= Decimal("0.10")
+    assert target.to_dict()["rounding_rule"] == "ceiling to the next valid venue tick"
+
+
+def test_fee_aware_target_handles_rounding_minimum_size_and_price_ceiling() -> None:
+    no_fee_market = market_details()
+    rounded = calculate_fee_aware_exit_target(
+        no_fee_market,
+        entry_price=Decimal("0.55"),
+        quantity=Decimal("1"),
+        entry_fee=Decimal("0"),
+        tick_size=Decimal("0.01"),
+        minimum_order_size=Decimal("1"),
+    )
+    below_minimum = calculate_fee_aware_exit_target(
+        no_fee_market,
+        entry_price=Decimal("0.55"),
+        quantity=Decimal("0.4"),
+        entry_fee=Decimal("0"),
+        tick_size=Decimal("0.01"),
+        minimum_order_size=Decimal("1"),
+    )
+    above_ceiling = calculate_fee_aware_exit_target(
+        no_fee_market,
+        entry_price=Decimal("0.91"),
+        quantity=Decimal("1"),
+        entry_fee=Decimal("0"),
+        tick_size=Decimal("0.01"),
+        minimum_order_size=Decimal("1"),
+    )
+
+    assert rounded.achievable is True
+    assert rounded.target_price == Decimal("0.61")
+    assert below_minimum.achievable is False
+    assert "minimum order size" in below_minimum.reason
+    assert above_ceiling.achievable is False
+    assert "not achievable" in above_ceiling.reason
 
 
 def test_market_near_expiry_is_rejected(tmp_path: Path) -> None:
