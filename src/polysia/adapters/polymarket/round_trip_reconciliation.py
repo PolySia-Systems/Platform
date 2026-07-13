@@ -33,6 +33,17 @@ class PolymarketRoundTripReader:
             if opened_here:
                 await self._adapter.connect()
             raw_order = await self._adapter.get_order(order_id=order_id)
+            order_absence_confirmed = False
+            if raw_order is None:
+                matching_open_orders = await self._adapter.get_open_orders(order_id=order_id)
+                if len(matching_open_orders) > 1:
+                    raise PolymarketRoundTripReadError(
+                        "Polymarket returned duplicate open-order evidence"
+                    )
+                if matching_open_orders:
+                    raw_order = matching_open_orders[0]
+                else:
+                    order_absence_confirmed = True
             raw_trades = await self._adapter.list_account_trades(token_id=token_id)
             raw_positions = await self._adapter.list_positions(size_threshold=0)
             await self._adapter.get_balance_allowance(asset_type="COLLATERAL")
@@ -62,6 +73,7 @@ class PolymarketRoundTripReader:
                 position_size=position_size,
                 account_balances_readable=True,
                 read_at=read_at,
+                order_absence_confirmed=order_absence_confirmed,
             )
         except PolymarketRoundTripReadError:
             raise

@@ -18,6 +18,7 @@ class FakeSecureAdapter:
         self.connect_count = 0
         self.close_count = 0
         self.balance_reads: list[tuple[str, str | None]] = []
+        self.open_order_reads: list[str] = []
 
     async def connect(self) -> None:
         self.connect_count += 1
@@ -41,6 +42,10 @@ class FakeSecureAdapter:
     async def list_account_trades(self, *, token_id: str) -> list[Any]:
         assert token_id == "token-down"
         return self.trades
+
+    async def get_open_orders(self, *, order_id: str) -> list[Any]:
+        self.open_order_reads.append(order_id)
+        return []
 
     async def list_positions(self, *, size_threshold: float) -> list[Any]:
         assert size_threshold == 0
@@ -138,5 +143,7 @@ async def test_reader_preserves_missing_order_as_reconcilable_evidence() -> None
     )
 
     assert snapshot.order is None
+    assert snapshot.order_absence_confirmed is True
     assert snapshot.fills == ()
     assert snapshot.account_balances_readable is True
+    assert adapter.open_order_reads == ["exit-order"]

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polymarket import PolymarketError, RequestRejectedError
+from polymarket import PolymarketError, RequestRejectedError, UnexpectedResponseError
 
 from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
@@ -271,6 +271,26 @@ async def test_get_order_maps_venue_not_found_to_none(
     await adapter.connect()
 
     assert await adapter.get_order(order_id="missing-order") is None
+
+
+@pytest.mark.asyncio
+async def test_get_order_maps_unparseable_terminal_detail_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TerminalOrderClient(FakeSecureClient):
+        async def get_order(self, **kwargs: Any) -> SimpleNamespace:
+            raise UnexpectedResponseError("order response did not match expected shape")
+
+    client = TerminalOrderClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> TerminalOrderClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(client_factory=factory)
+    await adapter.connect()
+
+    assert await adapter.get_order(order_id="terminal-order") is None
 
 
 def test_sanitize_order_request_redacts_sensitive_values() -> None:
