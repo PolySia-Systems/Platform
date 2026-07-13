@@ -8,11 +8,12 @@ durably reconciled as a completed profitable round trip, lifecycle monitoring
 is available through bounded read-only commands, financial/runtime correctness
 gaps were addressed, and a verified recovery package exists outside Git.
 
-This handoff is committed first as a closure candidate. The phase status remains
-`NOT_READY_BLOCKED` until this documentation Pull Request passes required CI,
-the focused diff is reviewed, the PR is squash-merged, and synchronized `main`
-is verified in the final task section. No product or venue-state blocker is
-currently known.
+Final phase status: `READY_FOR_RESEARCH_VALIDATION_CYCLE`.
+
+Draft Pull Request #25 passed all required CI checks and its focused,
+documentation-only diff has no blocking findings. The final delivery action is
+its squash merge followed by synchronized `main`; the resulting merge commit
+is resolved from Git history because this handoff cannot self-reference it.
 
 ## Git and delivery
 
@@ -122,8 +123,9 @@ temporary restore was removed safely.
   strict OSV audit, and SBOM upload.
 - PRs #20-#24 passed their required quality and supply-chain checks.
 - Backup restore smoke: passed.
-- Documentation checks passed locally; Draft PR #25 CI and final review/merge
-  remain pending.
+- Documentation checks passed locally. Draft PR #25 passed all six required CI
+  checks, is mergeable, and its focused documentation-only review found no
+  blocking issue.
 
 ## Safety confirmation
 

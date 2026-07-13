@@ -1,8 +1,8 @@
 {
   "task_id": "POLYSIA-PHASE-CLOSE-005",
   "runtime_task_id": "POLYSIA-RECON-005",
-  "phase_status": "NOT_READY_BLOCKED",
-  "status_reason": "Documentation PR validation, review, merge, and synchronized-main verification remain pending in the final task section.",
+  "phase_status": "READY_FOR_RESEARCH_VALIDATION_CYCLE",
+  "status_reason": "Runtime, evidence, recovery, documentation, focused review, and required CI gates passed; the next cycle is historical-data and strategy research validation.",
   "starting_commit": "4520f04ac96bc09a646aea391de35eb897bba11e",
   "final_runtime_commit": "b7dce82976a5b4ff624d8efef687c7d0d3776732",
   "documentation_ref": "HEAD",
@@ -52,7 +52,7 @@
     "sbom": "passed",
     "main_ci_run": 29277417903,
     "main_ci_status": "passed",
-    "documentation_pr_ci": "pending"
+    "documentation_pr_ci": "passed"
   },
   "backup": {
     "source_commit": "b7dce82976a5b4ff624d8efef687c7d0d3776732",

@@ -11,6 +11,7 @@
 | Documentation branch | `codex/polysia-phase-close-005` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
 | Active closure task | `POLYSIA-PHASE-CLOSE-005` |
+| Phase status | `READY_FOR_RESEARCH_VALIDATION_CYCLE` |
 
 The final runtime baseline is the last implementation merge before this
 documentation-only update. The documentation merge cannot self-reference and
@@ -104,9 +105,9 @@ evidence.
   baseline.
 - The approved versions remain `polymarket-client==0.1.0b11`, `mypy==2.1.0`,
   and `ruff==0.15.20`.
-- This documentation branch requires documentation checks and green PR CI
-  before final phase closure. No source, dependency, build, or runtime setting
-  is changed by this documentation work.
+- Draft PR #25 passed all six required CI checks and its focused
+  documentation-only review found no blocking issue. No source, dependency,
+  build, or runtime setting is changed by this documentation work.
 
 ## Recovery status
 
