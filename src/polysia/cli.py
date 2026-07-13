@@ -94,6 +94,7 @@ from polysia.cli_support import (
 )
 from polysia.config.logging import configure_logging
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.config.status import build_configuration_status
 from polysia.deployment.automation import run_deployment_automation
 from polysia.deployment.final_handoff import render_final_handoff_markdown
 from polysia.deployment.manifest import build_release_manifest
@@ -278,6 +279,18 @@ def health() -> None:
         "trading_mode": settings.trading_mode.value,
     }
     typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@app.command("configuration-status")
+def configuration_status() -> None:
+    """Print canonical, redacted runtime-configuration readiness."""
+
+    settings = AppSettings()
+    configure_logging(settings)
+    status = build_configuration_status(settings)
+    typer.echo(json.dumps(status.to_dict(), sort_keys=True))
+    if status.status == "blocked":
+        raise typer.Exit(code=1)
 
 
 @app.command("operator-status")
@@ -1204,8 +1217,7 @@ async def _resolve_live_smoke_selection(
     if not auto_btc_5m:
         if not market_slug or not condition_id or not token_id:
             raise ValueError(
-                "market_slug, condition_id, and token_id are required unless "
-                "--auto-btc-5m is used."
+                "market_slug, condition_id, and token_id are required unless --auto-btc-5m is used."
             )
         return LiveSmokeSelection(
             market_slug=market_slug,
@@ -1215,11 +1227,7 @@ async def _resolve_live_smoke_selection(
 
     adapter = PolymarketPublicAdapter()
     markets = await adapter.search_markets("Bitcoin Up or Down 5m", page_size=30)
-    candidates = [
-        market
-        for market in markets
-        if _is_active_btc_5m_candidate(market)
-    ]
+    candidates = [market for market in markets if _is_active_btc_5m_candidate(market)]
     candidates.sort(key=lambda market: market.end_date or datetime.max.replace(tzinfo=UTC))
 
     for candidate in candidates:
@@ -1525,9 +1533,7 @@ def live_cancel_order(
                 settings=settings,
                 order_id=order_id,
                 dry_run=dry_run,
-                i_understand_this_modifies_live_orders=(
-                    i_understand_this_modifies_live_orders
-                ),
+                i_understand_this_modifies_live_orders=(i_understand_this_modifies_live_orders),
             )
         )
     except (LiveBrokerError, PolymarketSecureAdapterError) as error:
@@ -1555,9 +1561,7 @@ def live_cancel_market_orders(
                 settings=settings,
                 token_id=token_id,
                 dry_run=dry_run,
-                i_understand_this_modifies_live_orders=(
-                    i_understand_this_modifies_live_orders
-                ),
+                i_understand_this_modifies_live_orders=(i_understand_this_modifies_live_orders),
             )
         )
     except (LiveBrokerError, PolymarketSecureAdapterError) as error:
@@ -1915,9 +1919,7 @@ def monitor_live_round_trip_command(
         _print_error_and_exit(error)
 
     payload = {
-        "alert_codes": sorted(
-            {alert.code for cycle in report.cycles for alert in cycle.alerts}
-        ),
+        "alert_codes": sorted({alert.code for cycle in report.cycles for alert in cycle.alerts}),
         "artifacts": {name: str(path) for name, path in artifacts.items()},
         "duplicate_alert_count": report.duplicate_alert_count,
         "monitor_status": report.status,
@@ -2111,9 +2113,7 @@ def controlled_second_tiny_live(
                     dry_run=(not submit) or dry_run,
                     submit_requested=submit,
                     acknowledgement=i_understand_this_places_real_orders,
-                    second_acknowledgement=(
-                        i_confirm_this_is_the_second_controlled_tiny_live_test
-                    ),
+                    second_acknowledgement=(i_confirm_this_is_the_second_controlled_tiny_live_test),
                     auto_btc_5m=auto_btc_5m,
                     require_clean_git=require_clean_git,
                     project_root=Path("."),
@@ -2293,9 +2293,7 @@ def live_limit_order(
                 daily_pnl=_parse_decimal(daily_pnl, "daily_pnl"),
                 open_orders_count=open_orders_count,
                 market_data_age_ms=market_data_age_ms,
-                i_understand_this_places_real_orders=(
-                    i_understand_this_places_real_orders
-                ),
+                i_understand_this_places_real_orders=(i_understand_this_places_real_orders),
             )
         )
     except (LiveBrokerError, PolymarketSecureAdapterError, ValueError) as error:
@@ -2457,8 +2455,7 @@ async def _live_account_status(
         raise LiveBrokerError("live account reads require TRADING_MODE=LIVE.")
     if not i_understand_this_uses_live_account:
         raise LiveBrokerError(
-            "live account reads require --redact-secrets or "
-            "--i-understand-this-uses-live-account."
+            "live account reads require --redact-secrets or --i-understand-this-uses-live-account."
         )
 
     _apply_secure_env_from_settings(settings)

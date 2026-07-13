@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from polysia.config.settings import AppSettings, TradingMode
 
 
@@ -16,6 +18,10 @@ def test_defaults_are_data_only(monkeypatch) -> None:
     monkeypatch.delenv("POLYMARKET_LIVE_MAX_ORDER_SIZE", raising=False)
     monkeypatch.delenv("POLYMARKET_LIVE_MAX_ORDER_NOTIONAL", raising=False)
     monkeypatch.delenv("POLYMARKET_LIVE_MAX_OPEN_ORDERS", raising=False)
+    monkeypatch.delenv("POLYMARKET_READ_MAX_ATTEMPTS", raising=False)
+    monkeypatch.delenv("POLYMARKET_READ_BACKOFF_SECONDS", raising=False)
+    monkeypatch.delenv("POLYMARKET_SERVER_TIME_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("POLYMARKET_MAX_CLOCK_DRIFT_SECONDS", raising=False)
 
     settings = AppSettings(_env_file=None)
 
@@ -29,6 +35,10 @@ def test_defaults_are_data_only(monkeypatch) -> None:
     assert settings.polymarket_private_key is None
     assert settings.polymarket_funder_address is None
     assert settings.polymarket_signature_type is None
+    assert settings.polymarket_read_max_attempts == 2
+    assert settings.polymarket_read_backoff_seconds == Decimal("0.25")
+    assert settings.polymarket_server_time_timeout_seconds == Decimal("5")
+    assert settings.polymarket_max_clock_drift_seconds == Decimal("5")
 
 
 def test_live_trading_requires_live_mode_and_enable_flag(monkeypatch) -> None:
@@ -82,3 +92,23 @@ def test_live_token_allowlist_is_parsed_from_comma_separated_env(monkeypatch) ->
     settings = AppSettings(_env_file=None)
 
     assert settings.polymarket_live_token_allowlist == ("token-1", "token-2", "token-3")
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("POLYMARKET_READ_MAX_ATTEMPTS", "4"),
+        ("POLYMARKET_READ_BACKOFF_SECONDS", "2.1"),
+        ("POLYMARKET_SERVER_TIME_TIMEOUT_SECONDS", "0"),
+        ("POLYMARKET_MAX_CLOCK_DRIFT_SECONDS", "5.1"),
+    ],
+)
+def test_runtime_resilience_settings_cannot_exceed_safe_bounds(
+    monkeypatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError):
+        AppSettings(_env_file=None)

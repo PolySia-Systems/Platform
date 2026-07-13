@@ -158,6 +158,7 @@ class FakeExecutionPort:
         entry: Literal["reject", "no_fill", "partial", "fill", "error"] = "fill",
         exit_order: Literal["open", "reject", "fill", "partial", "error"] = "open",
         position_size: str | None = None,
+        clock_drift: Decimal = Decimal("0"),
     ) -> None:
         self.connected = False
         self.closed = False
@@ -173,6 +174,7 @@ class FakeExecutionPort:
         self.exit_submitted = False
         self.exit_filled_size = Decimal("0")
         self.collateral_read_count = 0
+        self.clock_drift = clock_drift
 
     @property
     def is_connected(self) -> bool:
@@ -184,6 +186,9 @@ class FakeExecutionPort:
     async def close(self) -> None:
         self.closed = True
         self.connected = False
+
+    async def read_clock_drift(self) -> Decimal:
+        return self.clock_drift
 
     def identity(self) -> dict[str, object]:
         return {
@@ -221,11 +226,7 @@ class FakeExecutionPort:
         market: str | None = None,
     ) -> list[Any]:
         del order_id, market
-        if (
-            self.exit_submitted
-            and self.exit_mode in {"open", "partial"}
-            and token_id == "token-up"
-        ):
+        if self.exit_submitted and self.exit_mode in {"open", "partial"} and token_id == "token-up":
             return [
                 {
                     "id": "exit-1",
@@ -483,9 +484,7 @@ async def test_real_entry_fill_places_one_actual_position_sized_exit(tmp_path: P
         attempt = LiveEntryAttemptRepository(database.connection).get(AUTHORIZATION_ID)
         assert attempt is not None
         assert attempt["state"] == "ENTRY_FILLED_EXIT_OPEN"
-        checkpoints = LiveOrderCheckpointRepository(database.connection).list_for_run(
-            "filled"
-        )
+        checkpoints = LiveOrderCheckpointRepository(database.connection).list_for_run("filled")
         assert {item["phase"] for item in checkpoints} >= {
             "ENTRY_RESPONSE",
             "ENTRY_FILL_CONFIRMED",
@@ -708,6 +707,29 @@ async def test_geoblock_denial_stops_before_entry(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_clock_drift_preflight_blocks_before_authenticated_reads(
+    tmp_path: Path,
+) -> None:
+    adapter = FakeExecutionPort(clock_drift=Decimal("5.001"))
+
+    report = await run_tiny_live_round_trip(
+        config(tmp_path, dry_run=False, run_id="clock-drift"),
+        market_port=FakeMarketPort(),
+        execution_port=adapter,
+        geoblock_port=FakeGeoblock(),
+        clock=lambda: NOW,
+        git_reader=fake_git,
+    )
+
+    assert report.final_result == "NO_TRADE"
+    assert report.clock_preflight["status"] == "blocked"
+    assert report.clock_preflight["drift_seconds"] == "5.001"
+    assert "clock preflight" in str(report.stop_reason)
+    assert adapter.connected is False
+    assert adapter.entry_attempts == []
+
+
+@pytest.mark.asyncio
 async def test_partial_or_unavailable_filled_position_activates_safety_stop(
     tmp_path: Path,
 ) -> None:
@@ -825,14 +847,7 @@ async def test_confirmed_fill_is_durable_before_next_external_read(
     with SQLiteDatabase(tmp_path / "round-trip.sqlite3") as database:
         assert OrderRepository(database.connection).get("entry-1") is not None
         assert FillRepository(database.connection).get("crash-checkpoint:entry") is not None
-        assert (
-            len(
-                LedgerEventRepository(database.connection).list_for_run(
-                    "crash-checkpoint"
-                )
-            )
-            == 2
-        )
+        assert len(LedgerEventRepository(database.connection).list_for_run("crash-checkpoint")) == 2
         phases = {
             item["phase"]
             for item in LiveOrderCheckpointRepository(database.connection).list_for_run(

@@ -14,12 +14,45 @@ Run the safe local checks before collecting market data.
 
 ```powershell
 python -m polysia.cli health
+python -m polysia.cli configuration-status
 python -m polysia.cli deployment-readiness
 python -m polysia.cli operator-status
 ```
 
 Continue only when `health` is ok and readiness is ready. The output must never
 show secrets, wallet addresses, allowlisted token values, or transaction hashes.
+
+## Windows Clock Synchronization
+
+PolySia reads the official CLOB server time before the current authenticated
+round-trip path and fails closed when absolute drift exceeds
+`POLYMARKET_MAX_CLOCK_DRIFT_SECONDS` (maximum allowed value: 5 seconds). It does
+not change Windows services or the system clock.
+
+Inspect Windows time state without changing it:
+
+```powershell
+Get-Service W32Time
+w32tm /query /status
+w32tm /query /source
+w32tm /stripchart /computer:time.windows.com /dataonly /samples:5
+```
+
+If the clock is not synchronized, stop authenticated and live operations. The
+operator may enable **Set time automatically** and select **Sync now** under
+Windows **Settings > Time & language > Date & time**. An administrator may
+instead run `w32tm /resync` after confirming the intended time source. PolySia
+must never perform either action automatically.
+
+After manual synchronization, rerun:
+
+```powershell
+python -m polysia.cli configuration-status
+python -m polysia.cli tiny-live-round-trip --dry-run
+```
+
+Continue only when the clock preflight reports `pass`. A timeout, missing server
+time, unreadable response, or excessive positive or negative drift is blocking.
 
 ## Data Collection
 

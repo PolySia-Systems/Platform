@@ -64,6 +64,22 @@ class AppSettings(BaseSettings):
         default=1,
         validation_alias="POLYMARKET_LIVE_MAX_OPEN_ORDERS",
     )
+    polymarket_read_max_attempts: int = Field(
+        default=2,
+        validation_alias="POLYMARKET_READ_MAX_ATTEMPTS",
+    )
+    polymarket_read_backoff_seconds: Decimal = Field(
+        default=Decimal("0.25"),
+        validation_alias="POLYMARKET_READ_BACKOFF_SECONDS",
+    )
+    polymarket_server_time_timeout_seconds: Decimal = Field(
+        default=Decimal("5"),
+        validation_alias="POLYMARKET_SERVER_TIME_TIMEOUT_SECONDS",
+    )
+    polymarket_max_clock_drift_seconds: Decimal = Field(
+        default=Decimal("5"),
+        validation_alias="POLYMARKET_MAX_CLOCK_DRIFT_SECONDS",
+    )
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
     @field_validator("polymarket_live_token_allowlist", mode="before")
@@ -104,6 +120,34 @@ class AppSettings(BaseSettings):
             raise ValueError("POLYMARKET_LIVE_MAX_OPEN_ORDERS must not be negative")
         return value
 
+    @field_validator("polymarket_read_max_attempts")
+    @classmethod
+    def validate_read_max_attempts(cls, value: int) -> int:
+        if not 1 <= value <= 3:
+            raise ValueError("POLYMARKET_READ_MAX_ATTEMPTS must be within [1, 3]")
+        return value
+
+    @field_validator("polymarket_read_backoff_seconds")
+    @classmethod
+    def validate_read_backoff_seconds(cls, value: Decimal) -> Decimal:
+        if not Decimal("0") <= value <= Decimal("2"):
+            raise ValueError("POLYMARKET_READ_BACKOFF_SECONDS must be within [0, 2]")
+        return value
+
+    @field_validator("polymarket_server_time_timeout_seconds")
+    @classmethod
+    def validate_server_time_timeout(cls, value: Decimal) -> Decimal:
+        if not Decimal("0") < value <= Decimal("10"):
+            raise ValueError("POLYMARKET_SERVER_TIME_TIMEOUT_SECONDS must be within (0, 10]")
+        return value
+
+    @field_validator("polymarket_max_clock_drift_seconds")
+    @classmethod
+    def validate_max_clock_drift(cls, value: Decimal) -> Decimal:
+        if not Decimal("0") < value <= Decimal("5"):
+            raise ValueError("POLYMARKET_MAX_CLOCK_DRIFT_SECONDS must be within (0, 5]")
+        return value
+
     @field_validator("polymarket_signature_type")
     @classmethod
     def validate_signature_type(cls, value: int | None) -> int | None:
@@ -133,10 +177,14 @@ class AppSettings(BaseSettings):
             "log_level": self.log_level,
             "polymarket_live_token_allowlist_count": len(self.polymarket_live_token_allowlist),
             "polymarket_live_max_open_orders": self.polymarket_live_max_open_orders,
-            "polymarket_live_max_order_notional": str(
-                self.polymarket_live_max_order_notional
-            ),
+            "polymarket_live_max_order_notional": str(self.polymarket_live_max_order_notional),
             "polymarket_live_max_order_size": str(self.polymarket_live_max_order_size),
+            "polymarket_max_clock_drift_seconds": str(self.polymarket_max_clock_drift_seconds),
+            "polymarket_read_backoff_seconds": str(self.polymarket_read_backoff_seconds),
+            "polymarket_read_max_attempts": self.polymarket_read_max_attempts,
+            "polymarket_server_time_timeout_seconds": str(
+                self.polymarket_server_time_timeout_seconds
+            ),
             "polymarket_signature_type": self.polymarket_signature_type,
             "polymarket_wallet_address_configured": bool(self.polymarket_wallet_address),
             "trading_mode": self.trading_mode.value,

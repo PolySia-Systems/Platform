@@ -11,7 +11,12 @@ from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+from polysia.adapters.polymarket.diagnostics import ReadRetryPolicy
 from polysia.adapters.polymarket.geoblock import GeoblockStatus, PreLiveOrderGeoblockCheck
+from polysia.adapters.polymarket.lifecycle_monitoring import (
+    PolymarketServerTimeReader,
+    evaluate_clock_drift,
+)
 from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
@@ -107,6 +112,8 @@ class RoundTripExecutionPort(Protocol):
     async def connect(self) -> None: ...
 
     async def close(self) -> None: ...
+
+    async def read_clock_drift(self) -> Decimal: ...
 
     def identity(self) -> Any: ...
 
@@ -311,14 +318,10 @@ class FeeAwareExitTarget:
             "expected_gross_exit_proceeds": _optional_decimal_text(
                 self.expected_gross_exit_proceeds
             ),
-            "expected_net_exit_proceeds": _optional_decimal_text(
-                self.expected_net_exit_proceeds
-            ),
+            "expected_net_exit_proceeds": _optional_decimal_text(self.expected_net_exit_proceeds),
             "expected_net_profit": _optional_decimal_text(self.expected_net_profit),
             "expected_net_return": _optional_decimal_text(self.expected_net_return),
-            "fee_free_target_price": _optional_decimal_text(
-                self.fee_free_target_price
-            ),
+            "fee_free_target_price": _optional_decimal_text(self.fee_free_target_price),
             "minimum_order_size": str(self.minimum_order_size),
             "nominal_gross_target_price": str(self.nominal_gross_target_price),
             "quantity": str(self.quantity),
@@ -340,6 +343,7 @@ class TinyLiveRoundTripReport:
     strategy: dict[str, object]
     registry: dict[str, object]
     account_snapshot: dict[str, object]
+    clock_preflight: dict[str, object]
     market_snapshot: dict[str, object]
     strategy_decision: dict[str, object]
     portfolio_decision: dict[str, object]
@@ -359,6 +363,7 @@ class TinyLiveRoundTripReport:
     def to_dict(self) -> dict[str, object]:
         return {
             "account_snapshot": self.account_snapshot,
+            "clock_preflight": self.clock_preflight,
             "dry_run": self.dry_run,
             "entry_order": self.entry_order,
             "errors": list(self.errors),
@@ -528,7 +533,17 @@ async def run_tiny_live_round_trip(
     """Run a real-data dry-run or the single authorized bounded live attempt."""
 
     active_market_port = market_port or PolymarketPublicAdapter()
-    active_execution_port = execution_port or PolymarketSecureAdapter()
+    active_execution_port = execution_port or PolymarketSecureAdapter(
+        read_retry_policy=ReadRetryPolicy(
+            max_attempts=config.settings.polymarket_read_max_attempts,
+            backoff_seconds=float(config.settings.polymarket_read_backoff_seconds),
+        ),
+        server_time_reader=PolymarketServerTimeReader(
+            timeout_seconds=float(config.settings.polymarket_server_time_timeout_seconds),
+            max_attempts=config.settings.polymarket_read_max_attempts,
+            backoff_seconds=float(config.settings.polymarket_read_backoff_seconds),
+        ),
+    )
     active_geoblock = geoblock_port or PreLiveOrderGeoblockCheck()
     active_kill_switch = kill_switch or KillSwitch()
     started_at = clock()
@@ -544,6 +559,10 @@ async def run_tiny_live_round_trip(
     portfolio_decision = PortfolioAdmissionDecision(False, "not evaluated")
     risk_decision = RiskDecision(False, "not evaluated")
     account: AccountPreflight | None = None
+    clock_preflight: dict[str, object] = {
+        "status": "not_checked",
+        "drift_seconds": None,
+    }
     geoblock: dict[str, object] = {"status": "not_checked", "blocked": None}
     entry_order: dict[str, object] = {}
     exit_order: dict[str, object] = {}
@@ -582,6 +601,15 @@ async def run_tiny_live_round_trip(
             _assert_sdk_compatible()
             _assert_runtime_settings(config, active_kill_switch)
             _assert_git_and_ci(config, git_commit=git_commit, git_reader=git_reader)
+            clock_result = await evaluate_clock_drift(
+                active_execution_port,
+                threshold_seconds=(config.settings.polymarket_max_clock_drift_seconds),
+            )
+            clock_preflight = clock_result.to_dict()
+            if clock_result.status != "pass":
+                raise TinyLiveRoundTripError(
+                    f"clock preflight blocked authenticated execution: {clock_result.reason}"
+                )
             market, books, decision = await _select_market_and_decide(
                 active_market_port,
                 strategy,
@@ -663,9 +691,7 @@ async def run_tiny_live_round_trip(
                 clock=clock,
                 kill_switch=active_kill_switch,
             )
-            reconciliation_payload = _reconciliation_to_dict(
-                pre_entry_reconciliation
-            )
+            reconciliation_payload = _reconciliation_to_dict(pre_entry_reconciliation)
             portfolio_decision = SingleStrategyPortfolioAdmission().evaluate(
                 intent,
                 PortfolioAdmissionContext(
@@ -707,8 +733,7 @@ async def run_tiny_live_round_trip(
                     daily_pnl=Decimal("0"),
                     open_orders_count=len(conflicting_orders),
                     market_data_age_ms=max(
-                        _data_age_ms(quote.timestamp, risk_checked_at)
-                        for quote in decision.quotes
+                        _data_age_ms(quote.timestamp, risk_checked_at) for quote in decision.quotes
                     ),
                 ),
                 BoundedLiveRiskContext(
@@ -736,12 +761,9 @@ async def run_tiny_live_round_trip(
                     owner_authorized=True,
                     account_identity_consistent=True,
                     signer_funder_compatible=True,
-                    reconciliation_available=(
-                        not pre_entry_reconciliation.trading_should_pause
-                    ),
+                    reconciliation_available=(not pre_entry_reconciliation.trading_should_pause),
                     token_allowlisted=(
-                        intent.token_id
-                        in config.settings.polymarket_live_token_allowlist
+                        intent.token_id in config.settings.polymarket_live_token_allowlist
                     ),
                 ),
             )
@@ -797,9 +819,7 @@ async def run_tiny_live_round_trip(
                             clock=clock,
                             kill_switch=active_kill_switch,
                         )
-                        reconciliation_payload = _reconciliation_to_dict(
-                            reconciliation_result
-                        )
+                        reconciliation_payload = _reconciliation_to_dict(reconciliation_result)
                         result = "SAFETY_STOP"
                         stop_reason = str(error)
                         raise
@@ -841,9 +861,7 @@ async def run_tiny_live_round_trip(
                         clock=clock,
                         kill_switch=active_kill_switch,
                     )
-                    reconciliation_payload = _reconciliation_to_dict(
-                        reconciliation_result
-                    )
+                    reconciliation_payload = _reconciliation_to_dict(reconciliation_result)
                     result = (
                         "SAFETY_STOP"
                         if reconciliation_result.trading_should_pause
@@ -875,9 +893,7 @@ async def run_tiny_live_round_trip(
                             clock=clock,
                             kill_switch=active_kill_switch,
                         )
-                        reconciliation_payload = _reconciliation_to_dict(
-                            reconciliation_result
-                        )
+                        reconciliation_payload = _reconciliation_to_dict(reconciliation_result)
                         result = (
                             "SAFETY_STOP"
                             if reconciliation_result.trading_should_pause
@@ -938,19 +954,15 @@ async def run_tiny_live_round_trip(
                                 expected_size=fill.size,
                             )
                         except TinyLiveRoundTripError as error:
-                            reconciliation_result = (
-                                await _reconcile_position_without_exit(
-                                    active_execution_port,
-                                    market=market,
-                                    token_id=intent.token_id,
-                                    expected_position=fill.size,
-                                    clock=clock,
-                                    kill_switch=active_kill_switch,
-                                )
+                            reconciliation_result = await _reconcile_position_without_exit(
+                                active_execution_port,
+                                market=market,
+                                token_id=intent.token_id,
+                                expected_position=fill.size,
+                                clock=clock,
+                                kill_switch=active_kill_switch,
                             )
-                            reconciliation_payload = _reconciliation_to_dict(
-                                reconciliation_result
-                            )
+                            reconciliation_payload = _reconciliation_to_dict(reconciliation_result)
                             result = "SAFETY_STOP"
                             stop_reason = str(error)
                             raise
@@ -995,19 +1007,15 @@ async def run_tiny_live_round_trip(
                                 "actual fill cannot produce a valid fee-aware exit target: "
                                 f"{actual_exit_target.reason}"
                             )
-                            reconciliation_result = (
-                                await _reconcile_position_without_exit(
-                                    active_execution_port,
-                                    market=market,
-                                    token_id=intent.token_id,
-                                    expected_position=reconciled_size,
-                                    clock=clock,
-                                    kill_switch=active_kill_switch,
-                                )
+                            reconciliation_result = await _reconcile_position_without_exit(
+                                active_execution_port,
+                                market=market,
+                                token_id=intent.token_id,
+                                expected_position=reconciled_size,
+                                clock=clock,
+                                kill_switch=active_kill_switch,
                             )
-                            reconciliation_payload = _reconciliation_to_dict(
-                                reconciliation_result
-                            )
+                            reconciliation_payload = _reconciliation_to_dict(reconciliation_result)
                         else:
                             assert actual_exit_target.target_price is not None
                             try:
@@ -1017,15 +1025,13 @@ async def run_tiny_live_round_trip(
                                     size=reconciled_size,
                                 )
                             except TinyLiveRoundTripError as error:
-                                reconciliation_result = (
-                                    await _reconcile_position_without_exit(
-                                        active_execution_port,
-                                        market=market,
-                                        token_id=intent.token_id,
-                                        expected_position=reconciled_size,
-                                        clock=clock,
-                                        kill_switch=active_kill_switch,
-                                    )
+                                reconciliation_result = await _reconcile_position_without_exit(
+                                    active_execution_port,
+                                    market=market,
+                                    token_id=intent.token_id,
+                                    expected_position=reconciled_size,
+                                    clock=clock,
+                                    kill_switch=active_kill_switch,
                                 )
                                 reconciliation_payload = _reconciliation_to_dict(
                                     reconciliation_result
@@ -1038,18 +1044,14 @@ async def run_tiny_live_round_trip(
                                 {
                                     "client_order_id": manager.exit_client_order_id,
                                     "client_order_id_sent_to_venue": False,
-                                    "normalized_target": str(
-                                        actual_exit_target.target_price
-                                    ),
+                                    "normalized_target": str(actual_exit_target.target_price),
                                     "sell_quantity": str(reconciled_size),
                                     "submitted_at": clock().isoformat(),
                                     "target_calculation": actual_exit_target.to_dict(),
                                 }
                             )
-                            fee_evidence["expected_exit_fee_at_target"] = (
-                                _optional_decimal_text(
-                                    actual_exit_target.expected_exit_fee
-                                )
+                            fee_evidence["expected_exit_fee_at_target"] = _optional_decimal_text(
+                                actual_exit_target.expected_exit_fee
                             )
                             _persist_exit_order_state(
                                 database.connection,
@@ -1066,15 +1068,13 @@ async def run_tiny_live_round_trip(
                                     "EXIT_REJECTED",
                                     updated_at=clock(),
                                 )
-                                reconciliation_result = (
-                                    await _reconcile_position_without_exit(
-                                        active_execution_port,
-                                        market=market,
-                                        token_id=intent.token_id,
-                                        expected_position=reconciled_size,
-                                        clock=clock,
-                                        kill_switch=active_kill_switch,
-                                    )
+                                reconciliation_result = await _reconcile_position_without_exit(
+                                    active_execution_port,
+                                    market=market,
+                                    token_id=intent.token_id,
+                                    expected_position=reconciled_size,
+                                    clock=clock,
+                                    kill_switch=active_kill_switch,
                                 )
                                 reconciliation_payload = _reconciliation_to_dict(
                                     reconciliation_result
@@ -1115,15 +1115,9 @@ async def run_tiny_live_round_trip(
                                     fee_evidence["actual_total_fees"] = str(
                                         fill.fee + exit_fill.fee
                                     )
-                                    position_state["available_size"] = str(
-                                        remaining_position
-                                    )
-                                    position_state["exit_filled_size"] = str(
-                                        exit_fill.size
-                                    )
-                                    allocated_entry_fee = (
-                                        fill.fee * exit_fill.size / fill.size
-                                    )
+                                    position_state["available_size"] = str(remaining_position)
+                                    position_state["exit_filled_size"] = str(exit_fill.size)
+                                    allocated_entry_fee = fill.fee * exit_fill.size / fill.size
                                     position_state["realized_pnl"] = str(
                                         (exit_fill.weighted_average_price * exit_fill.size)
                                         - exit_fill.fee
@@ -1243,6 +1237,7 @@ async def run_tiny_live_round_trip(
                 if account is not None
                 else {}
             ),
+            clock_preflight=clock_preflight,
             market_snapshot=_market_snapshot(
                 market,
                 books,
@@ -1258,9 +1253,7 @@ async def run_tiny_live_round_trip(
                     "parameters": {
                         "desired_net_return": str(strategy.config.desired_net_return),
                         "maximum_book_age_ms": config.maximum_book_age_ms,
-                        "maximum_entry_notional": str(
-                            config.maximum_entry_notional
-                        ),
+                        "maximum_entry_notional": str(config.maximum_entry_notional),
                         "maximum_spread": str(config.maximum_spread),
                     },
                 }
@@ -1299,9 +1292,7 @@ async def run_tiny_live_round_trip(
                 },
                 decision=report.strategy_decision,
                 risk_result=report.risk_decision,
-                orders=tuple(
-                    item for item in (report.entry_order, report.exit_order) if item
-                ),
+                orders=tuple(item for item in (report.entry_order, report.exit_order) if item),
                 fills=tuple(
                     cast(dict[str, Any], fill_payload)
                     for fill_payload in (
@@ -1343,8 +1334,7 @@ async def _select_market_and_decide(
     if not candidates:
         raise TinyLiveRoundTripError("no active BTC Up/Down 15m market")
     first_rejection: (
-        tuple[MarketDetails, tuple[MarketOrderBookSnapshot, ...], FavoriteDecision]
-        | None
+        tuple[MarketDetails, tuple[MarketOrderBookSnapshot, ...], FavoriteDecision] | None
     ) = None
     for summary in candidates:
         if summary.slug is None:
@@ -1366,9 +1356,7 @@ async def _select_market_and_decide(
             first_rejection = first_rejection or candidate
             continue
         token_ids = tuple(
-            outcome.token_id
-            for outcome in market.outcomes
-            if outcome.token_id is not None
+            outcome.token_id for outcome in market.outcomes if outcome.token_id is not None
         )
         if len(token_ids) != 2 or len(set(token_ids)) != 2:
             candidate = (
@@ -1382,9 +1370,7 @@ async def _select_market_and_decide(
             )
             first_rejection = first_rejection or candidate
             continue
-        books = tuple(
-            [await market_port.get_order_book(token_id) for token_id in token_ids]
-        )
+        books = tuple([await market_port.get_order_book(token_id) for token_id in token_ids])
         decision = strategy.decide(
             market,
             books,
@@ -1499,9 +1485,7 @@ async def _read_account_preflight(
         raw_allowances = conditional.get("allowances")
         if not isinstance(raw_allowances, dict) or not raw_allowances:
             raise TinyLiveRoundTripError("outcome-token allowances are unreadable")
-        token_allowance = min(
-            _base_units_to_decimal(value) for value in raw_allowances.values()
-        )
+        token_allowance = min(_base_units_to_decimal(value) for value in raw_allowances.values())
         outcome_token_state[token_id] = {
             "allowance": str(token_allowance),
             "balance": str(token_balance),
@@ -1536,9 +1520,7 @@ def _assert_account_funded(
     if account.balance <= 0 or account.allowance < MAXIMUM_ENTRY_NOTIONAL:
         raise TinyLiveRoundTripError("collateral balance or allowance is insufficient")
     if account.available_balance < MAXIMUM_ENTRY_NOTIONAL:
-        raise TinyLiveRoundTripError(
-            "available collateral after reservations is insufficient"
-        )
+        raise TinyLiveRoundTripError("available collateral after reservations is insufficient")
     if selected_token_id is None or expected_exit_size is None:
         return
     selected = account.outcome_token_state.get(selected_token_id)
@@ -1583,6 +1565,10 @@ def _assert_geoblock(status: GeoblockStatus) -> None:
 def _assert_runtime_settings(config: TinyLiveRoundTripConfig, kill_switch: KillSwitch) -> None:
     if kill_switch.is_active():
         raise TinyLiveRoundTripError(f"kill switch is active: {kill_switch.reason or 'unknown'}")
+    if config.settings.polymarket_private_key is None:
+        raise TinyLiveRoundTripError(
+            "authenticated round-trip preflight requires POLYMARKET_PRIVATE_KEY"
+        )
     if config.dry_run:
         return
     if config.settings.trading_mode != TradingMode.LIVE:
@@ -1591,8 +1577,6 @@ def _assert_runtime_settings(config: TinyLiveRoundTripConfig, kill_switch: KillS
         raise TinyLiveRoundTripError("real run requires LIVE_TRADING_ENABLED=true")
     if not config.acknowledgement:
         raise TinyLiveRoundTripError("real run requires POLYSIA-LIVE-004 acknowledgement")
-    if config.settings.polymarket_private_key is None:
-        raise TinyLiveRoundTripError("real run requires configured test signer")
     if not config.settings.polymarket_funder_address:
         raise TinyLiveRoundTripError("real run requires configured test funder")
 
@@ -1645,9 +1629,7 @@ def calculate_fee_aware_exit_target(
     desired_net_profit = all_in_entry_cost * desired_net_return
     required_net_exit_proceeds = all_in_entry_cost + desired_net_profit
     nominal_gross_target_price = entry_price * (Decimal("1") + desired_net_return)
-    fee_free_target_price = (
-        required_net_exit_proceeds / quantity if quantity > 0 else None
-    )
+    fee_free_target_price = required_net_exit_proceeds / quantity if quantity > 0 else None
     fee_assumption = _exit_fee_assumption(market)
 
     def result(
@@ -1713,9 +1695,7 @@ def calculate_fee_aware_exit_target(
     if market.fee_schedule is None:
         return result(achievable=False, reason="market fee applicability is unreadable")
 
-    maximum_ticks = ((Decimal("1") - tick_size) / tick_size).to_integral_value(
-        rounding=ROUND_FLOOR
-    )
+    maximum_ticks = ((Decimal("1") - tick_size) / tick_size).to_integral_value(rounding=ROUND_FLOOR)
     if maximum_ticks > 100_000:
         return result(
             achievable=False,
@@ -1726,9 +1706,7 @@ def calculate_fee_aware_exit_target(
         return result(achievable=False, reason="venue price range has no valid exit tick")
 
     assert fee_free_target_price is not None
-    starting_ticks = (fee_free_target_price / tick_size).to_integral_value(
-        rounding=ROUND_CEILING
-    )
+    starting_ticks = (fee_free_target_price / tick_size).to_integral_value(rounding=ROUND_CEILING)
     candidate = max(tick_size, starting_ticks * tick_size)
     last_fee: Decimal | None = None
     last_gross: Decimal | None = None
@@ -1798,14 +1776,10 @@ async def _wait_for_confirmed_entry(
         trades = await adapter.list_account_trades(token_id=token_id)
         matching = [trade for trade in trades if _trade_matches_order(trade, order_id)]
         confirmed = [
-            trade
-            for trade in matching
-            if str(_read(trade, "status") or "").upper() == "CONFIRMED"
+            trade for trade in matching if str(_read(trade, "status") or "").upper() == "CONFIRMED"
         ]
         failed = [
-            trade
-            for trade in matching
-            if str(_read(trade, "status") or "").upper() == "FAILED"
+            trade for trade in matching if str(_read(trade, "status") or "").upper() == "FAILED"
         ]
         if failed:
             raise TinyLiveRoundTripError("entry trade reached terminal FAILED state")
@@ -1945,9 +1919,7 @@ async def _classify_and_reconcile_exit(
         )
         result = "ENTRY_FILLED_EXIT_OPEN"
     else:
-        expected_internal_size = (
-            expected_position if overfilled else normalized_remaining
-        )
+        expected_internal_size = expected_position if overfilled else normalized_remaining
         internal = InternalExpectedState(
             last_successful_account_read_at=checked_at,
             open_orders=(
@@ -2041,8 +2013,7 @@ async def _reconcile_position_without_exit(
     selected_positions = [
         position
         for position in positions
-        if str(_read(position, "token_id") or "") == token_id
-        and _position_size(position) != 0
+        if str(_read(position, "token_id") or "") == token_id and _position_size(position) != 0
     ]
     checked_at = clock()
     return _reconcile_snapshots(
@@ -2071,19 +2042,13 @@ def _reconcile_snapshots(
     kill_switch: KillSwitch,
 ) -> ReconciliationResult:
     checked_at = clock()
-    return ReconciliationManager(
-        safety_pause=KillSwitchSafetyPause(kill_switch)
-    ).reconcile(
+    return ReconciliationManager(safety_pause=KillSwitchSafetyPause(kill_switch)).reconcile(
         ReconciliationInput(
             actual=ActualAccountState(
                 account_readable=True,
-                open_orders=tuple(
-                    _order_snapshot(order, checked_at) for order in open_orders
-                ),
+                open_orders=tuple(_order_snapshot(order, checked_at) for order in open_orders),
                 open_orders_readable=True,
-                positions=tuple(
-                    _position_snapshot(position, checked_at) for position in positions
-                ),
+                positions=tuple(_position_snapshot(position, checked_at) for position in positions),
                 positions_readable=True,
                 read_at=checked_at,
             ),
@@ -2302,9 +2267,7 @@ def _entry_ledger_entries(
         },
         {
             **common,
-            "amount": str(
-                -((fill.weighted_average_price * fill.size) + fill.fee)
-            ),
+            "amount": str(-((fill.weighted_average_price * fill.size) + fill.fee)),
             "currency": "collateral",
             "event_id": f"{run_id}:entry:collateral",
             "event_type": "LIVE_ENTRY_COLLATERAL_DECREASE",
@@ -2335,9 +2298,7 @@ def _exit_ledger_entries(
         },
         {
             **common,
-            "amount": str(
-                (fill.weighted_average_price * fill.size) - fill.fee
-            ),
+            "amount": str((fill.weighted_average_price * fill.size) - fill.fee),
             "currency": "collateral",
             "event_id": f"{run_id}:exit:collateral",
             "event_type": "LIVE_EXIT_COLLATERAL_INCREASE",
@@ -2358,8 +2319,7 @@ def _summarize_exit_fill(
     if total_size <= 0:
         raise TinyLiveRoundTripError("confirmed exit trade has no size")
     notional = sum(
-        _decimal(_read(trade, "size")) * _decimal(_read(trade, "price"))
-        for trade in trades
+        _decimal(_read(trade, "size")) * _decimal(_read(trade, "price")) for trade in trades
     )
     average = notional / total_size
     fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
@@ -2375,9 +2335,7 @@ def _summarize_exit_fill(
         trade_count=len(trades),
         confirmed_at=confirmed_at,
         fee_rate_bps=tuple(
-            str(value)
-            for trade in trades
-            if (value := _read(trade, "fee_rate_bps")) is not None
+            str(value) for trade in trades if (value := _read(trade, "fee_rate_bps")) is not None
         ),
     )
 
@@ -2438,9 +2396,7 @@ def _fee_evidence(market: MarketDetails, *, expected_fee: Decimal) -> dict[str, 
 def _remaining_seconds(end_date: datetime | None, as_of: datetime) -> int | None:
     if end_date is None:
         return None
-    normalized_end = (
-        end_date if end_date.tzinfo is not None else end_date.replace(tzinfo=UTC)
-    )
+    normalized_end = end_date if end_date.tzinfo is not None else end_date.replace(tzinfo=UTC)
     normalized_as_of = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
     return max(0, int((normalized_end - normalized_as_of).total_seconds()))
 
@@ -2595,9 +2551,7 @@ def _position_snapshot(position: Any, checked_at: datetime) -> PositionSnapshot:
 
 def _reconciliation_to_dict(result: ReconciliationResult) -> dict[str, object]:
     payload = result.to_dict()
-    payload["resolution"] = (
-        "states_match" if not result.detected_events else "mismatch_detected"
-    )
+    payload["resolution"] = "states_match" if not result.detected_events else "mismatch_detected"
     return payload
 
 
