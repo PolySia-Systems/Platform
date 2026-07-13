@@ -185,3 +185,17 @@ CREATE TABLE IF NOT EXISTS live_order_checkpoints (
 
 CREATE INDEX IF NOT EXISTS idx_live_order_checkpoints_client
     ON live_order_checkpoints (client_order_id, persisted_at);
+
+CREATE TABLE IF NOT EXISTS live_round_trip_reconciliations (
+    observation_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    authorization_id TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    persisted_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_round_trip_reconciliations_run
+    ON live_round_trip_reconciliations (run_id, observed_at, observation_id);

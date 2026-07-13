@@ -17,6 +17,10 @@ from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
 )
+from polysia.adapters.polymarket.round_trip_reconciliation import (
+    PolymarketRoundTripReader,
+    PolymarketRoundTripReadError,
+)
 from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
     PolymarketSecureAdapterError,
@@ -221,6 +225,11 @@ from polysia.reconciliation import (
     ReconciliationResult,
     reconciliation_report_filename,
     write_reconciliation_reports,
+)
+from polysia.reconciliation.live_round_trip import (
+    LiveRoundTripReconciliationConfig,
+    LiveRoundTripReconciliationError,
+    reconcile_live_round_trip,
 )
 from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.risk.kill_switch import KillSwitch
@@ -1795,6 +1804,50 @@ def post_live_reconciliation(
     }
     typer.echo(json.dumps(payload, sort_keys=True))
     if report.reconciliation_status == "blocked":
+        raise typer.Exit(code=1)
+
+
+@app.command("reconcile-live-round-trip")
+def reconcile_live_round_trip_command(
+    run_id: Annotated[
+        str,
+        typer.Option("--run-id", help="Persisted live round-trip run identifier."),
+    ],
+    authorization_id: Annotated[
+        str,
+        typer.Option("--authorization-id", help="Consumed owner authorization identifier."),
+    ] = AUTHORIZATION_ID,
+    database_path: Annotated[
+        Path,
+        typer.Option("--database", help="PolySia SQLite state database."),
+    ] = Path("data/polysia.sqlite3"),
+) -> None:
+    """Reconcile a persisted round trip through authenticated read-only venue calls."""
+
+    settings = AppSettings()
+    configure_logging(settings)
+    _apply_secure_env_from_settings(settings)
+    try:
+        report = asyncio.run(
+            reconcile_live_round_trip(
+                LiveRoundTripReconciliationConfig(
+                    database_path=database_path,
+                    run_id=run_id,
+                    authorization_id=authorization_id,
+                ),
+                venue_reader=PolymarketRoundTripReader(),
+            )
+        )
+    except (
+        LiveRoundTripReconciliationError,
+        PolymarketRoundTripReadError,
+        OSError,
+        ValueError,
+    ) as error:
+        _print_error_and_exit(error)
+
+    typer.echo(json.dumps(report.to_dict(), sort_keys=True))
+    if report.status == "blocked":
         raise typer.Exit(code=1)
 
 

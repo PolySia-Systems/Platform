@@ -36,6 +36,7 @@ EXPECTED_COMMANDS = {
     "post-live-reconciliation",
     "production-gap-audit",
     "reconcile-account",
+    "reconcile-live-round-trip",
     "release-manifest",
     "shadow-run",
     "shadow-run-real-data",

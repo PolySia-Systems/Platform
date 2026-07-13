@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
-from polymarket import AsyncSecureClient, PolymarketError
+from polymarket import AsyncSecureClient, PolymarketError, RequestRejectedError
 
 from polysia.adapters.polymarket.capabilities import POLYMARKET_CAPABILITIES
 from polysia.config.logging import get_logger
@@ -198,6 +198,25 @@ class PolymarketSecureAdapter:
             )
             raise PolymarketSecureAdapterError("Could not fetch open orders.") from error
 
+    async def get_order(self, *, order_id: str) -> Any | None:
+        """Return one authenticated order by its durable venue identifier."""
+        client = self._require_client()
+        try:
+            return await client.get_order(order_id=order_id)
+        except RequestRejectedError as error:
+            if error.status == 404:
+                self._logger.info(
+                    "polymarket_secure_order_not_found",
+                    operation="get_order",
+                    order_id=order_id,
+                )
+                return None
+            self._log_sdk_error("get_order", error, order_id=order_id)
+            raise PolymarketSecureAdapterError("Could not fetch Polymarket order.") from error
+        except PolymarketError as error:
+            self._log_sdk_error("get_order", error, order_id=order_id)
+            raise PolymarketSecureAdapterError("Could not fetch Polymarket order.") from error
+
     async def get_market(
         self,
         *,
@@ -248,12 +267,11 @@ class PolymarketSecureAdapter:
         market: tuple[str, ...] | None = None,
         size_threshold: float | None = None,
     ) -> list[Any]:
-        """Return one page of account positions without exposing wallet identifiers."""
+        """Return all account positions without exposing wallet identifiers."""
         client = self._require_client()
         try:
             paginator = client.list_positions(market=market, size_threshold=size_threshold)
-            page = await paginator.first_page()
-            return list(page.items)
+            return [position async for position in paginator.iter_items()]
         except PolymarketError as error:
             self._log_sdk_error("list_positions", error)
             raise PolymarketSecureAdapterError("Could not fetch Polymarket positions.") from error
@@ -264,12 +282,11 @@ class PolymarketSecureAdapter:
         token_id: str | None = None,
         market: str | None = None,
     ) -> list[Any]:
-        """Return one page of account trades with raw identifiers kept out of logs."""
+        """Return all matching account trades with raw identifiers kept out of logs."""
         client = self._require_client()
         try:
             paginator = client.list_account_trades(token_id=token_id, market=market)
-            page = await paginator.first_page()
-            return list(page.items)
+            return [trade async for trade in paginator.iter_items()]
         except PolymarketError as error:
             self._log_sdk_error("list_account_trades", error, token_id=token_id, market=market)
             raise PolymarketSecureAdapterError("Could not fetch Polymarket trades.") from error
