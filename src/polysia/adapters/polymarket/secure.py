@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
-from polymarket import AsyncSecureClient, PolymarketError, RequestRejectedError
+from polymarket import (
+    AsyncSecureClient,
+    PolymarketError,
+    RequestRejectedError,
+    UnexpectedResponseError,
+)
 
 from polysia.adapters.polymarket.capabilities import POLYMARKET_CAPABILITIES
 from polysia.config.logging import get_logger
@@ -213,6 +218,13 @@ class PolymarketSecureAdapter:
                 return None
             self._log_sdk_error("get_order", error, order_id=order_id)
             raise PolymarketSecureAdapterError("Could not fetch Polymarket order.") from error
+        except UnexpectedResponseError:
+            self._logger.info(
+                "polymarket_secure_order_detail_unavailable",
+                operation="get_order",
+                order_id=order_id,
+            )
+            return None
         except PolymarketError as error:
             self._log_sdk_error("get_order", error, order_id=order_id)
             raise PolymarketSecureAdapterError("Could not fetch Polymarket order.") from error

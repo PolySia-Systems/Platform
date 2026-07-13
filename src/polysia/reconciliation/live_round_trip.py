@@ -75,6 +75,7 @@ class LiveRoundTripVenueSnapshot:
     position_size: Decimal
     account_balances_readable: bool
     read_at: datetime
+    order_absence_confirmed: bool = False
 
 
 class LiveRoundTripVenueReader(Protocol):
@@ -331,9 +332,21 @@ def _build_report(
     if not snapshot.account_balances_readable:
         blocking.append("required authenticated balance reads did not complete")
 
+    fully_filled = abs(confirmed_size - state.entry_size) <= _TOLERANCE
     order_status = snapshot.order.status.upper() if snapshot.order is not None else None
     if snapshot.order is None:
-        blocking.append("the venue exit order could not be identified")
+        if (
+            snapshot.order_absence_confirmed
+            and fully_filled
+            and abs(snapshot.position_size) <= _TOLERANCE
+        ):
+            order_status = "TERMINAL_UNAVAILABLE"
+            warnings.append(
+                "terminal order detail is unavailable; confirmed fills and zero position "
+                "prove closure"
+            )
+        else:
+            blocking.append("the venue exit order could not be identified")
     else:
         _validate_order(state, snapshot.order, confirmed_size, blocking, warnings)
 

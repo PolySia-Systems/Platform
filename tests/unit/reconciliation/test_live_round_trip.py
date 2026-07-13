@@ -170,6 +170,7 @@ def _snapshot(
     position_size: str = "5",
     order_present: bool = True,
     balances_readable: bool = True,
+    order_absence_confirmed: bool = False,
 ) -> LiveRoundTripVenueSnapshot:
     return LiveRoundTripVenueSnapshot(
         order=_order(status=status, matched_size=matched_size) if order_present else None,
@@ -177,6 +178,7 @@ def _snapshot(
         position_size=Decimal(position_size),
         account_balances_readable=balances_readable,
         read_at=NOW + timedelta(minutes=7),
+        order_absence_confirmed=order_absence_confirmed,
     )
 
 
@@ -304,6 +306,28 @@ async def test_full_fill_closes_position_and_records_net_realized_pnl(
     assert persisted_report["new_fill_count"] == 1
     assert persisted_report["new_ledger_event_count"] == 2
     assert persisted_report["observation_recorded"] is True
+
+
+@pytest.mark.asyncio
+async def test_confirmed_terminal_order_absence_allows_proven_full_closure(
+    database_path: Path,
+) -> None:
+    report = await _reconcile(
+        database_path,
+        _snapshot(
+            order_present=False,
+            order_absence_confirmed=True,
+            fills=(_fill("trade-1:maker:0", "5"),),
+            position_size="0",
+        ),
+    )
+
+    assert report.classification == "COMPLETED_ROUND_TRIP"
+    assert report.status == "warning"
+    assert report.observed_order_status == "TERMINAL_UNAVAILABLE"
+    assert report.net_realized_pnl == Decimal("0.21264")
+    assert report.expected_remaining_position == 0
+    assert "confirmed fills and zero position prove closure" in report.warnings[0]
 
 
 @pytest.mark.asyncio
