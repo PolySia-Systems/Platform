@@ -254,6 +254,68 @@ def test_reconcile_live_round_trip_command_uses_read_only_service(
     assert captured["config"].database_path == database_path
 
 
+def test_monitor_live_round_trip_command_uses_bounded_read_only_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    venue_reader = object()
+    health_reader = object()
+
+    async def fake_monitor(config, *, venue_reader, health_reader):
+        captured["config"] = config
+        captured["venue_reader"] = venue_reader
+        captured["health_reader"] = health_reader
+        return SimpleNamespace(
+            status="warning",
+            cycles=(
+                SimpleNamespace(
+                    alerts=(SimpleNamespace(code="EXIT_ORDER_STALE"),),
+                ),
+            ),
+            new_alert_count=1,
+            duplicate_alert_count=0,
+        )
+
+    def fake_write(_report, output_dir: Path):
+        return {
+            "json": output_dir / "live-round-trip-monitor.json",
+            "markdown": output_dir / "live-round-trip-monitor.md",
+        }
+
+    monkeypatch.setattr("polysia.cli.configure_logging", lambda _settings: None)
+    monkeypatch.setattr("polysia.cli._apply_secure_env_from_settings", lambda _settings: None)
+    monkeypatch.setattr("polysia.cli.PolymarketRoundTripReader", lambda: venue_reader)
+    monkeypatch.setattr("polysia.cli.PolymarketLifecycleHealthReader", lambda: health_reader)
+    monkeypatch.setattr("polysia.cli.monitor_live_round_trip", fake_monitor)
+    monkeypatch.setattr("polysia.cli.write_live_round_trip_monitor_reports", fake_write)
+
+    database_path = tmp_path / "state.sqlite3"
+    result = runner.invoke(
+        app,
+        [
+            "monitor-live-round-trip",
+            "--run-id",
+            "live-run",
+            "--database",
+            str(database_path),
+            "--output-dir",
+            str(tmp_path / "reports"),
+            "--max-cycles",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["monitor_status"] == "warning"
+    assert payload["alert_codes"] == ["EXIT_ORDER_STALE"]
+    assert captured["venue_reader"] is venue_reader
+    assert captured["health_reader"] is health_reader
+    assert captured["config"].database_path == database_path
+    assert captured["config"].max_cycles == 2
+
+
 def test_operator_status_command_returns_sanitized_payload(monkeypatch) -> None:
     monkeypatch.setenv("TRADING_MODE", "LIVE")
     monkeypatch.setenv("LIVE_TRADING_ENABLED", "true")

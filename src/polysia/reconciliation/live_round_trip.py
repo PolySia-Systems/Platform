@@ -38,6 +38,10 @@ class LiveRoundTripReconciliationError(RuntimeError):
     """Raised when persisted state cannot support trustworthy reconciliation."""
 
 
+class LiveRoundTripVenueReadError(RuntimeError):
+    """Raised when required authenticated read-only venue evidence is unavailable."""
+
+
 @dataclass(frozen=True, slots=True)
 class ObservedExitOrder:
     order_id: str
@@ -921,6 +925,7 @@ __all__ = [
     "LiveRoundTripReconciliationConfig",
     "LiveRoundTripReconciliationError",
     "LiveRoundTripReconciliationReport",
+    "LiveRoundTripVenueReadError",
     "LiveRoundTripVenueReader",
     "LiveRoundTripVenueSnapshot",
     "ObservedExitFill",
