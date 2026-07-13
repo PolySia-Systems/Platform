@@ -5,7 +5,7 @@
 - **Scope:** Owner Windows workstation, Conda environment, local Python process, local Git/files/SQLite, ignored secrets/evidence, Polymarket endpoints, and configured CI.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, operators, developers, security reviewers, and deployment reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -14,7 +14,7 @@ Canonical source: [`13-current-deployment-view.mmd`](../sources/13-current-deplo
 ```mermaid
 flowchart LR
   Operator["Owner / Operator\n[CURRENT]"]:::current
-  GitHost["Git provider / CI runtime\nconfiguration present; remote run unverified\n[EXTERNAL]"]:::external
+  GitHost["GitHub repository / CI runtime\nremote and CI verified\n[EXTERNAL]"]:::external
   PublicAPI["Polymarket public endpoints\n[EXTERNAL]"]:::external
   SecureAPI["Polymarket authenticated endpoints\n[EXTERNAL]"]:::external
 
@@ -35,7 +35,7 @@ flowchart LR
   Process ==>|sanitized output| Reports
   Process -->|public reads / stream| PublicAPI
   Process -->|acknowledged reads or guarded action| SecureAPI
-  Repo -.->|push / workflow source when configured| GitHost
+  Repo -.->|push / workflow source| GitHost
 
   subgraph LEGEND["Legend"]
     L1["CURRENT local deployment"]:::current
@@ -58,11 +58,16 @@ CURRENT is solid, TARGET is dashed, FUTURE is dotted, EXTERNAL is gray, safety i
 
 ## Main reading path
 
-Start at the owner workstation, then follow local process dependencies to files and external endpoints. Treat Git/CI as configured but not remotely verified.
+Start at the owner workstation, then follow local process dependencies to files
+and external endpoints. GitHub hosting and CI are verified external services;
+the PolySia runtime remains local.
 
 ## Current implementation mapping
 
-The current deployment is one local Python process in the `PolySia` Conda environment. SQLite and reports are local. `.env` is ignored. Public and authenticated Polymarket endpoints are external.
+The current deployment is one local Python process in the `PolySia` Conda
+environment. SQLite and reports are local. `.env` is ignored. The repository is
+connected to GitHub and CI verifies Python 3.11/3.13 plus supply-chain gates.
+Public and authenticated Polymarket endpoints are external.
 
 ## Target/future elements
 
@@ -90,7 +95,8 @@ The verified owner workstation remains the current execution host.
 
 ## Known limitations
 
-Remote CI execution and branch protection are not verified; local SQLite files and operational artifacts are intentionally ignored.
+Branch protection is not configured by this phase. Local SQLite files,
+operational artifacts, credentials, and recovery archives remain outside Git.
 
 ## Review trigger
 

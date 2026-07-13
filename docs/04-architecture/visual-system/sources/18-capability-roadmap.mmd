@@ -2,12 +2,12 @@ flowchart LR
   subgraph NOW["Implemented foundation / MVP / limited-live [CURRENT]"]
     N1["Public data, stream, normalization, event bus, order book"]:::current
     N2["Research strategies, risk, kill switch, paper execution, P&L"]:::current
-    N3["SQLite, reconciliation, monitoring, backtesting, delivery tooling"]:::current
+    N3["SQLite, minimal Strategy Registry, reconciliation, monitoring, backtesting"]:::current
     N4["Authenticated reads and guarded tiny-live tools"]:::risk
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
-    T1["Strategy registry, orchestration, and conflict resolution"]:::target
+    T1["Strategy orchestration and conflict resolution"]:::target
     T2["Portfolio and capital allocation"]:::target
     T3["OMS / Transaction Manager and generalized ledger"]:::target
     T4["Adapter registry, operator console, portable runtime hardening"]:::target

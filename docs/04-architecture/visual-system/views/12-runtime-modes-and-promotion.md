@@ -5,7 +5,7 @@
 - **Scope:** `TradingMode` enum, replay/paper/shadow/tiny-live workflows, and the evidence-based maturity path.
 - **Architecture status:** MIXED
 - **Audience:** Owner, operators, researchers, risk reviewers, and release reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -70,11 +70,17 @@ Read current enum modes at the top, current workflows in the middle, and evidenc
 
 ## Current implementation mapping
 
-The actual enum is `DATA_ONLY`, `PAPER`, and `LIVE`. Replay, paper, local shadow, public real-data shadow, and guarded tiny-live commands are implemented workflows.
+The actual enum is `DATA_ONLY`, `PAPER`, and `LIVE`. Replay, paper, local
+shadow, public real-data shadow, and guarded tiny-live commands are implemented
+workflows. LIVE-004 proves one bounded execution/reconciliation path, not a
+promotion decision.
 
 ## Target/future elements
 
-Out-of-sample discipline and micro-capital promotion are TARGET gates. Controlled scaling is FUTURE and has no release date.
+Historical data validation, realistic fee/slippage-aware backtesting, and a
+large Paper/Shadow sample are the immediate validation cycle. Out-of-sample
+discipline and micro-capital promotion remain TARGET gates. Controlled scaling
+is FUTURE and has no release date.
 
 ## Related repository files
 
@@ -98,7 +104,9 @@ Promotion requires evidence and owner approval; mode names do not themselves gra
 
 ## Known limitations
 
-`SHADOW` is not a `TradingMode` value. Micro-capital live and controlled scaling are not approved current operating stages.
+`SHADOW` is not a `TradingMode` value. Broader micro-capital live and controlled
+scaling are not approved current operating stages; all existing live
+authorizations are consumed.
 
 ## Review trigger
 
