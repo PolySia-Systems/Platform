@@ -1,24 +1,47 @@
 # Architecture Overview
 
-PolySia is a modular monolith. Dependencies point inward:
+## CURRENT
 
-`interfaces/adapters -> application -> domain`
+PolySia is one Python modular monolith with inward dependency boundaries:
 
-The domain and application layers must not import `polymarket`, Polymarket
-adapter modules, or SDK response models. Venue-specific identifiers and wallet,
-fee, settlement, and geoblock details are translated at the adapter boundary.
+`interfaces and adapters -> application contracts -> domain`
 
-The preserved forward path is:
+Domain and application code do not import Polymarket SDK types or adapter
+models. Venue identifiers, signer/funder semantics, fee schedules, tick/minimum
+rules, geoblock results, and venue errors are translated at the adapter
+boundary.
 
-`market data -> normalization -> features/strategy -> intent -> portfolio ->
-risk -> OMS/transaction manager -> execution port -> venue adapter`
+The current executable-intent path is:
 
-The return path is:
+`Strategy -> independent Risk -> Execution -> Polymarket Adapter -> Venue`
 
-`venue event -> OMS -> position/ledger -> reconciliation -> risk/monitoring`
+The bounded round-trip slice adds persistent authorization, one FAK entry,
+actual-fill reconciliation, one position-sized GTC exit, durable checkpoints,
+SQLite order/fill/position/ledger state, post-exit reconciliation, and bounded
+read-only lifecycle monitoring. Risk, geoblock, kill switch, allowlist, caps,
+acknowledgement, duplicate prevention, and fail-closed uncertainty remain
+non-bypassable.
 
-Emergency control is independent of strategy code. The first refactoring steps
-are identity migration, neutral market/order models and ports, then Polymarket
-adapter consolidation. Module decomposition follows only after behavior and
-boundaries have characterization tests.
+The minimal Strategy Registry is CURRENT. It stores versioned definitions,
+lifecycle state, run evidence, and explicitly unrated performance summaries; it
+is not a generalized multi-strategy orchestrator.
 
+## TARGET
+
+Generalized intent aggregation/conflict resolution, portfolio/capital
+allocation, OMS or Transaction Manager, generalized ledger, execution router,
+and adapter registry are approved target concepts only. They must not be shown
+or described as part of the current executable path.
+
+## FUTURE
+
+Additional venues, Web3/DeFi execution, cloud/distributed infrastructure,
+machine learning, and institutional availability are optional future directions
+requiring evidence and separate decisions.
+
+## EXTERNAL
+
+Polymarket APIs, market resolution, custody/wallet behavior, GitHub, CI runners,
+and the Windows time source are external systems. PolySia validates and
+reconciles their observable state but does not control their availability or
+truth.

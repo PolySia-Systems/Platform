@@ -5,7 +5,7 @@
 - **Scope:** Intent/risk pre-states, the current `OrderStatus` enum, observed paper transitions, and target submission/recovery states.
 - **Architecture status:** MIXED
 - **Audience:** Execution developers, risk reviewers, reconciliation developers, and testers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -85,7 +85,12 @@ Start at `OrderIntent`, pass risk, then follow current states. Read the isolated
 
 ## Current implementation mapping
 
-Both domain and execution order models define `NEW`, `ACCEPTED`, `PARTIALLY_FILLED`, `FILLED`, `CANCELLED`, and `REJECTED`. `PaperOrder.add_fill` drives partial/full transitions; `PaperBroker` creates, accepts, fills, or rejects.
+Both domain and execution order models define `NEW`, `ACCEPTED`,
+`PARTIALLY_FILLED`, `FILLED`, `CANCELLED`, and `REJECTED`. `PaperOrder.add_fill`
+drives partial/full transitions. The bounded live slice persists entry/exit
+checkpoints, confirmed fills, and the terminal `FILLED` exit state separately;
+FAK zero/partial/full outcomes use actual confirmed quantity and never create a
+replacement entry.
 
 ## Target/future elements
 
@@ -93,11 +98,16 @@ Both domain and execution order models define `NEW`, `ACCEPTED`, `PARTIALLY_FILL
 
 ## Related repository files
 
-`src/polysia/domain/orders/models.py`, `src/polysia/execution/order_state.py`, `src/polysia/execution/paper_broker.py`, `src/polysia/reconciliation/`
+`src/polysia/domain/orders/models.py`, `src/polysia/execution/order_state.py`,
+`src/polysia/execution/paper_broker.py`,
+`src/polysia/execution/tiny_live_round_trip.py`,
+`src/polysia/reconciliation/live_round_trip.py`
 
 ## Related tests
 
-`tests/unit/execution/test_paper_broker.py`, order-state tests, reconciliation tests
+`tests/unit/execution/test_paper_broker.py`,
+`tests/unit/execution/test_tiny_live_round_trip.py`, order-state,
+reconciliation, integration, and property tests
 
 ## Related ADRs
 
@@ -113,7 +123,9 @@ Intent and risk are lifecycle pre-states, not values of the current order enum.
 
 ## Known limitations
 
-`CANCELLED` exists in the current enum, but not every cancellation transition is owned by the paper broker.
+`CANCELLED` exists in the current enum, but not every cancellation transition
+is owned by the paper broker. Venue response/checkpoint phases are persistent
+workflow evidence, not new canonical `OrderStatus` enum values.
 
 ## Review trigger
 

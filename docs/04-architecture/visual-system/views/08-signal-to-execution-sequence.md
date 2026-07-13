@@ -5,7 +5,7 @@
 - **Scope:** Current data, strategy, risk, adapter, state, reconciliation, and monitoring participants plus target allocator, OMS, and execution-port boundaries.
 - **Architecture status:** MIXED
 - **Audience:** Architects, execution developers, strategy developers, risk reviewers, and operators.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -73,7 +73,12 @@ Read top to bottom. The alternatives show conflict/no-capital, risk rejection, v
 
 ## Current implementation mapping
 
-Market adapter, event bus, order book, features, strategies, risk engine, Polymarket adapter, positions, reconciliation, and monitoring exist. Current execution services cover part of the target execution-port role.
+Market adapter, event bus, order book, features, strategies, independent risk,
+execution services, Polymarket adapter, positions, reconciliation, and
+monitoring exist. The CURRENT bounded live slice is Strategy -> Risk ->
+Execution -> Polymarket Adapter. It claims a persistent authorization, submits
+at most one minimum-valid FAK entry, sizes at most one GTC exit from confirmed
+fill/position state, and later reconciles delayed fills read-only.
 
 ## Target/future elements
 
@@ -101,7 +106,9 @@ Target sequencing preserves current independent risk authority and adapter isola
 
 ## Known limitations
 
-The sequence unifies current and target participants for clarity; labels must be read before treating a participant as implemented.
+The sequence unifies current and target participants for clarity; labels must
+be read before treating a participant as implemented. The TARGET allocator and
+OMS must not be inserted into claims about the current bounded live path.
 
 ## Review trigger
 

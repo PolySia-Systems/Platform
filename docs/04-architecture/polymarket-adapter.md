@@ -2,34 +2,42 @@
 
 ## Boundary
 
-All official `polymarket` SDK imports are confined to
-`src/polysia/adapters/polymarket/`. The package contains:
+All official Polymarket SDK imports remain confined to
+`src/polysia/adapters/polymarket/`. Important current responsibilities include:
 
-- `public.py`: public market catalog reads;
-- `secure.py`: authenticated account and execution operations;
-- `stream.py`: realtime market ingestion and reconnect policy;
-- `geoblock.py`: mandatory fail-closed eligibility check;
-- `mappers.py`: SDK objects to canonical domain models;
-- `capabilities.py`: explicit venue capability profile.
+- public market/order-book reads and server-time access;
+- authenticated account, order, trade, balance, and position reads;
+- guarded execution/cancellation primitives used behind existing safety gates;
+- streaming and normalization;
+- fail-closed geoblock checks;
+- SDK-to-domain mapping and capability description;
+- sanitized structured error classification;
+- read-only round-trip reconciliation and lifecycle health reads.
 
-Domain and application modules do not import the SDK or adapter. Strategy and
-storage layers consume canonical models. Architecture tests enforce these
-directions.
+Domain, application, strategy, risk, portfolio, ledger, and persistence
+contracts consume canonical models rather than SDK response objects.
 
-## Capability profile
+## Current guarded behavior
 
-The current adapter supports public streaming, authenticated reads, limit and
-market order operations, cancellation, FAK/FOK and post-only workflows. Live
-execution requires the existing environment, risk, allowlist, cap,
-acknowledgement, one-attempt, kill-switch, and geoblock controls.
+The adapter supports public streaming, authenticated reads, limit/market
+operations, cancellation, FAK/FOK, and post-only workflows. The bounded
+round-trip path uses one minimum-valid FAK entry and one actual-fill-sized GTC
+exit. It does not automatically retry, replace, or resubmit a mutation.
 
-Polymarket-specific token/condition identifiers and signer/funder semantics are
-adapter metadata; they are not forced into generic domain contracts.
+Official CLOB server time is used for an authenticated preflight that fails
+closed on timeout, missing time, malformed time, or excessive positive/negative
+drift. Read-only transient failures may use bounded backoff. Geoblock and
+trading-prohibition results remain terminal, not retryable transient errors.
+
+Diagnostics retain sanitized status/error codes and safe venue messages while
+classifying authentication, signature, amount/quantity, minimum/tick, funding,
+order-type, market, geoblock, rate-limit, clock, SDK, server, timeout, and
+unknown failures. Credentials, signatures, keys, tokens, and sensitive request
+payloads are never included.
 
 ## SDK contract
 
-The verified baseline is `polymarket-client==0.1.0b11`. Contract tests assert
-the exact installed version and every SDK method called by public, secure, and
-stream adapters. Official b12 is known but intentionally deferred until a
-separate compatibility change.
-
+The approved pinned baseline is `polymarket-client==0.1.0b11`. Contract tests
+assert the installed version and the SDK methods used by the public, secure,
+streaming, and reconciliation boundaries. Any upgrade requires a focused
+contract/rollback change; current dependency upgrade PRs remain on hold.

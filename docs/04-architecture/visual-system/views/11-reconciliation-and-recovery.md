@@ -5,7 +5,7 @@
 - **Scope:** Expected/actual snapshots, detectors, event severity, status classification, safety pause, operator review, recovery, and audit output.
 - **Architecture status:** CURRENT
 - **Audience:** Operators, reconciliation developers, risk reviewers, and incident reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -67,7 +67,13 @@ Feed internal and external state into reconciliation, classify events, then foll
 
 ## Current implementation mapping
 
-Current models capture orders, positions, fills, read status, geoblock status, timestamps, event types, severity, blocking reasons, warnings, pause, and manual acknowledgement.
+Current models capture orders, positions, fills, fees, ledger events, realized
+P&L, read/geoblock status, timestamps, severity, blocking reasons, warnings,
+pause, and manual acknowledgement. The bounded round-trip service loads durable
+checkpoints, matches durable venue identifiers, ingests delayed exit fills once,
+updates order/position/ledger/P&L state transactionally, and persists a stable
+classification. The lifecycle monitor adds idempotent `INFO`, `WARNING`, and
+`CRITICAL` alerts without any order-submit/cancel capability.
 
 ## Target/future elements
 
@@ -75,11 +81,16 @@ No target element is needed for the current recovery logic. A future generalized
 
 ## Related repository files
 
-`src/polysia/reconciliation/`, `src/polysia/risk/kill_switch.py`, `src/polysia/monitoring/post_live_reconciliation.py`, `src/polysia/execution/manual_intervention_live_test.py`
+`src/polysia/reconciliation/live_round_trip.py`,
+`src/polysia/adapters/polymarket/round_trip_reconciliation.py`,
+`src/polysia/monitoring/live_round_trip.py`,
+`src/polysia/adapters/polymarket/lifecycle_monitoring.py`,
+`src/polysia/storage/schemas.sql`, `src/polysia/risk/kill_switch.py`
 
 ## Related tests
 
-reconciliation manager, detector, safety-pause, post-live, and manual-intervention tests; `tests/integration/test_paper_vertical_slice.py`
+round-trip reconciliation/monitor unit and adapter contract tests, storage
+transaction/idempotency tests, property tests, and the bounded vertical slice
 
 ## Related ADRs
 
@@ -95,7 +106,10 @@ Unreadable or uncertain live state is treated conservatively and may block.
 
 ## Known limitations
 
-Recovery is operator-led and local; automated disaster recovery is not a current capability.
+Recovery and monitoring are local and bounded; no continuous scheduler,
+external alert provider, or automated disaster recovery is a current
+capability. A missing terminal order detail remains a warning unless confirmed
+fills and position evidence cannot safely prove the state.
 
 ## Review trigger
 

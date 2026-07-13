@@ -22,6 +22,12 @@ python -m polysia.cli operator-status
 Continue only when `health` is ok and readiness is ready. The output must never
 show secrets, wallet addresses, allowlisted token values, or transaction hashes.
 
+`configuration-status` must also be `ready` for the intended operation. If it
+reports both `POLYMARKET_FUNDER_ADDRESS` and deprecated
+`POLYMARKET_WALLET_ADDRESS`, stop authenticated/live work. Remove the deprecated
+variable only through an owner-reviewed configuration change, then rerun the
+redacted status command. Do not print either value while diagnosing the issue.
+
 ## Windows Clock Synchronization
 
 PolySia reads the official CLOB server time before the current authenticated
@@ -87,6 +93,36 @@ Create a sanitized operator snapshot.
 python -m polysia.cli operator-report --format markdown
 python -m polysia.cli operator-report --format html --output .\operator-report.html
 ```
+
+## Read-Only Live Lifecycle Recovery
+
+For a previously authorized persisted round trip, use the dedicated read-only
+commands. They may read authenticated venue state and update local reconciliation
+or alert records, but they cannot submit, cancel, replace, or retry an order.
+
+Run one reconciliation observation:
+
+```powershell
+python -m polysia.cli reconcile-live-round-trip `
+  --run-id YOUR_RUN_ID `
+  --authorization-id YOUR_CONSUMED_AUTHORIZATION_ID
+```
+
+Run one scheduler-friendly monitoring cycle:
+
+```powershell
+python -m polysia.cli monitor-live-round-trip `
+  --run-id YOUR_RUN_ID `
+  --authorization-id YOUR_CONSUMED_AUTHORIZATION_ID `
+  --max-cycles 1
+```
+
+Bounded polling supports at most ten cycles and a minimum 30-second interval.
+Use an external scheduler only after an explicit operational decision. Stop on
+`blocked`, `CRITICAL`, identity/configuration conflict, geoblock, clock drift,
+unreadable account state, or unexplained position/fill/ledger mismatch. Never
+respond to a reconciliation warning by placing a replacement order manually
+without separate owner authorization and a new task.
 
 ## Live Dry-Run Only
 

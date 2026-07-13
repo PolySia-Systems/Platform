@@ -5,7 +5,7 @@
 - **Scope:** Foundation/MVP/limited-live capabilities, target orchestration and platform boundaries, and future multi-market/Web3/institutional categories.
 - **Architecture status:** MIXED
 - **Audience:** Owner, roadmap reviewers, architects, developers, and risk reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -16,12 +16,12 @@ flowchart LR
   subgraph NOW["Implemented foundation / MVP / limited-live [CURRENT]"]
     N1["Public data, stream, normalization, event bus, order book"]:::current
     N2["Research strategies, risk, kill switch, paper execution, P&L"]:::current
-    N3["SQLite, reconciliation, monitoring, backtesting, delivery tooling"]:::current
+    N3["SQLite, minimal Strategy Registry, reconciliation, monitoring, backtesting"]:::current
     N4["Authenticated reads and guarded tiny-live tools"]:::risk
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
-    T1["Strategy registry, orchestration, and conflict resolution"]:::target
+    T1["Strategy orchestration and conflict resolution"]:::target
     T2["Portfolio and capital allocation"]:::target
     T3["OMS / Transaction Manager and generalized ledger"]:::target
     T4["Adapter registry, operator console, portable runtime hardening"]:::target
@@ -75,11 +75,19 @@ Read CURRENT capabilities, pass the evidence gate into TARGET priorities, then p
 
 ## Current implementation mapping
 
-Current capabilities are the twelve entries in the baseline capability catalog and the verified Phase I delivery.
+Current capabilities include the verified Phase I foundation, a minimal
+Strategy Registry, the bounded FAK/actual-fill execution slice, delayed-fill
+reconciliation, lifecycle monitoring, fee-aware targets, runtime preflight, and
+the verified recovery package. The registry remains experimental support, not
+evidence of strategy quality.
 
 ## Target/future elements
 
-Strategy orchestration, allocator, OMS/generalized ledger, adapter registry, operator console, and portable hardening are TARGET. Multi-venue, wallet intelligence/copy trading, Web3/DeFi, and institutional HA are FUTURE.
+Immediate work is historical data, realistic backtesting, and large
+Paper/Shadow validation. Strategy orchestration, allocator, OMS/generalized
+ledger, adapter registry, operator console, and portable hardening remain
+TARGET. Multi-venue, wallet intelligence/copy trading, Web3/DeFi, and
+institutional HA remain FUTURE.
 
 ## Related repository files
 

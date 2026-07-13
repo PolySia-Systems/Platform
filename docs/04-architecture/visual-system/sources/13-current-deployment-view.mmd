@@ -1,6 +1,6 @@
 flowchart LR
   Operator["Owner / Operator\n[CURRENT]"]:::current
-  GitHost["Git provider / CI runtime\nconfiguration present; remote run unverified\n[EXTERNAL]"]:::external
+  GitHost["GitHub repository / CI runtime\nremote and CI verified\n[EXTERNAL]"]:::external
   PublicAPI["Polymarket public endpoints\n[EXTERNAL]"]:::external
   SecureAPI["Polymarket authenticated endpoints\n[EXTERNAL]"]:::external
 
@@ -21,7 +21,7 @@ flowchart LR
   Process ==>|sanitized output| Reports
   Process -->|public reads / stream| PublicAPI
   Process -->|acknowledged reads or guarded action| SecureAPI
-  Repo -.->|push / workflow source when configured| GitHost
+  Repo -.->|push / workflow source| GitHost
 
   subgraph LEGEND["Legend"]
     L1["CURRENT local deployment"]:::current

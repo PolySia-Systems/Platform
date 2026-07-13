@@ -5,7 +5,7 @@
 - **Scope:** Risk context/limits, kill switch, reconciliation safety pause, approval, and guarded live execution controls.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, risk reviewers, execution developers, security reviewers, and operators.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
 
 ## Mermaid diagram
 
@@ -80,7 +80,12 @@ Read intent/context/limits into `RiskEngine`; approved flow continues through ev
 
 ## Current implementation mapping
 
-`RiskEngine` checks kill switch, mode, live flag, notional, token/market position, daily loss, open orders, stale data, and edge. Live tools add allowlist, caps, geoblock, acknowledgement, and one-attempt controls.
+`RiskEngine` checks kill switch, mode, live flag, notional, token/market
+position, daily loss, open orders, stale data, and edge. Live tools add canonical
+configuration validation, official server-time drift preflight, allowlist,
+minimum/maximum size and cost caps, geoblock, acknowledgement, and a persistent
+one-attempt authorization claim. Read retries are bounded; live mutations are
+never automatically retried.
 
 ## Target/future elements
 
@@ -88,7 +93,11 @@ No broader live authority is proposed. Future risk controls must remain independ
 
 ## Related repository files
 
-`src/polysia/risk/`, `src/polysia/config/settings.py`, `src/polysia/execution/live_broker.py`, `src/polysia/execution/tiny_live_execution.py`, `src/polysia/adapters/polymarket/geoblock.py`, `src/polysia/reconciliation/safety_pause.py`
+`src/polysia/risk/`, `src/polysia/config/settings.py`,
+`src/polysia/config/status.py`, `src/polysia/execution/live_broker.py`,
+`src/polysia/execution/tiny_live_round_trip.py`,
+`src/polysia/adapters/polymarket/geoblock.py`,
+`src/polysia/adapters/polymarket/public.py`, `src/polysia/reconciliation/`
 
 ## Related tests
 
