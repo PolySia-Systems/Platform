@@ -199,3 +199,20 @@ CREATE TABLE IF NOT EXISTS live_round_trip_reconciliations (
 
 CREATE INDEX IF NOT EXISTS idx_live_round_trip_reconciliations_run
     ON live_round_trip_reconciliations (run_id, observed_at, observation_id);
+
+CREATE TABLE IF NOT EXISTS live_lifecycle_alerts (
+    alert_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    authorization_id TEXT NOT NULL,
+    alert_code TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    order_reference TEXT,
+    message TEXT NOT NULL,
+    operator_action TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_lifecycle_alerts_run
+    ON live_lifecycle_alerts (run_id, observed_at, alert_code);

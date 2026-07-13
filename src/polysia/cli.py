@@ -13,6 +13,9 @@ from uuid import uuid4
 import typer
 
 from polysia.adapters.polymarket.geoblock import PreLiveOrderGeoblockCheck
+from polysia.adapters.polymarket.lifecycle_monitoring import (
+    PolymarketLifecycleHealthReader,
+)
 from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
@@ -145,6 +148,11 @@ from polysia.monitoring.fill_simulation import (
     normalize_fill_models,
     normalize_fill_report_formats,
     render_fill_simulation_audit,
+)
+from polysia.monitoring.live_round_trip import (
+    LiveRoundTripMonitorConfig,
+    monitor_live_round_trip,
+    write_live_round_trip_monitor_reports,
 )
 from polysia.monitoring.local_release_closeout import (
     LocalReleaseCloseoutConfig,
@@ -1847,6 +1855,76 @@ def reconcile_live_round_trip_command(
         _print_error_and_exit(error)
 
     typer.echo(json.dumps(report.to_dict(), sort_keys=True))
+    if report.status == "blocked":
+        raise typer.Exit(code=1)
+
+
+@app.command("monitor-live-round-trip")
+def monitor_live_round_trip_command(
+    run_id: Annotated[
+        str,
+        typer.Option("--run-id", help="Persisted live round-trip run identifier."),
+    ],
+    authorization_id: Annotated[
+        str,
+        typer.Option("--authorization-id", help="Consumed owner authorization identifier."),
+    ] = AUTHORIZATION_ID,
+    database_path: Annotated[
+        Path,
+        typer.Option("--database", help="PolySia SQLite state database."),
+    ] = Path("data/polysia.sqlite3"),
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for sanitized lifecycle reports."),
+    ] = Path("release-artifacts/live-round-trip-monitor"),
+    stale_after_seconds: Annotated[
+        int,
+        typer.Option("--stale-after-seconds", min=60),
+    ] = 300,
+    max_cycles: Annotated[
+        int,
+        typer.Option("--max-cycles", min=1, max=10),
+    ] = 1,
+    interval_seconds: Annotated[
+        int,
+        typer.Option("--interval-seconds", min=30),
+    ] = 30,
+) -> None:
+    """Monitor one persisted lifecycle through bounded read-only venue calls."""
+
+    settings = AppSettings()
+    configure_logging(settings)
+    _apply_secure_env_from_settings(settings)
+    try:
+        report = asyncio.run(
+            monitor_live_round_trip(
+                LiveRoundTripMonitorConfig(
+                    database_path=database_path,
+                    run_id=run_id,
+                    authorization_id=authorization_id,
+                    stale_after=timedelta(seconds=stale_after_seconds),
+                    max_cycles=max_cycles,
+                    interval_seconds=interval_seconds,
+                ),
+                venue_reader=PolymarketRoundTripReader(),
+                health_reader=PolymarketLifecycleHealthReader(),
+            )
+        )
+        artifacts = write_live_round_trip_monitor_reports(report, output_dir)
+    except (OSError, ValueError) as error:
+        _print_error_and_exit(error)
+
+    payload = {
+        "alert_codes": sorted(
+            {alert.code for cycle in report.cycles for alert in cycle.alerts}
+        ),
+        "artifacts": {name: str(path) for name, path in artifacts.items()},
+        "duplicate_alert_count": report.duplicate_alert_count,
+        "monitor_status": report.status,
+        "new_alert_count": report.new_alert_count,
+        "status": "blocked" if report.status == "blocked" else "ok",
+    }
+    typer.echo(json.dumps(payload, sort_keys=True))
     if report.status == "blocked":
         raise typer.Exit(code=1)
 

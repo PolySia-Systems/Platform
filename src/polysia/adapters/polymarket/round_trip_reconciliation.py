@@ -6,13 +6,14 @@ from typing import Any
 
 from polysia.adapters.polymarket.secure import PolymarketSecureAdapter
 from polysia.reconciliation.live_round_trip import (
+    LiveRoundTripVenueReadError,
     LiveRoundTripVenueSnapshot,
     ObservedExitFill,
     ObservedExitOrder,
 )
 
 
-class PolymarketRoundTripReadError(RuntimeError):
+class PolymarketRoundTripReadError(LiveRoundTripVenueReadError):
     """Raised when authenticated read-only lifecycle evidence is unusable."""
 
 
