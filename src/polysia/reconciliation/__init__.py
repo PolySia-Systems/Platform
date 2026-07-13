@@ -1,3 +1,12 @@
+from polysia.reconciliation.live_round_trip import (
+    LiveRoundTripReconciliationConfig,
+    LiveRoundTripReconciliationError,
+    LiveRoundTripReconciliationReport,
+    LiveRoundTripVenueSnapshot,
+    ObservedExitFill,
+    ObservedExitOrder,
+    reconcile_live_round_trip,
+)
 from polysia.reconciliation.manager import ReconciliationManager
 from polysia.reconciliation.models import (
     ActualAccountState,
@@ -24,8 +33,14 @@ __all__ = [
     "ActualAccountState",
     "FillSnapshot",
     "InternalExpectedState",
+    "LiveRoundTripReconciliationConfig",
+    "LiveRoundTripReconciliationError",
+    "LiveRoundTripReconciliationReport",
+    "LiveRoundTripVenueSnapshot",
     "KillSwitchSafetyPause",
     "OrderSnapshot",
+    "ObservedExitFill",
+    "ObservedExitOrder",
     "PositionSnapshot",
     "ReconciliationEvent",
     "ReconciliationEventType",
@@ -36,6 +51,7 @@ __all__ = [
     "ReconciliationStatus",
     "SafetyPause",
     "reconciliation_report_filename",
+    "reconcile_live_round_trip",
     "render_reconciliation_report",
     "render_reconciliation_report_markdown",
     "write_reconciliation_reports",

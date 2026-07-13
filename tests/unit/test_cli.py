@@ -26,8 +26,36 @@ from polysia.monitoring.real_data_shadow_run import (
     RealDataShadowMetrics,
     RealDataShadowRunReport,
 )
+from polysia.reconciliation.live_round_trip import LiveRoundTripReconciliationReport
 
 runner = CliRunner()
+
+
+def _live_round_trip_reconciliation_report() -> LiveRoundTripReconciliationReport:
+    return LiveRoundTripReconciliationReport(
+        run_id="live-run",
+        authorization_id="POLYSIA-LIVE-004",
+        classification="COMPLETED_ROUND_TRIP",
+        status="ready",
+        observed_order_status="MATCHED",
+        confirmed_exit_size=Decimal("5"),
+        expected_remaining_position=Decimal("0"),
+        observed_position_size=Decimal("0"),
+        weighted_average_exit_price=Decimal("0.58"),
+        gross_exit_proceeds=Decimal("2.90"),
+        allocated_entry_cost=Decimal("2.68736"),
+        exit_fee=Decimal("0"),
+        fee_status="confirmed",
+        net_realized_pnl=Decimal("0.21264"),
+        fill_count=1,
+        new_fill_count=1,
+        new_ledger_event_count=2,
+        duplicate_fill_count=0,
+        observation_recorded=True,
+        observation_id="observation-1",
+        warnings=(),
+        blocking_reasons=(),
+    )
 
 
 def _write_json_file(path: Path, payload: dict[str, object]) -> Path:
@@ -187,6 +215,43 @@ def test_health_command_returns_safe_payload(monkeypatch) -> None:
     assert payload["live_trading_enabled"] is False
     assert payload["live_trading_allowed"] is False
     assert "polymarket_private_key" not in payload
+
+
+def test_reconcile_live_round_trip_command_uses_read_only_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    reader = object()
+
+    async def fake_reconcile(config, *, venue_reader):
+        captured["config"] = config
+        captured["reader"] = venue_reader
+        return _live_round_trip_reconciliation_report()
+
+    monkeypatch.setattr("polysia.cli.configure_logging", lambda _settings: None)
+    monkeypatch.setattr("polysia.cli._apply_secure_env_from_settings", lambda _settings: None)
+    monkeypatch.setattr("polysia.cli.PolymarketRoundTripReader", lambda: reader)
+    monkeypatch.setattr("polysia.cli.reconcile_live_round_trip", fake_reconcile)
+
+    database_path = tmp_path / "state.sqlite3"
+    result = runner.invoke(
+        app,
+        [
+            "reconcile-live-round-trip",
+            "--run-id",
+            "live-run",
+            "--database",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["classification"] == "COMPLETED_ROUND_TRIP"
+    assert payload["net_realized_pnl"] == "0.21264"
+    assert captured["reader"] is reader
+    assert captured["config"].database_path == database_path
 
 
 def test_operator_status_command_returns_sanitized_payload(monkeypatch) -> None:

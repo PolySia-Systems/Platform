@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polymarket import PolymarketError
+from polymarket import PolymarketError, RequestRejectedError
 
 from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
@@ -21,20 +21,44 @@ class FakePaginator:
     async def first_page(self) -> SimpleNamespace:
         return SimpleNamespace(items=self._items)
 
+    async def _iter_items(self) -> Any:
+        for item in self._items:
+            yield item
+
+    def iter_items(self) -> Any:
+        return self._iter_items()
+
 
 class FakeSecureClient:
     def __init__(self) -> None:
         self.closed = False
         self.wallet_type = "DEPOSIT_WALLET"
+        self.get_order_kwargs: dict[str, Any] | None = None
         self.open_order_kwargs: dict[str, Any] | None = None
         self.cancel_order_kwargs: dict[str, Any] | None = None
         self.cancel_market_kwargs: dict[str, Any] | None = None
         self.limit_order_kwargs: dict[str, Any] | None = None
         self.market_order_kwargs: dict[str, Any] | None = None
+        self.position_kwargs: dict[str, Any] | None = None
+        self.trade_kwargs: dict[str, Any] | None = None
 
     def list_open_orders(self, **kwargs: Any) -> FakePaginator:
         self.open_order_kwargs = kwargs
         return FakePaginator((SimpleNamespace(id="order-1"),))
+
+    async def get_order(self, **kwargs: Any) -> SimpleNamespace:
+        self.get_order_kwargs = kwargs
+        return SimpleNamespace(id="order-1", status="MATCHED")
+
+    def list_positions(self, **kwargs: Any) -> FakePaginator:
+        self.position_kwargs = kwargs
+        return FakePaginator(
+            (SimpleNamespace(token_id="token-1"), SimpleNamespace(token_id="token-2"))
+        )
+
+    def list_account_trades(self, **kwargs: Any) -> FakePaginator:
+        self.trade_kwargs = kwargs
+        return FakePaginator((SimpleNamespace(id="trade-1"), SimpleNamespace(id="trade-2")))
 
     async def cancel_order(self, **kwargs: Any) -> dict[str, str]:
         self.cancel_order_kwargs = kwargs
@@ -171,6 +195,9 @@ async def test_authenticated_methods_call_connected_client(
     await adapter.connect()
 
     orders = await adapter.get_open_orders(token_id="token-1", market="market-1")
+    order = await adapter.get_order(order_id="order-1")
+    positions = await adapter.list_positions(size_threshold=0)
+    trades = await adapter.list_account_trades(token_id="token-1", market="market-1")
     cancel_response = await adapter.cancel_order(order_id="order-1")
     cancel_market_response = await adapter.cancel_market_orders(token_id="token-1")
     limit_response = await adapter.place_limit_order(
@@ -187,6 +214,9 @@ async def test_authenticated_methods_call_connected_client(
     )
 
     assert [order.id for order in orders] == ["order-1"]
+    assert order.status == "MATCHED"
+    assert [position.token_id for position in positions] == ["token-1", "token-2"]
+    assert [trade.id for trade in trades] == ["trade-1", "trade-2"]
     assert cancel_response == {"status": "cancelled"}
     assert cancel_market_response == {"status": "cancelled"}
     assert limit_response == {"status": "accepted"}
@@ -196,6 +226,9 @@ async def test_authenticated_methods_call_connected_client(
         "id": None,
         "market": "market-1",
     }
+    assert client.get_order_kwargs == {"order_id": "order-1"}
+    assert client.position_kwargs == {"market": None, "size_threshold": 0}
+    assert client.trade_kwargs == {"token_id": "token-1", "market": "market-1"}
     assert client.cancel_order_kwargs == {"order_id": "order-1"}
     assert client.cancel_market_kwargs == {"market": None, "token_id": "token-1"}
     assert client.limit_order_kwargs == {
@@ -218,6 +251,26 @@ async def test_authenticated_methods_call_connected_client(
         "order_type": "FAK",
         "builder_code": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_order_maps_venue_not_found_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MissingOrderClient(FakeSecureClient):
+        async def get_order(self, **kwargs: Any) -> SimpleNamespace:
+            raise RequestRejectedError("not found", status=404)
+
+    client = MissingOrderClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> MissingOrderClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(client_factory=factory)
+    await adapter.connect()
+
+    assert await adapter.get_order(order_id="missing-order") is None
 
 
 def test_sanitize_order_request_redacts_sensitive_values() -> None:

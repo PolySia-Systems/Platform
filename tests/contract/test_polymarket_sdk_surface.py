@@ -10,7 +10,7 @@ from polymarket import (
     BalanceAllowance,
     OrderBook,
 )
-from polymarket.models.clob.account import ClobTrade
+from polymarket.models.clob.account import ClobTrade, MakerOrder, OpenOrder
 from polymarket.models.gamma.market import FeeSchedule, MarketState, MarketTrading
 
 
@@ -32,6 +32,7 @@ def test_secure_sdk_methods_used_by_adapter_exist() -> None:
         "get_balance_allowance",
         "get_market",
         "get_order_book",
+        "get_order",
         "list_account_trades",
         "list_open_orders",
         "list_positions",
@@ -64,6 +65,23 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
         "status",
         "taker_order_id",
     } <= set(ClobTrade.model_fields)
+    assert {
+        "fee_rate_bps",
+        "matched_amount",
+        "order_id",
+        "price",
+        "side",
+        "token_id",
+    } <= set(MakerOrder.model_fields)
+    assert {
+        "id",
+        "original_size",
+        "price",
+        "side",
+        "size_matched",
+        "status",
+        "token_id",
+    } <= set(OpenOrder.model_fields)
     assert {"exponent", "rate", "rebate_rate", "taker_only"} <= set(
         FeeSchedule.model_fields
     )
