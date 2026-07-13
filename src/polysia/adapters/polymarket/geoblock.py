@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -47,9 +49,24 @@ class GeoblockStatus:
 class GeoblockClient:
     """Client for the official Polymarket geoblock endpoint."""
 
-    def __init__(self, *, url: str = GEOBLOCK_URL, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        url: str = GEOBLOCK_URL,
+        timeout_seconds: float = 5.0,
+        max_attempts: int = 2,
+        backoff_seconds: float = 0.25,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if not 1 <= max_attempts <= 3:
+            raise ValueError("geoblock max_attempts must be within [1, 3]")
+        if not 0 <= backoff_seconds <= 2:
+            raise ValueError("geoblock backoff_seconds must be within [0, 2]")
         self._url = url
         self._timeout_seconds = timeout_seconds
+        self._max_attempts = max_attempts
+        self._backoff_seconds = backoff_seconds
+        self._sleeper = sleeper
 
     async def check(self) -> GeoblockStatus:
         return await asyncio.to_thread(self.check_sync)
@@ -61,14 +78,28 @@ class GeoblockClient:
             headers={"Accept": "application/json", "User-Agent": "polysia-geoblock/1.0"},
             method="GET",
         )
-        try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
-                raw_payload = response.read()
-            payload = json.loads(raw_payload.decode("utf-8"))
-        except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError) as error:
+        payload: Any | None = None
+        last_error: BaseException | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                with urlopen(request, timeout=self._timeout_seconds) as response:
+                    raw_payload = response.read()
+                payload = json.loads(raw_payload.decode("utf-8"))
+                break
+            except HTTPError as error:
+                last_error = error
+                retryable = error.code == 429 or error.code >= 500
+                if not retryable or attempt >= self._max_attempts:
+                    break
+            except (URLError, OSError, TimeoutError, json.JSONDecodeError) as error:
+                last_error = error
+                if attempt >= self._max_attempts:
+                    break
+            self._sleeper(self._backoff_seconds * attempt)
+        if payload is None:
             raise GeoblockClientError(
                 "Could not verify Polymarket geoblock eligibility."
-            ) from error
+            ) from last_error
 
         blocked = _extract_blocked(payload)
         return GeoblockStatus(

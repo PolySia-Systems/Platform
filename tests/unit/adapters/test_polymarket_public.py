@@ -5,8 +5,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polymarket import PolymarketError
+from polymarket import PolymarketError, RequestRejectedError, TransportError
 
+from polysia.adapters.polymarket.diagnostics import ReadRetryPolicy
 from polysia.adapters.polymarket.public import (
     PolymarketPublicAdapter,
     PolymarketPublicAdapterError,
@@ -143,9 +144,7 @@ async def test_search_markets_flattens_event_markets_and_deduplicates() -> None:
     duplicate_market = make_market("1", slug="duplicate-market")
     closed_market = make_market("2", slug="closed-market", closed=True)
     search_result = SimpleNamespace(
-        events=(
-            SimpleNamespace(markets=(open_market, duplicate_market, closed_market)),
-        )
+        events=(SimpleNamespace(markets=(open_market, duplicate_market, closed_market)),)
     )
     client = FakeClient(search_results=(search_result,))
     adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
@@ -196,3 +195,46 @@ async def test_polymarket_errors_are_wrapped() -> None:
 
     with pytest.raises(PolymarketPublicAdapterError):
         await adapter.list_active_markets()
+
+
+@pytest.mark.asyncio
+async def test_public_read_retries_transient_failure_but_not_auth_failure() -> None:
+    class IntermittentClient:
+        calls = 0
+
+        def list_markets(self, **kwargs: Any) -> FakePaginator:
+            del kwargs
+            self.calls += 1
+            if self.calls == 1:
+                raise TransportError("connection reset")
+            return FakePaginator((make_market(),))
+
+    client = IntermittentClient()
+    adapter = PolymarketPublicAdapter(
+        client_factory=lambda: FakeClientContext(client),
+        read_retry_policy=ReadRetryPolicy(max_attempts=2, backoff_seconds=0),
+    )
+
+    assert len(await adapter.list_active_markets()) == 1
+    assert client.calls == 2
+
+    class RejectedClient:
+        calls = 0
+
+        def list_markets(self, **kwargs: Any) -> FakePaginator:
+            del kwargs
+            self.calls += 1
+            raise RequestRejectedError("unauthorized", status=401)
+
+    rejected = RejectedClient()
+    rejected_adapter = PolymarketPublicAdapter(
+        client_factory=lambda: FakeClientContext(rejected),
+        read_retry_policy=ReadRetryPolicy(max_attempts=3, backoff_seconds=0),
+    )
+
+    with pytest.raises(PolymarketPublicAdapterError) as raised:
+        await rejected_adapter.list_active_markets()
+
+    assert rejected.calls == 1
+    assert raised.value.diagnostic is not None
+    assert raised.value.diagnostic.category.value == "AUTHENTICATION_FAILURE"

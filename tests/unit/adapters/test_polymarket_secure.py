@@ -5,8 +5,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polymarket import PolymarketError, RequestRejectedError, UnexpectedResponseError
+from polymarket import (
+    PolymarketError,
+    RequestRejectedError,
+    TransportError,
+    UnexpectedResponseError,
+)
 
+from polysia.adapters.polymarket.diagnostics import ReadRetryPolicy
 from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
     PolymarketSecureAdapterError,
@@ -346,7 +352,13 @@ async def test_sdk_error_logging_does_not_include_error_text_or_secrets(
         {
             "event": "polymarket_secure_sdk_error",
             "operation": "place_limit_order",
+            "category": "UNKNOWN_VENUE_REJECTION",
+            "error_code": None,
             "error_type": "PolymarketError",
+            "retryable_read": False,
+            "sanitized_message": "signed payload <redacted>",
+            "status_code": None,
+            "terminal": True,
             "action": "place_limit_order",
             "token_id": "token-1",
             "side": "BUY",
@@ -357,3 +369,74 @@ async def test_sdk_error_logging_does_not_include_error_text_or_secrets(
     ]
     assert "should-not-leak" not in str(logger.warning_records)
     assert "test-private-key" not in str(logger.warning_records)
+
+
+@pytest.mark.asyncio
+async def test_transient_authenticated_read_retries_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TransientReadClient(FakeSecureClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.position_calls = 0
+
+        def list_positions(self, **kwargs: Any) -> FakePaginator:
+            self.position_calls += 1
+            if self.position_calls == 1:
+                raise TransportError("connection reset")
+            return super().list_positions(**kwargs)
+
+    client = TransientReadClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> TransientReadClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(
+        client_factory=factory,
+        read_retry_policy=ReadRetryPolicy(max_attempts=2, backoff_seconds=0),
+    )
+    await adapter.connect()
+
+    positions = await adapter.list_positions(size_threshold=0)
+
+    assert len(positions) == 2
+    assert client.position_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_mutating_order_failure_is_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingMutationClient(FakeSecureClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.limit_calls = 0
+
+        async def place_limit_order(self, **kwargs: Any) -> dict[str, str]:
+            self.limit_calls += 1
+            raise TransportError("connection reset")
+
+    client = FailingMutationClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> FailingMutationClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(
+        client_factory=factory,
+        read_retry_policy=ReadRetryPolicy(max_attempts=3, backoff_seconds=0),
+    )
+    await adapter.connect()
+
+    with pytest.raises(PolymarketSecureAdapterError) as raised:
+        await adapter.place_limit_order(
+            token_id="token-1",
+            side="BUY",
+            price=Decimal("0.50"),
+            size=Decimal("5"),
+        )
+
+    assert client.limit_calls == 1
+    assert raised.value.diagnostic is not None
+    assert raised.value.diagnostic.category.value == "NETWORK_ERROR"

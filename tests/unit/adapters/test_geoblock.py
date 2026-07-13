@@ -61,6 +61,24 @@ def test_geoblock_client_rejects_endpoint_errors(monkeypatch) -> None:
         GeoblockClient().check_sync()
 
 
+def test_geoblock_client_retries_one_transient_read(monkeypatch) -> None:
+    calls = 0
+
+    def intermittent(*_args: object, **_kwargs: object) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise URLError("offline")
+        return FakeResponse(b'{"blocked": false}')
+
+    monkeypatch.setattr("polysia.adapters.polymarket.geoblock.urlopen", intermittent)
+
+    status = GeoblockClient(max_attempts=2, backoff_seconds=0).check_sync()
+
+    assert status.status == "allowed"
+    assert calls == 2
+
+
 @pytest.mark.asyncio
 async def test_pre_live_geoblock_check_fails_closed_on_error(monkeypatch) -> None:
     def fail(*_args: object, **_kwargs: object) -> object:

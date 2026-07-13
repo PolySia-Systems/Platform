@@ -10,6 +10,7 @@ from polysia.adapters.polymarket.lifecycle_monitoring import (
     PolymarketLifecycleHealthReader,
     PolymarketServerTimeError,
     PolymarketServerTimeReader,
+    evaluate_clock_drift,
 )
 
 
@@ -70,6 +71,79 @@ def test_server_time_reader_rejects_invalid_payload(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(PolymarketServerTimeError, match="invalid"):
         PolymarketServerTimeReader().read_clock_drift_sync()
+
+
+def test_server_time_reader_retries_timeout_only_within_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def timeout(*_args: object, **_kwargs: object) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(
+        "polysia.adapters.polymarket.lifecycle_monitoring.urlopen",
+        timeout,
+    )
+
+    with pytest.raises(PolymarketServerTimeError, match="unavailable"):
+        PolymarketServerTimeReader(
+            max_attempts=2,
+            backoff_seconds=0,
+        ).read_clock_drift_sync()
+
+    assert calls == 2
+
+
+def test_server_time_reader_rejects_missing_server_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "polysia.adapters.polymarket.lifecycle_monitoring.urlopen",
+        lambda *_args, **_kwargs: FakeResponse(b""),
+    )
+
+    with pytest.raises(PolymarketServerTimeError, match="invalid"):
+        PolymarketServerTimeReader().read_clock_drift_sync()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("drift", "expected_status"),
+    [
+        (Decimal("4.999"), "pass"),
+        (Decimal("-4.999"), "pass"),
+        (Decimal("5"), "pass"),
+        (Decimal("-5"), "pass"),
+        (Decimal("5.001"), "blocked"),
+        (Decimal("-5.001"), "blocked"),
+    ],
+)
+async def test_clock_preflight_handles_positive_negative_and_boundaries(
+    drift: Decimal,
+    expected_status: str,
+) -> None:
+    result = await evaluate_clock_drift(
+        FakeServerTimeReader(drift),  # type: ignore[arg-type]
+        threshold_seconds=Decimal("5"),
+    )
+
+    assert result.status == expected_status
+    assert result.drift_seconds == drift
+
+
+@pytest.mark.asyncio
+async def test_clock_preflight_fails_closed_when_server_time_is_unavailable() -> None:
+    result = await evaluate_clock_drift(
+        FakeServerTimeReader(None),  # type: ignore[arg-type]
+        threshold_seconds=Decimal("5"),
+    )
+
+    assert result.status == "blocked"
+    assert result.drift_seconds is None
+    assert "unavailable" in result.reason
 
 
 @pytest.mark.asyncio

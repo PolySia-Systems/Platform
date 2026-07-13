@@ -100,6 +100,9 @@ class ExecutionPort:
     async def close(self) -> None:
         self.connected = False
 
+    async def read_clock_drift(self) -> Decimal:
+        return Decimal("0")
+
     def identity(self) -> dict[str, object]:
         return {
             "active_wallet_source": "funder",

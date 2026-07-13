@@ -13,6 +13,7 @@ EXPECTED_COMMANDS = {
     "acceptance-audit",
     "backtest-jsonl",
     "controlled-second-tiny-live",
+    "configuration-status",
     "deployment-automation",
     "deployment-readiness",
     "discover-markets",

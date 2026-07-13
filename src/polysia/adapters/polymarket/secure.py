@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
@@ -14,6 +14,11 @@ from polymarket import (
 )
 
 from polysia.adapters.polymarket.capabilities import POLYMARKET_CAPABILITIES
+from polysia.adapters.polymarket.diagnostics import (
+    PolymarketErrorDiagnostic,
+    ReadRetryPolicy,
+    classify_polymarket_error,
+)
 from polysia.config.logging import get_logger
 from polysia.domain.market import VenueCapabilityProfile
 
@@ -48,8 +53,22 @@ class SecureClientFactory(Protocol):
         """Create an authenticated SDK client."""
 
 
+class ServerTimeReader(Protocol):
+    async def read_clock_drift(self) -> Decimal: ...
+
+
 class PolymarketSecureAdapterError(RuntimeError):
     """Raised when an authenticated Polymarket action fails or is unsafe."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: PolymarketErrorDiagnostic | None = None,
+    ) -> None:
+        self.diagnostic = diagnostic
+        detail = f" [{diagnostic.safe_summary()}]" if diagnostic is not None else ""
+        super().__init__(f"{message}{detail}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +112,8 @@ class PolymarketSecureAdapter:
         funder_address_env: str = FUNDER_ADDRESS_ENV,
         wallet_address_env: str = WALLET_ADDRESS_ENV,
         signature_type_env: str = SIGNATURE_TYPE_ENV,
+        read_retry_policy: ReadRetryPolicy | None = None,
+        server_time_reader: ServerTimeReader | None = None,
         logger: Any | None = None,
     ) -> None:
         self._client_factory = client_factory or _default_client_factory
@@ -100,6 +121,14 @@ class PolymarketSecureAdapter:
         self._funder_address_env = funder_address_env
         self._wallet_address_env = wallet_address_env
         self._signature_type_env = signature_type_env
+        self._read_retry_policy = read_retry_policy or ReadRetryPolicy()
+        if server_time_reader is None:
+            from polysia.adapters.polymarket.lifecycle_monitoring import (
+                PolymarketServerTimeReader,
+            )
+
+            server_time_reader = PolymarketServerTimeReader()
+        self._server_time_reader = server_time_reader
         self._logger = logger or get_logger(__name__)
         self._client: Any | None = None
         self._active_wallet_source: Literal["funder", "legacy_wallet", "sdk_default"] = (
@@ -140,9 +169,10 @@ class PolymarketSecureAdapter:
         try:
             self._client = await self._client_factory(private_key=private_key, wallet=wallet)
         except PolymarketError as error:
-            self._log_sdk_error("connect", error)
-            raise PolymarketSecureAdapterError(
-                "Could not create authenticated Polymarket client."
+            raise self._adapter_error(
+                "connect",
+                "Could not create authenticated Polymarket client.",
+                error,
             ) from error
 
         self._logger.info(
@@ -158,6 +188,11 @@ class PolymarketSecureAdapter:
         self._client = None
         if client is not None:
             await client.close()
+
+    async def read_clock_drift(self) -> Decimal:
+        """Return midpoint-adjusted CLOB server clock drift without venue mutation."""
+
+        return await self._server_time_reader.read_clock_drift()
 
     def identity(self) -> SecureClientIdentity:
         """Return sanitized signer/funder identity details for diagnostics."""
@@ -189,25 +224,33 @@ class PolymarketSecureAdapter:
     ) -> list[Any]:
         """Return one page of open orders from the authenticated account."""
         client = self._require_client()
-        try:
+
+        async def read() -> list[Any]:
             paginator = client.list_open_orders(token_id=token_id, id=order_id, market=market)
             page = await paginator.first_page()
             return list(page.items)
+
+        try:
+            return await self._run_read("get_open_orders", read)
         except PolymarketError as error:
-            self._log_sdk_error(
+            raise self._adapter_error(
                 "get_open_orders",
+                "Could not fetch open orders.",
                 error,
                 token_id=token_id,
                 order_id=order_id,
                 market=market,
-            )
-            raise PolymarketSecureAdapterError("Could not fetch open orders.") from error
+            ) from error
 
     async def get_order(self, *, order_id: str) -> Any | None:
         """Return one authenticated order by its durable venue identifier."""
         client = self._require_client()
-        try:
+
+        async def read() -> Any:
             return await client.get_order(order_id=order_id)
+
+        try:
+            return await self._run_read("get_order", read)
         except RequestRejectedError as error:
             if error.status == 404:
                 self._logger.info(
@@ -216,18 +259,27 @@ class PolymarketSecureAdapter:
                     order_id=order_id,
                 )
                 return None
-            self._log_sdk_error("get_order", error, order_id=order_id)
-            raise PolymarketSecureAdapterError("Could not fetch Polymarket order.") from error
-        except UnexpectedResponseError:
+            raise self._adapter_error(
+                "get_order",
+                "Could not fetch Polymarket order.",
+                error,
+                order_id=order_id,
+            ) from error
+        except UnexpectedResponseError as error:
+            diagnostic = classify_polymarket_error("get_order", error)
             self._logger.info(
                 "polymarket_secure_order_detail_unavailable",
-                operation="get_order",
+                **diagnostic.to_dict(),
                 order_id=order_id,
             )
             return None
         except PolymarketError as error:
-            self._log_sdk_error("get_order", error, order_id=order_id)
-            raise PolymarketSecureAdapterError("Could not fetch Polymarket order.") from error
+            raise self._adapter_error(
+                "get_order",
+                "Could not fetch Polymarket order.",
+                error,
+                order_id=order_id,
+            ) from error
 
     async def get_market(
         self,
@@ -237,20 +289,37 @@ class PolymarketSecureAdapter:
     ) -> Any:
         """Fetch market metadata through the authenticated SDK client."""
         client = self._require_client()
-        try:
+
+        async def read() -> Any:
             return await client.get_market(id=id, slug=slug, include_tag=True)
+
+        try:
+            return await self._run_read("get_market", read)
         except PolymarketError as error:
-            self._log_sdk_error("get_market", error, id=id, slug=slug)
-            raise PolymarketSecureAdapterError("Could not fetch Polymarket market.") from error
+            raise self._adapter_error(
+                "get_market",
+                "Could not fetch Polymarket market.",
+                error,
+                id=id,
+                slug=slug,
+            ) from error
 
     async def get_order_book(self, *, token_id: str) -> Any:
         """Fetch one CLOB order book by token id."""
         client = self._require_client()
-        try:
+
+        async def read() -> Any:
             return await client.get_order_book(token_id=token_id)
+
+        try:
+            return await self._run_read("get_order_book", read)
         except PolymarketError as error:
-            self._log_sdk_error("get_order_book", error, token_id=token_id)
-            raise PolymarketSecureAdapterError("Could not fetch Polymarket order book.") from error
+            raise self._adapter_error(
+                "get_order_book",
+                "Could not fetch Polymarket order book.",
+                error,
+                token_id=token_id,
+            ) from error
 
     async def get_balance_allowance(
         self,
@@ -260,17 +329,22 @@ class PolymarketSecureAdapter:
     ) -> Any:
         """Fetch sanitized account balance/allowance metadata."""
         client = self._require_client()
-        try:
-            return await client.get_balance_allowance(asset_type=asset_type, token_id=token_id)
-        except PolymarketError as error:
-            self._log_sdk_error(
-                "get_balance_allowance",
-                error,
+
+        async def read() -> Any:
+            return await client.get_balance_allowance(
                 asset_type=asset_type,
                 token_id=token_id,
             )
-            raise PolymarketSecureAdapterError(
-                "Could not fetch Polymarket balance allowance."
+
+        try:
+            return await self._run_read("get_balance_allowance", read)
+        except PolymarketError as error:
+            raise self._adapter_error(
+                "get_balance_allowance",
+                "Could not fetch Polymarket balance allowance.",
+                error,
+                asset_type=asset_type,
+                token_id=token_id,
             ) from error
 
     async def list_positions(
@@ -281,12 +355,19 @@ class PolymarketSecureAdapter:
     ) -> list[Any]:
         """Return all account positions without exposing wallet identifiers."""
         client = self._require_client()
-        try:
+
+        async def read() -> list[Any]:
             paginator = client.list_positions(market=market, size_threshold=size_threshold)
             return [position async for position in paginator.iter_items()]
+
+        try:
+            return await self._run_read("list_positions", read)
         except PolymarketError as error:
-            self._log_sdk_error("list_positions", error)
-            raise PolymarketSecureAdapterError("Could not fetch Polymarket positions.") from error
+            raise self._adapter_error(
+                "list_positions",
+                "Could not fetch Polymarket positions.",
+                error,
+            ) from error
 
     async def list_account_trades(
         self,
@@ -296,12 +377,21 @@ class PolymarketSecureAdapter:
     ) -> list[Any]:
         """Return all matching account trades with raw identifiers kept out of logs."""
         client = self._require_client()
-        try:
+
+        async def read() -> list[Any]:
             paginator = client.list_account_trades(token_id=token_id, market=market)
             return [trade async for trade in paginator.iter_items()]
+
+        try:
+            return await self._run_read("list_account_trades", read)
         except PolymarketError as error:
-            self._log_sdk_error("list_account_trades", error, token_id=token_id, market=market)
-            raise PolymarketSecureAdapterError("Could not fetch Polymarket trades.") from error
+            raise self._adapter_error(
+                "list_account_trades",
+                "Could not fetch Polymarket trades.",
+                error,
+                token_id=token_id,
+                market=market,
+            ) from error
 
     async def cancel_order(self, *, order_id: str) -> Any:
         """Cancel one authenticated order by id."""
@@ -309,8 +399,12 @@ class PolymarketSecureAdapter:
         try:
             return await client.cancel_order(order_id=order_id)
         except PolymarketError as error:
-            self._log_sdk_error("cancel_order", error, order_id=order_id)
-            raise PolymarketSecureAdapterError("Could not cancel Polymarket order.") from error
+            raise self._adapter_error(
+                "cancel_order",
+                "Could not cancel Polymarket order.",
+                error,
+                order_id=order_id,
+            ) from error
 
     async def cancel_market_orders(
         self,
@@ -323,14 +417,12 @@ class PolymarketSecureAdapter:
         try:
             return await client.cancel_market_orders(market=market, token_id=token_id)
         except PolymarketError as error:
-            self._log_sdk_error(
+            raise self._adapter_error(
                 "cancel_market_orders",
+                "Could not cancel Polymarket market orders.",
                 error,
                 market=market,
                 token_id=token_id,
-            )
-            raise PolymarketSecureAdapterError(
-                "Could not cancel Polymarket market orders."
             ) from error
 
     async def place_limit_order(
@@ -358,8 +450,9 @@ class PolymarketSecureAdapter:
                 builder_code=builder_code,
             )
         except PolymarketError as error:
-            self._log_sdk_error(
+            raise self._adapter_error(
                 "place_limit_order",
+                "Could not place Polymarket limit order.",
                 error,
                 **sanitize_order_request(
                     action="place_limit_order",
@@ -370,8 +463,7 @@ class PolymarketSecureAdapter:
                     post_only=post_only,
                     expiration=expiration,
                 ),
-            )
-            raise PolymarketSecureAdapterError("Could not place Polymarket limit order.") from error
+            ) from error
 
     async def place_market_order(
         self,
@@ -403,8 +495,9 @@ class PolymarketSecureAdapter:
                 builder_code=builder_code,
             )
         except PolymarketError as error:
-            self._log_sdk_error(
+            raise self._adapter_error(
                 "place_market_order",
+                "Could not place Polymarket market order.",
                 error,
                 **sanitize_order_request(
                     action="place_market_order",
@@ -417,9 +510,6 @@ class PolymarketSecureAdapter:
                     min_price=min_price,
                     order_type=order_type,
                 ),
-            )
-            raise PolymarketSecureAdapterError(
-                "Could not place Polymarket market order."
             ) from error
 
     def _require_client(self) -> Any:
@@ -427,13 +517,27 @@ class PolymarketSecureAdapter:
             raise PolymarketSecureAdapterError("Secure Polymarket adapter is not connected.")
         return self._client
 
-    def _log_sdk_error(self, operation: str, error: PolymarketError, **context: Any) -> None:
+    async def _run_read(
+        self,
+        operation: str,
+        call: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        return await self._read_retry_policy.run(operation, call)
+
+    def _adapter_error(
+        self,
+        operation: str,
+        message: str,
+        error: PolymarketError,
+        **context: Any,
+    ) -> PolymarketSecureAdapterError:
+        diagnostic = classify_polymarket_error(operation, error)
         self._logger.warning(
             "polymarket_secure_sdk_error",
-            operation=operation,
-            error_type=type(error).__name__,
+            **diagnostic.to_dict(),
             **context,
         )
+        return PolymarketSecureAdapterError(message, diagnostic=diagnostic)
 
 
 def sanitize_order_request(action: str, **fields: Any) -> dict[str, object]:
@@ -463,9 +567,7 @@ def _validate_market_order_inputs(
     max_spend: Decimal | None,
 ) -> None:
     if amount is None and shares is None and max_spend is None:
-        raise PolymarketSecureAdapterError(
-            "market order requires amount, shares, or max_spend."
-        )
+        raise PolymarketSecureAdapterError("market order requires amount, shares, or max_spend.")
 
 
 def _non_empty_env_value(name: str) -> str | None:
