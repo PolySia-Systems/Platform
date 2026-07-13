@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_CEILING, Decimal, InvalidOperation
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
 from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
@@ -268,6 +268,65 @@ class FilledExit:
             "size": str(self.size),
             "trade_count": self.trade_count,
             "weighted_average_price": str(self.weighted_average_price),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FeeAwareExitTarget:
+    """Tick-aligned exit target whose return is net of applicable fees."""
+
+    achievable: bool
+    reason: str
+    entry_price: Decimal
+    quantity: Decimal
+    minimum_order_size: Decimal
+    tick_size: Decimal
+    entry_fee: Decimal
+    entry_notional: Decimal
+    all_in_entry_cost: Decimal
+    desired_net_return: Decimal
+    desired_net_profit: Decimal
+    required_net_exit_proceeds: Decimal
+    nominal_gross_target_price: Decimal
+    fee_free_target_price: Decimal | None
+    target_price: Decimal | None
+    expected_exit_fee: Decimal | None
+    expected_gross_exit_proceeds: Decimal | None
+    expected_net_exit_proceeds: Decimal | None
+    expected_net_profit: Decimal | None
+    expected_net_return: Decimal | None
+    exit_fee_assumption: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "achievable": self.achievable,
+            "all_in_entry_cost": str(self.all_in_entry_cost),
+            "desired_net_profit": str(self.desired_net_profit),
+            "desired_net_return": str(self.desired_net_return),
+            "entry_fee": str(self.entry_fee),
+            "entry_notional": str(self.entry_notional),
+            "entry_price": str(self.entry_price),
+            "exit_fee_assumption": self.exit_fee_assumption,
+            "expected_exit_fee": _optional_decimal_text(self.expected_exit_fee),
+            "expected_gross_exit_proceeds": _optional_decimal_text(
+                self.expected_gross_exit_proceeds
+            ),
+            "expected_net_exit_proceeds": _optional_decimal_text(
+                self.expected_net_exit_proceeds
+            ),
+            "expected_net_profit": _optional_decimal_text(self.expected_net_profit),
+            "expected_net_return": _optional_decimal_text(self.expected_net_return),
+            "fee_free_target_price": _optional_decimal_text(
+                self.fee_free_target_price
+            ),
+            "minimum_order_size": str(self.minimum_order_size),
+            "nominal_gross_target_price": str(self.nominal_gross_target_price),
+            "quantity": str(self.quantity),
+            "reason": self.reason,
+            "required_net_exit_proceeds": str(self.required_net_exit_proceeds),
+            "rounding_rule": "ceiling to the next valid venue tick",
+            "target_price": _optional_decimal_text(self.target_price),
+            "tick_size": str(self.tick_size),
         }
 
 
@@ -577,16 +636,21 @@ async def run_tiny_live_round_trip(
 
             intent = decision.to_intent()
             selected_book = next(book for book in books if book.token_id == intent.token_id)
-            exit_target = normalize_exit_target(
-                intent.price,
-                tick_size=selected_book.tick_size,
-            )
             expected_fee = strategy.expected_fee(
                 market,
                 price=intent.price,
                 size=intent.size,
             )
             intended_all_in_cost = (intent.price * intent.size) + expected_fee
+            exit_target = calculate_fee_aware_exit_target(
+                market,
+                entry_price=intent.price,
+                quantity=intent.size,
+                entry_fee=expected_fee,
+                tick_size=selected_book.tick_size,
+                minimum_order_size=selected_book.minimum_order_size,
+                desired_net_return=strategy.config.desired_net_return,
+            )
             fee_evidence = _fee_evidence(market, expected_fee=expected_fee)
 
             conflicting_orders = _conflicting_orders(open_orders, market, books)
@@ -610,7 +674,7 @@ async def run_tiny_live_round_trip(
                     existing_market_positions=len(conflicting_positions),
                     conflicting_open_orders=len(conflicting_orders),
                     current_market_exposure=_position_total(conflicting_positions),
-                    exit_path_available=exit_target is not None,
+                    exit_path_available=exit_target.achievable,
                 ),
                 expected_fee=expected_fee,
             )
@@ -668,7 +732,7 @@ async def run_tiny_live_round_trip(
                     market_tradeable=True,
                     geoblock_allowed=True,
                     duplicate_free=not conflicting_orders,
-                    exit_path_available=exit_target is not None,
+                    exit_path_available=exit_target.achievable,
                     owner_authorized=True,
                     account_identity_consistent=True,
                     signer_funder_compatible=True,
@@ -699,9 +763,9 @@ async def run_tiny_live_round_trip(
             }
             exit_order = {
                 "attempted": False,
-                "normalized_target": str(exit_target),
+                "normalized_target": _optional_decimal_text(exit_target.target_price),
                 "order_type": "GTC",
-                "raw_target_formula": "actual_weighted_average_fill_price * 1.10",
+                "target_calculation": exit_target.to_dict(),
                 "status": "NOT_APPLICABLE_DRY_RUN" if config.dry_run else "PENDING_ENTRY_FILL",
             }
 
@@ -911,13 +975,26 @@ async def run_tiny_live_round_trip(
                             average_entry_price=fill.weighted_average_price,
                             timestamp=position_checked_at,
                         )
-                        actual_exit_target = normalize_exit_target(
-                            fill.weighted_average_price,
+                        actual_exit_target = calculate_fee_aware_exit_target(
+                            market,
+                            entry_price=fill.weighted_average_price,
+                            quantity=reconciled_size,
+                            entry_fee=fill.fee,
                             tick_size=selected_book.tick_size,
+                            minimum_order_size=selected_book.minimum_order_size,
+                            desired_net_return=strategy.config.desired_net_return,
                         )
-                        if actual_exit_target is None:
+                        exit_order["target_calculation"] = actual_exit_target.to_dict()
+                        exit_order["normalized_target"] = _optional_decimal_text(
+                            actual_exit_target.target_price
+                        )
+                        if not actual_exit_target.achievable:
                             result = "SAFETY_STOP"
-                            stop_reason = "actual fill cannot produce a valid 10% exit target"
+                            exit_order["status"] = "UNACHIEVABLE"
+                            stop_reason = (
+                                "actual fill cannot produce a valid fee-aware exit target: "
+                                f"{actual_exit_target.reason}"
+                            )
                             reconciliation_result = (
                                 await _reconcile_position_without_exit(
                                     active_execution_port,
@@ -932,10 +1009,11 @@ async def run_tiny_live_round_trip(
                                 reconciliation_result
                             )
                         else:
+                            assert actual_exit_target.target_price is not None
                             try:
                                 exit_response = await manager.submit_exit(
                                     token_id=intent.token_id,
-                                    price=actual_exit_target,
+                                    price=actual_exit_target.target_price,
                                     size=reconciled_size,
                                 )
                             except TinyLiveRoundTripError as error:
@@ -960,14 +1038,18 @@ async def run_tiny_live_round_trip(
                                 {
                                     "client_order_id": manager.exit_client_order_id,
                                     "client_order_id_sent_to_venue": False,
-                                    "normalized_target": str(actual_exit_target),
-                                    "raw_target": str(
-                                        fill.weighted_average_price * Decimal("1.10")
+                                    "normalized_target": str(
+                                        actual_exit_target.target_price
                                     ),
                                     "sell_quantity": str(reconciled_size),
                                     "submitted_at": clock().isoformat(),
-                                    "target_formula": "actual_weighted_average_fill_price * 1.10",
+                                    "target_calculation": actual_exit_target.to_dict(),
                                 }
+                            )
+                            fee_evidence["expected_exit_fee_at_target"] = (
+                                _optional_decimal_text(
+                                    actual_exit_target.expected_exit_fee
+                                )
                             )
                             _persist_exit_order_state(
                                 database.connection,
@@ -1174,7 +1256,7 @@ async def run_tiny_live_round_trip(
                         "relative executable-price separation; not alpha evidence"
                     ),
                     "parameters": {
-                        "exit_target_multiple": "1.10",
+                        "desired_net_return": str(strategy.config.desired_net_return),
                         "maximum_book_age_ms": config.maximum_book_age_ms,
                         "maximum_entry_notional": str(
                             config.maximum_entry_notional
@@ -1213,7 +1295,7 @@ async def run_tiny_live_round_trip(
                     "maximum_entry_notional": str(MAXIMUM_ENTRY_NOTIONAL),
                     "maximum_markets": 1,
                     "maximum_positions": 1,
-                    "exit_target_multiple": "1.10",
+                    "desired_net_return": str(strategy.config.desired_net_return),
                 },
                 decision=report.strategy_decision,
                 risk_result=report.risk_decision,
@@ -1546,16 +1628,159 @@ def _assert_sdk_compatible() -> None:
         )
 
 
-def normalize_exit_target(fill_price: Decimal, *, tick_size: Decimal) -> Decimal | None:
-    if fill_price <= 0 or tick_size <= 0:
-        return None
-    raw = fill_price * Decimal("1.10")
-    ticks = (raw / tick_size).to_integral_value(rounding=ROUND_CEILING)
-    normalized = ticks * tick_size
-    maximum = Decimal("1") - tick_size
-    if normalized > maximum or normalized <= fill_price:
-        return None
-    return normalized
+def calculate_fee_aware_exit_target(
+    market: MarketDetails,
+    *,
+    entry_price: Decimal,
+    quantity: Decimal,
+    entry_fee: Decimal,
+    tick_size: Decimal,
+    minimum_order_size: Decimal,
+    desired_net_return: Decimal = Decimal("0.10"),
+) -> FeeAwareExitTarget:
+    """Find the lowest valid sell tick that delivers the desired net return."""
+
+    entry_notional = entry_price * quantity
+    all_in_entry_cost = entry_notional + entry_fee
+    desired_net_profit = all_in_entry_cost * desired_net_return
+    required_net_exit_proceeds = all_in_entry_cost + desired_net_profit
+    nominal_gross_target_price = entry_price * (Decimal("1") + desired_net_return)
+    fee_free_target_price = (
+        required_net_exit_proceeds / quantity if quantity > 0 else None
+    )
+    fee_assumption = _exit_fee_assumption(market)
+
+    def result(
+        *,
+        achievable: bool,
+        reason: str,
+        target_price: Decimal | None = None,
+        expected_exit_fee: Decimal | None = None,
+        expected_gross_exit_proceeds: Decimal | None = None,
+        expected_net_exit_proceeds: Decimal | None = None,
+    ) -> FeeAwareExitTarget:
+        expected_net_profit = (
+            expected_net_exit_proceeds - all_in_entry_cost
+            if expected_net_exit_proceeds is not None
+            else None
+        )
+        expected_net_return = (
+            expected_net_profit / all_in_entry_cost
+            if expected_net_profit is not None and all_in_entry_cost > 0
+            else None
+        )
+        return FeeAwareExitTarget(
+            achievable=achievable,
+            reason=reason,
+            entry_price=entry_price,
+            quantity=quantity,
+            minimum_order_size=minimum_order_size,
+            tick_size=tick_size,
+            entry_fee=entry_fee,
+            entry_notional=entry_notional,
+            all_in_entry_cost=all_in_entry_cost,
+            desired_net_return=desired_net_return,
+            desired_net_profit=desired_net_profit,
+            required_net_exit_proceeds=required_net_exit_proceeds,
+            nominal_gross_target_price=nominal_gross_target_price,
+            fee_free_target_price=fee_free_target_price,
+            target_price=target_price,
+            expected_exit_fee=expected_exit_fee,
+            expected_gross_exit_proceeds=expected_gross_exit_proceeds,
+            expected_net_exit_proceeds=expected_net_exit_proceeds,
+            expected_net_profit=expected_net_profit,
+            expected_net_return=expected_net_return,
+            exit_fee_assumption=fee_assumption,
+        )
+
+    if entry_price <= 0 or entry_price >= 1:
+        return result(achievable=False, reason="entry price must be within (0, 1)")
+    if quantity <= 0:
+        return result(achievable=False, reason="confirmed exit quantity must be positive")
+    if minimum_order_size <= 0:
+        return result(achievable=False, reason="minimum order size must be positive")
+    if quantity < minimum_order_size:
+        return result(
+            achievable=False,
+            reason="confirmed exit quantity is below the venue minimum order size",
+        )
+    if tick_size <= 0 or tick_size >= 1:
+        return result(achievable=False, reason="tick size must be within (0, 1)")
+    if entry_fee < 0:
+        return result(achievable=False, reason="entry fee must not be negative")
+    if desired_net_return < 0:
+        return result(achievable=False, reason="desired net return must not be negative")
+    if market.fee_schedule is None:
+        return result(achievable=False, reason="market fee applicability is unreadable")
+
+    maximum_ticks = ((Decimal("1") - tick_size) / tick_size).to_integral_value(
+        rounding=ROUND_FLOOR
+    )
+    if maximum_ticks > 100_000:
+        return result(
+            achievable=False,
+            reason="venue tick size is too granular for bounded target evaluation",
+        )
+    maximum_price = maximum_ticks * tick_size
+    if maximum_price <= 0 or maximum_price >= 1:
+        return result(achievable=False, reason="venue price range has no valid exit tick")
+
+    assert fee_free_target_price is not None
+    starting_ticks = (fee_free_target_price / tick_size).to_integral_value(
+        rounding=ROUND_CEILING
+    )
+    candidate = max(tick_size, starting_ticks * tick_size)
+    last_fee: Decimal | None = None
+    last_gross: Decimal | None = None
+    last_net: Decimal | None = None
+
+    while candidate <= maximum_price:
+        try:
+            last_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
+                market,
+                price=candidate,
+                size=quantity,
+            )
+        except (InvalidOperation, ValueError):
+            return result(
+                achievable=False,
+                reason="expected exit fee cannot be calculated from the market schedule",
+            )
+        last_gross = candidate * quantity
+        last_net = last_gross - last_fee
+        if last_net >= required_net_exit_proceeds:
+            return result(
+                achievable=True,
+                reason="lowest valid tick satisfies the desired net return after fees",
+                target_price=candidate,
+                expected_exit_fee=last_fee,
+                expected_gross_exit_proceeds=last_gross,
+                expected_net_exit_proceeds=last_net,
+            )
+        candidate += tick_size
+
+    return result(
+        achievable=False,
+        reason="desired net return is not achievable within the venue price range",
+        target_price=maximum_price,
+        expected_exit_fee=last_fee,
+        expected_gross_exit_proceeds=last_gross,
+        expected_net_exit_proceeds=last_net,
+    )
+
+
+def _exit_fee_assumption(market: MarketDetails) -> str:
+    schedule = market.fee_schedule
+    if schedule is None:
+        return "unavailable market fee schedule"
+    if not schedule.enabled:
+        return "venue fee schedule disabled; expected exit fee is zero"
+    if schedule.taker_only:
+        return (
+            "conservative applicable taker fee at the target price; "
+            "a resting maker fill may cost less"
+        )
+    return "applicable market fee schedule at the target price"
 
 
 async def _wait_for_confirmed_entry(
@@ -2418,6 +2643,10 @@ def _decimal_or_zero(value: object) -> Decimal:
         return Decimal("0")
 
 
+def _optional_decimal_text(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
+
+
 def _safe(value: object) -> str | None:
     return None if value is None else str(value)
 
@@ -2446,11 +2675,12 @@ def _git_value(
 __all__ = [
     "AUTHORIZATION_ID",
     "AccountPreflight",
+    "FeeAwareExitTarget",
     "FilledEntry",
     "RoundTripOrderManager",
     "TinyLiveRoundTripConfig",
     "TinyLiveRoundTripError",
     "TinyLiveRoundTripReport",
-    "normalize_exit_target",
+    "calculate_fee_aware_exit_target",
     "run_tiny_live_round_trip",
 ]
