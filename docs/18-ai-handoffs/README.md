@@ -8,6 +8,9 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`polysia-controlled-server-deployment-handoff.md`](polysia-controlled-server-deployment-handoff.md)
+  records the controlled Helsinki Docker deployment, validation, and recovery
+  evidence.
 - [`polysia-upgrade-006-handoff.md`](polysia-upgrade-006-handoff.md) records the
   Python 3.14, dependency, SDK, reproducibility, and security baseline upgrade.
 - [`polysia-live-004-final-handoff.md`](polysia-live-004-final-handoff.md) records
