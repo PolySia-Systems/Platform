@@ -57,6 +57,29 @@ jobs:
           .wheel-smoke/bin/python -m pip install dist/*.whl
           .wheel-smoke/bin/python -m polysia.cli --help
 
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build --tag polysia:ci .
+      - run: docker run --rm polysia:ci health
+      - shell: bash
+        run: |
+          mkdir -p .ci-state
+          chmod 0777 .ci-state
+          POLYSIA_ENV_FILE=deploy/polysia.env.example \
+          POLYSIA_STATE_DIR="$PWD/.ci-state" \
+          docker compose config --quiet
+      - shell: bash
+        run: |
+          docker run --rm \
+            --user 10001:10001 \
+            --volume "$PWD/.ci-state:/var/lib/polysia" \
+            --entrypoint python \
+            polysia:ci \
+            -m polysia.deployment.sqlite_backup \
+            init --database /var/lib/polysia/data/polysia.sqlite3
+
   supply-chain:
     runs-on: windows-latest
     steps:
