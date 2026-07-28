@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -9,26 +9,27 @@ description = "Professional prediction-market platform with a Polymarket adapter
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "polymarket-client==0.1.0b11",
-    "pydantic>=2.7",
-    "pydantic-settings>=2.3",
-    "python-dotenv>=1.0",
-    "structlog>=24.1",
-    "rich>=13.7",
-    "typer>=0.12",
+    "polymarket-client==0.2.0",
+    "pydantic>=2.13.4,<3",
+    "pydantic-settings>=2.14.2,<3",
+    "python-dotenv>=1.2.2,<2",
+    "structlog>=26.1.0,<27",
+    "rich>=15.0.0,<16",
+    "typer>=0.27.0,<1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "build==1.5.1",
-    "cyclonedx-bom==7.3.0",
-    "hypothesis==6.156.6",
-    "mypy==2.1.0",
+    "build==1.5.0",
+    "cyclonedx-bom==7.3.1",
+    "hypothesis==6.163.0",
+    "mypy==2.3.0",
     "pip-audit==2.10.1",
-    "pre-commit==4.6.0",
+    "pre-commit==4.6.1",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
-    "ruff==0.15.20",
+    "ruff==0.16.0",
+    "setuptools==83.0.0",
 ]
 
 [project.scripts]

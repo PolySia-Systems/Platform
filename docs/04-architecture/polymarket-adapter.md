@@ -37,7 +37,12 @@ payloads are never included.
 
 ## SDK contract
 
-The approved pinned baseline is `polymarket-client==0.1.0b11`. Contract tests
-assert the installed version and the SDK methods used by the public, secure,
-streaming, and reconciliation boundaries. Any upgrade requires a focused
-contract/rollback change; current dependency upgrade PRs remain on hold.
+The approved pinned baseline is the official unified
+`polymarket-client==0.2.0`. Contract tests assert the installed version, the
+SDK methods used by the public, secure, streaming, and reconciliation
+boundaries, and the `condition_id` compatibility surface introduced before the
+stable 0.x releases. SDK objects remain confined to the adapter boundary.
+
+Any future upgrade requires a focused contract, lock, security, CI, and
+rollback change. The currently verified rollback returns to the Python 3.13.14
+and SDK 0.1.0b11 baseline without changing private credential values.

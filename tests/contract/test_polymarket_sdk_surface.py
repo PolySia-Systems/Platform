@@ -15,7 +15,7 @@ from polymarket.models.gamma.market import FeeSchedule, MarketState, MarketTradi
 
 
 def test_pinned_polymarket_sdk_version() -> None:
-    assert version("polymarket-client") == "0.1.0b11"
+    assert version("polymarket-client") == "0.2.0"
 
 
 def test_public_sdk_methods_used_by_adapter_exist() -> None:
@@ -47,6 +47,7 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
     assert {
         "asks",
         "bids",
+        "condition_id",
         "market",
         "min_order_size",
         "tick_size",

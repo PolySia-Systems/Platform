@@ -8,6 +8,8 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`polysia-upgrade-006-handoff.md`](polysia-upgrade-006-handoff.md) records the
+  Python 3.14, dependency, SDK, reproducibility, and security baseline upgrade.
 - [`polysia-live-004-final-handoff.md`](polysia-live-004-final-handoff.md) records
   the completed real round trip and delayed-fill reconciliation.
 - [`polysia-phase-closure-005-final-handoff.md`](polysia-phase-closure-005-final-handoff.md)

@@ -4,9 +4,10 @@
 
 - Distribution: `polymarket-client`
 - Import namespace: `polymarket`
-- Verified version: `0.1.0b11`
-- Status: official beta SDK
-- Newer reviewed tag: `polymarket-client-v0.1.0-b12` (2026-07-02)
+- Verified version: `0.2.0`
+- Status: official stable 0.x unified SDK
+- Reviewed release: `0.2.0` (2026-07-24)
+- Primary runtime: CPython `3.14.6`
 
 ## Upgrade procedure
 
@@ -32,7 +33,7 @@ live gate weakens.
 
 ## Rollback
 
-Restore `polymarket-client==0.1.0b11` in `pyproject.toml` and
-`locks/pip-win-64.lock`, reinstall the project, and rerun all local and public
+Use the external `PolySia-py313-rollback-*` export or revert ADR-0011 and the
+upgrade commit to restore Python 3.13.14 and `polymarket-client==0.1.0b11`.
+Recreate the environment, reinstall the project, and rerun all local and public
 read-only gates. Never roll back by changing or replacing credential values.
-
