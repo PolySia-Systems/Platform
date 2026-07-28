@@ -1,0 +1,14 @@
+[
+  {
+    "id": "fixture-event-1",
+    "slug": "btc-updown-15m-1785255300",
+    "markets": [
+      {
+        "conditionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "clobTokenIds": "[\"111111\", \"222222\"]",
+        "outcomes": "[\"Up\", \"Down\"]",
+        "endDate": "2026-07-28T16:30:00Z"
+      }
+    ]
+  }
+]

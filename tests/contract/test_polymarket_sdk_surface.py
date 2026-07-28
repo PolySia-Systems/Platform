@@ -19,7 +19,16 @@ def test_pinned_polymarket_sdk_version() -> None:
 
 
 def test_public_sdk_methods_used_by_adapter_exist() -> None:
-    required = {"get_market", "list_markets", "search", "subscribe"}
+    required = {
+        "get_market",
+        "list_activity",
+        "list_closed_positions",
+        "list_markets",
+        "list_positions",
+        "list_trades",
+        "search",
+        "subscribe",
+    }
 
     assert required <= set(dir(AsyncPublicClient))
 
