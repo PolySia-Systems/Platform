@@ -1,0 +1,13 @@
+*
+!.dockerignore
+!.env.example
+!.gitignore
+!Dockerfile
+!Makefile
+!README.md
+!pyproject.toml
+!locks/
+!locks/pip-py314.lock
+!locks/pip-runtime-py314.lock
+!src/
+!src/**

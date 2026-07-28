@@ -1,0 +1,101 @@
+name: polysia
+
+services:
+  monitor:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: ${POLYSIA_ENV_FILE:-/etc/polysia/polysia.env}
+        required: true
+    environment:
+      APP_ENV: server
+      LIVE_TRADING_ENABLED: "false"
+      POLYMARKET_LIVE_TOKEN_ALLOWLIST: ""
+      TRADING_MODE: DATA_ONLY
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        reconciliation_cycle=0
+        while true; do
+          python -m polysia.cli tiny-live-monitor \
+            --max-cycles 1 \
+            --interval-seconds 60 \
+            --output-dir /var/lib/polysia/reports
+          reconciliation_cycle=$$((reconciliation_cycle + 1))
+          if [ "$$reconciliation_cycle" -ge \
+            "$${POLYSIA_RECONCILIATION_EVERY_CYCLES:-15}" ]; then
+            python -m polysia.cli post-live-reconciliation \
+              --output-dir /var/lib/polysia/reports
+            reconciliation_cycle=0
+          fi
+          sleep "$${POLYSIA_MONITOR_INTERVAL_SECONDS:-60}"
+        done
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}
+        target: /var/lib/polysia
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -w /var/lib/polysia &&
+          python -m polysia.cli health >/dev/null
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  backup:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles:
+      - operations
+    entrypoint:
+      - python
+      - -m
+      - polysia.deployment.sqlite_backup
+    command:
+      - backup
+      - --database
+      - /var/lib/polysia/data/polysia.sqlite3
+      - --backup-dir
+      - /var/lib/polysia/backups
+      - --keep
+      - "${POLYSIA_BACKUP_RETENTION:-14}"
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}
+        target: /var/lib/polysia
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

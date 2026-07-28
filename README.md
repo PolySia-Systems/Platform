@@ -45,6 +45,12 @@ python -m pip install -e ".[dev]"
 Copy `.env.example` to `.env` only when local overrides are needed. Keep real
 secrets out of git.
 
+## Controlled Server Deployment
+
+The approved single-host Docker deployment runs the existing modular monolith
+as a non-root, read-only monitor with `DATA_ONLY` enforced and no exposed port.
+See [the server deployment runbook](docs/10-operations/server-deployment.md).
+
 ## First Run
 
 ```powershell
