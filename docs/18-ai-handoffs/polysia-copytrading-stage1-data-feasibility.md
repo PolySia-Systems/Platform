@@ -244,6 +244,60 @@ Data API executed timestamp -> first successful PolySia observation timestamp
 
 with local NTP uncertainty recorded.
 
+## Read-only 403 connectivity diagnostic
+
+Run on 2026-07-28 after the owner changed the local VPN route. The comparison
+used only official Data API and Gamma API public reads. It changed no VPN,
+firewall, server, container, credential, account, or venue state.
+
+### Results
+
+| Location and client | Data trades | Data activity | Data positions | Gamma events |
+|---|---:|---:|---:|---:|
+| Local curl, empty User-Agent | 200 | 200 | 200 | 200 |
+| Local curl, PolySia User-Agent | 200 | 200 | 200 | 200 |
+| Finland server curl, empty User-Agent | 200 | 200 | 200 | 200 |
+| Finland server curl, PolySia User-Agent | 200 | 200 | 200 | 200 |
+
+Local curl requests completed in 0.718–1.244 seconds. Server requests completed
+in 0.038–0.216 seconds. The User-Agent did not change status behavior in this
+sample.
+
+Additional client-path checks:
+
+- local synchronous HTTPX returned 200 for Data and Gamma in 1.943 seconds;
+- local asynchronous HTTPX did not finish within a 30-second process cap;
+- the local official SDK, which uses an asynchronous HTTP path, did not produce
+  a result within a 70-second process cap;
+- inside the healthy Finland container, official SDK 0.2.0 returned one Data
+  trade page in 0.295 seconds and one Gamma event page in 0.381 seconds.
+
+One SSH connection attempt timed out during banner exchange. A later bounded
+connection succeeded and all server API probes completed. This was an SSH-path
+transient, not a Polymarket HTTP 403.
+
+### Finding
+
+No persistent Polymarket 403 exists on either currently tested route. Earlier
+local 403 responses were intermittent and are consistent with a local
+client/VPN/Cloudflare route interaction, not an invalid endpoint or permanent
+geographic block. The exact former VPN exit route was not retained, so this is
+an evidence-based inference rather than a proven root cause.
+
+The remaining reproducible local issue is narrower: asynchronous HTTP stalls on
+the current Windows/VPN path while synchronous REST works. The Stage 1 adapter
+already uses bounded synchronous standard-library reads through
+`asyncio.to_thread`, so the diagnostic does not require an architecture change.
+
+Recommended future response:
+
+1. run the four-request REST smoke check before a long local collection;
+2. if REST returns 403, record only route label, UTC time, endpoint, client,
+   User-Agent profile, and status, then compare against the Finland server;
+3. prefer the server or the bounded REST adapter while local async HTTP stalls;
+4. do not weaken geoblock or trading controls and do not rotate VPN routes
+   during a measured run.
+
 ## Pagination and restart
 
 The source:
