@@ -6,23 +6,19 @@
 |---|---|
 | Review date | 2026-07-28 |
 | Source-of-truth branch | `main` |
+| Deployed application source | `52c1bcc980f7db797066f982b23ab755dca31f58` |
 | Final runtime baseline | `b7dce82976a5b4ff624d8efef687c7d0d3776732` |
-| Starting main baseline for this upgrade | `c3e0cdddefd437f8367d58a551658f887bd04a7e` |
-| Upgrade branch | `codex/python314-platform-upgrade` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
-| Active maintenance task | `POLYSIA-UPGRADE-006` |
+| Active maintenance task | Controlled single-server deployment handoff |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
 | Polymarket SDK | `polymarket-client==0.2.0` |
 | Phase status | `READY_FOR_RESEARCH_VALIDATION_CYCLE` |
 
 The final runtime baseline remains the last trading-runtime implementation
-merge. `POLYSIA-UPGRADE-006` changes the development/runtime platform baseline,
-dependency contracts, reproducibility files, and SDK version guard without
-changing strategy, risk, execution, reconciliation, credential, or live-control
-behavior. Its final merge and CI runs remain discoverable from Git/PR history
-because this tracked document cannot self-reference them. Two pre-existing
-untracked architecture prompt inputs remain preserved and unchanged.
+merge. The current Git HEAD adds the approved server packaging and operations
+layer without changing strategy, risk, execution, credential, or live-order
+behavior.
 
 ## Completed stages
 
@@ -41,17 +37,27 @@ untracked architecture prompt inputs remain preserved and unchanged.
 - Bounded read-only lifecycle monitoring, fee-aware take-profit calculation,
   structured adapter diagnostics, fail-closed server-clock preflight, canonical
   configuration reporting, and bounded read-only retry behavior are CURRENT.
-- A verified external recovery package exists for the final runtime baseline.
 - `POLYSIA-UPGRADE-006` established Python 3.14.6 as the primary runtime,
   upgraded the official unified Polymarket SDK to 0.2.0, updated direct
   dependencies and portable locks, added Python 3.14 and Linux smoke coverage
   to CI, removed the deprecated local wallet variable, and created a Python
-  3.13 rollback export.
+  3.13 rollback export, which the owner later removed after verification.
+- PR `#36` added the controlled single-server Docker deployment, exact runtime
+  lock, non-root read-only monitor, periodic read-only reconciliation, health
+  checks, rotating logs, persistent SQLite state, and verified backup/restore.
+  It was deployed to `Hetzner-Finland-Helsinki-01` in enforced `DATA_ONLY`
+  mode with no published port.
 
 ## Current architecture and runtime capabilities
 
-- CURRENT deployment is one Python modular monolith with a Typer CLI, local
-  SQLite persistence, and Polymarket as the first venue adapter.
+- CURRENT deployment is one Python modular monolith with a Typer CLI and
+  Polymarket as the first venue adapter. It can run locally in the `PolySia`
+  Conda environment and now runs continuously in one hardened Docker container
+  on the controlled Helsinki host.
+- The server monitor is non-root, read-only, exposes no port, forces
+  `TRADING_MODE=DATA_ONLY`, forces `LIVE_TRADING_ENABLED=false`, clears the
+  live token allowlist, and persists state and sanitized reports under
+  `/var/lib/polysia`.
 - CURRENT executable path is Strategy -> independent Risk -> Execution ->
   Polymarket Adapter. Strategies do not call venue, wallet, SDK, or execution
   clients directly.
@@ -108,8 +114,8 @@ evidence.
 
 ## Validation and CI
 
-- The Python 3.14.6 upgrade environment passed compile, Ruff 0.16.0, Mypy 2.3.0
-  over 119 source files, all 504 Pytest tests, `pip check`, secret scan,
+- The current Python 3.14.6 environment passed compile, Ruff 0.16.0, Mypy 2.3.0
+  over 120 source files, all 508 Pytest tests, `pip check`, secret scan,
   source/wheel build, isolated wheel installation, and CLI smoke.
 - A clean locked dependency environment passed strict OSV audit with no known
   vulnerabilities and generated a CycloneDX JSON SBOM.
@@ -121,45 +127,43 @@ evidence.
   history after this document is committed.
 - The approved versions are `polymarket-client==0.2.0`, `mypy==2.3.0`, and
   `ruff==0.16.0`. `setuptools==83.0.0` removes the known 82.0.1 finding.
+- PR `#36` CI passed Python 3.11/3.13/3.14 quality jobs, Linux smoke,
+  supply-chain checks, and the new Linux container build/runtime/database
+  initialization job.
 
 ## Recovery status
 
-Verified external package:
-
-`C:\Users\Siamak\Documents\PolySia-backups\PolySia-recovery-20260713-224436`
-
-- Git bundle SHA-256:
-  `8c321f7e9bcf7e54fd90ee86e5bb9764d0ccc2e7c7eec7226713dbf768d8cb5f`
-- Source archive SHA-256:
-  `d58e9816df276e81c1d3ae46d15b51e0f81f58a80563f10d0ae76f5f0bbbabde`
-- Manifest SHA-256:
-  `c4ab63b9a31afcef7326682ce44c83adba56b9ec2a893c5ee2031c3c5e5ef0aa`
-- Restore result: PASS; bundle clone, expected commit, Git object check,
-  source extraction, all 365 tracked files, and exclusion checks verified.
-
-Python 3.13 environment rollback export:
-
-`C:\Users\Siamak\Documents\PolySia-backups\PolySia-py313-rollback-20260728-133429`
-
-It contains explicit Conda, portable environment, pip-freeze, and SHA-256
-records created before canonical environment promotion. The legacy project
-folder, local database, ignored live evidence, and prompt inputs remain
-preserved. The owner had already removed the obsolete `polymarket` Conda
-environment; PolySia does not depend on it.
+- The owner intentionally removed the earlier external workstation recovery
+  packages and obsolete legacy environment after verification.
+- GitHub `main` and its CI history remain the source recovery path for tracked
+  code.
+- The server created and verified
+  `polysia-20260728T130327484331Z.sqlite3` with SHA-256
+  `47e58b7eb950f7d409522fc3ffa79abb31d99005c35cffecc4ef3513244102cf`.
+  A restore rehearsal to a separate database passed and the rehearsal file was
+  removed.
+- The server backup is local to the same host. An encrypted off-host copy is
+  not yet configured and remains a recovery limitation.
 
 ## Active work, blockers, and open decisions
 
 - The private owner configuration now contains only the canonical funder
   variable. Redacted `configuration-status` reports no deprecated-variable
   conflict and no missing authenticated-read setting.
-- The lifecycle monitor is a local bounded command, not a continuously managed
-  production service. Scheduling, escalation providers, and high availability
-  are deliberately deferred.
+- The lifecycle monitor is now a continuously managed Docker service on the
+  controlled host. External alert delivery and high availability remain
+  deliberately deferred.
 - One live sample is statistically meaningless. Capital scaling, broader live
   use, new strategies, new venues, AI/ML, cloud, and microservices are not the
   next task.
-- Linux behavior is covered by CI rather than a local Linux host. Production
-  server deployment and operations remain a separate authorized task.
+- Linux behavior is covered by CI and the controlled Ubuntu host. The server is
+  suitable for data-only, paper, and shadow validation; it is not evidence of
+  production readiness or authorization for automated live trading.
+- The first server reconciliation completed with no blockers, readable account
+  and open-order state, and zero open orders. Its only warning was the expected
+  absence of a server-local tiny-live execution artifact.
+- Automated encrypted off-host backups and an external alert provider remain
+  unfinished operational work.
 - Branch-protection policy remains governance debt.
 - LIVE-001 through LIVE-004 authorizations are consumed. Historical live task
   prompts and the architecture-generation prompts are superseded as execution

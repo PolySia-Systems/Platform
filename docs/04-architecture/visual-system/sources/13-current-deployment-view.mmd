@@ -6,25 +6,39 @@ flowchart LR
 
   subgraph WORKSTATION["Owner Windows workstation [CURRENT]"]
     Repo["Local Git repository\nmain branch"]:::storage
-    Conda["Conda environment: PolySia\nPython 3.13 workstation baseline"]:::current
-    Process["One local Python process\npolysia CLI / modular monolith"]:::application
+    Conda["Conda environment: PolySia\nPython 3.14.6"]:::current
+    Process["Operator-run polysia CLI\nmodular monolith"]:::application
     Secrets["Ignored local .env\nsecret boundary; values never diagrammed"]:::risk
     SQLite[("SQLite databases / local files\nignored runtime state")]:::storage
-    Reports["Ignored artifacts and reports\nlocal operator evidence"]:::observability
+  end
+
+  subgraph SERVER["Hetzner Helsinki Ubuntu host [CURRENT]"]
+    Checkout["Read-only deploy-key checkout\nmain branch"]:::storage
+    Container["Non-root Docker monitor\nDATA_ONLY; no published port"]:::application
+    ServerSecrets["/etc/polysia/polysia.env\nroot-only 0600"]:::risk
+    ServerState[("/var/lib/polysia\nSQLite, reports, local backups")]:::storage
+    DockerLogs["Rotating Docker logs\nhealth and reconciliation"]:::observability
   end
 
   Operator --> Process
+  Operator -->|controlled SSH / Docker operations| Container
   Repo --> Conda
   Conda --> Process
   Secrets -->|configuration at runtime| Process
   Process ==>|persistent state| SQLite
-  Process ==>|sanitized output| Reports
   Process -->|public reads / stream| PublicAPI
   Process -->|acknowledged reads or guarded action| SecureAPI
   Repo -.->|push / workflow source| GitHost
+  GitHost -.->|read-only deploy key| Checkout
+  Checkout -->|approved image build| Container
+  ServerSecrets -->|runtime-only configuration| Container
+  Container ==>|persistent state and reports| ServerState
+  Container -.->|structured output| DockerLogs
+  Container -->|public and authenticated reads only| PublicAPI
+  Container -->|authenticated reads only| SecureAPI
 
   subgraph LEGEND["Legend"]
-    L1["CURRENT local deployment"]:::current
+    L1["CURRENT deployment"]:::current
     L2["EXTERNAL"]:::external
     L3["SECRET / SAFETY boundary"]:::risk
     L4["Persistent local state"]:::storage

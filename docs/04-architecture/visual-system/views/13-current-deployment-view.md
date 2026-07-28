@@ -2,10 +2,10 @@
 
 - **Diagram ID:** PSA-ARCH-13
 - **Purpose:** Represent only verified current deployment and runtime facts.
-- **Scope:** Owner Windows workstation, Conda environment, local Python process, local Git/files/SQLite, ignored secrets/evidence, Polymarket endpoints, and configured CI.
+- **Scope:** Owner workstation, controlled Helsinki host, Docker monitor, persistent state, secret boundaries, Polymarket endpoints, and configured CI.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, operators, developers, security reviewers, and deployment reviewers.
-- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
+- **Verified deployment source:** `52c1bcc980f7db797066f982b23ab755dca31f58`
 
 ## Mermaid diagram
 
@@ -20,25 +20,39 @@ flowchart LR
 
   subgraph WORKSTATION["Owner Windows workstation [CURRENT]"]
     Repo["Local Git repository\nmain branch"]:::storage
-    Conda["Conda environment: PolySia\nPython 3.13 workstation baseline"]:::current
-    Process["One local Python process\npolysia CLI / modular monolith"]:::application
+    Conda["Conda environment: PolySia\nPython 3.14.6"]:::current
+    Process["Operator-run polysia CLI\nmodular monolith"]:::application
     Secrets["Ignored local .env\nsecret boundary; values never diagrammed"]:::risk
     SQLite[("SQLite databases / local files\nignored runtime state")]:::storage
-    Reports["Ignored artifacts and reports\nlocal operator evidence"]:::observability
+  end
+
+  subgraph SERVER["Hetzner Helsinki Ubuntu host [CURRENT]"]
+    Checkout["Read-only deploy-key checkout\nmain branch"]:::storage
+    Container["Non-root Docker monitor\nDATA_ONLY; no published port"]:::application
+    ServerSecrets["/etc/polysia/polysia.env\nroot-only 0600"]:::risk
+    ServerState[("/var/lib/polysia\nSQLite, reports, local backups")]:::storage
+    DockerLogs["Rotating Docker logs\nhealth and reconciliation"]:::observability
   end
 
   Operator --> Process
+  Operator -->|controlled SSH / Docker operations| Container
   Repo --> Conda
   Conda --> Process
   Secrets -->|configuration at runtime| Process
   Process ==>|persistent state| SQLite
-  Process ==>|sanitized output| Reports
   Process -->|public reads / stream| PublicAPI
   Process -->|acknowledged reads or guarded action| SecureAPI
   Repo -.->|push / workflow source| GitHost
+  GitHost -.->|read-only deploy key| Checkout
+  Checkout -->|approved image build| Container
+  ServerSecrets -->|runtime-only configuration| Container
+  Container ==>|persistent state and reports| ServerState
+  Container -.->|structured output| DockerLogs
+  Container -->|public and authenticated reads only| PublicAPI
+  Container -->|authenticated reads only| SecureAPI
 
   subgraph LEGEND["Legend"]
-    L1["CURRENT local deployment"]:::current
+    L1["CURRENT deployment"]:::current
     L2["EXTERNAL"]:::external
     L3["SECRET / SAFETY boundary"]:::risk
     L4["Persistent local state"]:::storage
@@ -58,28 +72,36 @@ CURRENT is solid, TARGET is dashed, FUTURE is dotted, EXTERNAL is gray, safety i
 
 ## Main reading path
 
-Start at the owner workstation, then follow local process dependencies to files
-and external endpoints. GitHub hosting and CI are verified external services;
-the PolySia runtime remains local.
+Start at the owner workstation and GitHub, then follow the approved source to
+the single controlled Docker runtime, persistent state, monitoring, and
+external read-only endpoints.
 
 ## Current implementation mapping
 
-The current deployment is one local Python process in the `PolySia` Conda
-environment. SQLite and reports are local. `.env` is ignored. The repository is
-connected to GitHub and CI verifies Python 3.11/3.13 plus supply-chain gates.
-Public and authenticated Polymarket endpoints are external.
+The current deployment remains one Python modular monolith. Local operator use
+continues in the `PolySia` Python 3.14.6 Conda environment. The continuously
+managed runtime is one non-root Docker container on the controlled Ubuntu host.
+It forces `DATA_ONLY`, disables live trading, clears the live allowlist, exposes
+no port, persists SQLite and reports, writes rotating logs, and runs read-only
+monitoring and reconciliation. GitHub CI verifies Python 3.11/3.13/3.14, Linux,
+the container, and supply-chain gates.
 
 ## Target/future elements
 
-No cloud, VPS, container, queue, scheduler, or production infrastructure is shown as current.
+External alert delivery, encrypted off-host backups, high availability,
+additional hosts, queues, and orchestration remain TARGET or FUTURE.
 
 ## Related repository files
 
-`environment.yml`, `locks/`, `pyproject.toml`, `.gitignore`, `.github/workflows/ci.yml`, `src/polysia/storage/`, `src/polysia/config/settings.py`
+`Dockerfile`, `compose.yaml`, `deploy/polysia.env.example`,
+`docs/10-operations/server-deployment.md`, `environment.yml`, `locks/`,
+`.github/workflows/ci.yml`, `src/polysia/storage/`,
+`src/polysia/config/settings.py`
 
 ## Related tests
 
-Phase I handoff, deployment/readiness tests, storage tests, migration tests
+Container CI, deployment/readiness tests, SQLite backup tests, storage tests,
+and the controlled server deployment handoff
 
 ## Related ADRs
 
@@ -91,12 +113,15 @@ CAP-004, CAP-008, CAP-011, CAP-012; REQ-005, REQ-007
 
 ## Assumptions
 
-The verified owner workstation remains the current execution host.
+The server remains a single controlled host and operates only in read-only
+`DATA_ONLY` mode.
 
 ## Known limitations
 
-Branch protection is not configured by this phase. Local SQLite files,
-operational artifacts, credentials, and recovery archives remain outside Git.
+The verified backup remains on the same server; encrypted off-host backup is
+not configured. External alert delivery and high availability are absent.
+SQLite remains limited to the current single-runtime workload. Credentials and
+operational state remain outside Git.
 
 ## Review trigger
 
