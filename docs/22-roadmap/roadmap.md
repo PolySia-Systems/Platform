@@ -28,12 +28,12 @@
 
 ## Parallel maintenance gates
 
-- Resolve the local canonical/deprecated funder-variable conflict before any
-  future authenticated/live run.
-- Keep `polymarket-client==0.1.0b11`, Mypy 2.1.0, and Ruff 0.15.20 pinned until
-  contract, lock, security, and rollback evidence approves an upgrade.
-- Preserve the legacy project, old environment, database, live evidence, and
-  verified recovery package until a separate owner-approved retirement task.
+- Keep Python 3.14.6, `polymarket-client==0.2.0`, Mypy 2.3.0, and Ruff 0.16.0
+  pinned until new contract, lock, security, and rollback evidence approves an
+  upgrade.
+- Preserve the legacy project, database, live evidence, verified recovery
+  package, and Python 3.13 rollback export until a separate owner-approved
+  retirement task.
 - Add branch protection and portable cross-platform locking only through a
   focused governance/release-hardening task.
 

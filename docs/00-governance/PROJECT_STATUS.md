@@ -4,19 +4,25 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-07-13 |
+| Review date | 2026-07-28 |
 | Source-of-truth branch | `main` |
 | Final runtime baseline | `b7dce82976a5b4ff624d8efef687c7d0d3776732` |
-| Remote baseline | `origin/main` at the same commit |
-| Documentation branch | `codex/polysia-phase-close-005` |
+| Starting main baseline for this upgrade | `c3e0cdddefd437f8367d58a551658f887bd04a7e` |
+| Upgrade branch | `codex/python314-platform-upgrade` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
-| Active closure task | `POLYSIA-PHASE-CLOSE-005` |
+| Active maintenance task | `POLYSIA-UPGRADE-006` |
+| Primary runtime | CPython `3.14.6` |
+| Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
+| Polymarket SDK | `polymarket-client==0.2.0` |
 | Phase status | `READY_FOR_RESEARCH_VALIDATION_CYCLE` |
 
-The final runtime baseline is the last implementation merge before this
-documentation-only update. The documentation merge cannot self-reference and
-remains discoverable from Git history. Two pre-existing untracked architecture
-prompt inputs remain preserved and unchanged.
+The final runtime baseline remains the last trading-runtime implementation
+merge. `POLYSIA-UPGRADE-006` changes the development/runtime platform baseline,
+dependency contracts, reproducibility files, and SDK version guard without
+changing strategy, risk, execution, reconciliation, credential, or live-control
+behavior. Its final merge and CI runs remain discoverable from Git/PR history
+because this tracked document cannot self-reference them. Two pre-existing
+untracked architecture prompt inputs remain preserved and unchanged.
 
 ## Completed stages
 
@@ -36,6 +42,11 @@ prompt inputs remain preserved and unchanged.
   structured adapter diagnostics, fail-closed server-clock preflight, canonical
   configuration reporting, and bounded read-only retry behavior are CURRENT.
 - A verified external recovery package exists for the final runtime baseline.
+- `POLYSIA-UPGRADE-006` established Python 3.14.6 as the primary runtime,
+  upgraded the official unified Polymarket SDK to 0.2.0, updated direct
+  dependencies and portable locks, added Python 3.14 and Linux smoke coverage
+  to CI, removed the deprecated local wallet variable, and created a Python
+  3.13 rollback export.
 
 ## Current architecture and runtime capabilities
 
@@ -97,17 +108,19 @@ evidence.
 
 ## Validation and CI
 
-- Final runtime validation at `b7dce829...` passed compile, Ruff, Mypy over 119
-  source files, 504 Pytest tests, `pip check`, secret scan, source/wheel build,
-  isolated wheel smoke, strict OSV audit, and CycloneDX SBOM generation.
-- Pull Requests #20-#24 passed the Python 3.11, Python 3.13, and supply-chain
-  checks. Post-merge main CI run `29277417903` passed for the final runtime
-  baseline.
-- The approved versions remain `polymarket-client==0.1.0b11`, `mypy==2.1.0`,
-  and `ruff==0.15.20`.
-- Draft PR #25 passed all six required CI checks and its focused
-  documentation-only review found no blocking issue. No source, dependency,
-  build, or runtime setting is changed by this documentation work.
+- The Python 3.14.6 upgrade environment passed compile, Ruff 0.16.0, Mypy 2.3.0
+  over 119 source files, all 504 Pytest tests, `pip check`, secret scan,
+  source/wheel build, isolated wheel installation, and CLI smoke.
+- A clean locked dependency environment passed strict OSV audit with no known
+  vulnerabilities and generated a CycloneDX JSON SBOM.
+- A second Conda environment recreated from `environment.yml` and the portable
+  pip lock, passed `pip check`, and passed all five SDK surface contracts.
+- CI now verifies Python 3.11, 3.13, and 3.14 on Windows, runs a Python 3.14
+  Linux build/test/wheel smoke, and performs strict OSV/SBOM validation from
+  the exact dependency lock. Final PR CI evidence is resolved from GitHub
+  history after this document is committed.
+- The approved versions are `polymarket-client==0.2.0`, `mypy==2.3.0`, and
+  `ruff==0.16.0`. `setuptools==83.0.0` removes the known 82.0.1 finding.
 
 ## Recovery status
 
@@ -124,30 +137,33 @@ Verified external package:
 - Restore result: PASS; bundle clone, expected commit, Git object check,
   source extraction, all 365 tracked files, and exclusion checks verified.
 
-The legacy project folder, old Conda environment, local database, ignored live
-evidence, and prompt inputs remain preserved. They are not authorized for
-deletion by this task.
+Python 3.13 environment rollback export:
+
+`C:\Users\Siamak\Documents\PolySia-backups\PolySia-py313-rollback-20260728-133429`
+
+It contains explicit Conda, portable environment, pip-freeze, and SHA-256
+records created before canonical environment promotion. The legacy project
+folder, local database, ignored live evidence, and prompt inputs remain
+preserved. The owner had already removed the obsolete `polymarket` Conda
+environment; PolySia does not depend on it.
 
 ## Active work, blockers, and open decisions
 
-- The owner configuration currently sets both canonical
-  `POLYMARKET_FUNDER_ADDRESS` and deprecated `POLYMARKET_WALLET_ADDRESS`.
-  `configuration-status` reports this conflict as blocked without exposing
-  either value. Remove the deprecated variable through an owner-reviewed
-  configuration task before a future authenticated/live run.
+- The private owner configuration now contains only the canonical funder
+  variable. Redacted `configuration-status` reports no deprecated-variable
+  conflict and no missing authenticated-read setting.
 - The lifecycle monitor is a local bounded command, not a continuously managed
   production service. Scheduling, escalation providers, and high availability
   are deliberately deferred.
 - One live sample is statistically meaningless. Capital scaling, broader live
   use, new strategies, new venues, AI/ML, cloud, and microservices are not the
   next task.
-- Dependency upgrade PRs for the SDK, Mypy, and Ruff remain on hold pending
-  synchronized lock/contract evidence. Portable cross-platform locking and
-  branch-protection policy remain governance debt.
+- Linux behavior is covered by CI rather than a local Linux host. Production
+  server deployment and operations remain a separate authorized task.
+- Branch-protection policy remains governance debt.
 - LIVE-001 through LIVE-004 authorizations are consumed. Historical live task
   prompts and the architecture-generation prompts are superseded as execution
-  instructions; they remain provenance evidence only. The phase-closure prompt
-  remains active until the closure PR is merged and verified.
+  instructions; they remain provenance evidence only.
 
 ## Single recommended next task
 

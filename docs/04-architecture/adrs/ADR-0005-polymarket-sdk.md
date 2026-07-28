@@ -1,6 +1,6 @@
 # ADR-0005: Official Polymarket SDK and Beta Risk
 
-- Status: Accepted
+- Status: Superseded by ADR-0011
 - Date: 2026-07-11
 
 ## Context
@@ -19,4 +19,3 @@ Record official changelog/tag evidence, run public/read-only compatibility tests
 all local gates, and controlled signer/funder diagnostics before promotion.
 Rollback restores the exact lock and reinstalls b11. Never silently change SDK
 families.
-
