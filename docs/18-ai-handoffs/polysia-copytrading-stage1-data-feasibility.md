@@ -11,7 +11,7 @@
 | Runtime environment | Existing Conda environment `PolySia` |
 | Python | CPython 3.14.6 |
 | SDK inspected | `polymarket-client==0.2.0` |
-| Decision | `CONDITIONAL_GO` |
+| Decision | `NO_GO` for Stage 2 |
 
 ## Outcome
 
@@ -21,11 +21,12 @@ venue-neutral `LeaderTradeEvent`. A bounded real-data probe normalized 81 BTC
 Up/Down 15-minute events across five markets without credentials or venue
 mutation.
 
-The result is a conditional data-shape and mapping success, not approval for a
-strategy, persistence migration, paper execution, live execution, or production
-operation. Continuous first-seen polling latency, approved-leader identity
-management, complete non-truncated history, and non-trade position events still
-need closure before Stage 2.
+The local closure probe verified repeated polling, duplicate suppression,
+restart-stable identity, pagination, and visibility of non-trade activity.
+However, no new execution occurred for the temporary test leader during the
+measured window, so true first-seen latency did not receive a sample. Stage 1 is
+therefore closed as `NO_GO` for advancing to Stage 2, rather than assigning a
+misleading latency value.
 
 ## Scope and safety
 
@@ -244,6 +245,52 @@ Data API executed timestamp -> first successful PolySia observation timestamp
 
 with local NTP uncertainty recorded.
 
+## Local Stage 1 closure probe
+
+Run on 2026-07-28 on the owner's local system using only unauthenticated
+official Gamma and Data API `GET` requests. The source wallet was discovered
+from current public BTC 15-minute market activity and held only in process
+memory. It was represented as `test-leader-001` with sanitized digest
+`fb63284ab93b`; this is a technical test source, not an approved Copy Trading
+leader.
+
+The successful bounded run produced:
+
+| Metric | Result |
+|---|---:|
+| Selection | Recent active BTC 15-minute public wallet |
+| Polls | 6 attempted, 6 successful |
+| Unique events observed | 5 |
+| Repeated observations suppressed | 25 |
+| New executions during measured window | 0 |
+| First-seen latency samples | 0 |
+| Independent frozen-window reads | 5 events, then 5 events |
+| Restart count and digest | Stable |
+| Pagination | 3 pages, complete |
+| Source errors | 0 |
+| Credentials or venue mutation | None |
+
+The duplicate count measures repeated observation of already-known stable event
+IDs across polls; it is not evidence that the Data API returned corrupt rows.
+Two independently initialized reads of the same frozen window produced the same
+count and digest. Re-reading that window in two-event pages reproduced the same
+event-ID set.
+
+Wallet-wide non-trade Activity reads over the preceding 24 hours returned 33
+`REDEEM` rows and zero `SPLIT`, `MERGE`, or `CONVERSION` rows. This proves the
+read surface can expose non-trade activity for the temporary source; it does
+not by itself map those rows to BTC 15-minute position effects.
+
+A second and final bounded selection window waited 45 seconds for a fresh
+current-market execution. It observed none and did not find a fallback wallet
+active within the preceding three minutes, so the probe stopped without
+further retries. This is market-sample insufficiency, not an HTTP, credential,
+or product error.
+
+No p50, p95, or maximum live latency is reported because the sample count is
+zero. Historical age and the lag of a previously executed trade are not valid
+substitutes for first-seen indexing latency.
+
 ## Read-only 403 connectivity diagnostic
 
 Run on 2026-07-28 after the owner changed the local VPN route. The comparison
@@ -364,7 +411,7 @@ final diff review.
 
 ## Decision
 
-**`CONDITIONAL_GO` for source feasibility; do not start Stage 2 yet.**
+**`NO_GO` for Stage 2. Stage 1 is closed and no Stage 2 work was started.**
 
 Proven:
 
@@ -377,18 +424,24 @@ Proven:
   inventory is proven; otherwise UNKNOWN is enforced;
 - no credentials or mutation path are required.
 
-Conditions not yet closed:
+Blocking conditions:
 
-1. owner supplies one to three approved leader identifiers through protected,
-   untracked configuration;
-2. owner decides whether and for how long sanitized public evidence may be
-   retained;
-3. continuous polling measures true p50, p95, and maximum first-seen latency;
-4. real repeated ingestion proves ordering and checkpoint recovery for the
-   same frozen window;
-5. proxy-wallet / EOA identity grouping is explicitly decided;
-6. SPLIT, MERGE, REDEEM, conversion, and opposite-outcome behavior are measured
-   or deliberately classified UNKNOWN.
+1. a longer read-only run must capture enough new executions to measure true
+   p50, p95, and maximum first-seen latency;
+2. the owner must later approve one to three leader identities through
+   protected, untracked configuration before any Copy Trading evaluation;
+3. the owner must decide whether and for how long sanitized public evidence may
+   be retained;
+4. proxy-wallet / EOA identity grouping must be explicitly decided;
+5. observed non-trade rows and opposite-outcome behavior must remain
+   fail-closed until their position effects are proven.
+
+Closed by the local probe:
+
+- repeated polling and stable duplicate suppression;
+- restart-stable frozen-window identity;
+- real offset pagination for the frozen window;
+- read-only visibility of at least one non-trade activity type.
 
 ## Rollback
 
@@ -399,10 +452,9 @@ server, account, or venue state requires restoration.
 
 ## Exact next task
 
-Continue on `codex/copytrading-experiment` and perform only a Stage 1 closure
-probe for one to three owner-approved leader aliases. Use protected, untracked
-addresses; run bounded continuous polling long enough to measure true
-first-seen latency; repeat a frozen non-truncated window to prove checkpoint
-recovery; and measure non-trade position events. Update this handoff with a
-final GO or NO_GO. Do not begin Stage 2, create a strategy, create an intent, or
-place/cancel any order.
+Do not begin Stage 2. If the owner chooses to revisit the `NO_GO`, run one
+longer, bounded, read-only collection against a deliberately active temporary
+or owner-approved leader until enough new executions exist for a meaningful
+latency distribution. Preserve the current duplicate, restart, pagination, and
+non-trade evidence. Do not create a strategy, create an intent, or place/cancel
+any order.
