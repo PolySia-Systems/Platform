@@ -29,3 +29,18 @@ depend on it.
 
 Never copy `.env`, keys, account identifiers, databases, or generated live
 evidence into a source archive or tracked handoff.
+
+## Tiny Live Copy 002 rollback
+
+The reliability repair adds only additive SQLite tables for discovery state,
+per-alias read checkpoints, and sanitized pending read events. Before the
+authorized run starts, rollback is a checkout of the previously recorded
+merged commit followed by an image rebuild; the additive empty tables may
+remain.
+
+After launch, preserve the database, run reports, cooldown state, and candidate
+cleanup evidence. Do not roll back or stop the worker while an entry order,
+position, or exit exists without an explicit containment plan. If the worker is
+flat, stop the profile, reconcile authenticated account state read-only, verify
+report checksums, and retain the report directory. Never delete the prior
+failed-safe run or reuse either authorization or run identifier.

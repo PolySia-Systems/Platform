@@ -6,7 +6,9 @@
       {
         "conditionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "clobTokenIds": "[\"111111\", \"222222\"]",
+        "eventStartTime": "2026-07-28T16:15:00Z",
         "outcomes": "[\"Up\", \"Down\"]",
+        "startDate": "2026-07-27T16:22:35.645945Z",
         "endDate": "2026-07-28T16:30:00Z"
       }
     ]

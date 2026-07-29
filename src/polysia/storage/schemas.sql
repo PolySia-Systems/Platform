@@ -301,3 +301,42 @@ CREATE TABLE IF NOT EXISTS copytrading_baselined_leaders (
     PRIMARY KEY (run_id, leader_alias),
     FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
 );
+
+CREATE TABLE IF NOT EXISTS copytrading_discovery_state (
+    run_id TEXT PRIMARY KEY,
+    ordering_version TEXT NOT NULL,
+    ordered_aliases_json TEXT NOT NULL,
+    cursor INTEGER NOT NULL CHECK(cursor BETWEEN 0 AND 101),
+    active_aliases_json TEXT NOT NULL,
+    subset_digest TEXT NOT NULL,
+    rotated_at TEXT NOT NULL,
+    outage_started_at TEXT,
+    next_probe_at TEXT,
+    cooldown_attempt INTEGER NOT NULL DEFAULT 0
+        CHECK(cooldown_attempt >= 0),
+    last_source_success_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS copytrading_read_checkpoints (
+    run_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    checkpoint_value TEXT,
+    last_successful_at TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, leader_alias),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS copytrading_pending_read_events (
+    run_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    staged_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, event_id),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);

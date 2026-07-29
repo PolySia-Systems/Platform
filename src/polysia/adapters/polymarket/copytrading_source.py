@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import re
-from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -14,9 +13,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from polysia.adapters.polymarket.request_scheduling import (
+    EndpointRequestScheduler,
+)
 from polysia.application.ports.copytrading import (
     LeaderInventorySnapshot,
     LeaderMarketMetadata,
+    LeaderReadPurpose,
     LeaderTradeCheckpoint,
     LeaderTradeReadPage,
 )
@@ -50,6 +53,8 @@ class JsonGetTransport(Protocol):
         base_url: str,
         path: str,
         params: Mapping[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
     ) -> Any: ...
 
 
@@ -87,8 +92,7 @@ class UrllibJsonGetTransport:
         max_attempts: int = 2,
         backoff_seconds: float = 0.25,
         max_response_bytes: int = 5_000_000,
-        rate_limit_requests: int = 140,
-        rate_limit_window_seconds: float = 10,
+        scheduler: EndpointRequestScheduler | None = None,
     ) -> None:
         if not 1 <= max_attempts <= 3:
             raise ValueError("max_attempts must be within [1, 3]")
@@ -98,24 +102,19 @@ class UrllibJsonGetTransport:
             raise ValueError("backoff_seconds must be within [0, 2]")
         if not 1024 <= max_response_bytes <= 10_000_000:
             raise ValueError("max_response_bytes must be within [1024, 10000000]")
-        if not 1 <= rate_limit_requests <= 140:
-            raise ValueError("rate_limit_requests must be within [1, 140]")
-        if not 1 <= rate_limit_window_seconds <= 60:
-            raise ValueError("rate_limit_window_seconds must be within [1, 60]")
         self._timeout_seconds = timeout_seconds
         self._max_attempts = max_attempts
         self._backoff_seconds = backoff_seconds
         self._max_response_bytes = max_response_bytes
-        self._rate_limit_requests = rate_limit_requests
-        self._rate_limit_window_seconds = rate_limit_window_seconds
-        self._rate_lock = asyncio.Lock()
-        self._request_times: deque[float] = deque()
+        self._scheduler = scheduler or EndpointRequestScheduler()
 
     async def get_json(
         self,
         base_url: str,
         path: str,
         params: Mapping[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
     ) -> Any:
         if base_url not in {DATA_API_BASE_URL, GAMMA_API_BASE_URL}:
             raise PolymarketCopyTradingSourceError("Unapproved public API base URL.")
@@ -123,18 +122,43 @@ class UrllibJsonGetTransport:
             raise PolymarketCopyTradingSourceError("Invalid public API path.")
 
         url = f"{base_url}{path}?{urlencode(_stringify_params(params))}"
+        route = f"{'gamma' if base_url == GAMMA_API_BASE_URL else 'data'}:{path}"
         for attempt in range(1, self._max_attempts + 1):
-            await self._wait_for_rate_slot()
             try:
-                return await asyncio.to_thread(self._read_json, url)
+                async with self._scheduler.request(
+                    route,
+                    purpose=purpose,
+                    retry=attempt > 1,
+                ):
+                    payload = await asyncio.to_thread(self._read_json, url)
+                await self._scheduler.record_success(route, purpose=purpose)
+                return payload
             except HTTPError as error:
-                retryable = error.code == 429 or error.code >= 500
+                if error.code == 429 and path == "/trades":
+                    retry_after = (
+                        None if error.headers is None else error.headers.get("Retry-After")
+                    )
+                    await self._scheduler.record_rate_limit(retry_after)
+                    raise await self._scheduler.unavailable_error(
+                        reason="Public /trades source returned HTTP 429."
+                    ) from error
+                retryable = error.code >= 500
                 if not retryable or attempt >= self._max_attempts:
+                    if path == "/trades":
+                        await self._scheduler.record_trades_failure()
+                        raise await self._scheduler.unavailable_error(
+                            reason="Public /trades source remained unavailable."
+                        ) from error
                     raise PolymarketCopyTradingSourceError(
                         f"Public API returned HTTP {error.code}."
                     ) from error
             except (TimeoutError, URLError) as error:
                 if attempt >= self._max_attempts:
+                    if path == "/trades":
+                        await self._scheduler.record_trades_failure()
+                        raise await self._scheduler.unavailable_error(
+                            reason="Public /trades read failed after bounded retry."
+                        ) from error
                     raise PolymarketCopyTradingSourceError(
                         "Public API read failed after bounded retry."
                     ) from error
@@ -142,25 +166,24 @@ class UrllibJsonGetTransport:
 
         raise AssertionError("bounded public read retry loop exhausted unexpectedly")
 
-    async def _wait_for_rate_slot(self) -> None:
-        async with self._rate_lock:
-            loop = asyncio.get_running_loop()
-            while True:
-                now = loop.time()
-                cutoff = now - self._rate_limit_window_seconds
-                while self._request_times and self._request_times[0] <= cutoff:
-                    self._request_times.popleft()
-                if len(self._request_times) < self._rate_limit_requests:
-                    self._request_times.append(now)
-                    return
-                await asyncio.sleep(
-                    max(
-                        0,
-                        self._request_times[0]
-                        + self._rate_limit_window_seconds
-                        - now,
-                    )
-                )
+    def request_telemetry(self) -> dict[str, object]:
+        return self._scheduler.telemetry_snapshot()
+
+    def trades_circuit(self) -> dict[str, object]:
+        return self._scheduler.circuit_snapshot()
+
+    async def restore_trades_circuit(
+        self,
+        *,
+        outage_started_at: datetime,
+        retry_at: datetime,
+        cooldown_attempt: int,
+    ) -> None:
+        await self._scheduler.restore_circuit(
+            outage_started_at=outage_started_at,
+            retry_at=retry_at,
+            cooldown_attempt=cooldown_attempt,
+        )
 
     def _read_json(self, url: str) -> Any:
         request = Request(
@@ -178,9 +201,7 @@ class UrllibJsonGetTransport:
         try:
             return json.loads(payload)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise PolymarketCopyTradingSourceError(
-                "Public API returned invalid JSON."
-            ) from error
+            raise PolymarketCopyTradingSourceError("Public API returned invalid JSON.") from error
 
 
 class PolymarketCopyTradingSource:
@@ -207,6 +228,7 @@ class PolymarketCopyTradingSource:
         end_at: datetime,
         page_size: int = 100,
         checkpoint: LeaderTradeCheckpoint | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
     ) -> LeaderTradeReadPage:
         wallet = self._leader_wallet(leader_id)
         _require_utc_window(start_at, end_at)
@@ -233,6 +255,7 @@ class PolymarketCopyTradingSource:
                 "limit": page_size,
                 "offset": offset,
             },
+            purpose=purpose,
         )
         rows = _require_object_list(payload, source="/trades")
         observed_at = self._utc_now()
@@ -252,7 +275,8 @@ class PolymarketCopyTradingSource:
                 rejected_count += 1
 
         verified_markets = await self._verified_markets(
-            {slug for _, slug in target_rows}
+            {slug for _, slug in target_rows},
+            purpose=purpose,
         )
         for row, slug in target_rows:
             try:
@@ -314,11 +338,13 @@ class PolymarketCopyTradingSource:
                 DATA_API_BASE_URL,
                 "/trades",
                 {**common, "takerOnly": False},
+                purpose=LeaderReadPurpose.BASELINE,
             ),
             self._transport.get_json(
                 DATA_API_BASE_URL,
                 "/trades",
                 {**common, "takerOnly": True},
+                purpose=LeaderReadPurpose.BASELINE,
             ),
             self._transport.get_json(
                 DATA_API_BASE_URL,
@@ -329,6 +355,7 @@ class PolymarketCopyTradingSource:
                     "sortBy": "TIMESTAMP",
                     "sortDirection": "ASC",
                 },
+                purpose=LeaderReadPurpose.BASELINE,
             ),
             self._transport.get_json(
                 DATA_API_BASE_URL,
@@ -339,6 +366,7 @@ class PolymarketCopyTradingSource:
                     "limit": page_limit,
                     "offset": 0,
                 },
+                purpose=LeaderReadPurpose.BASELINE,
             ),
             self._transport.get_json(
                 DATA_API_BASE_URL,
@@ -350,6 +378,7 @@ class PolymarketCopyTradingSource:
                     "sortBy": "TIMESTAMP",
                     "sortDirection": "DESC",
                 },
+                purpose=LeaderReadPurpose.BASELINE,
             ),
         )
         all_rows = _require_object_list(all_trades, source="/trades")
@@ -388,6 +417,7 @@ class PolymarketCopyTradingSource:
                     "limit": page_size,
                     "offset": page_number * page_size,
                 },
+                purpose=LeaderReadPurpose.BASELINE,
             )
             rows = _require_object_list(payload, source="/positions")
             for row in rows:
@@ -411,9 +441,7 @@ class PolymarketCopyTradingSource:
             [market_reference, outcome_reference, str(size)]
             for (market_reference, outcome_reference), size in sorted(positions.items())
         ]
-        digest = hashlib.sha256(
-            json.dumps(evidence, separators=(",", ":")).encode()
-        ).hexdigest()
+        digest = hashlib.sha256(json.dumps(evidence, separators=(",", ":")).encode()).hexdigest()
         return LeaderInventorySnapshot(
             leader_id=leader_id,
             positions=positions,
@@ -442,6 +470,33 @@ class PolymarketCopyTradingSource:
             ends_at=market.ends_at,
         )
 
+    def request_telemetry(self) -> dict[str, object]:
+        reader = getattr(self._transport, "request_telemetry", None)
+        if callable(reader):
+            return dict(reader())
+        return {}
+
+    def trades_circuit(self) -> dict[str, object]:
+        reader = getattr(self._transport, "trades_circuit", None)
+        if callable(reader):
+            return dict(reader())
+        return {"open": False}
+
+    async def restore_trades_circuit(
+        self,
+        *,
+        outage_started_at: datetime,
+        retry_at: datetime,
+        cooldown_attempt: int,
+    ) -> None:
+        restorer = getattr(self._transport, "restore_trades_circuit", None)
+        if callable(restorer):
+            await restorer(
+                outage_started_at=outage_started_at,
+                retry_at=retry_at,
+                cooldown_attempt=cooldown_attempt,
+            )
+
     def _leader_wallet(self, leader_id: str) -> str:
         try:
             return self._leaders[leader_id]
@@ -454,7 +509,12 @@ class PolymarketCopyTradingSource:
             raise ValueError("clock must return timezone-aware UTC")
         return value
 
-    async def _verified_btc_15m_market(self, slug: str) -> _VerifiedBtc15Market:
+    async def _verified_btc_15m_market(
+        self,
+        slug: str,
+        *,
+        purpose: LeaderReadPurpose,
+    ) -> _VerifiedBtc15Market:
         cached = self._market_cache.get(slug)
         if cached is not None:
             return cached
@@ -465,12 +525,11 @@ class PolymarketCopyTradingSource:
             GAMMA_API_BASE_URL,
             "/events",
             {"slug": slug},
+            purpose=purpose,
         )
         events = _require_object_list(payload, source="/events")
         if len(events) != 1 or events[0].get("slug") != slug:
-            raise PolymarketCopyTradingSourceError(
-                "BTC 15-minute market metadata was not unique."
-            )
+            raise PolymarketCopyTradingSourceError("BTC 15-minute market metadata was not unique.")
         markets = _require_object_list(events[0].get("markets"), source="event markets")
         if len(markets) != 1:
             raise PolymarketCopyTradingSourceError(
@@ -485,7 +544,13 @@ class PolymarketCopyTradingSource:
         if outcomes != ["Up", "Down"] or len(token_ids) != len(outcomes):
             raise ValueError("unexpected BTC 15-minute outcomes")
         starts_at = datetime.fromtimestamp(int(match.group("start")), tz=UTC)
+        event_starts_at = _parse_utc_datetime(
+            raw_market.get("eventStartTime"),
+            name="eventStartTime",
+        )
         ends_at = _parse_utc_datetime(raw_market.get("endDate"), name="endDate")
+        if abs((event_starts_at - starts_at).total_seconds()) > 1:
+            raise ValueError("BTC 15-minute event start time does not match its slug")
         if abs((ends_at - (starts_at + timedelta(minutes=15))).total_seconds()) > 1:
             raise ValueError("BTC 15-minute metadata end time does not match its slug")
         verified = _VerifiedBtc15Market(
@@ -502,13 +567,18 @@ class PolymarketCopyTradingSource:
     async def _verified_markets(
         self,
         slugs: set[str],
+        *,
+        purpose: LeaderReadPurpose,
     ) -> dict[str, _VerifiedBtc15Market]:
         semaphore = asyncio.Semaphore(5)
 
         async def load(slug: str) -> tuple[str, _VerifiedBtc15Market | None]:
             try:
                 async with semaphore:
-                    return slug, await self._verified_btc_15m_market(slug)
+                    return slug, await self._verified_btc_15m_market(
+                        slug,
+                        purpose=purpose,
+                    )
             except (TypeError, ValueError, PolymarketCopyTradingSourceError):
                 return slug, None
 
@@ -560,9 +630,9 @@ def _normalize_trade(
     event_id = hashlib.sha256(
         json.dumps(event_components, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    evidence_reference = "sha256:" + hashlib.sha256(
-        transaction_hash.casefold().encode()
-    ).hexdigest()
+    evidence_reference = (
+        "sha256:" + hashlib.sha256(transaction_hash.casefold().encode()).hexdigest()
+    )
 
     return LeaderTradeEvent(
         event_id=event_id,
@@ -669,9 +739,7 @@ def _encode_checkpoint(
     offset: int,
 ) -> LeaderTradeCheckpoint:
     alias_digest = hashlib.sha256(leader_id.encode()).hexdigest()[:16]
-    return LeaderTradeCheckpoint(
-        value=f"v1:{alias_digest}:{start_epoch}:{end_epoch}:{offset}"
-    )
+    return LeaderTradeCheckpoint(value=f"v1:{alias_digest}:{start_epoch}:{end_epoch}:{offset}")
 
 
 def _decode_checkpoint(

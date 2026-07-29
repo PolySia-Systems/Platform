@@ -3,9 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Protocol
 
 from polysia.domain.copytrading import LeaderTradeEvent
+
+
+class LeaderReadPurpose(StrEnum):
+    """Scheduling class for a leader-data read without venue-specific semantics."""
+
+    BASELINE = "baseline"
+    DISCOVERY = "discovery"
+    RECOVERY = "recovery"
+    SELECTED_LEADER = "selected_leader"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +70,7 @@ class LeaderTradeSourcePort(Protocol):
         end_at: datetime,
         page_size: int = 100,
         checkpoint: LeaderTradeCheckpoint | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
     ) -> LeaderTradeReadPage: ...
 
     async def read_inventory(self, leader_id: str) -> LeaderInventorySnapshot: ...

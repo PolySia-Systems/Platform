@@ -6,19 +6,23 @@
 |---|---|
 | Review date | 2026-07-29 |
 | Source-of-truth branch | `main` |
-| Deployed application source | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
-| Final runtime baseline | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
+| Last deployed baseline before authorization 002 | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
+| Failed-safe runtime baseline | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
 | Active maintenance task | Tiny Live Copy reliability corrections |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `TINY_LIVE_FAILED_SAFE_DIAGNOSTIC_COMPLETE` |
+| Phase status | `TINY_LIVE_COPY_002_AUTHORIZED_GATED` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly
 proven closed zero-value historical positions are ignored. The exact merged
 commit was deployed before the first authorized worker run.
+PR `#40` recorded the failed-safe diagnostic. Authorization
+`POLYSIA-TINY-LIVE-COPY-002` permits only the bounded reliability repair,
+normal PR/CI/merge/deploy gates, read-only preflight, and one new 12-hour run if
+every gate passes.
 
 ## Completed stages
 
@@ -53,6 +57,10 @@ commit was deployed before the first authorized worker run.
   submissions, fills, positions, fees, collateral debit, and cumulative entry
   cost. The diagnostic also proved an independent Gamma market-time mapping
   defect. See the latest Tiny Live Copy diagnostic handoff.
+- The Tiny Live Copy 002 delivery candidate adds endpoint-aware pacing, shared
+  429 recovery, follower-management priority, strict Gamma `eventStartTime`
+  validation, rotating 48-alias discovery, and durable read/cooldown state.
+  Delivery and live-run evidence remain gated and are not claimed here.
 
 ## Current architecture and runtime capabilities
 
@@ -157,25 +165,25 @@ evidence.
   monitored 102 protected aliases, observed 25 new public events, deduplicated
   46 repeated observations, and identified four fresh candidate signals before
   stopping on Data API HTTP 429. It made zero venue attempts and mutations.
-- The configured six-second discovery cycle demands approximately 170
-  `/trades` requests per 10 seconds before pagination and retries, too close to
-  the official 200-per-10-second IP limit. Current retry behavior does not
-  honor `Retry-After`, apply exponential backoff and jitter, or coordinate a
-  global endpoint circuit.
-- Valid BTC 15-minute events are rejected because Gamma `startDate` is treated
-  as interval start. Strict mapping must instead verify the canonical slug
-  epoch against Gamma `eventStartTime` and verify `endDate` is exactly 15
-  minutes later.
-- Active follower order and position management must take priority over public
-  selected-leader and discovery polling. Per-alias read checkpoints and last
-  poll time should become durable before another long experiment.
-- The protected candidate bank remains 102. The proposed active discovery
-  subset size and maximum continuous 429 recovery window require owner review.
-  The diagnostic recommendation is 48 active discovery aliases, a 100-request
-  per-10-second internal `/trades` budget with 20 requests reserved for
-  recovery and selected-leader monitoring, and a bounded recovery window.
-- The prior live authorization is consumed. Another live run requires a new
-  run ID, new persistent authorization ID, and explicit owner authorization.
+- The repair fixes the measured burst behavior with 48 active aliases, a
+  100-attempt rolling `/trades` budget, an 80-attempt discovery budget, 20
+  reserved attempts, and at most four calls in flight. Discovery is evenly
+  paced and rotates every 30 minutes by step 34 only while flat.
+- One shared `/trades` circuit honors integer and HTTP-date `Retry-After`,
+  applies bounded deterministic fallback and jitter, permits one probe, and
+  finalizes a flat 120-second outage as `INCONCLUSIVE_DATA_SOURCE`.
+- Strict BTC interval mapping now verifies slug epoch against Gamma child
+  `eventStartTime` and verifies child `endDate` is exactly 900 seconds later.
+  Gamma `startDate` is ignored as interval-start evidence.
+- Active follower management and authenticated reconciliation precede public
+  leader reads. Public outage cannot block management of actual exposure, and
+  discovery remains off while capacity is occupied.
+- Discovery ordering, cursor, active aliases, subset digest, cooldown metadata,
+  per-alias read checkpoints, and sanitized pending events are durable. Raw
+  candidate addresses remain protected runtime input.
+- Authorization `POLYSIA-TINY-LIVE-COPY-002` is exclusive to one new 12-hour
+  run. It does not authorize launch unless Draft PR review, required CI,
+  synchronized merged deployment, and zero-mutation preflight all pass.
 - Copy Trading Stage 0 established a conditional architecture GO. Stage 1
   proved official read surfaces, normalization, deduplication, strict BTC
   15-minute mapping, and restart-stable event identity, but closed `NO_GO` for
@@ -222,12 +230,11 @@ evidence.
 
 ## Single recommended next task
 
-**Correct the verified Tiny Live Copy reliability defects without performing a
-new live run.** Add endpoint-aware pacing and bounded 429 recovery, prioritize
-active follower management, map BTC 15-minute interval time from Gamma
-`eventStartTime`, and persist read checkpoints. Add focused tests, pass CI,
-deploy read-only verification, and stop for owner review of the active
-candidate subset, recovery window, and a new live authorization.
+**Complete the gated `POLYSIA-TINY-LIVE-COPY-002` delivery.** Pass the full
+repository and CI gates, merge normally, synchronize and deploy the exact merge
+commit, perform zero-mutation live preflight, and launch exactly one detached
+12-hour run only if every gate passes. After the initial read-only snapshot,
+leave the detached run alone; later owner-requested checks must be read-only.
 
 After a separately authorized experiment becomes terminal, the broader
 recommendation remains:
