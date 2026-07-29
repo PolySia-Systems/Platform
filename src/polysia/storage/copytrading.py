@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -13,6 +15,33 @@ from polysia.domain.copytrading.live_experiment import (
     CopyExperimentSnapshot,
     CopyExperimentState,
 )
+
+ACTIVE_DISCOVERY_COUNT = 48
+DISCOVERY_ROTATION_STEP = 34
+DISCOVERY_ORDERING_VERSION = "prior-signal-aliases-first-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class CopyDiscoveryState:
+    ordering_version: str
+    ordered_aliases: tuple[str, ...]
+    cursor: int
+    active_aliases: tuple[str, ...]
+    subset_digest: str
+    rotated_at: datetime
+    outage_started_at: datetime | None
+    next_probe_at: datetime | None
+    cooldown_attempt: int
+    last_source_success_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class CopyReadCheckpoint:
+    leader_alias: str
+    window_start: datetime
+    window_end: datetime
+    checkpoint_value: str | None
+    last_successful_at: datetime | None
 
 
 class CopyExperimentRepository:
@@ -118,8 +147,7 @@ class CopyExperimentRepository:
                 and str(row["state"]) == CopyExperimentState.MONITORING.value
                 and attempts < MAXIMUM_TOTAL_ENTRY_ATTEMPTS
                 and cycles < MAXIMUM_COMPLETED_LIVE_CYCLES
-                and cumulative_entry_cost + entry_debit
-                <= MAXIMUM_EXPERIMENT_ENTRY_COST
+                and cumulative_entry_cost + entry_debit <= MAXIMUM_EXPERIMENT_ENTRY_COST
                 and row["entry_order_id"] is None
                 and Decimal(str(row["position_size"])) == 0
             )
@@ -253,9 +281,7 @@ class CopyExperimentRepository:
                 and int(row["completed_live_cycles"]) < MAXIMUM_COMPLETED_LIVE_CYCLES
             )
             next_state = (
-                CopyExperimentState.MONITORING
-                if acceptance_open
-                else CopyExperimentState.FINALIZED
+                CopyExperimentState.MONITORING if acceptance_open else CopyExperimentState.FINALIZED
             )
             self._connection.execute(
                 """
@@ -423,9 +449,7 @@ class CopyExperimentRepository:
                 and int(row["total_entry_attempts"]) < MAXIMUM_TOTAL_ENTRY_ATTEMPTS
             )
             next_state = (
-                CopyExperimentState.MONITORING
-                if acceptance_open
-                else CopyExperimentState.FINALIZED
+                CopyExperimentState.MONITORING if acceptance_open else CopyExperimentState.FINALIZED
             )
             connection.execute(
                 """
@@ -575,6 +599,346 @@ class CopyExperimentRepository:
         except sqlite3.IntegrityError:
             return False
         return True
+
+    def apply_event_if_unseen(
+        self,
+        *,
+        run_id: str,
+        event_id: str,
+        leader_alias: str,
+        observed_at: datetime,
+        market_reference: str,
+        outcome_reference: str,
+        next_size: Decimal,
+    ) -> bool:
+        if next_size < 0:
+            raise ValueError("leader inventory must not be negative")
+        try:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    INSERT INTO copytrading_seen_events (
+                        run_id, event_id, leader_alias, observed_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        event_id,
+                        leader_alias,
+                        _datetime_text(observed_at),
+                    ),
+                )
+                self._connection.execute(
+                    """
+                    INSERT INTO copytrading_leader_inventory (
+                        run_id, leader_alias, market_reference, outcome_reference,
+                        size, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(
+                        run_id, leader_alias, market_reference, outcome_reference
+                    ) DO UPDATE SET
+                        size = excluded.size, updated_at = excluded.updated_at
+                    """,
+                    (
+                        run_id,
+                        leader_alias,
+                        market_reference,
+                        outcome_reference,
+                        str(next_size),
+                        _datetime_text(observed_at),
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def aliases_with_seen_events(self, run_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT DISTINCT leader_alias FROM copytrading_seen_events
+            WHERE run_id = ? ORDER BY leader_alias
+            """,
+            (run_id,),
+        ).fetchall()
+        return tuple(str(row["leader_alias"]) for row in rows)
+
+    def initialize_discovery(
+        self,
+        *,
+        run_id: str,
+        ordered_aliases: tuple[str, ...],
+        initialized_at: datetime,
+    ) -> CopyDiscoveryState:
+        if len(ordered_aliases) != 102 or len(set(ordered_aliases)) != 102:
+            raise ValueError("discovery ordering must contain exactly 102 unique aliases")
+        active_aliases = ordered_aliases[:ACTIVE_DISCOVERY_COUNT]
+        digest = _alias_digest(active_aliases)
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO copytrading_discovery_state (
+                    run_id, ordering_version, ordered_aliases_json, cursor,
+                    active_aliases_json, subset_digest, rotated_at, updated_at
+                ) VALUES (?, ?, ?, 0, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO NOTHING
+                """,
+                (
+                    run_id,
+                    DISCOVERY_ORDERING_VERSION,
+                    json.dumps(ordered_aliases, separators=(",", ":")),
+                    json.dumps(active_aliases, separators=(",", ":")),
+                    digest,
+                    _datetime_text(initialized_at),
+                    _datetime_text(initialized_at),
+                ),
+            )
+        state = self.discovery_state(run_id)
+        if (
+            state.ordering_version != DISCOVERY_ORDERING_VERSION
+            or state.ordered_aliases != ordered_aliases
+        ):
+            raise ValueError("durable discovery ordering does not match runtime aliases")
+        return state
+
+    def discovery_state(self, run_id: str) -> CopyDiscoveryState:
+        row = self._connection.execute(
+            "SELECT * FROM copytrading_discovery_state WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"missing discovery state for {run_id}")
+        return _discovery_state(row)
+
+    def rotate_discovery(
+        self,
+        *,
+        run_id: str,
+        rotated_at: datetime,
+    ) -> CopyDiscoveryState:
+        state = self.discovery_state(run_id)
+        cursor = (state.cursor + DISCOVERY_ROTATION_STEP) % len(state.ordered_aliases)
+        active_aliases = tuple(
+            state.ordered_aliases[(cursor + offset) % len(state.ordered_aliases)]
+            for offset in range(ACTIVE_DISCOVERY_COUNT)
+        )
+        digest = _alias_digest(active_aliases)
+        with self._connection:
+            self._connection.execute(
+                """
+                UPDATE copytrading_discovery_state
+                SET cursor = ?, active_aliases_json = ?, subset_digest = ?,
+                    rotated_at = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    cursor,
+                    json.dumps(active_aliases, separators=(",", ":")),
+                    digest,
+                    _datetime_text(rotated_at),
+                    _datetime_text(rotated_at),
+                    run_id,
+                ),
+            )
+        return self.discovery_state(run_id)
+
+    def set_discovery_cooldown(
+        self,
+        *,
+        run_id: str,
+        outage_started_at: datetime,
+        next_probe_at: datetime,
+        cooldown_attempt: int,
+        updated_at: datetime,
+    ) -> None:
+        if cooldown_attempt < 1:
+            raise ValueError("cooldown_attempt must be positive")
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE copytrading_discovery_state
+                SET outage_started_at = ?, next_probe_at = ?,
+                    cooldown_attempt = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    _datetime_text(outage_started_at),
+                    _datetime_text(next_probe_at),
+                    cooldown_attempt,
+                    _datetime_text(updated_at),
+                    run_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(f"missing discovery state for {run_id}")
+
+    def clear_discovery_cooldown(
+        self,
+        *,
+        run_id: str,
+        successful_at: datetime,
+    ) -> None:
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE copytrading_discovery_state
+                SET outage_started_at = NULL, next_probe_at = NULL,
+                    cooldown_attempt = 0, last_source_success_at = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    _datetime_text(successful_at),
+                    _datetime_text(successful_at),
+                    run_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(f"missing discovery state for {run_id}")
+
+    def read_checkpoint(
+        self,
+        *,
+        run_id: str,
+        leader_alias: str,
+    ) -> CopyReadCheckpoint | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM copytrading_read_checkpoints
+            WHERE run_id = ? AND leader_alias = ?
+            """,
+            (run_id, leader_alias),
+        ).fetchone()
+        if row is None:
+            return None
+        return CopyReadCheckpoint(
+            leader_alias=str(row["leader_alias"]),
+            window_start=datetime.fromisoformat(str(row["window_start"])),
+            window_end=datetime.fromisoformat(str(row["window_end"])),
+            checkpoint_value=_optional(row["checkpoint_value"]),
+            last_successful_at=_optional_datetime(row["last_successful_at"]),
+        )
+
+    def save_read_checkpoint(
+        self,
+        *,
+        run_id: str,
+        leader_alias: str,
+        window_start: datetime,
+        window_end: datetime,
+        checkpoint_value: str | None,
+        last_successful_at: datetime | None,
+        updated_at: datetime,
+    ) -> None:
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO copytrading_read_checkpoints (
+                    run_id, leader_alias, window_start, window_end,
+                    checkpoint_value, last_successful_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, leader_alias) DO UPDATE SET
+                    window_start = excluded.window_start,
+                    window_end = excluded.window_end,
+                    checkpoint_value = excluded.checkpoint_value,
+                    last_successful_at = excluded.last_successful_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    run_id,
+                    leader_alias,
+                    _datetime_text(window_start),
+                    _datetime_text(window_end),
+                    checkpoint_value,
+                    (None if last_successful_at is None else _datetime_text(last_successful_at)),
+                    _datetime_text(updated_at),
+                ),
+            )
+
+    def stage_read_page(
+        self,
+        *,
+        run_id: str,
+        leader_alias: str,
+        window_start: datetime,
+        window_end: datetime,
+        checkpoint_value: str | None,
+        last_successful_at: datetime | None,
+        event_payloads: tuple[dict[str, object], ...],
+        staged_at: datetime,
+    ) -> None:
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO copytrading_read_checkpoints (
+                    run_id, leader_alias, window_start, window_end,
+                    checkpoint_value, last_successful_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, leader_alias) DO UPDATE SET
+                    window_start = excluded.window_start,
+                    window_end = excluded.window_end,
+                    checkpoint_value = excluded.checkpoint_value,
+                    last_successful_at = excluded.last_successful_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    run_id,
+                    leader_alias,
+                    _datetime_text(window_start),
+                    _datetime_text(window_end),
+                    checkpoint_value,
+                    (None if last_successful_at is None else _datetime_text(last_successful_at)),
+                    _datetime_text(staged_at),
+                ),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO copytrading_pending_read_events (
+                    run_id, leader_alias, event_id, payload_json, staged_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, event_id) DO NOTHING
+                """,
+                (
+                    (
+                        run_id,
+                        leader_alias,
+                        str(payload["event_id"]),
+                        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                        _datetime_text(staged_at),
+                    )
+                    for payload in event_payloads
+                ),
+            )
+
+    def pending_read_events(
+        self,
+        *,
+        run_id: str,
+        leader_alias: str,
+    ) -> tuple[dict[str, object], ...]:
+        rows = self._connection.execute(
+            """
+            SELECT payload_json FROM copytrading_pending_read_events
+            WHERE run_id = ? AND leader_alias = ? ORDER BY staged_at, event_id
+            """,
+            (run_id, leader_alias),
+        ).fetchall()
+        return tuple(json.loads(str(row["payload_json"])) for row in rows)
+
+    def clear_pending_read_events(
+        self,
+        *,
+        run_id: str,
+        event_ids: tuple[str, ...],
+    ) -> None:
+        if not event_ids:
+            return
+        with self._connection:
+            self._connection.executemany(
+                """
+                DELETE FROM copytrading_pending_read_events
+                WHERE run_id = ? AND event_id = ?
+                """,
+                ((run_id, event_id) for event_id in event_ids),
+            )
 
     def set_inventory(
         self,
@@ -745,6 +1109,29 @@ def _snapshot(row: sqlite3.Row) -> CopyExperimentSnapshot:
     )
 
 
+def _discovery_state(row: sqlite3.Row) -> CopyDiscoveryState:
+    ordered = tuple(str(value) for value in json.loads(str(row["ordered_aliases_json"])))
+    active = tuple(str(value) for value in json.loads(str(row["active_aliases_json"])))
+    if len(ordered) != 102 or len(active) != ACTIVE_DISCOVERY_COUNT:
+        raise ValueError("durable discovery state has invalid alias counts")
+    return CopyDiscoveryState(
+        ordering_version=str(row["ordering_version"]),
+        ordered_aliases=ordered,
+        cursor=int(row["cursor"]),
+        active_aliases=active,
+        subset_digest=str(row["subset_digest"]),
+        rotated_at=datetime.fromisoformat(str(row["rotated_at"])),
+        outage_started_at=_optional_datetime(row["outage_started_at"]),
+        next_probe_at=_optional_datetime(row["next_probe_at"]),
+        cooldown_attempt=int(row["cooldown_attempt"]),
+        last_source_success_at=_optional_datetime(row["last_source_success_at"]),
+    )
+
+
+def _alias_digest(aliases: tuple[str, ...]) -> str:
+    return "sha256:" + hashlib.sha256("\n".join(aliases).encode()).hexdigest()
+
+
 def _optional(value: Any) -> str | None:
     return None if value is None else str(value)
 
@@ -765,4 +1152,11 @@ def _json(value: dict[str, object]) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-__all__ = ["CopyExperimentRepository"]
+__all__ = [
+    "ACTIVE_DISCOVERY_COUNT",
+    "DISCOVERY_ORDERING_VERSION",
+    "DISCOVERY_ROTATION_STEP",
+    "CopyDiscoveryState",
+    "CopyExperimentRepository",
+    "CopyReadCheckpoint",
+]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -8,9 +9,13 @@ from typing import Any
 import pytest
 
 from polysia.adapters.polymarket.geoblock import GeoblockStatus
+from polysia.adapters.polymarket.request_scheduling import (
+    TradesSourceUnavailableError,
+)
 from polysia.application.ports.copytrading import (
     LeaderInventorySnapshot,
     LeaderMarketMetadata,
+    LeaderReadPurpose,
     LeaderTradeReadPage,
 )
 from polysia.config.settings import AppSettings, TradingMode
@@ -66,12 +71,10 @@ class Source:
         end_at: datetime,
         page_size: int = 100,
         checkpoint: object | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
     ) -> LeaderTradeReadPage:
-        del start_at, end_at, page_size, checkpoint
-        if self.baseline_trade_reads > 0:
-            self.baseline_trade_reads -= 1
-            events: tuple[LeaderTradeEvent, ...] = ()
-        elif leader_id == "candidate-001":
+        del start_at, end_at, page_size, checkpoint, purpose
+        if leader_id == "candidate-001":
             events = (
                 LeaderTradeEvent(
                     event_id="event-1",
@@ -288,6 +291,174 @@ class Geoblock:
         return GeoblockStatus(status="allowed", checked_at=NOW, blocked=False)
 
 
+class ObservedExecutionPort(ExecutionPort):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_all_calls = 0
+
+    async def cancel_all(self) -> dict[str, object]:
+        self.cancel_all_calls += 1
+        return await super().cancel_all()
+
+
+class AlwaysUnavailableSource(Source):
+    def __init__(self, clock: MutableClock) -> None:
+        super().__init__(clock)
+        self.read_purposes: list[LeaderReadPurpose] = []
+
+    async def read_page(
+        self,
+        leader_id: str,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        page_size: int = 100,
+        checkpoint: object | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> LeaderTradeReadPage:
+        del leader_id, start_at, end_at, page_size, checkpoint
+        self.read_purposes.append(purpose)
+        raise TradesSourceUnavailableError(
+            outage_started_at=NOW,
+            retry_at=self.clock() + timedelta(seconds=1),
+            reason="fixture public source unavailable",
+        )
+
+
+class RecoveringSource(AlwaysUnavailableSource):
+    def __init__(self, clock: MutableClock, *, stale_event: bool = False) -> None:
+        super().__init__(clock)
+        self.stale_event = stale_event
+        self.failures_remaining = 1
+
+    async def read_page(
+        self,
+        leader_id: str,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        page_size: int = 100,
+        checkpoint: object | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> LeaderTradeReadPage:
+        self.read_purposes.append(purpose)
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise TradesSourceUnavailableError(
+                outage_started_at=NOW,
+                retry_at=self.clock() + timedelta(seconds=1),
+                reason="fixture temporary outage",
+            )
+        if not self.stale_event:
+            return LeaderTradeReadPage(
+                events=(),
+                next_checkpoint=None,
+                raw_count=0,
+                filtered_count=0,
+                rejected_count=0,
+                duplicate_count=0,
+            )
+        page = await Source.read_page(
+            self,
+            leader_id,
+            start_at=start_at,
+            end_at=end_at,
+            page_size=page_size,
+            checkpoint=checkpoint,
+            purpose=purpose,
+        )
+        if not page.events:
+            return page
+        stale = page.events[0]
+        return LeaderTradeReadPage(
+            events=(
+                LeaderTradeEvent(
+                    event_id=stale.event_id,
+                    source_id=stale.source_id,
+                    leader_id=stale.leader_id,
+                    market_reference=stale.market_reference,
+                    outcome_reference=stale.outcome_reference,
+                    trade_action=stale.trade_action,
+                    position_effect=stale.position_effect,
+                    executed_price=stale.executed_price,
+                    executed_size=stale.executed_size,
+                    executed_at=self.clock() - timedelta(seconds=11),
+                    observed_at=self.clock(),
+                    external_evidence_reference=stale.external_evidence_reference,
+                ),
+            ),
+            next_checkpoint=None,
+            raw_count=1,
+            filtered_count=0,
+            rejected_count=0,
+            duplicate_count=0,
+        )
+
+
+class ActiveOutageSource(Source):
+    def __init__(
+        self,
+        clock: MutableClock,
+        execution: ObservedExecutionPort,
+    ) -> None:
+        super().__init__(clock)
+        self.execution = execution
+        self.read_purposes: list[LeaderReadPurpose] = []
+
+    async def read_page(
+        self,
+        leader_id: str,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        page_size: int = 100,
+        checkpoint: object | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> LeaderTradeReadPage:
+        self.read_purposes.append(purpose)
+        if purpose is LeaderReadPurpose.SELECTED_LEADER:
+            assert self.execution.exit_open is True
+            raise TradesSourceUnavailableError(
+                outage_started_at=self.clock(),
+                retry_at=self.clock() + timedelta(seconds=1),
+                reason="fixture active-exposure public outage",
+            )
+        return await super().read_page(
+            leader_id,
+            start_at=start_at,
+            end_at=end_at,
+            page_size=page_size,
+            checkpoint=checkpoint,
+            purpose=purpose,
+        )
+
+
+class CountingSource(Source):
+    def __init__(self, clock: MutableClock) -> None:
+        super().__init__(clock)
+        self.read_purposes: list[LeaderReadPurpose] = []
+
+    async def read_page(
+        self,
+        leader_id: str,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        page_size: int = 100,
+        checkpoint: object | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> LeaderTradeReadPage:
+        self.read_purposes.append(purpose)
+        return await super().read_page(
+            leader_id,
+            start_at=start_at,
+            end_at=end_at,
+            page_size=page_size,
+            checkpoint=checkpoint,
+            purpose=purpose,
+        )
+
+
 def _candidate_file(path: Path) -> Path:
     candidate_path = path / "candidates.txt"
     candidate_path.write_text(
@@ -302,7 +473,7 @@ async def test_complete_fixture_dry_run_never_submits_an_order(
     tmp_path: Path,
 ) -> None:
     clock = MutableClock()
-    source = Source(clock)
+    source = CountingSource(clock)
     market = MarketPort(clock)
     execution = ExecutionPort()
     settings = AppSettings(
@@ -390,9 +561,7 @@ async def test_fixture_vertical_slice_proves_risk_execution_partial_fill_and_tp(
     assert execution.limit_calls[0]["size"] == Decimal("5")
     assert execution.limit_calls[1]["size"] == Decimal("5")
     assert execution.user_stream_probes >= 2
-    assert "0x0000000000000000000000000000000000000001" not in str(
-        report.to_dict()
-    )
+    assert "0x0000000000000000000000000000000000000001" not in str(report.to_dict())
 
     restarted = await run_tiny_live_copy(
         TinyLiveCopyConfig(
@@ -479,3 +648,259 @@ async def test_pending_entry_restart_never_submits_a_duplicate(
     assert restarted.state == "ENTRY_PENDING"
     assert restarted.total_entry_attempts == 1
     assert [call["side"] for call in execution.limit_calls] == ["BUY"]
+
+
+@pytest.mark.asyncio
+async def test_flat_public_outage_finalizes_inconclusive_at_120_seconds(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    source = AlwaysUnavailableSource(clock)
+    execution = ObservedExecutionPort()
+    settings = AppSettings(
+        _env_file=None,
+        POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+        POLYMARKET_PRIVATE_KEY="fixture-key",
+        POLYMARKET_SIGNATURE_TYPE=3,
+    )
+
+    report = await run_tiny_live_copy(
+        TinyLiveCopyConfig(
+            settings=settings,
+            project_root=tmp_path,
+            output_dir=tmp_path / "reports",
+            database_path=tmp_path / "state.sqlite3",
+            candidate_file=_candidate_file(tmp_path),
+            run_id="tiny-live-copy-20260729T120002Z",
+            dry_run=True,
+            maximum_poll_cycles=30,
+            delete_candidate_file_on_terminal=False,
+        ),
+        source=source,
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.classification == "INCONCLUSIVE_DATA_SOURCE"
+    assert report.state == "FINALIZED"
+    assert report.total_entry_attempts == 0
+    assert execution.limit_calls == []
+    assert execution.cancel_all_calls == 0
+    assert source.read_purposes.count(LeaderReadPurpose.DISCOVERY) == 48
+    assert all(purpose is LeaderReadPurpose.RECOVERY for purpose in source.read_purposes[48:])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_event", [False, True])
+async def test_flat_public_source_recovers_without_stale_entry(
+    tmp_path: Path,
+    stale_event: bool,
+) -> None:
+    clock = MutableClock()
+    source = RecoveringSource(clock, stale_event=stale_event)
+    execution = ObservedExecutionPort()
+    settings = AppSettings(
+        _env_file=None,
+        POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+        POLYMARKET_PRIVATE_KEY="fixture-key",
+        POLYMARKET_SIGNATURE_TYPE=3,
+    )
+
+    report = await run_tiny_live_copy(
+        TinyLiveCopyConfig(
+            settings=settings,
+            project_root=tmp_path,
+            output_dir=tmp_path / "reports",
+            database_path=tmp_path / "state.sqlite3",
+            candidate_file=_candidate_file(tmp_path),
+            run_id=f"tiny-live-copy-recovery-{int(stale_event)}",
+            dry_run=True,
+            maximum_poll_cycles=2,
+            delete_candidate_file_on_terminal=False,
+        ),
+        source=source,
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.classification == "DRY_RUN_BOUNDED_COMPLETE"
+    assert report.source_availability == "available"
+    assert report.total_entry_attempts == 0
+    assert report.signal_count == 0
+    assert execution.limit_calls == []
+    assert any(
+        decision["action"] == "PUBLIC_TRADES_SOURCE_RECOVERED" for decision in report.decisions
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_follower_management_precedes_public_leader_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "polysia.execution.tiny_live_copy._assert_synchronized_main",
+        lambda config, git_commit: None,
+    )
+    clock = MutableClock()
+    execution = ObservedExecutionPort()
+    source = ActiveOutageSource(clock, execution)
+    settings = AppSettings(
+        _env_file=None,
+        TRADING_MODE=TradingMode.LIVE,
+        LIVE_TRADING_ENABLED=True,
+        POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+        POLYMARKET_PRIVATE_KEY="fixture-key",
+        POLYMARKET_SIGNATURE_TYPE=3,
+    )
+
+    report = await run_tiny_live_copy(
+        TinyLiveCopyConfig(
+            settings=settings,
+            project_root=tmp_path,
+            output_dir=tmp_path / "reports",
+            database_path=tmp_path / "state.sqlite3",
+            candidate_file=_candidate_file(tmp_path),
+            run_id="tiny-live-copy-20260729T120003Z",
+            dry_run=False,
+            acknowledgement=True,
+            verified_ci_commit="a" * 40,
+            maximum_poll_cycles=2,
+            delete_candidate_file_on_terminal=False,
+        ),
+        source=source,
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.state == "EXIT_PENDING"
+    assert report.active_management_priority_cycles == 1
+    assert report.source_availability == "degraded_active_management_continues"
+    assert execution.cancel_all_calls == 0
+    assert source.read_purposes.count(LeaderReadPurpose.DISCOVERY) == 48
+    assert source.read_purposes.count(LeaderReadPurpose.SELECTED_LEADER) == 1
+
+
+@pytest.mark.asyncio
+async def test_fixture_dry_run_records_one_unfilled_attempt_and_resumes_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "polysia.execution.tiny_live_copy._assert_synchronized_main",
+        lambda config, git_commit: None,
+    )
+    clock = MutableClock()
+    source = CountingSource(clock)
+    execution = UnfilledExecutionPort()
+    settings = AppSettings(
+        _env_file=None,
+        TRADING_MODE=TradingMode.LIVE,
+        LIVE_TRADING_ENABLED=True,
+        POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+        POLYMARKET_PRIVATE_KEY="fixture-key",
+        POLYMARKET_SIGNATURE_TYPE=3,
+    )
+    output_dir = tmp_path / "reports"
+    candidate_path = _candidate_file(tmp_path)
+
+    report = await run_tiny_live_copy(
+        TinyLiveCopyConfig(
+            settings=settings,
+            project_root=tmp_path,
+            output_dir=output_dir,
+            database_path=tmp_path / "state.sqlite3",
+            candidate_file=candidate_path,
+            run_id="tiny-live-copy-20260729T120004Z",
+            dry_run=False,
+            acknowledgement=True,
+            verified_ci_commit="a" * 40,
+            maximum_poll_cycles=17,
+            delete_candidate_file_on_terminal=False,
+        ),
+        source=source,
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.total_entry_attempts == 1
+    assert report.current_order_or_fill_exists is False
+    assert report.state == "MONITORING"
+    assert any(decision["action"] == "ENTRY_UNFILLED_CANCELLED" for decision in report.decisions)
+    assert execution.limit_calls[0]["side"] == "BUY"
+    assert source.read_purposes.count(LeaderReadPurpose.DISCOVERY) == 96
+    assert source.read_purposes.count(LeaderReadPurpose.SELECTED_LEADER) > 0
+    for candidate in candidate_path.read_text(encoding="utf-8").splitlines():
+        assert candidate not in "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in output_dir.iterdir()
+            if path.suffix in {".json", ".jsonl"}
+        )
+    for line in (output_dir / "checksum.sha256").read_text(encoding="utf-8").splitlines():
+        expected, name = line.split("  ", maxsplit=1)
+        assert hashlib.sha256((output_dir / name).read_bytes()).hexdigest() == expected
+
+
+@pytest.mark.asyncio
+async def test_restart_during_discovery_pause_restores_without_duplicate_entry(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    first_source = RecoveringSource(clock)
+    execution = ObservedExecutionPort()
+    settings = AppSettings(
+        _env_file=None,
+        POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+        POLYMARKET_PRIVATE_KEY="fixture-key",
+        POLYMARKET_SIGNATURE_TYPE=3,
+    )
+    config = TinyLiveCopyConfig(
+        settings=settings,
+        project_root=tmp_path,
+        output_dir=tmp_path / "reports",
+        database_path=tmp_path / "state.sqlite3",
+        candidate_file=_candidate_file(tmp_path),
+        run_id="tiny-live-copy-20260729T120005Z",
+        dry_run=True,
+        maximum_poll_cycles=1,
+        delete_candidate_file_on_terminal=False,
+    )
+
+    first = await run_tiny_live_copy(
+        config,
+        source=first_source,
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    recovered_source = RecoveringSource(clock)
+    recovered_source.failures_remaining = 0
+    restarted = await run_tiny_live_copy(
+        config,
+        source=recovered_source,
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert first.source_availability == "cooldown_flat"
+    assert restarted.source_availability == "available"
+    assert restarted.total_entry_attempts == 0
+    assert restarted.signal_count == 0
+    assert recovered_source.read_purposes == [LeaderReadPurpose.RECOVERY]

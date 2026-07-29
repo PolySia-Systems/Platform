@@ -1,0 +1,118 @@
+[
+  {
+    "event": {
+      "id": "sanitized-event-1",
+      "slug": "btc-updown-15m-1785306600",
+      "markets": [
+        {
+          "conditionId": "0x196609907213d736a92510a3c44495b52e063bbc9bc604ebc8d261f89fedc92b",
+          "clobTokenIds": "[\"sanitized-up-1\", \"sanitized-down-1\"]",
+          "eventStartTime": "2026-07-29T06:30:00Z",
+          "startDate": "2026-07-28T06:37:58.949848Z",
+          "endDate": "2026-07-29T06:45:00Z",
+          "outcomes": "[\"Up\", \"Down\"]"
+        }
+      ]
+    },
+    "trade": {
+      "proxyWallet": "0x1111111111111111111111111111111111111111",
+      "conditionId": "0x196609907213d736a92510a3c44495b52e063bbc9bc604ebc8d261f89fedc92b",
+      "asset": "sanitized-up-1",
+      "outcome": "Up",
+      "eventSlug": "btc-updown-15m-1785306600",
+      "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "side": "BUY",
+      "price": "0.50",
+      "size": "5",
+      "timestamp": 1785305702
+    },
+    "observedAt": "2026-07-29T06:15:10Z"
+  },
+  {
+    "event": {
+      "id": "sanitized-event-2",
+      "slug": "btc-updown-15m-1785307500",
+      "markets": [
+        {
+          "conditionId": "0x0852441f1b5aead5e2d096aa61d30cc85358a3cee139840319b8c2b5ffc79114",
+          "clobTokenIds": "[\"sanitized-up-2\", \"sanitized-down-2\"]",
+          "eventStartTime": "2026-07-29T06:45:00Z",
+          "startDate": "2026-07-28T06:53:31.568669Z",
+          "endDate": "2026-07-29T07:00:00Z",
+          "outcomes": "[\"Up\", \"Down\"]"
+        }
+      ]
+    },
+    "trade": {
+      "proxyWallet": "0x1111111111111111111111111111111111111111",
+      "conditionId": "0x0852441f1b5aead5e2d096aa61d30cc85358a3cee139840319b8c2b5ffc79114",
+      "asset": "sanitized-up-2",
+      "outcome": "Up",
+      "eventSlug": "btc-updown-15m-1785307500",
+      "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000002",
+      "side": "BUY",
+      "price": "0.51",
+      "size": "5",
+      "timestamp": 1785306602
+    },
+    "observedAt": "2026-07-29T06:30:09Z"
+  },
+  {
+    "event": {
+      "id": "sanitized-event-3",
+      "slug": "btc-updown-15m-1785306600",
+      "markets": [
+        {
+          "conditionId": "0x196609907213d736a92510a3c44495b52e063bbc9bc604ebc8d261f89fedc92b",
+          "clobTokenIds": "[\"sanitized-up-1\", \"sanitized-down-1\"]",
+          "eventStartTime": "2026-07-29T06:30:00Z",
+          "startDate": "2026-07-28T06:37:58.949848Z",
+          "endDate": "2026-07-29T06:45:00Z",
+          "outcomes": "[\"Up\", \"Down\"]"
+        }
+      ]
+    },
+    "trade": {
+      "proxyWallet": "0x1111111111111111111111111111111111111111",
+      "conditionId": "0x196609907213d736a92510a3c44495b52e063bbc9bc604ebc8d261f89fedc92b",
+      "asset": "sanitized-down-1",
+      "outcome": "Down",
+      "eventSlug": "btc-updown-15m-1785306600",
+      "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000003",
+      "side": "BUY",
+      "price": "0.49",
+      "size": "5",
+      "timestamp": 1785306605
+    },
+    "observedAt": "2026-07-29T06:30:09Z"
+  },
+  {
+    "event": {
+      "id": "sanitized-event-4",
+      "slug": "btc-updown-15m-1785312900",
+      "markets": [
+        {
+          "conditionId": "0x5532b8cf849bd9e780c27170c971e4b369ffd5a6197d2471e32f764934da38fc",
+          "clobTokenIds": "[\"sanitized-up-4\", \"sanitized-down-4\"]",
+          "eventStartTime": "2026-07-29T08:15:00Z",
+          "startDate": "2026-07-28T08:23:22.689962Z",
+          "endDate": "2026-07-29T08:30:00Z",
+          "outcomes": "[\"Up\", \"Down\"]"
+        }
+      ]
+    },
+    "trade": {
+      "proxyWallet": "0x1111111111111111111111111111111111111111",
+      "conditionId": "0x5532b8cf849bd9e780c27170c971e4b369ffd5a6197d2471e32f764934da38fc",
+      "asset": "sanitized-down-4",
+      "outcome": "Down",
+      "eventSlug": "btc-updown-15m-1785312900",
+      "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000004",
+      "side": "BUY",
+      "price": "0.48",
+      "size": "5",
+      "timestamp": 1785312843
+    },
+    "observedAt": "2026-07-29T08:14:12Z"
+  }
+]

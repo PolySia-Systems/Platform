@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,7 @@ from polysia.adapters.polymarket.copytrading_source import (
     GAMMA_API_BASE_URL,
     PolymarketCopyTradingSource,
 )
+from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.domain.copytrading import (
     LeaderPositionEffect,
     LeaderTradeAction,
@@ -43,7 +44,10 @@ class FakeTransport:
         base_url: str,
         path: str,
         params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
     ) -> Any:
+        del purpose
         self.calls.append((base_url, path, dict(params)))
         if base_url == GAMMA_API_BASE_URL and path == "/events":
             return deepcopy(self.event)
@@ -81,15 +85,18 @@ class FakeTransport:
 
 @pytest.fixture
 def trades() -> list[dict[str, Any]]:
-    return json.loads(
-        (FIXTURES / "polymarket_trades_page.json").read_text(encoding="utf-8")
-    )
+    return json.loads((FIXTURES / "polymarket_trades_page.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture
 def event() -> list[dict[str, Any]]:
+    return json.loads((FIXTURES / "polymarket_btc15_event.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def rejected_signal_fixtures() -> list[dict[str, Any]]:
     return json.loads(
-        (FIXTURES / "polymarket_btc15_event.json").read_text(encoding="utf-8")
+        (FIXTURES / "polymarket_btc15_rejected_signals.json").read_text(encoding="utf-8")
     )
 
 
@@ -122,9 +129,7 @@ async def test_normalizes_realistic_response_with_stable_identity_and_no_wallet_
     assert first.filtered_count == 0
     assert len(first.events) == 5
     assert first.duplicate_count == 1
-    assert [item.event_id for item in first.events] == [
-        item.event_id for item in repeated.events
-    ]
+    assert [item.event_id for item in first.events] == [item.event_id for item in repeated.events]
     assert first.events[0].executed_price == Decimal("0.52")
     assert first.events[0].trade_action is LeaderTradeAction.SELL
     serialized = repr(first.events)
@@ -316,14 +321,113 @@ async def test_complete_position_baseline_and_verified_market_metadata_are_sanit
     assert WALLET not in repr(baseline)
 
 
+@pytest.mark.asyncio
+async def test_four_sanitized_real_signals_pass_corrected_interval_time_mapping(
+    rejected_signal_fixtures: list[dict[str, Any]],
+) -> None:
+    for fixture in rejected_signal_fixtures:
+        observed_at = datetime.fromisoformat(str(fixture["observedAt"]).replace("Z", "+00:00"))
+        source = PolymarketCopyTradingSource(
+            {"leader-001": WALLET},
+            transport=FakeTransport([fixture["trade"]], [fixture["event"]]),
+            clock=lambda observed_at=observed_at: observed_at,
+        )
+
+        page = await source.read_page(
+            "leader-001",
+            start_at=observed_at - timedelta(hours=1),
+            end_at=observed_at + timedelta(seconds=1),
+        )
+
+        assert len(page.events) == 1
+        metadata = source.market_metadata(
+            page.events[0].market_reference,
+            page.events[0].outcome_reference,
+        )
+        child = fixture["event"]["markets"][0]
+        assert metadata.starts_at == datetime.fromisoformat(
+            child["eventStartTime"].replace("Z", "+00:00")
+        )
+        assert metadata.ends_at - metadata.starts_at == timedelta(minutes=15)
+        assert child["startDate"] != child["eventStartTime"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutate_event", "mutate_trade"),
+    [
+        (lambda child: child.update(eventStartTime="2026-07-29T06:45:00Z"), None),
+        (lambda child: child.update(endDate="2026-07-29T07:00:00Z"), None),
+        (None, lambda trade: trade.update(conditionId="0x" + ("f" * 64))),
+        (None, lambda trade: trade.update(asset="wrong-token")),
+        (None, lambda trade: trade.update(outcome="Down")),
+        (
+            None,
+            lambda trade: trade.update(eventSlug="btc-updown-15m-1785307500"),
+        ),
+    ],
+)
+async def test_strict_interval_identity_rejects_adjacent_or_mismatched_evidence(
+    rejected_signal_fixtures: list[dict[str, Any]],
+    mutate_event: Any,
+    mutate_trade: Any,
+) -> None:
+    fixture = deepcopy(rejected_signal_fixtures[0])
+    if mutate_event is not None:
+        mutate_event(fixture["event"]["markets"][0])
+    if mutate_trade is not None:
+        mutate_trade(fixture["trade"])
+    observed_at = datetime.fromisoformat(fixture["observedAt"].replace("Z", "+00:00"))
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=FakeTransport([fixture["trade"]], [fixture["event"]]),
+        clock=lambda: observed_at,
+    )
+
+    page = await source.read_page(
+        "leader-001",
+        start_at=observed_at - timedelta(hours=1),
+        end_at=observed_at + timedelta(seconds=1),
+    )
+
+    assert page.events == ()
+    assert page.rejected_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_start_time", "accepted"),
+    [
+        ("2026-07-29T06:30:01Z", True),
+        ("2026-07-29T06:30:01.001Z", False),
+    ],
+)
+async def test_interval_time_mapping_uses_at_most_one_second_tolerance(
+    rejected_signal_fixtures: list[dict[str, Any]],
+    event_start_time: str,
+    accepted: bool,
+) -> None:
+    fixture = deepcopy(rejected_signal_fixtures[0])
+    fixture["event"]["markets"][0]["eventStartTime"] = event_start_time
+    observed_at = datetime.fromisoformat(fixture["observedAt"].replace("Z", "+00:00"))
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=FakeTransport([fixture["trade"]], [fixture["event"]]),
+        clock=lambda: observed_at,
+    )
+
+    page = await source.read_page(
+        "leader-001",
+        start_at=observed_at - timedelta(hours=1),
+        end_at=observed_at + timedelta(seconds=1),
+    )
+
+    assert bool(page.events) is accepted
+
+
 def test_source_module_contains_only_get_transport_and_no_mutation_methods() -> None:
     source = (
-        PROJECT_ROOT
-        / "src"
-        / "polysia"
-        / "adapters"
-        / "polymarket"
-        / "copytrading_source.py"
+        PROJECT_ROOT / "src" / "polysia" / "adapters" / "polymarket" / "copytrading_source.py"
     ).read_text(encoding="utf-8")
 
     assert 'method="GET"' in source

@@ -155,14 +155,23 @@ Stop the affected action and preserve evidence when:
 
 ## Owner-bounded Tiny Live Copy experiment
 
-This section applies only to the one authorization
-`POLYSIA-TINY-LIVE-COPY-001`. It is not a general live-trading procedure.
-Stages 2 through 6 of the Copy Trading plan remain incomplete.
+This section applies only to authorization
+`POLYSIA-TINY-LIVE-COPY-002` and its one new 12-hour run. It is not a general
+live-trading procedure. The prior `POLYSIA-TINY-LIVE-COPY-001` run is immutable
+`FAILED_SAFE` evidence with zero financial impact. Stages 2 through 6 of the
+Copy Trading plan remain incomplete.
 
 The experiment runs as the `copy-experiment` Compose profile with:
 
 - one protected 102-candidate input at
   `/var/lib/polysia/runtime/candidates.txt` (`0600`, UID/GID `10001`);
+- exactly 48 active discovery aliases, rotated every 30 minutes by a circular
+  step of 34 only while the account is flat and monitoring;
+- a maximum of 100 `/trades` attempts per rolling 10 seconds, of which at most
+  80 are discovery attempts and 20 remain reserved, with at most four calls in
+  flight;
+- one shared `/trades` cooldown, one recovery probe, `Retry-After` support,
+  bounded deterministic fallback, and a 120-second flat-account cutoff;
 - one protected root-owned environment file at
   `/etc/polysia/tiny-live-copy.env` (`0600`);
 - no published port;
@@ -186,6 +195,15 @@ active/positive-value/mergeable/ambiguous position, existing allowances,
 authenticated reads,
 User WebSocket access, SQLite backup, and the image `BUILD_COMMIT`. A failed or
 ambiguous check means no live launch.
+
+The read-only preflight must also validate the 102-candidate bank, the
+48-alias window and safe subset digest, durable cursor/checkpoint/cooldown
+state, limiter telemetry, fresh public data, and restart reconciliation. It
+must create no order or other venue mutation. Verify cancellation and
+emergency-cancel readiness from authenticated order-query access, configuration,
+code paths, and deterministic tests; never create an order solely to test
+cancellation. If `/trades` remains unavailable for 120 continuous seconds
+while flat, do not launch and record `INCONCLUSIVE_DATA_SOURCE_PREFLIGHT`.
 
 The wallet may hold more than USD 10 because the cap applies to this
 experiment's entry cost, not total wallet collateral. A historical position is
@@ -224,3 +242,10 @@ At `FINALIZED`, `FAILED_SAFE`, or `REDEEMABLE`, the worker deletes the protected
 candidate input. It retains only aliases, hashes, lifecycle evidence, and
 checksummed sanitized reports. A winning unresolved token may require manual
 redemption; the experiment does not add a new redemption path.
+
+During a public `/trades` cooldown, follower order and position management,
+authenticated reconciliation, kill-switch handling, and emergency controls
+take priority. Discovery remains off while capacity is occupied. A public 429
+alone does not authorize emergency cancel-all. While flat, 120 seconds of
+continuous source outage finalizes as `INCONCLUSIVE_DATA_SOURCE`; with exposure,
+manage only that exposure to a terminal state.

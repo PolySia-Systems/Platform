@@ -121,7 +121,7 @@ services:
       - |
         test "$${TRADING_MODE:-}" = LIVE
         test "$${LIVE_TRADING_ENABLED:-}" = true
-        test "$${POLYSIA_COPY_LIVE_ACK:-}" = POLYSIA-TINY-LIVE-COPY-001
+        test "$${POLYSIA_COPY_LIVE_ACK:-}" = POLYSIA-TINY-LIVE-COPY-002
         test -n "$${POLYSIA_VERIFIED_CI_COMMIT:-}"
         test -n "$${POLYSIA_COPY_RUN_ID:-}"
         status_path="/var/lib/polysia/reports/$${POLYSIA_COPY_RUN_ID}/status.json"
