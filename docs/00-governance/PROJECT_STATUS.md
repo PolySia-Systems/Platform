@@ -159,6 +159,11 @@ evidence.
   Polymarket Adapter path, uses exactly 102 protected candidate wallets through
   aliases, accepts only proven zero-to-positive BTC 15-minute OPEN events, and
   stores attempt/cycle limits durably before external submission.
+- Its USD 10 limit applies to cumulative experiment entry cost, not total wallet
+  collateral. Closed historical positions are ignored only with explicit
+  past-end, zero-price, zero-value, and non-mergeable evidence. A venue
+  `redeemable` label on a zero-value historical record does not alone block;
+  active, positive-value, mergeable, or ambiguous state still fails closed.
 - The pinned SDK requires a GTD timestamp at least 180 seconds ahead. The
   experiment retains a 90-second operational cancellation TTL and skips any
   signal whose 185-second venue backstop cannot expire before the final-entry

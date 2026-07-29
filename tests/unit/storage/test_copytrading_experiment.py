@@ -34,6 +34,7 @@ def _claim(
     *,
     index: int,
     leader: str | None = None,
+    entry_debit: Decimal = Decimal("2.25"),
 ) -> int | None:
     return repository.claim_entry_attempt(
         run_id="tiny-live-copy-test",
@@ -44,7 +45,7 @@ def _claim(
         token_id=f"token-{index}",
         entry_price=Decimal("0.45"),
         entry_quantity=Decimal("5"),
-        entry_debit=Decimal("2.25"),
+        entry_debit=entry_debit,
         entry_fee=Decimal("0"),
         entry_cancel_at=NOW + timedelta(seconds=90),
         leader_latency_ms=1_000,
@@ -128,6 +129,49 @@ def test_three_unfilled_attempts_finalize_and_fourth_is_impossible(tmp_path) -> 
         assert snapshot.total_entry_attempts == 3
         assert snapshot.completed_live_cycles == 0
         assert _claim(repository, index=4) is None
+    finally:
+        database.close()
+
+
+def test_cumulative_filled_entry_cost_is_atomic_and_capped_at_ten_usd(
+    tmp_path,
+) -> None:
+    database, repository = _repository(tmp_path)
+    try:
+        for index in range(1, 3):
+            assert _claim(repository, index=index, entry_debit=Decimal("5")) == index
+            repository.record_entry_submission(
+                run_id="tiny-live-copy-test",
+                attempt_number=index,
+                venue_order_id=f"order-{index}",
+                state="ENTRY_PENDING",
+                updated_at=NOW,
+            )
+            repository.record_fill(
+                run_id="tiny-live-copy-test",
+                attempt_number=index,
+                position_size=Decimal("5"),
+                fill_price=Decimal("0.9"),
+                entry_fee=Decimal("0"),
+                updated_at=NOW,
+            )
+            repository.complete_cycle(
+                run_id="tiny-live-copy-test",
+                updated_at=NOW,
+                signal_window_open=True,
+            )
+
+        assert repository.cumulative_entry_cost("tiny-live-copy-test") == Decimal("9")
+        assert _claim(
+            repository,
+            index=3,
+            entry_debit=Decimal("1.01"),
+        ) is None
+        assert _claim(
+            repository,
+            index=3,
+            entry_debit=Decimal("1"),
+        ) == 3
     finally:
         database.close()
 

@@ -7,7 +7,7 @@ import os
 import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -40,9 +40,9 @@ from polysia.domain.copytrading import (
 )
 from polysia.domain.copytrading.live_experiment import (
     EXPECTED_CANDIDATE_COUNT,
-    MAXIMUM_ACCOUNT_BALANCE,
     MAXIMUM_COMPLETED_LIVE_CYCLES,
     MAXIMUM_ENTRY_DEBIT,
+    MAXIMUM_EXPERIMENT_ENTRY_COST,
     MAXIMUM_TOTAL_ENTRY_ATTEMPTS,
     TERMINAL_STATES,
 )
@@ -224,6 +224,7 @@ class TinyLiveCopyReport:
     geoblock_status: str
     total_entry_attempts: int
     completed_live_cycles: int
+    cumulative_entry_cost: Decimal
     signal_count: int
     event_count: int
     duplicate_count: int
@@ -260,9 +261,12 @@ class TinyLiveCopyReport:
             "geoblock_status": self.geoblock_status,
             "heartbeat_health": self.heartbeat_health,
             "git_commit": self.git_commit,
-            "maximum_account_balance_usd": str(MAXIMUM_ACCOUNT_BALANCE),
+            "cumulative_entry_cost_usd": str(self.cumulative_entry_cost),
             "maximum_completed_live_cycles": MAXIMUM_COMPLETED_LIVE_CYCLES,
             "maximum_entry_debit_usd": str(MAXIMUM_ENTRY_DEBIT),
+            "maximum_experiment_entry_cost_usd": str(
+                MAXIMUM_EXPERIMENT_ENTRY_COST
+            ),
             "maximum_total_entry_attempts": MAXIMUM_TOTAL_ENTRY_ATTEMPTS,
             "maximum_actual_loss_usd": self._maximum_actual_loss(),
             "no_fourth_entry_possible": self.total_entry_attempts <= 3,
@@ -360,6 +364,7 @@ async def run_tiny_live_copy(
         geoblock_status="not_checked",
         total_entry_attempts=0,
         completed_live_cycles=0,
+        cumulative_entry_cost=Decimal("0"),
         signal_count=0,
         event_count=0,
         duplicate_count=0,
@@ -388,6 +393,9 @@ async def run_tiny_live_copy(
                     "candidate_count": EXPECTED_CANDIDATE_COUNT,
                     "maximum_completed_live_cycles": MAXIMUM_COMPLETED_LIVE_CYCLES,
                     "maximum_entry_debit": str(MAXIMUM_ENTRY_DEBIT),
+                    "maximum_experiment_entry_cost": str(
+                        MAXIMUM_EXPERIMENT_ENTRY_COST
+                    ),
                     "maximum_total_entry_attempts": MAXIMUM_TOTAL_ENTRY_ATTEMPTS,
                 },
             )
@@ -404,6 +412,7 @@ async def run_tiny_live_copy(
                 report=report,
                 git_commit=git_commit,
                 restart_snapshot=existing,
+                now=_aware(clock()),
             )
             _refresh_report(repository, config.run_id, report)
             write_tiny_live_copy_reports(report, config.output_dir)
@@ -560,6 +569,7 @@ async def _preflight(
     report: TinyLiveCopyReport,
     git_commit: str | None,
     restart_snapshot: Any | None,
+    now: datetime,
 ) -> None:
     if distribution_version("polymarket-client") != APPROVED_SDK_VERSION:
         raise TinyLiveCopyError("approved Polymarket SDK version is not installed")
@@ -598,11 +608,9 @@ async def _preflight(
     allowances = collateral.get("allowances")
     if not isinstance(allowances, dict) or not allowances:
         raise TinyLiveCopyError("collateral allowance is unreadable")
-    if balance > MAXIMUM_ACCOUNT_BALANCE or (
-        balance <= 0 and restart_snapshot is None
-    ):
+    if balance <= 0 and restart_snapshot is None:
         raise TinyLiveCopyError(
-            "account balance is outside the owner-authorized range"
+            "account has no usable collateral for the bounded experiment"
         )
     open_orders = await execution_port.get_open_orders()
     positions = await execution_port.list_positions(size_threshold=0)
@@ -611,15 +619,16 @@ async def _preflight(
             raise TinyLiveCopyError(
                 "unrelated open orders exist in the dedicated test account"
             )
-        if any(_position_size(position) > 0 for position in positions):
+        if _positions_requiring_isolation(positions, now=now):
             raise TinyLiveCopyError(
-                "unrelated positions exist in the dedicated test account"
+                "unrelated active, positive-value, mergeable, or ambiguous positions exist"
             )
     else:
         _assert_restart_account_scope(
             restart_snapshot,
             open_orders=open_orders,
             positions=positions,
+            now=now,
         )
     if not callable(getattr(execution_port, "cancel_all", None)):
         raise TinyLiveCopyError("emergency cancel-all is unavailable")
@@ -1010,6 +1019,14 @@ async def _attempt_entry(
             market_end=metadata.ends_at,
         )
         calculate_take_profit_price(quote.price, tick_size=book.tick_size)
+        if (
+            repository.cumulative_entry_cost(config.run_id)
+            + quote.maximum_debit
+            > MAXIMUM_EXPERIMENT_ENTRY_COST
+        ):
+            raise CopySignalSkip(
+                "entry would exceed the 10.00 USD cumulative experiment-cost cap"
+            )
     except (CopySignalSkip, ValueError) as error:
         runtime.report.decisions.append(
             {
@@ -1029,6 +1046,7 @@ async def _attempt_entry(
         required_size=quote.quantity,
         required_debit=quote.maximum_debit,
         settings=config.settings,
+        now=now,
     )
     intent = OrderIntent(
         strategy_id=STRATEGY_ID,
@@ -1609,6 +1627,7 @@ async def _refresh_safety_gates(
     required_size: Decimal,
     required_debit: Decimal,
     settings: AppSettings,
+    now: datetime,
 ) -> None:
     if kill_switch.is_active():
         raise TinyLiveCopyError("kill switch activated before entry")
@@ -1624,16 +1643,16 @@ async def _refresh_safety_gates(
     await execution_port.probe_user_stream()
     if await execution_port.get_open_orders():
         raise TinyLiveCopyError("an open order appeared before entry")
-    if any(
-        _position_size(position) > 0
-        for position in await execution_port.list_positions(size_threshold=0)
+    if _positions_requiring_isolation(
+        await execution_port.list_positions(size_threshold=0),
+        now=now,
     ):
         raise TinyLiveCopyError("a position appeared before entry")
     collateral = _mapping(
         await execution_port.get_balance_allowance(asset_type="COLLATERAL")
     )
     balance = _base_units(collateral.get("balance"))
-    if balance > MAXIMUM_ACCOUNT_BALANCE or balance < required_debit:
+    if balance < required_debit:
         raise TinyLiveCopyError("collateral balance fails the bounded debit gate")
     conditional = _mapping(
         await execution_port.get_balance_allowance(
@@ -1988,6 +2007,7 @@ def _assert_restart_account_scope(
     *,
     open_orders: list[Any],
     positions: list[Any],
+    now: datetime,
 ) -> None:
     allowed_order_ids = {
         order_id
@@ -2003,9 +2023,7 @@ def _assert_restart_account_scope(
     if len(observed_order_ids) > 1:
         raise TinyLiveCopyError("restart found more than one related open order")
 
-    positive_positions = [
-        position for position in positions if _position_size(position) > 0
-    ]
+    positive_positions = _positions_requiring_isolation(positions, now=now)
     if not positive_positions:
         return
     if snapshot.active_token_id is None:
@@ -2219,6 +2237,7 @@ def _refresh_report(
     report.state = snapshot.state.value
     report.total_entry_attempts = snapshot.total_entry_attempts
     report.completed_live_cycles = snapshot.completed_live_cycles
+    report.cumulative_entry_cost = repository.cumulative_entry_cost(run_id)
     report.current_order_or_fill_exists = bool(
         snapshot.entry_order_id
         or snapshot.exit_order_id
@@ -2250,6 +2269,59 @@ def _base_units(value: object) -> Decimal:
 
 def _position_size(value: Any) -> Decimal:
     return _decimal(_read(value, "size", "0"))
+
+
+def _positions_requiring_isolation(
+    positions: list[Any],
+    *,
+    now: datetime,
+) -> list[Any]:
+    return [
+        position
+        for position in positions
+        if _position_size(position) > 0
+        and not _is_closed_zero_value_position(position, now=now)
+    ]
+
+
+def _is_closed_zero_value_position(value: Any, *, now: datetime) -> bool:
+    current_value = _read(
+        value,
+        "current_value",
+        _read(value, "currentValue"),
+    )
+    current_price = _read(
+        value,
+        "cur_price",
+        _read(value, "curPrice"),
+    )
+    redeemable = _read(value, "redeemable")
+    mergeable = _read(value, "mergeable")
+    end_value = _read(value, "end_date", _read(value, "endDate"))
+    if (
+        current_value is None
+        or current_price is None
+        or _decimal(current_value) != 0
+        or _decimal(current_price) != 0
+        or redeemable is None
+        or mergeable is not False
+    ):
+        return False
+    end_date = _position_end_date(end_value)
+    return end_date is not None and end_date < _aware(now).date()
+
+
+def _position_end_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return _aware(value).date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
 
 
 def _order_id(value: Any) -> str:

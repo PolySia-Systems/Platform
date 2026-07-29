@@ -97,7 +97,16 @@ class _StaleWebsocketExecution:
         raise RuntimeError("stale user websocket")
 
 
-class _InsufficientBalanceExecution:
+class _SafetyGateExecution:
+    def __init__(
+        self,
+        *,
+        balance: int,
+        positions: list[Any] | None = None,
+    ) -> None:
+        self._balance = balance
+        self._positions = positions or []
+
     async def read_clock_drift(self) -> Decimal:
         return Decimal("0")
 
@@ -110,11 +119,14 @@ class _InsufficientBalanceExecution:
 
     async def list_positions(self, **kwargs: Any) -> list[Any]:
         del kwargs
-        return []
+        return self._positions
 
     async def get_balance_allowance(self, **kwargs: Any) -> dict[str, object]:
         if kwargs["asset_type"] == "COLLATERAL":
-            return {"balance": 1_000_000, "allowances": {"exchange": 10_000_000}}
+            return {
+                "balance": self._balance,
+                "allowances": {"exchange": 10_000_000},
+            }
         return {"balance": 0, "allowances": {"exchange": 10_000_000}}
 
 
@@ -133,13 +145,90 @@ async def test_stale_user_websocket_blocks_active_entry_health() -> None:
 async def test_insufficient_remaining_balance_blocks_before_submission() -> None:
     with pytest.raises(TinyLiveCopyError, match="balance"):
         await _refresh_safety_gates(
-            execution_port=_InsufficientBalanceExecution(),  # type: ignore[arg-type]
+            execution_port=_SafetyGateExecution(balance=1_000_000),  # type: ignore[arg-type]
             geoblock_port=_AllowedGeoblock(),
             kill_switch=KillSwitch(),
             token_id=TOKEN,
             required_size=Decimal("5"),
             required_debit=Decimal("2"),
             settings=AppSettings(_env_file=None),
+            now=NOW,
+        )
+
+
+@pytest.mark.asyncio
+async def test_high_wallet_balance_and_closed_zero_value_history_are_allowed() -> None:
+    historical = {
+        "size": "5",
+        "currentValue": "0",
+        "curPrice": "0",
+        "redeemable": True,
+        "mergeable": False,
+        "endDate": "2026-07-28",
+    }
+
+    await _refresh_safety_gates(
+        execution_port=_SafetyGateExecution(  # type: ignore[arg-type]
+            balance=10_213_845,
+            positions=[historical],
+        ),
+        geoblock_port=_AllowedGeoblock(),
+        kill_switch=KillSwitch(),
+        token_id=TOKEN,
+        required_size=Decimal("5"),
+        required_debit=Decimal("2"),
+        settings=AppSettings(_env_file=None),
+        now=NOW,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "position",
+    [
+        {
+            "size": "5",
+            "currentValue": "1",
+            "curPrice": "0.2",
+            "redeemable": False,
+            "mergeable": False,
+            "endDate": "2026-07-28",
+        },
+        {
+            "size": "5",
+            "currentValue": "5",
+            "curPrice": "1",
+            "redeemable": True,
+            "mergeable": False,
+            "endDate": "2026-07-28",
+        },
+        {
+            "size": "5",
+            "currentValue": "0",
+            "curPrice": "0",
+            "redeemable": False,
+            "mergeable": False,
+            "endDate": "2026-07-29",
+        },
+        {"size": "5"},
+    ],
+)
+async def test_active_redeemable_or_ambiguous_position_still_blocks(
+    position: dict[str, object],
+) -> None:
+    with pytest.raises(TinyLiveCopyError, match="position"):
+        await _refresh_safety_gates(
+            execution_port=_SafetyGateExecution(  # type: ignore[arg-type]
+                balance=10_213_845,
+                positions=[position],
+            ),
+            geoblock_port=_AllowedGeoblock(),
+            kill_switch=KillSwitch(),
+            token_id=TOKEN,
+            required_size=Decimal("5"),
+            required_debit=Decimal("2"),
+            settings=AppSettings(_env_file=None),
+            now=NOW,
         )
 
 
