@@ -58,7 +58,22 @@ class FakeTransport:
         if path == "/activity":
             return deepcopy(self.trades[:4])
         if path == "/positions":
-            return [{"size": 0.25}, {"size": 2}]
+            return [
+                {
+                    "asset": "111111",
+                    "conditionId": (
+                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    ),
+                    "size": 0.25,
+                },
+                {
+                    "asset": "222222",
+                    "conditionId": (
+                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    ),
+                    "size": 2,
+                },
+            ]
         if path == "/closed-positions":
             return [{"totalBought": 5}]
         raise AssertionError(f"unexpected path: {path}")
@@ -266,6 +281,39 @@ async def test_coverage_probe_includes_maker_delta_and_small_positions(
     assert coverage.maker_coverage_delta == 4
     assert coverage.activity_trade_count == 4
     assert coverage.smallest_visible_position == Decimal("0.25")
+
+
+@pytest.mark.asyncio
+async def test_complete_position_baseline_and_verified_market_metadata_are_sanitized(
+    trades: list[dict[str, Any]],
+    event: list[dict[str, Any]],
+) -> None:
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=FakeTransport(trades, event),
+        clock=lambda: OBSERVED_AT,
+    )
+    baseline = await source.read_inventory("leader-001")
+    page = await source.read_page(
+        "leader-001",
+        start_at=START_AT,
+        end_at=END_AT,
+        page_size=10,
+    )
+    metadata = source.market_metadata(
+        page.events[0].market_reference,
+        page.events[0].outcome_reference,
+    )
+
+    assert baseline.positions[
+        (
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "111111",
+        )
+    ] == Decimal("0.25")
+    assert metadata.external_slug == "btc-updown-15m-1785255300"
+    assert metadata.outcome_label in {"Up", "Down"}
+    assert WALLET not in repr(baseline)
 
 
 def test_source_module_contains_only_get_transport_and_no_mutation_methods() -> None:

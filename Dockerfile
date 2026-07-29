@@ -20,6 +20,8 @@ RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 
 FROM ${PYTHON_IMAGE} AS runtime
 
+ARG POLYSIA_BUILD_COMMIT=unknown
+
 ENV APP_ENV=server \
     LIVE_TRADING_ENABLED=false \
     PATH=/home/polysia/.local/bin:${PATH} \
@@ -41,7 +43,8 @@ RUN python -m pip install --upgrade pip==26.1.2 \
 
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-deps /wheels/*.whl \
-    && rm -rf /wheels
+    && rm -rf /wheels \
+    && printf '%s\n' "${POLYSIA_BUILD_COMMIT}" > /opt/polysia/BUILD_COMMIT
 
 USER 10001:10001
 

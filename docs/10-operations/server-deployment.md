@@ -152,3 +152,66 @@ Stop the affected action and preserve evidence when:
 - credentials or funder/signature settings are ambiguous;
 - an unexpected open order, position, container, port, or host change appears;
 - the requested action would enable live mutation without fresh authorization.
+
+## Owner-bounded Tiny Live Copy experiment
+
+This section applies only to the one authorization
+`POLYSIA-TINY-LIVE-COPY-001`. It is not a general live-trading procedure.
+Stages 2 through 6 of the Copy Trading plan remain incomplete.
+
+The experiment runs as the `copy-experiment` Compose profile with:
+
+- one protected 102-candidate input at
+  `/var/lib/polysia/runtime/candidates.txt` (`0600`, UID/GID `10001`);
+- one protected root-owned environment file at
+  `/etc/polysia/tiny-live-copy.env` (`0600`);
+- no published port;
+- a read-only container filesystem and the existing persistent state bind;
+- no more than three venue entry submissions, three terminal filled cycles,
+  one pending entry, one position, and one related exit;
+- a per-entry all-in debit cap of USD 5 and a dedicated account balance cap of
+  USD 10;
+- a 90-second operational entry TTL;
+- a detached heartbeat watchdog and `on-failure:3` restart policy.
+
+The pinned `polymarket-client==0.2.0` requires a GTD timestamp at least 180
+seconds in the future. PolySia therefore cancels and confirms the entry at the
+90-second operational TTL, while allowing a 185-second venue GTD backstop only
+when that backstop still expires before the final-entry cutoff. Signals that
+cannot satisfy both constraints are skipped. Do not weaken either boundary.
+
+Before launch, verify synchronized clean `main`, green CI for the exact commit,
+host NTP, official geoblock, the dedicated account balance, no unrelated order
+or position, existing allowances, authenticated reads, User WebSocket access,
+SQLite backup, and the image `BUILD_COMMIT`. A failed or ambiguous check means
+no live launch.
+
+Build the exact merged commit and start the one-off profile:
+
+```bash
+export POLYSIA_IMAGE_TAG=<merged-main-sha>
+export POLYSIA_COPY_ENV_FILE=/etc/polysia/tiny-live-copy.env
+docker compose build copy-experiment
+docker compose --profile live-experiment up --detach --no-deps copy-experiment
+```
+
+Inspect without continuously polling:
+
+```bash
+docker compose --profile live-experiment ps copy-experiment
+docker compose --profile live-experiment logs --tail 100 copy-experiment
+python -m json.tool /var/lib/polysia/reports/<run-id>/status.json
+sha256sum --check /var/lib/polysia/reports/<run-id>/checksum.sha256
+```
+
+Do not stop or roll back while a follower position exists unless the owner has
+an explicit manual containment plan. A shutdown cancels resting orders for
+safety, but it cannot remove a filled position. For a pending entry,
+`docker compose --profile live-experiment stop copy-experiment` triggers the
+bounded cancellation path. Preserve `/var/lib/polysia`, the SQLite database,
+and the run report during any rollback.
+
+At `FINALIZED`, `FAILED_SAFE`, or `REDEEMABLE`, the worker deletes the protected
+candidate input. It retains only aliases, hashes, lifecycle evidence, and
+checksummed sanitized reports. A winning unresolved token may require manual
+redemption; the experiment does not add a new redemption path.

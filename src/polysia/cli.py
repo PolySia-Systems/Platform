@@ -116,6 +116,13 @@ from polysia.execution.manual_intervention_live_test import (
     run_manual_intervention_live_test,
 )
 from polysia.execution.paper_broker import PaperBroker
+from polysia.execution.tiny_live_copy import (
+    AUTHORIZATION_ID as COPY_AUTHORIZATION_ID,
+)
+from polysia.execution.tiny_live_copy import (
+    TinyLiveCopyConfig,
+    run_tiny_live_copy,
+)
 from polysia.execution.tiny_live_execution import (
     TinyLiveExecutionConfig,
     normalize_tiny_live_execution_formats,
@@ -1783,6 +1790,76 @@ def tiny_live_round_trip(
     typer.echo(json.dumps(payload, sort_keys=True))
     if report.final_result not in safe_results:
         raise typer.Exit(code=1)
+
+
+@app.command("tiny-live-copy")
+def tiny_live_copy(
+    candidate_file: Annotated[
+        Path,
+        typer.Option(
+            "--candidate-file",
+            help="Protected mode-0600 candidate input; raw addresses are never reported.",
+        ),
+    ],
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Protected run-specific report directory."),
+    ],
+    database_path: Annotated[
+        Path,
+        typer.Option("--database", help="Persistent PolySia SQLite state database."),
+    ] = Path("data/polysia.sqlite3"),
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run-id", help="Stable run id used for restart recovery."),
+    ] = None,
+    submit: Annotated[
+        bool,
+        typer.Option("--submit/--dry-run", help="Enable only the bounded owner-approved run."),
+    ] = False,
+    acknowledge: Annotated[
+        str | None,
+        typer.Option(
+            "--acknowledge",
+            help=f"Required live acknowledgement: {COPY_AUTHORIZATION_ID}",
+        ),
+    ] = None,
+    verified_ci_commit: Annotated[
+        str | None,
+        typer.Option("--verified-ci-commit", help="Exact green-CI merge commit."),
+    ] = None,
+    maximum_poll_cycles: Annotated[
+        int | None,
+        typer.Option(
+            "--maximum-poll-cycles",
+            min=1,
+            help="Test-only bounded return; omit for the fixed 12-hour run.",
+        ),
+    ] = None,
+) -> None:
+    """Run the exact 102-candidate, three-attempt Tiny Live Copy experiment."""
+
+    settings = AppSettings()
+    configure_logging(settings)
+    _apply_secure_env_from_settings(settings)
+    actual_run_id = run_id or f"tiny-live-copy-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
+    report = asyncio.run(
+        run_tiny_live_copy(
+            TinyLiveCopyConfig(
+                settings=settings,
+                project_root=Path("."),
+                output_dir=output_dir,
+                database_path=database_path,
+                candidate_file=candidate_file,
+                run_id=actual_run_id,
+                dry_run=not submit,
+                acknowledgement=acknowledge == COPY_AUTHORIZATION_ID,
+                verified_ci_commit=verified_ci_commit,
+                maximum_poll_cycles=maximum_poll_cycles,
+            )
+        )
+    )
+    typer.echo(json.dumps(report.to_dict(), sort_keys=True))
 
 
 @app.command("post-live-reconciliation")

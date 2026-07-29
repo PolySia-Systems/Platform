@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from polysia.application.ports.copytrading import (
+    LeaderInventorySnapshot,
+    LeaderMarketMetadata,
     LeaderTradeCheckpoint,
     LeaderTradeReadPage,
 )
@@ -84,6 +87,8 @@ class UrllibJsonGetTransport:
         max_attempts: int = 2,
         backoff_seconds: float = 0.25,
         max_response_bytes: int = 5_000_000,
+        rate_limit_requests: int = 140,
+        rate_limit_window_seconds: float = 10,
     ) -> None:
         if not 1 <= max_attempts <= 3:
             raise ValueError("max_attempts must be within [1, 3]")
@@ -93,10 +98,18 @@ class UrllibJsonGetTransport:
             raise ValueError("backoff_seconds must be within [0, 2]")
         if not 1024 <= max_response_bytes <= 10_000_000:
             raise ValueError("max_response_bytes must be within [1024, 10000000]")
+        if not 1 <= rate_limit_requests <= 140:
+            raise ValueError("rate_limit_requests must be within [1, 140]")
+        if not 1 <= rate_limit_window_seconds <= 60:
+            raise ValueError("rate_limit_window_seconds must be within [1, 60]")
         self._timeout_seconds = timeout_seconds
         self._max_attempts = max_attempts
         self._backoff_seconds = backoff_seconds
         self._max_response_bytes = max_response_bytes
+        self._rate_limit_requests = rate_limit_requests
+        self._rate_limit_window_seconds = rate_limit_window_seconds
+        self._rate_lock = asyncio.Lock()
+        self._request_times: deque[float] = deque()
 
     async def get_json(
         self,
@@ -111,6 +124,7 @@ class UrllibJsonGetTransport:
 
         url = f"{base_url}{path}?{urlencode(_stringify_params(params))}"
         for attempt in range(1, self._max_attempts + 1):
+            await self._wait_for_rate_slot()
             try:
                 return await asyncio.to_thread(self._read_json, url)
             except HTTPError as error:
@@ -127,6 +141,26 @@ class UrllibJsonGetTransport:
             await asyncio.sleep(self._backoff_seconds * attempt)
 
         raise AssertionError("bounded public read retry loop exhausted unexpectedly")
+
+    async def _wait_for_rate_slot(self) -> None:
+        async with self._rate_lock:
+            loop = asyncio.get_running_loop()
+            while True:
+                now = loop.time()
+                cutoff = now - self._rate_limit_window_seconds
+                while self._request_times and self._request_times[0] <= cutoff:
+                    self._request_times.popleft()
+                if len(self._request_times) < self._rate_limit_requests:
+                    self._request_times.append(now)
+                    return
+                await asyncio.sleep(
+                    max(
+                        0,
+                        self._request_times[0]
+                        + self._rate_limit_window_seconds
+                        - now,
+                    )
+                )
 
     def _read_json(self, url: str) -> Any:
         request = Request(
@@ -163,6 +197,7 @@ class PolymarketCopyTradingSource:
         self._transport = transport or UrllibJsonGetTransport()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._market_cache: dict[str, _VerifiedBtc15Market] = {}
+        self._market_by_condition: dict[str, _VerifiedBtc15Market] = {}
 
     async def read_page(
         self,
@@ -337,6 +372,76 @@ class PolymarketCopyTradingSource:
             page_limit=page_limit,
         )
 
+    async def read_inventory(self, leader_id: str) -> LeaderInventorySnapshot:
+        """Read a complete sizeThreshold=0 public position baseline."""
+
+        wallet = self._leader_wallet(leader_id)
+        positions: dict[tuple[str, str], Decimal] = {}
+        page_size = 500
+        for page_number in range(5):
+            payload = await self._transport.get_json(
+                DATA_API_BASE_URL,
+                "/positions",
+                {
+                    "user": wallet,
+                    "sizeThreshold": 0,
+                    "limit": page_size,
+                    "offset": page_number * page_size,
+                },
+            )
+            rows = _require_object_list(payload, source="/positions")
+            for row in rows:
+                condition_id = _required_string(row, "conditionId")
+                token_id = _required_string(row, "asset")
+                if _CONDITION_PATTERN.fullmatch(condition_id) is None:
+                    raise PolymarketCopyTradingSourceError(
+                        "Position baseline contained an invalid market reference."
+                    )
+                size = _non_negative_decimal(row.get("size"), name="position size")
+                positions[(condition_id, token_id)] = size
+            if len(rows) < page_size:
+                break
+        else:
+            raise PolymarketCopyTradingSourceError(
+                "Position baseline exceeded the bounded pagination limit."
+            )
+
+        observed_at = self._utc_now()
+        evidence = [
+            [market_reference, outcome_reference, str(size)]
+            for (market_reference, outcome_reference), size in sorted(positions.items())
+        ]
+        digest = hashlib.sha256(
+            json.dumps(evidence, separators=(",", ":")).encode()
+        ).hexdigest()
+        return LeaderInventorySnapshot(
+            leader_id=leader_id,
+            positions=positions,
+            observed_at=observed_at,
+            evidence_digest=f"sha256:{digest}",
+        )
+
+    def market_metadata(
+        self,
+        market_reference: str,
+        outcome_reference: str,
+    ) -> LeaderMarketMetadata:
+        try:
+            market = self._market_by_condition[market_reference]
+            outcome = market.outcomes_by_token[outcome_reference]
+        except KeyError as error:
+            raise PolymarketCopyTradingSourceError(
+                "Verified market metadata is unavailable for the event."
+            ) from error
+        return LeaderMarketMetadata(
+            market_reference=market.condition_id,
+            outcome_reference=outcome_reference,
+            external_slug=market.slug,
+            outcome_label=outcome,
+            starts_at=market.starts_at,
+            ends_at=market.ends_at,
+        )
+
     def _leader_wallet(self, leader_id: str) -> str:
         try:
             return self._leaders[leader_id]
@@ -391,6 +496,7 @@ class PolymarketCopyTradingSource:
             ends_at=ends_at,
         )
         self._market_cache[slug] = verified
+        self._market_by_condition[condition_id] = verified
         return verified
 
     async def _verified_markets(
@@ -509,6 +615,18 @@ def _positive_decimal(value: Any, *, name: str) -> Decimal:
         raise ValueError(f"{name} must be numeric") from error
     if not result.is_finite() or result <= Decimal("0"):
         raise ValueError(f"{name} must be positive")
+    return result
+
+
+def _non_negative_decimal(value: Any, *, name: str) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise ValueError(f"{name} must be numeric")
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError(f"{name} must be numeric") from error
+    if not result.is_finite() or result < Decimal("0"):
+        raise ValueError(f"{name} must not be negative")
     return result
 
 

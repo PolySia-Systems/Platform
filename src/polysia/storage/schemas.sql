@@ -216,3 +216,88 @@ CREATE TABLE IF NOT EXISTS live_lifecycle_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_live_lifecycle_alerts_run
     ON live_lifecycle_alerts (run_id, observed_at, alert_code);
+
+CREATE TABLE IF NOT EXISTS copytrading_live_runs (
+    run_id TEXT PRIMARY KEY,
+    authorization_id TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    signal_window_end TEXT NOT NULL,
+    total_entry_attempts INTEGER NOT NULL DEFAULT 0
+        CHECK(total_entry_attempts BETWEEN 0 AND 3),
+    completed_live_cycles INTEGER NOT NULL DEFAULT 0
+        CHECK(completed_live_cycles BETWEEN 0 AND 3),
+    signal_acceptance_open INTEGER NOT NULL DEFAULT 1,
+    active_leader_alias TEXT,
+    active_event_id TEXT,
+    active_market_id TEXT,
+    active_market_slug TEXT,
+    active_token_id TEXT,
+    entry_order_id TEXT,
+    exit_order_id TEXT,
+    entry_price TEXT,
+    entry_quantity TEXT,
+    entry_fee TEXT NOT NULL DEFAULT '0',
+    entry_cancel_at TEXT,
+    fill_price TEXT,
+    position_size TEXT NOT NULL DEFAULT '0',
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS copytrading_live_attempts (
+    run_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK(attempt_number BETWEEN 1 AND 3),
+    leader_alias TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    venue_order_id TEXT,
+    entry_quantity TEXT,
+    entry_debit TEXT,
+    entry_fee TEXT,
+    fill_size TEXT,
+    fill_price TEXT,
+    exit_price TEXT,
+    exit_fee TEXT,
+    gross_pnl TEXT,
+    net_pnl TEXT,
+    terminal_reason TEXT,
+    leader_latency_ms INTEGER,
+    leader_price_difference TEXT,
+    claimed_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, attempt_number),
+    UNIQUE (run_id, leader_alias),
+    UNIQUE (run_id, event_id),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS copytrading_seen_events (
+    run_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, event_id),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS copytrading_leader_inventory (
+    run_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    market_reference TEXT NOT NULL,
+    outcome_reference TEXT NOT NULL,
+    size TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, leader_alias, market_reference, outcome_reference),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS copytrading_baselined_leaders (
+    run_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    baseline_digest TEXT NOT NULL,
+    baselined_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, leader_alias),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);

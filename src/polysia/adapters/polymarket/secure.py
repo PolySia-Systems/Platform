@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from polymarket import (
     RequestRejectedError,
     UnexpectedResponseError,
 )
+from polymarket.streams import UserSpec
 
 from polysia.adapters.polymarket.capabilities import POLYMARKET_CAPABILITIES
 from polysia.adapters.polymarket.diagnostics import (
@@ -393,6 +395,28 @@ class PolymarketSecureAdapter:
                 market=market,
             ) from error
 
+    async def probe_user_stream(self, *, market: str | None = None) -> None:
+        """Authenticate and close one user-stream subscription without mutation."""
+
+        client = self._require_client()
+        try:
+            stream = await asyncio.wait_for(
+                client.subscribe(UserSpec(markets=None if market is None else (market,))),
+                timeout=10,
+            )
+            await asyncio.wait_for(stream.close(), timeout=5)
+        except TimeoutError as error:
+            raise PolymarketSecureAdapterError(
+                "Authenticated Polymarket user-stream probe timed out."
+            ) from error
+        except PolymarketError as error:
+            raise self._adapter_error(
+                "probe_user_stream",
+                "Could not verify the authenticated Polymarket user stream.",
+                error,
+                market=market,
+            ) from error
+
     async def cancel_order(self, *, order_id: str) -> Any:
         """Cancel one authenticated order by id."""
         client = self._require_client()
@@ -423,6 +447,19 @@ class PolymarketSecureAdapter:
                 error,
                 market=market,
                 token_id=token_id,
+            ) from error
+
+    async def cancel_all(self) -> Any:
+        """Emergency cancellation for all authenticated account orders."""
+
+        client = self._require_client()
+        try:
+            return await client.cancel_all()
+        except PolymarketError as error:
+            raise self._adapter_error(
+                "cancel_all",
+                "Could not execute Polymarket emergency cancel-all.",
+                error,
             ) from error
 
     async def place_limit_order(

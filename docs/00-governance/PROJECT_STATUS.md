@@ -4,16 +4,16 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-07-28 |
+| Review date | 2026-07-29 |
 | Source-of-truth branch | `main` |
 | Deployed application source | `52c1bcc980f7db797066f982b23ab755dca31f58` |
 | Final runtime baseline | `b7dce82976a5b4ff624d8efef687c7d0d3776732` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
-| Active maintenance task | Controlled single-server deployment handoff |
+| Active maintenance task | Owner-bounded Tiny Live Copy experiment |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `READY_FOR_RESEARCH_VALIDATION_CYCLE` |
+| Phase status | `TINY_LIVE_EXCEPTION_IN_DELIVERY` |
 
 The final runtime baseline remains the last trading-runtime implementation
 merge. The current Git HEAD adds the approved server packaging and operations
@@ -147,6 +147,23 @@ evidence.
 
 ## Active work, blockers, and open decisions
 
+- Copy Trading Stage 0 established a conditional architecture GO. Stage 1
+  proved official read surfaces, normalization, deduplication, strict BTC
+  15-minute mapping, and restart-stable event identity, but closed `NO_GO` for
+  Stage 2 because no measured fresh-execution latency sample was captured.
+- The owner explicitly authorized one bounded exception that jumps from that
+  inconclusive evidence state to a maximum of three venue entry attempts and
+  three terminal filled cycles. This exception does not complete Stages 2
+  through 6 and does not authorize general or permanent Copy Trading.
+- The exception preserves the current Strategy/Policy -> Risk -> Execution ->
+  Polymarket Adapter path, uses exactly 102 protected candidate wallets through
+  aliases, accepts only proven zero-to-positive BTC 15-minute OPEN events, and
+  stores attempt/cycle limits durably before external submission.
+- The pinned SDK requires a GTD timestamp at least 180 seconds ahead. The
+  experiment retains a 90-second operational cancellation TTL and skips any
+  signal whose 185-second venue backstop cannot expire before the final-entry
+  cutoff. This is a stricter eligibility rule, not a weakened safety control.
+
 - The private owner configuration now contains only the canonical funder
   variable. Redacted `configuration-status` reports no deprecated-variable
   conflict and no missing authenticated-read setting.
@@ -170,6 +187,14 @@ evidence.
   instructions; they remain provenance evidence only.
 
 ## Single recommended next task
+
+**Complete and reconcile the single owner-bounded Tiny Live Copy exception,
+then return to evidence collection.** Do not scale, generalize, or promote Copy
+Trading from this sample. Review sanitized latency, fill, fee, P&L, restart,
+and reconciliation evidence before deciding whether Stage 2 should be
+reopened.
+
+After that exception is terminal, the prior recommendation remains:
 
 **Start a historical-data and strategy-validation slice for BTC Up/Down
 15-minute markets.** Define data-quality gates, acquire and validate a

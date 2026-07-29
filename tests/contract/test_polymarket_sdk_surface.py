@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import inspect
+from decimal import Decimal
 from importlib.metadata import version
 
+import pytest
 from polymarket import (
     AcceptedOrder,
     AsyncPublicClient,
     AsyncSecureClient,
     BalanceAllowance,
     OrderBook,
+    UserInputError,
 )
 from polymarket.models.clob.account import ClobTrade, MakerOrder, OpenOrder
 from polymarket.models.gamma.market import FeeSchedule, MarketState, MarketTrading
@@ -121,3 +124,31 @@ def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
     assert {"post_only", "price", "side", "size", "token_id"} <= set(
         limit_parameters
     )
+
+
+def test_pinned_sdk_gtd_minimum_buffer_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polymarket._internal.actions.orders import limit
+
+    monkeypatch.setattr(limit.time, "time", lambda: 1_000)
+
+    with pytest.raises(UserInputError, match="at least 180 seconds"):
+        limit.validate_limit_order_params(
+            token_id="1",
+            price=Decimal("0.50"),
+            size=Decimal("5"),
+            side="BUY",
+            post_only=True,
+            expiration=1_179,
+        )
+
+    params = limit.validate_limit_order_params(
+        token_id="1",
+        price=Decimal("0.50"),
+        size=Decimal("5"),
+        side="BUY",
+        post_only=True,
+        expiration=1_185,
+    )
+    assert params.expiration == 1_185

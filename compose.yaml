@@ -6,6 +6,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
     env_file:
       - path: ${POLYSIA_ENV_FILE:-/etc/polysia/polysia.env}
         required: true
@@ -99,3 +101,88 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+  copy-experiment:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
+    profiles:
+      - live-experiment
+    env_file:
+      - path: ${POLYSIA_COPY_ENV_FILE:-/etc/polysia/tiny-live-copy.env}
+        required: true
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        test "$${TRADING_MODE:-}" = LIVE
+        test "$${LIVE_TRADING_ENABLED:-}" = true
+        test "$${POLYSIA_COPY_LIVE_ACK:-}" = POLYSIA-TINY-LIVE-COPY-001
+        test -n "$${POLYSIA_VERIFIED_CI_COMMIT:-}"
+        test -n "$${POLYSIA_COPY_RUN_ID:-}"
+        status_path="/var/lib/polysia/reports/$${POLYSIA_COPY_RUN_ID}/status.json"
+        python -m polysia.cli tiny-live-copy \
+          --candidate-file /var/lib/polysia/runtime/candidates.txt \
+          --output-dir "/var/lib/polysia/reports/$${POLYSIA_COPY_RUN_ID}" \
+          --database /var/lib/polysia/data/polysia.sqlite3 \
+          --run-id "$${POLYSIA_COPY_RUN_ID}" \
+          --verified-ci-commit "$${POLYSIA_VERIFIED_CI_COMMIT}" \
+          --acknowledge "$${POLYSIA_COPY_LIVE_ACK}" \
+          --submit &
+        worker_pid=$$!
+        trap 'kill -TERM "$${worker_pid}" 2>/dev/null || true' TERM INT
+        (
+          while kill -0 "$${worker_pid}" 2>/dev/null; do
+            sleep 30
+            if test -s "$${status_path}" &&
+              ! python -c "import json,os,time; p='$${status_path}'; s=json.load(open(p)); assert s.get('state') in {'PREFLIGHT','BASELINING'} or time.time()-os.path.getmtime(p)<120"; then
+              kill -TERM "$${worker_pid}" 2>/dev/null || true
+              sleep 10
+              kill -KILL "$${worker_pid}" 2>/dev/null || true
+              exit
+            fi
+          done
+        ) &
+        watchdog_pid=$$!
+        set +e
+        wait "$${worker_pid}"
+        worker_status=$$?
+        kill "$${watchdog_pid}" 2>/dev/null || true
+        wait "$${watchdog_pid}" 2>/dev/null || true
+        exit "$${worker_status}"
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}
+        target: /var/lib/polysia
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os,time; p='/var/lib/polysia/reports/'+os.environ['POLYSIA_COPY_RUN_ID']+'/status.json'; assert os.path.getsize(p)>0 and time.time()-os.path.getmtime(p)<120"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    restart: "on-failure:3"
+    stop_grace_period: 60s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"

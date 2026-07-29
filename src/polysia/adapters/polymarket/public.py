@@ -101,6 +101,23 @@ class PolymarketPublicAdapter:
                 slug=slug,
             ) from error
 
+    async def get_market_by_id(self, market_id: str) -> MarketDetails:
+        """Fetch one market by canonical condition/market id."""
+
+        async def read() -> MarketDetails:
+            async with self._client_factory() as client:
+                market = await client.get_market(id=market_id, include_tag=True)
+                return self._mapper.to_details(market)
+
+        try:
+            return await self._read_retry_policy.run("get_market_by_id", read)
+        except PolymarketError as error:
+            raise self._adapter_error(
+                "get_market_by_id",
+                "Could not fetch Polymarket market by id.",
+                error,
+            ) from error
+
     async def search_markets(self, query: str, page_size: int = 20) -> list[MarketSummary]:
         """Search active events and return their normalized markets."""
 

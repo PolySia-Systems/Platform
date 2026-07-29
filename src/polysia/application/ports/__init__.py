@@ -1,6 +1,8 @@
 """Application boundary protocols."""
 
 from polysia.application.ports.copytrading import (
+    LeaderInventorySnapshot,
+    LeaderMarketMetadata,
     LeaderTradeCheckpoint,
     LeaderTradeReadPage,
     LeaderTradeSourcePort,
@@ -17,6 +19,8 @@ from polysia.application.ports.protocols import (
 )
 
 __all__ = [
+    "LeaderInventorySnapshot",
+    "LeaderMarketMetadata",
     "AccountReadPort",
     "ClockPort",
     "EmergencyControlPort",
