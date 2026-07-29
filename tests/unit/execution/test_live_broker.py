@@ -294,8 +294,35 @@ async def test_live_submit_requires_all_gates_and_uses_adapter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_before_submit_claim_runs_once_after_local_gates() -> None:
+    adapter = FakeLiveAdapter()
+    geoblock = FakeGeoblockCheck()
+    claims: list[str] = []
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=geoblock,  # type: ignore[arg-type]
+    )
+
+    await broker.place_limit_order(
+        make_intent(),
+        RiskContext(),
+        i_understand_this_places_real_orders=True,
+        dry_run=False,
+        before_submit=lambda: claims.append("claimed"),
+    )
+
+    assert claims == ["claimed"]
+    assert geoblock.calls == 1
+    assert len(adapter.limit_orders) == 1
+
+
+@pytest.mark.asyncio
 async def test_live_submit_rejected_response_raises() -> None:
     adapter = FakeLiveAdapter()
+    claims: list[str] = []
     adapter.limit_order_response = {
         "ok": False,
         "code": "not_enough_balance",
@@ -315,16 +342,49 @@ async def test_live_submit_rejected_response_raises() -> None:
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            before_submit=lambda: claims.append("claimed"),
         )
 
+    assert claims == ["claimed"]
     assert adapter.connected is True
     assert len(adapter.limit_orders) == 1
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_venue_error_occurs_after_single_attempt_claim() -> None:
+    adapter = FakeLiveAdapter()
+    claims: list[str] = []
+
+    async def ambiguous(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        raise TimeoutError("ambiguous venue response")
+
+    adapter.place_limit_order = ambiguous  # type: ignore[method-assign]
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TimeoutError, match="ambiguous"):
+        await broker.place_limit_order(
+            make_intent(),
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            before_submit=lambda: claims.append("claimed"),
+        )
+
+    assert claims == ["claimed"]
 
 
 @pytest.mark.asyncio
 async def test_live_submit_aborts_when_geoblock_blocks() -> None:
     adapter = FakeLiveAdapter()
     geoblock = FakeGeoblockCheck(allowed=False)
+    claims: list[str] = []
     broker = LiveBroker(
         adapter=adapter,  # type: ignore[arg-type]
         risk_engine=live_risk_engine(),
@@ -339,9 +399,11 @@ async def test_live_submit_aborts_when_geoblock_blocks() -> None:
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            before_submit=lambda: claims.append("claimed"),
         )
 
     assert geoblock.calls == 1
+    assert claims == []
     assert adapter.connected is False
     assert adapter.limit_orders == []
 

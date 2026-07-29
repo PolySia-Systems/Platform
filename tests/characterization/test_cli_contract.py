@@ -45,6 +45,7 @@ EXPECTED_COMMANDS = {
     "strategy-evaluation",
     "strategy-evaluation-extended",
     "stream-market",
+    "tiny-live-copy",
     "tiny-live-execute",
     "tiny-live-monitor",
     "tiny-live-round-trip",

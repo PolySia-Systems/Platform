@@ -199,6 +199,7 @@ class LiveBroker:
         post_only: bool = False,
         expiration: int | None = None,
         builder_code: str | None = None,
+        before_submit: Callable[[], None] | None = None,
     ) -> LiveBrokerResult:
         """Approve, preview, or submit a live limit order."""
         approved_intent = self._approve_intent(
@@ -231,6 +232,8 @@ class LiveBroker:
         if not self._adapter.is_connected:
             await self._adapter.connect()
 
+        if before_submit is not None:
+            before_submit()
         response = await self._adapter.place_limit_order(
             token_id=approved_intent.token_id,
             side=approved_intent.side,

@@ -47,6 +47,8 @@ class FakeSecureClient:
         self.market_order_kwargs: dict[str, Any] | None = None
         self.position_kwargs: dict[str, Any] | None = None
         self.trade_kwargs: dict[str, Any] | None = None
+        self.cancel_all_calls = 0
+        self.subscriptions: list[Any] = []
 
     def list_open_orders(self, **kwargs: Any) -> FakePaginator:
         self.open_order_kwargs = kwargs
@@ -73,6 +75,18 @@ class FakeSecureClient:
     async def cancel_market_orders(self, **kwargs: Any) -> dict[str, str]:
         self.cancel_market_kwargs = kwargs
         return {"status": "cancelled"}
+
+    async def cancel_all(self) -> dict[str, str]:
+        self.cancel_all_calls += 1
+        return {"status": "cancelled"}
+
+    async def subscribe(self, spec: Any) -> SimpleNamespace:
+        self.subscriptions.append(spec)
+
+        async def close() -> None:
+            return None
+
+        return SimpleNamespace(close=close)
 
     async def place_limit_order(self, **kwargs: Any) -> dict[str, str]:
         self.limit_order_kwargs = kwargs
@@ -257,6 +271,27 @@ async def test_authenticated_methods_call_connected_client(
         "order_type": "FAK",
         "builder_code": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_user_stream_probe_and_emergency_cancel_all_are_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeSecureClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> FakeSecureClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(client_factory=factory)
+    await adapter.connect()
+
+    await adapter.probe_user_stream(market="condition-1")
+    response = await adapter.cancel_all()
+
+    assert client.subscriptions[0].markets == ("condition-1",)
+    assert client.cancel_all_calls == 1
+    assert response == {"status": "cancelled"}
 
 
 @pytest.mark.asyncio
