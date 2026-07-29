@@ -48,7 +48,9 @@ before submission. Local rejection consumes none. Accepted, rejected, unknown,
 unfilled, partial, and full venue outcomes consume one. Unique constraints
 prevent reuse of a leader or event, and the authorization identifier is unique.
 The run permits at most three attempts, three completed filled cycles, one
-pending entry, one follower position, and one related exit.
+pending entry, one follower position, and one related exit. Confirmed entry
+cost plus the maximum debit reserved for the next submission may never exceed
+USD 10 across the experiment.
 
 Entry policy uses a fresh official book, exact minimum size, Decimal
 arithmetic, a 5% lower price rounded down, a USD 5 all-in debit cap, post-only
@@ -80,8 +82,9 @@ Every live activation requires:
 - approved SDK version;
 - configured signer/funder identity and signature semantics;
 - passing clock, official geoblock, authenticated read, and User WebSocket;
-- a dedicated account with usable collateral in `(0, 10]` USD;
-- no unrelated open order or positive position;
+- sufficient dedicated-account collateral for the next bounded entry;
+- no unrelated open order or active, positive-value, mergeable, or ambiguous
+  position;
 - sufficient existing allowances without increasing them;
 - kill switch inactive and emergency cancel-all available.
 
@@ -89,7 +92,11 @@ The Compose profile exposes no port, runs UID/GID 10001 with a read-only root
 filesystem, drops all capabilities, persists SQLite and reports, and has a
 heartbeat watchdog plus bounded restart. Restart reconciles counters, pending
 entry, fills, position, and related exit before action. An ambiguous submission
-remains consumed and fails safe without retry.
+remains consumed and fails safe without retry. Closed historical positions are
+ignored only when their venue fields prove a past end date, zero current price,
+zero current value, and non-mergeable status. Polymarket may still label these
+zero-value records `redeemable`; that label alone is not economic exposure.
+Total wallet collateral is not an experiment-spend limit.
 
 ## Evidence and reports
 
@@ -115,7 +122,8 @@ order identifiers are excluded.
 
 Focused validation covers protected candidate handling, OPEN/UNKNOWN behavior,
 strict mapping, signal and market-time boundaries, price/tick/minimum-size
-calculation, debit and balance caps, GTD compatibility, impossible take-profit,
+calculation, per-entry and cumulative cost caps, GTD compatibility,
+closed-position classification, impossible take-profit,
 concurrency, atomic attempt accounting, rejected/unknown submission, leader
 fairness, unfilled and filled caps, partial fill, take-profit, fee-adjusted
 profit/breakeven/loss and resolution, restart persistence, stale WebSocket,

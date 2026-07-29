@@ -8,6 +8,7 @@ from typing import Any
 
 from polysia.domain.copytrading.live_experiment import (
     MAXIMUM_COMPLETED_LIVE_CYCLES,
+    MAXIMUM_EXPERIMENT_ENTRY_COST,
     MAXIMUM_TOTAL_ENTRY_ATTEMPTS,
     CopyExperimentSnapshot,
     CopyExperimentState,
@@ -111,11 +112,14 @@ class CopyExperimentRepository:
             row = self._required_run(run_id)
             attempts = int(row["total_entry_attempts"])
             cycles = int(row["completed_live_cycles"])
+            cumulative_entry_cost = self.cumulative_entry_cost(run_id)
             allowed = (
                 bool(row["signal_acceptance_open"])
                 and str(row["state"]) == CopyExperimentState.MONITORING.value
                 and attempts < MAXIMUM_TOTAL_ENTRY_ATTEMPTS
                 and cycles < MAXIMUM_COMPLETED_LIVE_CYCLES
+                and cumulative_entry_cost + entry_debit
+                <= MAXIMUM_EXPERIMENT_ENTRY_COST
                 and row["entry_order_id"] is None
                 and Decimal(str(row["position_size"])) == 0
             )
@@ -690,6 +694,24 @@ class CopyExperimentRepository:
             (run_id,),
         ).fetchall()
         return tuple(dict(row) for row in rows)
+
+    def cumulative_entry_cost(self, run_id: str) -> Decimal:
+        rows = self._connection.execute(
+            """
+            SELECT fill_size, fill_price, entry_fee
+            FROM copytrading_live_attempts
+            WHERE run_id = ? AND fill_size IS NOT NULL AND fill_price IS NOT NULL
+            """,
+            (run_id,),
+        ).fetchall()
+        return sum(
+            (
+                Decimal(str(row["fill_size"])) * Decimal(str(row["fill_price"]))
+                + Decimal(str(row["entry_fee"] or "0"))
+                for row in rows
+            ),
+            Decimal("0"),
+        )
 
     def _required_run(self, run_id: str) -> sqlite3.Row:
         row = self._connection.execute(

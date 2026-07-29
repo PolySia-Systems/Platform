@@ -169,8 +169,8 @@ The experiment runs as the `copy-experiment` Compose profile with:
 - a read-only container filesystem and the existing persistent state bind;
 - no more than three venue entry submissions, three terminal filled cycles,
   one pending entry, one position, and one related exit;
-- a per-entry all-in debit cap of USD 5 and a dedicated account balance cap of
-  USD 10;
+- a per-entry all-in debit cap of USD 5 and a cumulative confirmed-entry plus
+  next-reserved-entry cost cap of USD 10 for the experiment;
 - a 90-second operational entry TTL;
 - a detached heartbeat watchdog and `on-failure:3` restart policy.
 
@@ -181,10 +181,19 @@ when that backstop still expires before the final-entry cutoff. Signals that
 cannot satisfy both constraints are skipped. Do not weaken either boundary.
 
 Before launch, verify synchronized clean `main`, green CI for the exact commit,
-host NTP, official geoblock, the dedicated account balance, no unrelated order
-or position, existing allowances, authenticated reads, User WebSocket access,
-SQLite backup, and the image `BUILD_COMMIT`. A failed or ambiguous check means
-no live launch.
+host NTP, official geoblock, sufficient collateral, no unrelated open order or
+active/positive-value/mergeable/ambiguous position, existing allowances,
+authenticated reads,
+User WebSocket access, SQLite backup, and the image `BUILD_COMMIT`. A failed or
+ambiguous check means no live launch.
+
+The wallet may hold more than USD 10 because the cap applies to this
+experiment's entry cost, not total wallet collateral. A historical position is
+ignored only when its end date is before the current UTC date, both current
+price and current value are exactly zero, and the venue explicitly reports it
+as non-mergeable. The venue may still label a zero-value historical record
+`redeemable`; that label does not create economic exposure. Missing or
+contradictory fields fail closed.
 
 Build the exact merged commit and start the one-off profile:
 
