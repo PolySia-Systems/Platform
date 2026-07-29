@@ -6,19 +6,19 @@
 |---|---|
 | Review date | 2026-07-29 |
 | Source-of-truth branch | `main` |
-| Deployed application source | `52c1bcc980f7db797066f982b23ab755dca31f58` |
-| Final runtime baseline | `b7dce82976a5b4ff624d8efef687c7d0d3776732` |
+| Deployed application source | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
+| Final runtime baseline | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
-| Active maintenance task | Owner-bounded Tiny Live Copy experiment |
+| Active maintenance task | Tiny Live Copy reliability corrections |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `TINY_LIVE_EXCEPTION_IN_DELIVERY` |
+| Phase status | `TINY_LIVE_FAILED_SAFE_DIAGNOSTIC_COMPLETE` |
 
-The final runtime baseline remains the last trading-runtime implementation
-merge. The current Git HEAD adds the approved server packaging and operations
-layer without changing strategy, risk, execution, credential, or live-order
-behavior.
+PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
+preflight so the USD 10 cap applies to experiment exposure and only strictly
+proven closed zero-value historical positions are ignored. The exact merged
+commit was deployed before the first authorized worker run.
 
 ## Completed stages
 
@@ -47,6 +47,12 @@ behavior.
   checks, rotating logs, persistent SQLite state, and verified backup/restore.
   It was deployed to `Hetzner-Finland-Helsinki-01` in enforced `DATA_ONLY`
   mode with no published port.
+- PRs `#38` and `#39` implemented and corrected the owner-bounded Tiny Live
+  Copy experiment. Its first authorized worker run failed safely on a public
+  Data API HTTP 429 before any venue attempt. Durable counters prove zero
+  submissions, fills, positions, fees, collateral debit, and cumulative entry
+  cost. The diagnostic also proved an independent Gamma market-time mapping
+  defect. See the latest Tiny Live Copy diagnostic handoff.
 
 ## Current architecture and runtime capabilities
 
@@ -147,6 +153,29 @@ evidence.
 
 ## Active work, blockers, and open decisions
 
+- The first bounded Tiny Live Copy worker run is terminal `FAILED_SAFE`. It
+  monitored 102 protected aliases, observed 25 new public events, deduplicated
+  46 repeated observations, and identified four fresh candidate signals before
+  stopping on Data API HTTP 429. It made zero venue attempts and mutations.
+- The configured six-second discovery cycle demands approximately 170
+  `/trades` requests per 10 seconds before pagination and retries, too close to
+  the official 200-per-10-second IP limit. Current retry behavior does not
+  honor `Retry-After`, apply exponential backoff and jitter, or coordinate a
+  global endpoint circuit.
+- Valid BTC 15-minute events are rejected because Gamma `startDate` is treated
+  as interval start. Strict mapping must instead verify the canonical slug
+  epoch against Gamma `eventStartTime` and verify `endDate` is exactly 15
+  minutes later.
+- Active follower order and position management must take priority over public
+  selected-leader and discovery polling. Per-alias read checkpoints and last
+  poll time should become durable before another long experiment.
+- The protected candidate bank remains 102. The proposed active discovery
+  subset size and maximum continuous 429 recovery window require owner review.
+  The diagnostic recommendation is 48 active discovery aliases, a 100-request
+  per-10-second internal `/trades` budget with 20 requests reserved for
+  recovery and selected-leader monitoring, and a bounded recovery window.
+- The prior live authorization is consumed. Another live run requires a new
+  run ID, new persistent authorization ID, and explicit owner authorization.
 - Copy Trading Stage 0 established a conditional architecture GO. Stage 1
   proved official read surfaces, normalization, deduplication, strict BTC
   15-minute mapping, and restart-stable event identity, but closed `NO_GO` for
@@ -193,13 +222,15 @@ evidence.
 
 ## Single recommended next task
 
-**Complete and reconcile the single owner-bounded Tiny Live Copy exception,
-then return to evidence collection.** Do not scale, generalize, or promote Copy
-Trading from this sample. Review sanitized latency, fill, fee, P&L, restart,
-and reconciliation evidence before deciding whether Stage 2 should be
-reopened.
+**Correct the verified Tiny Live Copy reliability defects without performing a
+new live run.** Add endpoint-aware pacing and bounded 429 recovery, prioritize
+active follower management, map BTC 15-minute interval time from Gamma
+`eventStartTime`, and persist read checkpoints. Add focused tests, pass CI,
+deploy read-only verification, and stop for owner review of the active
+candidate subset, recovery window, and a new live authorization.
 
-After that exception is terminal, the prior recommendation remains:
+After a separately authorized experiment becomes terminal, the broader
+recommendation remains:
 
 **Start a historical-data and strategy-validation slice for BTC Up/Down
 15-minute markets.** Define data-quality gates, acquire and validate a

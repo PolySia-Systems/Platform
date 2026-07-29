@@ -8,6 +8,12 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`polysia-tiny-live-copy-diagnostic-handoff.md`](polysia-tiny-live-copy-diagnostic-handoff.md)
+  is the latest continuation record. It captures the first Tiny Live Copy
+  worker's fail-safe HTTP 429 result, the verified market-time mapping defect,
+  the bounded correction plan, and the exact next task.
+- [`polysia-tiny-live-copy-experiment.md`](polysia-tiny-live-copy-experiment.md)
+  records the approved bounded experiment design and safety controls.
 - [`polysia-controlled-server-deployment-handoff.md`](polysia-controlled-server-deployment-handoff.md)
   records the controlled Helsinki Docker deployment, validation, and recovery
   evidence.
