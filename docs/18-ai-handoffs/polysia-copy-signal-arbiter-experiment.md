@@ -1,5 +1,11 @@
 # PolySia Copy Signal Arbiter Experimental Handoff
 
+The experimental `FULL` policy is not a Live authority. Runtime exposure is
+guarded by `POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED`, whose default is `false`.
+If both Live trading and this flag are enabled, startup fails closed because
+this release deliberately accepts no separate owner authorization for `FULL`.
+Offline Replay and non-mutating evaluation remain available.
+
 ## Outcome
 
 An isolated, generic Copy Trading Signal Arbiter, additive evidence persistence,

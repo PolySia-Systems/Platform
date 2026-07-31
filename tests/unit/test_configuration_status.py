@@ -30,6 +30,7 @@ def test_data_only_configuration_status_is_ready_and_redacted() -> None:
     assert status.operation_scope == "data_only"
     assert payload["values_redacted"] is True
     assert "POLYMARKET_PRIVATE_KEY" in payload["canonical_variables"]
+    assert payload["configured"]["copy_signal_arbiter_full_enabled"] is False
 
 
 def test_live_configuration_reports_missing_deprecated_and_conflicting_names() -> None:

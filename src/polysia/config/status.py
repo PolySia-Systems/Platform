@@ -12,6 +12,7 @@ CANONICAL_ENVIRONMENT_VARIABLES = (
     "APP_ENV",
     "TRADING_MODE",
     "LIVE_TRADING_ENABLED",
+    "POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED",
     "POLYMARKET_PRIVATE_KEY",
     "POLYMARKET_FUNDER_ADDRESS",
     "POLYMARKET_SIGNATURE_TYPE",
@@ -93,6 +94,7 @@ def build_configuration_status(settings: AppSettings) -> ConfigurationStatus:
         operation_scope=scope,
         canonical_variables=CANONICAL_ENVIRONMENT_VARIABLES,
         configured={
+            "copy_signal_arbiter_full_enabled": settings.copy_signal_arbiter_full_enabled,
             "legacy_wallet_configured": settings.polymarket_wallet_address is not None,
             "live_token_allowlist_count": len(settings.polymarket_live_token_allowlist),
             "live_trading_enabled": settings.live_trading_enabled,
