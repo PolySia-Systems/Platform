@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from threading import Barrier
 
 from polysia.domain.copytrading.live_experiment import CopyExperimentState
 from polysia.storage.copytrading import CopyExperimentRepository
@@ -36,10 +38,19 @@ def _claim(
     leader: str | None = None,
     entry_debit: Decimal = Decimal("2.25"),
 ) -> int | None:
-    return repository.claim_entry_attempt(
+    event_id = f"event-{index}"
+    leader_alias = leader or f"candidate-{index:03d}"
+    if not repository.reserve_signal(
         run_id="tiny-live-copy-test",
-        leader_alias=leader or f"candidate-{index:03d}",
-        event_id=f"event-{index}",
+        event_id=event_id,
+        leader_alias=leader_alias,
+        reserved_at=NOW + timedelta(seconds=index),
+    ):
+        return None
+    attempt = repository.claim_entry_attempt(
+        run_id="tiny-live-copy-test",
+        leader_alias=leader_alias,
+        event_id=event_id,
         market_id=f"market-{index}",
         market_slug=f"btc-updown-15m-{index:010d}",
         token_id=f"token-{index}",
@@ -51,7 +62,14 @@ def _claim(
         leader_latency_ms=1_000,
         leader_price_difference=Decimal("-0.05"),
         claimed_at=NOW + timedelta(seconds=index),
+        reserved_event_id=event_id,
     )
+    if attempt is None:
+        repository.release_signal_reservation(
+            run_id="tiny-live-copy-test",
+            event_id=event_id,
+        )
+    return attempt
 
 
 def test_local_rejection_before_claim_consumes_no_attempt(tmp_path) -> None:
@@ -60,6 +78,51 @@ def test_local_rejection_before_claim_consumes_no_attempt(tmp_path) -> None:
         assert repository.get("tiny-live-copy-test").total_entry_attempts == 0  # type: ignore[union-attr]
     finally:
         database.close()
+
+
+def test_atomic_signal_reservation_does_not_consume_an_attempt(tmp_path) -> None:
+    path = tmp_path / "atomic-reservation.sqlite3"
+    database = SQLiteDatabase(path)
+    database.initialize()
+    repository = CopyExperimentRepository(database.connection)
+    repository.create(
+        run_id="tiny-live-copy-test",
+        authorization_id="authorization",
+        started_at=NOW,
+        signal_window_end=NOW + timedelta(hours=12),
+        payload={},
+    )
+    repository.set_state(
+        "tiny-live-copy-test",
+        CopyExperimentState.MONITORING,
+        updated_at=NOW,
+    )
+    database.close()
+    barrier = Barrier(2)
+
+    def reserve(index: int) -> bool:
+        with SQLiteDatabase(path) as worker_database:
+            worker = CopyExperimentRepository(worker_database.connection)
+            barrier.wait()
+            return worker.reserve_signal(
+                run_id="tiny-live-copy-test",
+                event_id=f"event-{index}",
+                leader_alias=f"candidate-{index:03d}",
+                reserved_at=NOW,
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(reserve, (1, 2)))
+
+    assert sorted(results) == [False, True]
+    with SQLiteDatabase(path) as verification_database:
+        verification = CopyExperimentRepository(verification_database.connection)
+        snapshot = verification.get("tiny-live-copy-test")
+        assert snapshot is not None
+        assert snapshot.total_entry_attempts == 0
+        assert verification.signal_reservation("tiny-live-copy-test") is not None
+        assert verification.release_orphaned_signal_reservation("tiny-live-copy-test")
+        assert verification.signal_reservation("tiny-live-copy-test") is None
 
 
 def test_every_claim_consumes_once_and_used_leader_cannot_repeat(tmp_path) -> None:
@@ -162,16 +225,22 @@ def test_cumulative_filled_entry_cost_is_atomic_and_capped_at_ten_usd(
             )
 
         assert repository.cumulative_entry_cost("tiny-live-copy-test") == Decimal("9")
-        assert _claim(
-            repository,
-            index=3,
-            entry_debit=Decimal("1.01"),
-        ) is None
-        assert _claim(
-            repository,
-            index=3,
-            entry_debit=Decimal("1"),
-        ) == 3
+        assert (
+            _claim(
+                repository,
+                index=3,
+                entry_debit=Decimal("1.01"),
+            )
+            is None
+        )
+        assert (
+            _claim(
+                repository,
+                index=3,
+                entry_debit=Decimal("1"),
+            )
+            == 3
+        )
     finally:
         database.close()
 
@@ -333,9 +402,7 @@ def test_durable_attempt_and_cycle_counters_survive_reopen(tmp_path) -> None:
     database.close()
 
     with SQLiteDatabase(path) as reopened:
-        snapshot = CopyExperimentRepository(reopened.connection).get(
-            "tiny-live-copy-test"
-        )
+        snapshot = CopyExperimentRepository(reopened.connection).get("tiny-live-copy-test")
         assert snapshot is not None
         assert snapshot.total_entry_attempts == 1
         assert snapshot.completed_live_cycles == 1

@@ -89,6 +89,9 @@ class CopyExperimentRepository:
         row = self._required_run(run_id)
         return datetime.fromisoformat(str(row["signal_window_end"]))
 
+    def authorization_id(self, run_id: str) -> str:
+        return str(self._required_run(run_id)["authorization_id"])
+
     def set_state(
         self,
         run_id: str,
@@ -115,6 +118,102 @@ class CopyExperimentRepository:
         if cursor.rowcount != 1:
             raise KeyError(f"unknown Copy Trading run {run_id}")
 
+    def reserve_signal(
+        self,
+        *,
+        run_id: str,
+        event_id: str,
+        leader_alias: str,
+        reserved_at: datetime,
+    ) -> bool:
+        """Atomically reserve the single pre-submission signal slot."""
+
+        connection = self._connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._required_run(run_id)
+            allowed = (
+                bool(row["signal_acceptance_open"])
+                and str(row["state"]) == CopyExperimentState.MONITORING.value
+                and int(row["total_entry_attempts"]) < MAXIMUM_TOTAL_ENTRY_ATTEMPTS
+                and int(row["completed_live_cycles"]) < MAXIMUM_COMPLETED_LIVE_CYCLES
+                and row["entry_order_id"] is None
+                and row["exit_order_id"] is None
+                and Decimal(str(row["position_size"])) == 0
+            )
+            if not allowed:
+                connection.rollback()
+                return False
+            connection.execute(
+                """
+                INSERT INTO copytrading_signal_reservations (
+                    run_id, event_id, leader_alias, reserved_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (run_id, event_id, leader_alias, _datetime_text(reserved_at)),
+            )
+            connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return False
+        except Exception:
+            connection.rollback()
+            raise
+
+    def signal_reservation(self, run_id: str) -> dict[str, object] | None:
+        row = self._connection.execute(
+            """
+            SELECT event_id, leader_alias, reserved_at
+            FROM copytrading_signal_reservations WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "event_id": str(row["event_id"]),
+            "leader_alias": str(row["leader_alias"]),
+            "reserved_at": datetime.fromisoformat(str(row["reserved_at"])),
+        }
+
+    def release_signal_reservation(self, *, run_id: str, event_id: str) -> bool:
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                DELETE FROM copytrading_signal_reservations
+                WHERE run_id = ? AND event_id = ?
+                """,
+                (run_id, event_id),
+            )
+        return cursor.rowcount == 1
+
+    def release_orphaned_signal_reservation(self, run_id: str) -> bool:
+        """Release only a proven pre-submit reservation after restart reconciliation."""
+
+        connection = self._connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._required_run(run_id)
+            safe_to_release = (
+                str(row["state"]) == CopyExperimentState.MONITORING.value
+                and row["entry_order_id"] is None
+                and row["exit_order_id"] is None
+                and Decimal(str(row["position_size"])) == 0
+            )
+            if not safe_to_release:
+                connection.rollback()
+                return False
+            cursor = connection.execute(
+                "DELETE FROM copytrading_signal_reservations WHERE run_id = ?",
+                (run_id,),
+            )
+            connection.commit()
+            return cursor.rowcount == 1
+        except Exception:
+            connection.rollback()
+            raise
+
     def claim_entry_attempt(
         self,
         *,
@@ -132,6 +231,7 @@ class CopyExperimentRepository:
         leader_latency_ms: int,
         leader_price_difference: Decimal,
         claimed_at: datetime,
+        reserved_event_id: str,
     ) -> int | None:
         """Atomically consume one venue-attempt slot immediately before submission."""
 
@@ -139,6 +239,13 @@ class CopyExperimentRepository:
         connection.execute("BEGIN IMMEDIATE")
         try:
             row = self._required_run(run_id)
+            reservation = connection.execute(
+                """
+                SELECT event_id, leader_alias FROM copytrading_signal_reservations
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
             attempts = int(row["total_entry_attempts"])
             cycles = int(row["completed_live_cycles"])
             cumulative_entry_cost = self.cumulative_entry_cost(run_id)
@@ -149,7 +256,11 @@ class CopyExperimentRepository:
                 and cycles < MAXIMUM_COMPLETED_LIVE_CYCLES
                 and cumulative_entry_cost + entry_debit <= MAXIMUM_EXPERIMENT_ENTRY_COST
                 and row["entry_order_id"] is None
+                and row["exit_order_id"] is None
                 and Decimal(str(row["position_size"])) == 0
+                and reservation is not None
+                and str(reservation["event_id"]) == event_id == reserved_event_id
+                and str(reservation["leader_alias"]) == leader_alias
             )
             if not allowed:
                 connection.rollback()
@@ -207,6 +318,13 @@ class CopyExperimentRepository:
                     _datetime_text(claimed_at),
                     run_id,
                 ),
+            )
+            connection.execute(
+                """
+                DELETE FROM copytrading_signal_reservations
+                WHERE run_id = ? AND event_id = ?
+                """,
+                (run_id, reserved_event_id),
             )
             connection.commit()
             return attempt_number

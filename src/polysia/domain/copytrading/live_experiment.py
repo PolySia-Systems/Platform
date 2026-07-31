@@ -129,11 +129,15 @@ class CopyExperimentSnapshot:
             raise ValueError("an exit order requires a confirmed follower position")
         if self.state is CopyExperimentState.ENTRY_PENDING and self.entry_order_id is None:
             raise ValueError("ENTRY_PENDING requires an entry order")
-        if self.state in {
-            CopyExperimentState.POSITION_OPEN,
-            CopyExperimentState.EXIT_PENDING,
-            CopyExperimentState.AWAITING_RESOLUTION,
-        } and self.position_size <= 0:
+        if (
+            self.state
+            in {
+                CopyExperimentState.POSITION_OPEN,
+                CopyExperimentState.EXIT_PENDING,
+                CopyExperimentState.AWAITING_RESOLUTION,
+            }
+            and self.position_size <= 0
+        ):
             raise ValueError(f"{self.state} requires a positive position")
         if self.state is CopyExperimentState.EXIT_PENDING and self.exit_order_id is None:
             raise ValueError("EXIT_PENDING requires an exit order")
@@ -148,9 +152,7 @@ def load_candidate_bank(text: str) -> CandidateBank:
     """Extract, normalize, and deduplicate the exact protected candidate bank."""
 
     raw_addresses = [
-        line.strip()
-        for line in text.splitlines()
-        if _WALLET_PATTERN.fullmatch(line.strip())
+        line.strip() for line in text.splitlines() if _WALLET_PATTERN.fullmatch(line.strip())
     ]
     unique: list[str] = []
     seen: set[str] = set()
@@ -166,8 +168,7 @@ def load_candidate_bank(text: str) -> CandidateBank:
             f"unique valid addresses; found {len(unique)}"
         )
     aliases_and_addresses = tuple(
-        (f"candidate-{index:03d}", address)
-        for index, address in enumerate(unique, start=1)
+        (f"candidate-{index:03d}", address) for index, address in enumerate(unique, start=1)
     )
     digest = hashlib.sha256("\n".join(unique).encode()).hexdigest()
     return CandidateBank(
@@ -186,6 +187,7 @@ def calculate_entry_quote(
     expected_fee: Decimal,
     now: datetime,
     market_end: datetime,
+    minimum_seconds_to_end: int = MINIMUM_SECONDS_TO_END_AT_SIGNAL,
 ) -> EntryQuote:
     """Build the only permitted post-only GTD entry quote."""
 
@@ -201,9 +203,11 @@ def calculate_entry_quote(
         raise ValueError("best ask must be within (0, 1]")
     if expected_fee < 0:
         raise ValueError("expected fee must not be negative")
+    if minimum_seconds_to_end < 0:
+        raise ValueError("minimum seconds to market end must not be negative")
     remaining = (market_end - now).total_seconds()
-    if remaining < MINIMUM_SECONDS_TO_END_AT_SIGNAL:
-        raise ValueError("fewer than seven minutes remain before market end")
+    if remaining < minimum_seconds_to_end:
+        raise ValueError(_minimum_market_time_error(minimum_seconds_to_end))
 
     raw_price = leader_fill_price * (Decimal("1") - ENTRY_OFFSET)
     price = round_down_to_tick(raw_price, tick_size)
@@ -223,13 +227,9 @@ def calculate_entry_quote(
     if cancel_at <= now:
         raise ValueError("entry cancellation deadline is not safely representable")
     venue_expires_at = now + SDK_GTD_MINIMUM_BUFFER + SDK_GTD_CLOCK_SAFETY_BUFFER
-    final_entry_cutoff = market_end - timedelta(
-        seconds=ENTRY_CANCEL_BEFORE_END_SECONDS
-    )
+    final_entry_cutoff = market_end - timedelta(seconds=ENTRY_CANCEL_BEFORE_END_SECONDS)
     if venue_expires_at > final_entry_cutoff:
-        raise ValueError(
-            "SDK GTD backstop cannot expire before the final entry cutoff"
-        )
+        raise ValueError("SDK GTD backstop cannot expire before the final entry cutoff")
     venue_expiration = int(venue_expires_at.timestamp())
     return EntryQuote(
         raw_price=raw_price,
@@ -288,6 +288,7 @@ def signal_is_fresh(
     executed_at: datetime,
     observed_at: datetime,
     market_end: datetime,
+    minimum_seconds_to_end: int = MINIMUM_SECONDS_TO_END_AT_SIGNAL,
 ) -> bool:
     for name, value in (
         ("executed_at", executed_at),
@@ -295,11 +296,21 @@ def signal_is_fresh(
         ("market_end", market_end),
     ):
         _require_utc(name, value)
+    if minimum_seconds_to_end < 0:
+        raise ValueError("minimum seconds to market end must not be negative")
     age = observed_at - executed_at
     return (
         timedelta(0) <= age <= MAXIMUM_SIGNAL_AGE
-        and (market_end - observed_at).total_seconds() >= MINIMUM_SECONDS_TO_END_AT_SIGNAL
+        and (market_end - observed_at).total_seconds() >= minimum_seconds_to_end
     )
+
+
+def _minimum_market_time_error(minimum_seconds_to_end: int) -> str:
+    if minimum_seconds_to_end == 420:
+        return "fewer than seven minutes remain before market end"
+    if minimum_seconds_to_end == 240:
+        return "fewer than four minutes remain before market end"
+    return f"fewer than {minimum_seconds_to_end} seconds remain before market end"
 
 
 def round_down_to_tick(value: Decimal, tick_size: Decimal) -> Decimal:

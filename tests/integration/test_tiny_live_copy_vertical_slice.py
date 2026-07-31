@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -291,6 +292,18 @@ class Geoblock:
         return GeoblockStatus(status="allowed", checked_at=NOW, blocked=False)
 
 
+class SubmissionDelayGeoblock(Geoblock):
+    def __init__(self, clock: MutableClock) -> None:
+        self.clock = clock
+        self.calls = 0
+
+    async def check(self) -> GeoblockStatus:
+        self.calls += 1
+        if self.calls == 3:
+            self.clock.now += timedelta(seconds=11)
+        return await super().check()
+
+
 class ObservedExecutionPort(ExecutionPort):
     def __init__(self) -> None:
         super().__init__()
@@ -459,6 +472,74 @@ class CountingSource(Source):
         )
 
 
+class DelayedBatchSource(Source):
+    def __init__(self, clock: MutableClock) -> None:
+        super().__init__(clock)
+        self.release_delayed = asyncio.Event()
+        self.completed_aliases = 0
+
+    async def read_page(
+        self,
+        leader_id: str,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        page_size: int = 100,
+        checkpoint: object | None = None,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> LeaderTradeReadPage:
+        del start_at, end_at, page_size, checkpoint, purpose
+        if leader_id == "candidate-001":
+            self.clock.now = NOW + timedelta(seconds=7.53)
+            self.completed_aliases += 1
+            return LeaderTradeReadPage(
+                events=(
+                    LeaderTradeEvent(
+                        event_id="streamed-event",
+                        source_id="fixture",
+                        leader_id=leader_id,
+                        market_reference=CONDITION,
+                        outcome_reference=TOKEN,
+                        trade_action=LeaderTradeAction.BUY,
+                        position_effect=LeaderPositionEffect.UNKNOWN,
+                        executed_price=Decimal("0.50"),
+                        executed_size=Decimal("5"),
+                        executed_at=NOW,
+                        observed_at=self.clock(),
+                        external_evidence_reference="sha256:streamed-evidence",
+                    ),
+                ),
+                next_checkpoint=None,
+                raw_count=1,
+                filtered_count=0,
+                rejected_count=0,
+                duplicate_count=0,
+            )
+        await self.release_delayed.wait()
+        self.clock.now = NOW + timedelta(seconds=13.16)
+        self.completed_aliases += 1
+        return LeaderTradeReadPage(
+            events=(),
+            next_checkpoint=None,
+            raw_count=0,
+            filtered_count=0,
+            rejected_count=0,
+            duplicate_count=0,
+        )
+
+
+class StreamingMarketPort(MarketPort):
+    def __init__(self, clock: MutableClock, source: DelayedBatchSource) -> None:
+        super().__init__(clock)
+        self.source = source
+        self.signal_evaluated_before_batch = False
+
+    async def get_market_by_slug(self, slug: str) -> MarketDetails:
+        self.signal_evaluated_before_batch = self.source.completed_aliases == 1
+        self.source.release_delayed.set()
+        return await super().get_market_by_slug(slug)
+
+
 def _candidate_file(path: Path) -> Path:
     candidate_path = path / "candidates.txt"
     candidate_path.write_text(
@@ -466,6 +547,114 @@ def _candidate_file(path: Path) -> Path:
         encoding="utf-8",
     )
     return candidate_path
+
+
+@pytest.mark.asyncio
+async def test_signal_is_processed_before_all_48_wallet_responses_complete(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    source = DelayedBatchSource(clock)
+    market = StreamingMarketPort(clock, source)
+    execution = ExecutionPort()
+    settings = AppSettings(
+        _env_file=None,
+        POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+        POLYMARKET_PRIVATE_KEY="fixture-key",
+        POLYMARKET_SIGNATURE_TYPE=3,
+    )
+    candidate_path = _candidate_file(tmp_path)
+
+    report = await run_tiny_live_copy(
+        TinyLiveCopyConfig(
+            settings=settings,
+            project_root=tmp_path,
+            output_dir=tmp_path / "reports",
+            database_path=tmp_path / "state.sqlite3",
+            candidate_file=candidate_path,
+            run_id="tiny-live-copy-streaming-regression",
+            dry_run=True,
+            maximum_poll_cycles=1,
+        ),
+        source=source,
+        market_port=market,
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert market.signal_evaluated_before_batch is True
+    assert source.completed_aliases == 48
+    assert report.signal_count == 1
+    assert report.total_entry_attempts == 0
+    assert execution.limit_calls == []
+    assert report.candidate_runtime_file_deleted is True
+    assert not candidate_path.exists()
+    assert any(decision["action"] == "ENTRY_APPROVED" for decision in report.decisions)
+    assert not any(
+        decision["action"]
+        in {
+            "SIGNAL_REJECTED_STALE_AT_EVALUATION",
+            "SIGNAL_REJECTED_STALE_AT_SUBMISSION",
+        }
+        for decision in report.decisions
+    )
+    signal_metric = report.signal_latency_metrics[0]
+    assert signal_metric["executed_to_observed_ms"] == 7_530
+    assert signal_metric["observed_to_evaluation_ms"] == 0
+    batch_metric = report.poll_batch_metrics[-1]
+    assert batch_metric["response_count"] == 48
+    assert batch_metric["full_batch_completion_ms"] == 13_160
+
+
+@pytest.mark.asyncio
+async def test_signal_that_really_exceeds_ten_seconds_before_submit_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "polysia.execution.tiny_live_copy._assert_synchronized_main",
+        lambda config, git_commit: None,
+    )
+    clock = MutableClock()
+    execution = ExecutionPort()
+    report = await run_tiny_live_copy(
+        TinyLiveCopyConfig(
+            settings=AppSettings(
+                _env_file=None,
+                TRADING_MODE=TradingMode.LIVE,
+                LIVE_TRADING_ENABLED=True,
+                POLYMARKET_FUNDER_ADDRESS="0x1111111111111111111111111111111111111111",
+                POLYMARKET_PRIVATE_KEY="fixture-key",
+                POLYMARKET_SIGNATURE_TYPE=3,
+            ),
+            project_root=tmp_path,
+            output_dir=tmp_path / "reports",
+            database_path=tmp_path / "state.sqlite3",
+            candidate_file=_candidate_file(tmp_path),
+            run_id="tiny-live-copy-real-stale-regression",
+            dry_run=False,
+            authorization_id="POLYSIA-TINY-LIVE-COPY-999",
+            acknowledgement=True,
+            verified_ci_commit="a" * 40,
+            maximum_poll_cycles=1,
+            delete_candidate_file_on_terminal=False,
+        ),
+        source=Source(clock),
+        market_port=MarketPort(clock),
+        execution_port=execution,
+        geoblock_port=SubmissionDelayGeoblock(clock),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.total_entry_attempts == 0
+    assert execution.limit_calls == []
+    assert any(
+        decision["action"] == "SIGNAL_REJECTED_STALE_BEFORE_SUBMISSION"
+        for decision in report.decisions
+    )
 
 
 @pytest.mark.asyncio
@@ -539,6 +728,7 @@ async def test_fixture_vertical_slice_proves_risk_execution_partial_fill_and_tp(
             candidate_file=_candidate_file(tmp_path),
             run_id="tiny-live-copy-20260729T120000Z",
             dry_run=False,
+            authorization_id="POLYSIA-TINY-LIVE-COPY-999",
             acknowledgement=True,
             verified_ci_commit="a" * 40,
             maximum_poll_cycles=2,
@@ -572,6 +762,7 @@ async def test_fixture_vertical_slice_proves_risk_execution_partial_fill_and_tp(
             candidate_file=tmp_path / "candidates.txt",
             run_id="tiny-live-copy-20260729T120000Z",
             dry_run=False,
+            authorization_id="POLYSIA-TINY-LIVE-COPY-999",
             acknowledgement=True,
             verified_ci_commit="a" * 40,
             maximum_poll_cycles=1,
@@ -619,6 +810,7 @@ async def test_pending_entry_restart_never_submits_a_duplicate(
         candidate_file=_candidate_file(tmp_path),
         run_id="tiny-live-copy-20260729T120001Z",
         dry_run=False,
+        authorization_id="POLYSIA-TINY-LIVE-COPY-999",
         acknowledgement=True,
         verified_ci_commit="a" * 40,
         maximum_poll_cycles=1,
@@ -769,6 +961,7 @@ async def test_active_follower_management_precedes_public_leader_failure(
             candidate_file=_candidate_file(tmp_path),
             run_id="tiny-live-copy-20260729T120003Z",
             dry_run=False,
+            authorization_id="POLYSIA-TINY-LIVE-COPY-999",
             acknowledgement=True,
             verified_ci_commit="a" * 40,
             maximum_poll_cycles=2,
@@ -822,6 +1015,7 @@ async def test_fixture_dry_run_records_one_unfilled_attempt_and_resumes_capacity
             candidate_file=candidate_path,
             run_id="tiny-live-copy-20260729T120004Z",
             dry_run=False,
+            authorization_id="POLYSIA-TINY-LIVE-COPY-999",
             acknowledgement=True,
             verified_ci_commit="a" * 40,
             maximum_poll_cycles=17,
