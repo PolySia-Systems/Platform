@@ -8,6 +8,9 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`polysia-copy-signal-arbiter-experiment.md`](polysia-copy-signal-arbiter-experiment.md)
+  records the isolated confidence-aware Arbiter, fail-closed historical Replay,
+  and deferred non-interfering Shadow gate.
 - [`polysia-tiny-live-copy-streaming-003.md`](polysia-tiny-live-copy-streaming-003.md)
   is the current delivery handoff for response-streaming, atomic signal
   reservation, the scoped four-minute gate, and the Shadow-only 003 workflow.
