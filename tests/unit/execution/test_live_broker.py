@@ -7,7 +7,12 @@ import pytest
 
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.execution.intents import OrderIntent
-from polysia.execution.live_broker import LiveBroker, LiveBrokerError
+from polysia.execution.live_broker import (
+    LiveBroker,
+    LiveBrokerError,
+    LiveOrderRejectedError,
+    PreparedLimitOrder,
+)
 from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
@@ -23,6 +28,8 @@ class FakeLiveAdapter:
         self.open_order_calls: list[dict[str, Any]] = []
         self.open_orders: list[Any] = []
         self.limit_order_response: Any = {"status": "accepted", "ok": True}
+        self.prepared_limit_orders: list[dict[str, Any]] = []
+        self.submission_events: list[str] = []
 
     @property
     def is_connected(self) -> bool:
@@ -48,6 +55,16 @@ class FakeLiveAdapter:
 
     async def place_limit_order(self, **kwargs: Any) -> Any:
         self.limit_orders.append(kwargs)
+        return self.limit_order_response
+
+    async def prepare_limit_order(self, **kwargs: Any) -> dict[str, Any]:
+        self.submission_events.append("prepared")
+        self.prepared_limit_orders.append(kwargs)
+        return kwargs
+
+    async def post_prepared_limit_order(self, prepared_order: dict[str, Any]) -> Any:
+        self.submission_events.append("posted")
+        self.limit_orders.append(prepared_order)
         return self.limit_order_response
 
     async def place_market_order(self, **kwargs: Any) -> dict[str, str]:
@@ -320,6 +337,90 @@ async def test_before_submit_claim_runs_once_after_local_gates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_final_refresh_is_reapproved_before_attempt_claim() -> None:
+    adapter = FakeLiveAdapter()
+    events: list[str] = []
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+
+    async def refresh() -> PreparedLimitOrder:
+        assert adapter.submission_events == ["prepared"]
+        events.append("refreshed")
+        return PreparedLimitOrder(
+            intent=OrderIntent(
+                strategy_id="strategy",
+                token_id="token-1",
+                side="BUY",
+                price=Decimal("0.50"),
+                size=Decimal("5"),
+                reason="final quote",
+                confidence=Decimal("1"),
+            ),
+            context=RiskContext(),
+            expiration=123,
+        )
+
+    def claim() -> None:
+        events.append("claimed")
+        adapter.submission_events.append("claimed")
+
+    await broker.place_limit_order(
+        make_intent(),
+        RiskContext(),
+        i_understand_this_places_real_orders=True,
+        dry_run=False,
+        expiration=123,
+        refresh_before_submit=refresh,
+        before_submit=claim,
+    )
+
+    assert events == ["refreshed", "claimed"]
+    assert adapter.submission_events == ["prepared", "claimed", "posted"]
+    assert adapter.prepared_limit_orders[0]["price"] == Decimal("0.50")
+    assert adapter.limit_orders[0]["price"] == Decimal("0.50")
+    assert adapter.limit_orders[0]["expiration"] == 123
+
+
+@pytest.mark.asyncio
+async def test_final_refresh_mismatch_is_rejected_before_claim_and_post() -> None:
+    adapter = FakeLiveAdapter()
+    claims: list[str] = []
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+
+    async def refresh() -> PreparedLimitOrder:
+        return PreparedLimitOrder(
+            intent=make_intent(price="0.49"),
+            context=RiskContext(),
+            expiration=None,
+        )
+
+    with pytest.raises(LiveBrokerError, match="no longer matches"):
+        await broker.place_limit_order(
+            make_intent(),
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            refresh_before_submit=refresh,
+            before_submit=lambda: claims.append("claimed"),
+        )
+
+    assert len(adapter.prepared_limit_orders) == 1
+    assert adapter.limit_orders == []
+    assert claims == []
+
+
+@pytest.mark.asyncio
 async def test_live_submit_rejected_response_raises() -> None:
     adapter = FakeLiveAdapter()
     claims: list[str] = []
@@ -336,7 +437,10 @@ async def test_live_submit_rejected_response_raises() -> None:
         geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(LiveBrokerError, match="Polymarket rejected live order"):
+    with pytest.raises(
+        LiveOrderRejectedError,
+        match="Polymarket rejected live order",
+    ) as raised:
         await broker.place_limit_order(
             make_intent(),
             RiskContext(),
@@ -346,6 +450,7 @@ async def test_live_submit_rejected_response_raises() -> None:
         )
 
     assert claims == ["claimed"]
+    assert raised.value.code == "not_enough_balance"
     assert adapter.connected is True
     assert len(adapter.limit_orders) == 1
 

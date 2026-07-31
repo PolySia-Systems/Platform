@@ -375,6 +375,125 @@ class CopyExperimentRepository:
                 (next_state, venue_order_id, _datetime_text(updated_at), run_id),
             )
 
+    def record_definitive_post_only_rejection(
+        self,
+        *,
+        run_id: str,
+        attempt_number: int,
+        updated_at: datetime,
+    ) -> int:
+        """Record a proven no-order Post-only rejection and release run capacity."""
+
+        connection = self._connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._required_run(run_id)
+            cursor = connection.execute(
+                """
+                UPDATE copytrading_live_attempts
+                SET state = 'SUBMISSION_REJECTED_DEFINITIVE_POST_ONLY',
+                    venue_order_id = NULL, terminal_reason = 'POST_ONLY_WOULD_CROSS',
+                    updated_at = ?
+                WHERE run_id = ? AND attempt_number = ?
+                """,
+                (_datetime_text(updated_at), run_id, attempt_number),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("unknown Copy Trading entry attempt")
+            rejection_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM copytrading_live_attempts
+                    WHERE run_id = ?
+                      AND state = 'SUBMISSION_REJECTED_DEFINITIVE_POST_ONLY'
+                    """,
+                    (run_id,),
+                ).fetchone()["count"]
+            )
+            acceptance_open = (
+                bool(row["signal_acceptance_open"])
+                and int(row["total_entry_attempts"]) < MAXIMUM_TOTAL_ENTRY_ATTEMPTS
+                and int(row["completed_live_cycles"]) < MAXIMUM_COMPLETED_LIVE_CYCLES
+            )
+            next_state = (
+                CopyExperimentState.MONITORING
+                if acceptance_open
+                else CopyExperimentState.FINALIZED
+            )
+            connection.execute(
+                """
+                UPDATE copytrading_live_runs
+                SET state = ?, signal_acceptance_open = ?,
+                    active_leader_alias = NULL, active_event_id = NULL,
+                    active_market_id = NULL, active_market_slug = NULL,
+                    active_token_id = NULL, entry_order_id = NULL,
+                    entry_price = NULL, entry_quantity = NULL, entry_fee = '0',
+                    entry_cancel_at = NULL, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    next_state.value,
+                    int(acceptance_open),
+                    _datetime_text(updated_at),
+                    run_id,
+                ),
+            )
+            connection.commit()
+            return rejection_count
+        except Exception:
+            connection.rollback()
+            raise
+
+    def record_ambiguous_entry_submission(
+        self,
+        *,
+        run_id: str,
+        attempt_number: int,
+        updated_at: datetime,
+    ) -> None:
+        """Preserve the consumed attempt and active capacity for fail-closed reconciliation."""
+
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE copytrading_live_attempts
+                SET state = 'SUBMISSION_OUTCOME_UNKNOWN',
+                    terminal_reason = 'RECONCILIATION_REQUIRED', updated_at = ?
+                WHERE run_id = ? AND attempt_number = ?
+                """,
+                (_datetime_text(updated_at), run_id, attempt_number),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("unknown Copy Trading entry attempt")
+
+    def record_definitive_entry_rejection(
+        self,
+        *,
+        run_id: str,
+        attempt_number: int,
+        terminal_reason: str,
+        updated_at: datetime,
+    ) -> None:
+        """Distinguish a proven venue rejection while retaining fail-closed run state."""
+
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE copytrading_live_attempts
+                SET state = 'SUBMISSION_REJECTED_DEFINITIVE', venue_order_id = NULL,
+                    terminal_reason = ?, updated_at = ?
+                WHERE run_id = ? AND attempt_number = ?
+                """,
+                (
+                    terminal_reason[:80],
+                    _datetime_text(updated_at),
+                    run_id,
+                    attempt_number,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("unknown Copy Trading entry attempt")
+
     def record_no_fill(
         self,
         *,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -37,6 +37,15 @@ class LiveBrokerError(RuntimeError):
     """Raised when a live broker action is blocked or fails."""
 
 
+class LiveOrderRejectedError(LiveBrokerError):
+    """A structured, definitive venue rejection with no accepted order."""
+
+    def __init__(self, *, code: str, message: str) -> None:
+        self.code = code
+        self.venue_message = message
+        super().__init__(f"Polymarket rejected live order: {code}: {message}")
+
+
 @dataclass(frozen=True, slots=True)
 class LiveBrokerResult:
     """Result of a live broker request or dry-run preview."""
@@ -46,6 +55,15 @@ class LiveBrokerResult:
     request: dict[str, object]
     reason: str
     response: Any | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedLimitOrder:
+    """A final limit intent and expiration produced immediately before submission."""
+
+    intent: OrderIntent
+    context: RiskContext
+    expiration: int | None
 
 
 class LiveBroker:
@@ -199,6 +217,7 @@ class LiveBroker:
         post_only: bool = False,
         expiration: int | None = None,
         builder_code: str | None = None,
+        refresh_before_submit: Callable[[], Awaitable[PreparedLimitOrder]] | None = None,
         before_submit: Callable[[], None] | None = None,
     ) -> LiveBrokerResult:
         """Approve, preview, or submit a live limit order."""
@@ -232,17 +251,60 @@ class LiveBroker:
         if not self._adapter.is_connected:
             await self._adapter.connect()
 
+        prepared_venue_order: Any | None = None
+        if refresh_before_submit is not None:
+            prepared_approved_intent = approved_intent
+            prepared_expiration = expiration
+            prepared_venue_order = await self._adapter.prepare_limit_order(
+                token_id=prepared_approved_intent.token_id,
+                side=prepared_approved_intent.side,
+                price=prepared_approved_intent.price,
+                size=prepared_approved_intent.approved_size,
+                post_only=post_only,
+                expiration=prepared_expiration,
+                builder_code=builder_code,
+            )
+            prepared = await refresh_before_submit()
+            approved_intent = self._approve_intent(
+                prepared.intent,
+                prepared.context,
+                i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+            )
+            expiration = prepared.expiration
+            self._assert_token_allowed(approved_intent.token_id)
+            if (
+                approved_intent.token_id != prepared_approved_intent.token_id
+                or approved_intent.side != prepared_approved_intent.side
+                or approved_intent.price != prepared_approved_intent.price
+                or approved_intent.approved_size != prepared_approved_intent.approved_size
+                or expiration != prepared_expiration
+            ):
+                raise LiveBrokerError(
+                    "final refreshed limit order no longer matches the prepared order"
+                )
+            request = sanitize_order_request(
+                action="place_limit_order",
+                token_id=approved_intent.token_id,
+                side=approved_intent.side,
+                price=approved_intent.price,
+                size=approved_intent.approved_size,
+                post_only=post_only,
+                expiration=expiration,
+            )
         if before_submit is not None:
             before_submit()
-        response = await self._adapter.place_limit_order(
-            token_id=approved_intent.token_id,
-            side=approved_intent.side,
-            price=approved_intent.price,
-            size=approved_intent.approved_size,
-            post_only=post_only,
-            expiration=expiration,
-            builder_code=builder_code,
-        )
+        if prepared_venue_order is not None:
+            response = await self._adapter.post_prepared_limit_order(prepared_venue_order)
+        else:
+            response = await self._adapter.place_limit_order(
+                token_id=approved_intent.token_id,
+                side=approved_intent.side,
+                price=approved_intent.price,
+                size=approved_intent.approved_size,
+                post_only=post_only,
+                expiration=expiration,
+                builder_code=builder_code,
+            )
         _assert_order_response_ok(response)
         return LiveBrokerResult(
             submitted=True,
@@ -421,4 +483,4 @@ def _assert_order_response_ok(response: Any) -> None:
     else:
         code = getattr(response, "code", "unknown")
         message = getattr(response, "message", "order rejected")
-    raise LiveBrokerError(f"Polymarket rejected live order: {code}: {message}")
+    raise LiveOrderRejectedError(code=str(code), message=str(message))

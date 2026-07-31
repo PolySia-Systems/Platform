@@ -502,6 +502,60 @@ class PolymarketSecureAdapter:
                 ),
             ) from error
 
+    async def prepare_limit_order(
+        self,
+        *,
+        token_id: str,
+        side: OrderSide,
+        price: Decimal,
+        size: Decimal,
+        post_only: bool = False,
+        expiration: int | None = None,
+        builder_code: str | None = None,
+    ) -> Any:
+        """Create and sign a limit order without submitting or mutating venue state."""
+
+        _validate_side(side)
+        client = self._require_client()
+        try:
+            return await client.create_limit_order(
+                token_id=token_id,
+                side=side,
+                price=price,
+                size=size,
+                post_only=post_only,
+                expiration=expiration,
+                builder_code=builder_code,
+            )
+        except PolymarketError as error:
+            raise self._adapter_error(
+                "prepare_limit_order",
+                "Could not prepare Polymarket limit order.",
+                error,
+                **sanitize_order_request(
+                    action="prepare_limit_order",
+                    token_id=token_id,
+                    side=side,
+                    price=price,
+                    size=size,
+                    post_only=post_only,
+                    expiration=expiration,
+                ),
+            ) from error
+
+    async def post_prepared_limit_order(self, prepared_order: Any) -> Any:
+        """Submit one already-signed limit order exactly once without SDK auto-retry."""
+
+        client = self._require_client()
+        try:
+            return await client.post_order(prepared_order)
+        except PolymarketError as error:
+            raise self._adapter_error(
+                "post_prepared_limit_order",
+                "Could not post prepared Polymarket limit order.",
+                error,
+            ) from error
+
     async def place_market_order(
         self,
         *,
