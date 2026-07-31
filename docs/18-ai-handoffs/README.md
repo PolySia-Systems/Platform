@@ -8,9 +8,11 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`polysia-tiny-live-copy-streaming-003.md`](polysia-tiny-live-copy-streaming-003.md)
+  is the current delivery handoff for response-streaming, atomic signal
+  reservation, the scoped four-minute gate, and the Shadow-only 003 workflow.
 - [`polysia-tiny-live-copy-reliability-002.md`](polysia-tiny-live-copy-reliability-002.md)
-  is the current delivery handoff for the bounded reliability repair and the
-  gated `POLYSIA-TINY-LIVE-COPY-002` workflow.
+  records the deployed reliability repair and consumed 002 workflow.
 - [`polysia-tiny-live-copy-diagnostic-handoff.md`](polysia-tiny-live-copy-diagnostic-handoff.md)
   captures the first Tiny Live Copy worker's fail-safe HTTP 429 result, the
   verified market-time mapping defect, and the bounded correction plan.

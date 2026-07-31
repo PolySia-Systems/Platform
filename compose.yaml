@@ -121,7 +121,8 @@ services:
       - |
         test "$${TRADING_MODE:-}" = LIVE
         test "$${LIVE_TRADING_ENABLED:-}" = true
-        test "$${POLYSIA_COPY_LIVE_ACK:-}" = POLYSIA-TINY-LIVE-COPY-002
+        test -n "$${POLYSIA_COPY_AUTHORIZATION_ID:-}"
+        test "$${POLYSIA_COPY_LIVE_ACK:-}" = "$${POLYSIA_COPY_AUTHORIZATION_ID}"
         test -n "$${POLYSIA_VERIFIED_CI_COMMIT:-}"
         test -n "$${POLYSIA_COPY_RUN_ID:-}"
         status_path="/var/lib/polysia/reports/$${POLYSIA_COPY_RUN_ID}/status.json"
@@ -131,6 +132,7 @@ services:
           --database /var/lib/polysia/data/polysia.sqlite3 \
           --run-id "$${POLYSIA_COPY_RUN_ID}" \
           --verified-ci-commit "$${POLYSIA_VERIFIED_CI_COMMIT}" \
+          --authorization-id "$${POLYSIA_COPY_AUTHORIZATION_ID}" \
           --acknowledge "$${POLYSIA_COPY_LIVE_ACK}" \
           --submit &
         worker_pid=$$!

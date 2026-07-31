@@ -155,11 +155,12 @@ Stop the affected action and preserve evidence when:
 
 ## Owner-bounded Tiny Live Copy experiment
 
-This section applies only to authorization
-`POLYSIA-TINY-LIVE-COPY-002` and its one new 12-hour run. It is not a general
-live-trading procedure. The prior `POLYSIA-TINY-LIVE-COPY-001` run is immutable
-`FAILED_SAFE` evidence with zero financial impact. Stages 2 through 6 of the
-Copy Trading plan remain incomplete.
+This section applies only to an exact, separately owner-authorized Tiny Live
+Copy run. It is not a general live-trading procedure. Authorizations 001 and
+002 are consumed historical evidence. `POLYSIA-TINY-LIVE-COPY-003` may be
+prepared and shadow-validated, but it must not be claimed or used for Live
+without a later owner instruction naming that exact authorization and Run ID.
+Stages 2 through 6 of the Copy Trading plan remain incomplete.
 
 The experiment runs as the `copy-experiment` Compose profile with:
 
@@ -167,6 +168,8 @@ The experiment runs as the `copy-experiment` Compose profile with:
   `/var/lib/polysia/runtime/candidates.txt` (`0600`, UID/GID `10001`);
 - exactly 48 active discovery aliases, rotated every 30 minutes by a circular
   step of 34 only while the account is flat and monitoring;
+- response-by-response signal processing without waiting for the other active
+  wallet reads, plus one atomic durable pre-submit signal reservation;
 - a maximum of 100 `/trades` attempts per rolling 10 seconds, of which at most
   80 are discovery attempts and 20 remain reserved, with at most four calls in
   flight;
@@ -181,6 +184,8 @@ The experiment runs as the `copy-experiment` Compose profile with:
 - a per-entry all-in debit cap of USD 5 and a cumulative confirmed-entry plus
   next-reserved-entry cost cap of USD 10 for the experiment;
 - a 90-second operational entry TTL;
+- a ten-second maximum signal age and a Tiny Live Copy-specific four-minute
+  market-time gate; the shared Copy Trading domain default remains seven minutes;
 - a detached heartbeat watchdog and `on-failure:3` restart policy.
 
 The pinned `polymarket-client==0.2.0` requires a GTD timestamp at least 180
@@ -213,7 +218,10 @@ as non-mergeable. The venue may still label a zero-value historical record
 `redeemable`; that label does not create economic exposure. Missing or
 contradictory fields fail closed.
 
-Build the exact merged commit and start the one-off profile:
+The protected runtime environment must set distinct, matching values for
+`POLYSIA_COPY_AUTHORIZATION_ID` and `POLYSIA_COPY_LIVE_ACK`. A Dry-run/Shadow
+omits both values and never uses `--submit`. Build the exact merged commit and
+start the one-off profile only after separate Live authorization:
 
 ```bash
 export POLYSIA_IMAGE_TAG=<merged-main-sha>

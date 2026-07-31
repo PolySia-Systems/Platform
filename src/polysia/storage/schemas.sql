@@ -273,6 +273,15 @@ CREATE TABLE IF NOT EXISTS copytrading_live_attempts (
     FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
 );
 
+CREATE TABLE IF NOT EXISTS copytrading_signal_reservations (
+    run_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    reserved_at TEXT NOT NULL,
+    UNIQUE (run_id, event_id),
+    FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
+);
+
 CREATE TABLE IF NOT EXISTS copytrading_seen_events (
     run_id TEXT NOT NULL,
     event_id TEXT NOT NULL,

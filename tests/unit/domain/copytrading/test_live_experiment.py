@@ -123,6 +123,26 @@ def test_signal_freshness_enforces_ten_seconds_and_seven_minutes() -> None:
     )
 
 
+def test_signal_freshness_allows_scoped_four_minute_override() -> None:
+    assert signal_is_fresh(
+        executed_at=NOW,
+        observed_at=NOW + timedelta(seconds=10),
+        market_end=NOW + timedelta(seconds=250),
+        minimum_seconds_to_end=240,
+    )
+    assert not signal_is_fresh(
+        executed_at=NOW,
+        observed_at=NOW,
+        market_end=NOW + timedelta(seconds=239),
+        minimum_seconds_to_end=240,
+    )
+    assert not signal_is_fresh(
+        executed_at=NOW,
+        observed_at=NOW,
+        market_end=NOW + timedelta(seconds=240),
+    )
+
+
 def test_concurrency_snapshot_enforces_one_pending_or_one_position_and_exit() -> None:
     CopyExperimentSnapshot(
         state=CopyExperimentState.ENTRY_PENDING,

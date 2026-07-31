@@ -17,6 +17,7 @@ from polysia.domain.market import (
     MarketOutcomeSummary,
 )
 from polysia.execution.tiny_live_copy import (
+    TinyLiveCopyConfig,
     TinyLiveCopyError,
     _assert_market_mapping,
     _emergency_cancel_if_needed,
@@ -75,6 +76,30 @@ def test_strict_btc_15m_mapping_accepts_only_exact_current_market() -> None:
             expected_start=NOW,
             expected_end=NOW + timedelta(minutes=15),
             now=NOW,
+        )
+
+
+def test_tiny_live_copy_market_time_gate_is_exactly_four_minutes() -> None:
+    market = _market()
+    _assert_market_mapping(
+        market,
+        expected_slug=str(market.slug),
+        expected_condition=CONDITION,
+        token_id=TOKEN,
+        expected_start=NOW,
+        expected_end=NOW + timedelta(minutes=15),
+        now=NOW + timedelta(minutes=11),
+    )
+
+    with pytest.raises(TinyLiveCopyError, match="four minutes"):
+        _assert_market_mapping(
+            market,
+            expected_slug=str(market.slug),
+            expected_condition=CONDITION,
+            token_id=TOKEN,
+            expected_start=NOW,
+            expected_end=NOW + timedelta(minutes=15),
+            now=NOW + timedelta(minutes=11, milliseconds=1),
         )
 
 
@@ -290,11 +315,41 @@ async def test_emergency_cancel_all_is_confirmed_and_persisted(tmp_path: Path) -
 
 
 def test_copy_runtime_cannot_bypass_risk_or_execution() -> None:
-    source = Path("src/polysia/execution/tiny_live_copy.py").read_text(
-        encoding="utf-8"
-    )
+    source = Path("src/polysia/execution/tiny_live_copy.py").read_text(encoding="utf-8")
 
     assert "RiskEngine(" in source
     assert "LiveBroker(" in source
     assert "execution_port.place_limit_order" not in source
     assert "execution_port.place_market_order" not in source
+
+
+def test_live_authorization_is_runtime_supplied_and_not_hardcoded(tmp_path: Path) -> None:
+    common = {
+        "settings": AppSettings(_env_file=None),
+        "project_root": tmp_path,
+        "output_dir": tmp_path / "reports",
+        "database_path": tmp_path / "state.sqlite3",
+        "candidate_file": tmp_path / "candidates.txt",
+        "run_id": "tiny-live-copy-authorization-test",
+        "dry_run": False,
+    }
+    with pytest.raises(ValueError, match="runtime authorization"):
+        TinyLiveCopyConfig(**common)
+
+    with pytest.raises(ValueError, match="runtime acknowledgement"):
+        TinyLiveCopyConfig(
+            **common,
+            authorization_id="POLYSIA-TINY-LIVE-COPY-003",
+        )
+
+    config = TinyLiveCopyConfig(
+        **common,
+        authorization_id="POLYSIA-TINY-LIVE-COPY-003",
+        acknowledgement=True,
+    )
+    assert config.authorization_id == "POLYSIA-TINY-LIVE-COPY-003"
+
+    compose = Path("compose.yaml").read_text(encoding="utf-8")
+    assert "POLYSIA_COPY_AUTHORIZATION_ID" in compose
+    assert '--authorization-id "$${POLYSIA_COPY_AUTHORIZATION_ID}"' in compose
+    assert "POLYSIA-TINY-LIVE-COPY-002" not in compose

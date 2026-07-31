@@ -74,10 +74,11 @@ from polysia.strategies.btc_15m_favorite_take_profit import (
     Btc15mFavoriteTakeProfitStrategy,
 )
 
-AUTHORIZATION_ID = "POLYSIA-TINY-LIVE-COPY-002"
 PREVIOUS_RUN_ID = "tiny-live-copy-20260729T054315Z"
 STRATEGY_ID = "polymarket-copytrading"
 APPROVED_SDK_VERSION = "0.2.0"
+AUTHORIZATION_ID_PREFIX = "POLYSIA-TINY-LIVE-COPY-"
+DRY_RUN_AUTHORIZATION_PREFIX = "DRY-RUN:"
 BASE_UNITS = Decimal("1000000")
 POLL_INTERVAL_SECONDS = 6
 POLL_OVERLAP_SECONDS = 20
@@ -86,6 +87,7 @@ DISCOVERY_ROTATION_MINUTES = 30
 SOURCE_OUTAGE_LIMIT_SECONDS = 120
 MAXIMUM_BOOK_AGE_MS = 5_000
 MAXIMUM_HEARTBEAT_GAP_SECONDS = 60
+TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END = 240
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
@@ -93,6 +95,11 @@ Sleeper = Callable[[float], Awaitable[None]]
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _valid_authorization_id(value: str) -> bool:
+    suffix = value.removeprefix(AUTHORIZATION_ID_PREFIX)
+    return value.startswith(AUTHORIZATION_ID_PREFIX) and len(suffix) == 3 and suffix.isdigit()
 
 
 class TinyLiveCopyError(RuntimeError):
@@ -211,6 +218,7 @@ class TinyLiveCopyConfig:
     candidate_file: Path
     run_id: str
     dry_run: bool = True
+    authorization_id: str | None = None
     acknowledgement: bool = False
     verified_ci_commit: str | None = None
     signal_window_hours: int = 12
@@ -227,6 +235,12 @@ class TinyLiveCopyConfig:
             raise ValueError("poll interval must preserve the bounded official API rate")
         if self.maximum_poll_cycles is not None and self.maximum_poll_cycles < 1:
             raise ValueError("maximum_poll_cycles must be positive when supplied")
+        if self.authorization_id is not None and not _valid_authorization_id(self.authorization_id):
+            raise ValueError("authorization id must use the protected Tiny Live Copy format")
+        if not self.dry_run and self.authorization_id is None:
+            raise ValueError("live execution requires a runtime authorization id")
+        if not self.dry_run and not self.acknowledgement:
+            raise ValueError("live execution requires a matching runtime acknowledgement")
 
 
 @dataclass(slots=True)
@@ -253,7 +267,7 @@ class TinyLiveCopyReport:
     candidate_runtime_file_deleted: bool
     stop_reason: str | None
     candidate_summary: dict[str, object]
-    authorization_id: str = AUTHORIZATION_ID
+    authorization_id: str = "NOT_CLAIMED_DRY_RUN"
     source_availability: str = "available"
     request_metrics: dict[str, object] = field(default_factory=dict)
     active_management_priority_cycles: int = 0
@@ -264,6 +278,8 @@ class TinyLiveCopyReport:
     decisions: list[dict[str, object]] = field(default_factory=list)
     orderbook_snapshots: list[dict[str, object]] = field(default_factory=list)
     sanitized_events: list[dict[str, object]] = field(default_factory=list)
+    signal_latency_metrics: list[dict[str, object]] = field(default_factory=list)
+    poll_batch_metrics: list[dict[str, object]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -297,6 +313,10 @@ class TinyLiveCopyReport:
             "preflight_venue_mutation": self.preflight_venue_mutation,
             "market_time_validation": self.market_time_validation,
             "request_metrics": self.request_metrics,
+            "signal_latency_metrics": self.signal_latency_metrics,
+            "poll_batch_metrics": self.poll_batch_metrics,
+            "maximum_signal_age_seconds": 10,
+            "minimum_market_time_remaining_seconds": (TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END),
             "run_id": self.run_id,
             "signal_count": self.signal_count,
             "signal_window_end": self.signal_window_end.isoformat(),
@@ -353,6 +373,12 @@ class _ObservedLeaderEvent:
 class _PollBatch:
     events: tuple[_ObservedLeaderEvent, ...]
     unavailable: TradesSourceUnavailableError | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    response_count: int = 0
+
+
+PollResultHandler = Callable[[_PollBatch], Awaitable[None]]
 
 
 async def run_tiny_live_copy(
@@ -410,6 +436,9 @@ async def run_tiny_live_copy(
         candidate_runtime_file_deleted=False,
         stop_reason=None,
         candidate_summary=bank.to_safe_dict(),
+        authorization_id=(
+            "NOT_CLAIMED_DRY_RUN" if config.dry_run else cast(str, config.authorization_id)
+        ),
     )
     runtime = _Runtime(report=report, last_poll_at=started_at)
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -417,10 +446,15 @@ async def run_tiny_live_copy(
     with SQLiteDatabase(config.database_path) as database:
         repository = CopyExperimentRepository(database.connection)
         existing = repository.get(config.run_id)
+        runtime_authorization_id = (
+            f"{DRY_RUN_AUTHORIZATION_PREFIX}{config.run_id}"
+            if config.dry_run
+            else cast(str, config.authorization_id)
+        )
         if existing is None:
             repository.create(
                 run_id=config.run_id,
-                authorization_id=AUTHORIZATION_ID,
+                authorization_id=runtime_authorization_id,
                 started_at=started_at,
                 signal_window_end=signal_window_end,
                 payload={
@@ -430,9 +464,14 @@ async def run_tiny_live_copy(
                     "maximum_entry_debit": str(MAXIMUM_ENTRY_DEBIT),
                     "maximum_experiment_entry_cost": str(MAXIMUM_EXPERIMENT_ENTRY_COST),
                     "maximum_total_entry_attempts": MAXIMUM_TOTAL_ENTRY_ATTEMPTS,
+                    "minimum_market_time_remaining_seconds": (
+                        TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END
+                    ),
                 },
             )
         else:
+            if repository.authorization_id(config.run_id) != runtime_authorization_id:
+                raise TinyLiveCopyError("restart authorization does not match durable state")
             signal_window_end = repository.signal_window_end(config.run_id)
             report.signal_window_end = signal_window_end
         priority_aliases = tuple(
@@ -495,6 +534,15 @@ async def run_tiny_live_copy(
                 runtime=runtime,
                 clock=clock,
             )
+            if existing is not None and repository.release_orphaned_signal_reservation(
+                config.run_id
+            ):
+                runtime.report.decisions.append(
+                    {
+                        "action": "ORPHANED_SIGNAL_RESERVATION_RELEASED",
+                        "timestamp": _aware(clock()).isoformat(),
+                    }
+                )
             if existing is not None:
                 runtime.report.decisions.append(
                     {
@@ -582,11 +630,17 @@ async def run_tiny_live_copy(
             if (
                 config.delete_candidate_file_on_terminal
                 and snapshot is not None
-                and snapshot.state in TERMINAL_STATES
                 and (
-                    snapshot.state is CopyExperimentState.REDEEMABLE
+                    (
+                        config.dry_run
+                        and snapshot.entry_order_id is None
+                        and snapshot.exit_order_id is None
+                        and snapshot.position_size == 0
+                    )
+                    or snapshot.state is CopyExperimentState.REDEEMABLE
                     or (
-                        snapshot.entry_order_id is None
+                        snapshot.state in TERMINAL_STATES
+                        and snapshot.entry_order_id is None
                         and snapshot.exit_order_id is None
                         and snapshot.position_size == 0
                     )
@@ -819,6 +873,7 @@ async def _monitor(
                         start_at=now - timedelta(seconds=POLL_OVERLAP_SECONDS),
                         end_at=now,
                         purpose=LeaderReadPurpose.SELECTED_LEADER,
+                        clock=clock,
                     )
                 elif now >= discovery.next_probe_at:
                     active_batch = await _poll_aliases(
@@ -829,8 +884,18 @@ async def _monitor(
                         start_at=now - timedelta(seconds=POLL_OVERLAP_SECONDS),
                         end_at=now,
                         purpose=LeaderReadPurpose.RECOVERY,
+                        clock=clock,
                     )
                 if active_batch is not None:
+                    _record_poll_batch(
+                        runtime.report,
+                        active_batch,
+                        purpose=(
+                            LeaderReadPurpose.SELECTED_LEADER
+                            if discovery.outage_started_at is None
+                            else LeaderReadPurpose.RECOVERY
+                        ),
+                    )
                     if active_batch.unavailable is not None:
                         _ingest_events(
                             config,
@@ -932,7 +997,30 @@ async def _monitor(
             _update_discovery_report(runtime.report, discovery)
 
             batch: _PollBatch | None = None
+            streamed_discovery = False
+            streamed_outage = False
+            entry_selected = False
+
+            async def process_discovery_result(partial: _PollBatch) -> None:
+                nonlocal entry_selected, streamed_outage
+                if partial.unavailable is not None:
+                    streamed_outage = True
+                if await _process_discovery_events(
+                    config,
+                    events=partial.events,
+                    allow_signals=not streamed_outage and not entry_selected,
+                    market_port=market_port,
+                    execution_port=execution_port,
+                    geoblock_port=geoblock_port,
+                    kill_switch=kill_switch,
+                    repository=repository,
+                    runtime=runtime,
+                    clock=clock,
+                ):
+                    entry_selected = True
+
             if discovery.outage_started_at is None:
+                streamed_discovery = True
                 batch = await _poll_aliases(
                     source,
                     repository=repository,
@@ -941,6 +1029,8 @@ async def _monitor(
                     start_at=now - timedelta(seconds=POLL_OVERLAP_SECONDS),
                     end_at=now,
                     purpose=LeaderReadPurpose.DISCOVERY,
+                    clock=clock,
+                    on_result=process_discovery_result,
                 )
             elif discovery.next_probe_at is not None and now >= discovery.next_probe_at:
                 batch = await _poll_aliases(
@@ -951,54 +1041,59 @@ async def _monitor(
                     start_at=now - timedelta(seconds=POLL_OVERLAP_SECONDS),
                     end_at=now,
                     purpose=LeaderReadPurpose.RECOVERY,
+                    clock=clock,
                 )
             if batch is not None:
+                _record_poll_batch(
+                    runtime.report,
+                    batch,
+                    purpose=(
+                        LeaderReadPurpose.DISCOVERY
+                        if streamed_discovery
+                        else LeaderReadPurpose.RECOVERY
+                    ),
+                )
                 if batch.unavailable is not None:
-                    _ingest_events(
-                        config,
-                        repository=repository,
-                        events=batch.events,
-                        runtime=runtime,
-                        allow_signals=False,
-                    )
+                    if not streamed_discovery:
+                        _ingest_events(
+                            config,
+                            repository=repository,
+                            events=batch.events,
+                            runtime=runtime,
+                            allow_signals=False,
+                        )
+                    post_batch = repository.get(config.run_id)
+                    assert post_batch is not None
                     _record_source_outage(
                         repository,
                         run_id=config.run_id,
                         error=batch.unavailable,
                         report=runtime.report,
-                        now=now,
-                        exposure_exists=False,
+                        now=_aware(clock()),
+                        exposure_exists=(
+                            post_batch.entry_order_id is not None or post_batch.position_size > 0
+                        ),
                     )
                 else:
                     _clear_source_outage(
                         repository,
                         run_id=config.run_id,
                         report=runtime.report,
-                        now=now,
+                        now=_aware(clock()),
                     )
-                    signals = _ingest_events(
-                        config,
-                        repository=repository,
-                        events=batch.events,
-                        runtime=runtime,
-                    )
-                    snapshot = repository.get(config.run_id)
-                    assert snapshot is not None
-                    if snapshot.signal_acceptance_open and signals:
-                        for signal in signals:
-                            if await _attempt_entry(
-                                config,
-                                event=signal.event,
-                                metadata=signal.metadata,
-                                market_port=market_port,
-                                execution_port=execution_port,
-                                geoblock_port=geoblock_port,
-                                kill_switch=kill_switch,
-                                repository=repository,
-                                runtime=runtime,
-                                clock=clock,
-                            ):
-                                break
+                    if not streamed_discovery:
+                        await _process_discovery_events(
+                            config,
+                            events=batch.events,
+                            allow_signals=True,
+                            market_port=market_port,
+                            execution_port=execution_port,
+                            geoblock_port=geoblock_port,
+                            kill_switch=kill_switch,
+                            repository=repository,
+                            runtime=runtime,
+                            clock=clock,
+                        )
         runtime.last_poll_at = now
         _refresh_source_report(source, runtime.report)
         _refresh_report(repository, config.run_id, runtime.report)
@@ -1083,6 +1178,7 @@ def _ingest_events(
                 executed_at=event.executed_at,
                 observed_at=event.observed_at,
                 market_end=metadata.ends_at,
+                minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
             )
         ):
             signals.append(observed)
@@ -1092,6 +1188,105 @@ def _ingest_events(
         event_ids=tuple(observed.event.event_id for observed in events),
     )
     return signals
+
+
+async def _process_discovery_events(
+    config: TinyLiveCopyConfig,
+    *,
+    events: tuple[_ObservedLeaderEvent, ...],
+    allow_signals: bool,
+    market_port: CopyMarketPort,
+    execution_port: CopyExecutionPort,
+    geoblock_port: CopyGeoblockPort,
+    kill_switch: KillSwitch,
+    repository: CopyExperimentRepository,
+    runtime: _Runtime,
+    clock: Clock,
+) -> bool:
+    signals = _ingest_events(
+        config,
+        repository=repository,
+        events=events,
+        runtime=runtime,
+        allow_signals=allow_signals,
+    )
+    snapshot = repository.get(config.run_id)
+    assert snapshot is not None
+    if not snapshot.signal_acceptance_open or not allow_signals:
+        return repository.signal_reservation(config.run_id) is not None
+    for signal in signals:
+        event = signal.event
+        metadata = signal.metadata
+        evaluated_at = _aware(clock())
+        metric: dict[str, object] = {
+            "event_id": event.event_id,
+            "leader_alias": event.leader_id,
+            "evaluated_at": evaluated_at.isoformat(),
+            "executed_to_observed_ms": _elapsed_ms(
+                event.executed_at,
+                event.observed_at,
+            ),
+            "observed_to_evaluation_ms": _elapsed_ms(
+                event.observed_at,
+                evaluated_at,
+            ),
+            "market_time_remaining_at_evaluation_ms": _elapsed_ms(
+                evaluated_at,
+                metadata.ends_at,
+            ),
+        }
+        runtime.report.signal_latency_metrics.append(metric)
+        if not signal_is_fresh(
+            executed_at=event.executed_at,
+            observed_at=evaluated_at,
+            market_end=metadata.ends_at,
+            minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
+        ):
+            runtime.report.decisions.append(
+                {
+                    "action": "SIGNAL_REJECTED_STALE_AT_EVALUATION",
+                    "event_id": event.event_id,
+                    "leader_alias": event.leader_id,
+                    "timestamp": evaluated_at.isoformat(),
+                }
+            )
+            continue
+        reserved_at = _aware(clock())
+        if not repository.reserve_signal(
+            run_id=config.run_id,
+            event_id=event.event_id,
+            leader_alias=event.leader_id,
+            reserved_at=reserved_at,
+        ):
+            metric["reservation"] = "rejected"
+            return repository.signal_reservation(config.run_id) is not None
+        metric["reserved_at"] = reserved_at.isoformat()
+        metric["evaluation_to_reservation_ms"] = _elapsed_ms(
+            evaluated_at,
+            reserved_at,
+        )
+        try:
+            selected = await _attempt_entry(
+                config,
+                event=event,
+                metadata=metadata,
+                market_port=market_port,
+                execution_port=execution_port,
+                geoblock_port=geoblock_port,
+                kill_switch=kill_switch,
+                repository=repository,
+                runtime=runtime,
+                clock=clock,
+                latency_metric=metric,
+            )
+        finally:
+            repository.release_signal_reservation(
+                run_id=config.run_id,
+                event_id=event.event_id,
+            )
+        if selected:
+            return True
+    return repository.signal_reservation(config.run_id) is not None
 
 
 async def _attempt_entry(
@@ -1106,12 +1301,14 @@ async def _attempt_entry(
     repository: CopyExperimentRepository,
     runtime: _Runtime,
     clock: Clock,
+    latency_metric: dict[str, object] | None = None,
 ) -> bool:
     now = _aware(clock())
     if not signal_is_fresh(
         executed_at=event.executed_at,
         observed_at=now,
         market_end=metadata.ends_at,
+        minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
     ):
         runtime.report.decisions.append(
             {
@@ -1144,6 +1341,7 @@ async def _attempt_entry(
             expected_fee=Decimal("0"),
             now=now,
             market_end=metadata.ends_at,
+            minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
         )
         expected_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
             market,
@@ -1158,6 +1356,7 @@ async def _attempt_entry(
             expected_fee=expected_fee,
             now=now,
             market_end=metadata.ends_at,
+            minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
         )
         calculate_take_profit_price(quote.price, tick_size=book.tick_size)
         if (
@@ -1216,6 +1415,25 @@ async def _attempt_entry(
     claim: dict[str, int] = {}
 
     def persist_attempt() -> None:
+        submission_checked_at = _aware(clock())
+        if latency_metric is not None:
+            reserved_at = datetime.fromisoformat(str(latency_metric["reserved_at"]))
+            latency_metric["submission_checked_at"] = submission_checked_at.isoformat()
+            latency_metric["reservation_to_submission_ms"] = _elapsed_ms(
+                reserved_at,
+                submission_checked_at,
+            )
+            latency_metric["market_time_remaining_at_submission_ms"] = _elapsed_ms(
+                submission_checked_at,
+                metadata.ends_at,
+            )
+        if not signal_is_fresh(
+            executed_at=event.executed_at,
+            observed_at=submission_checked_at,
+            market_end=metadata.ends_at,
+            minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
+        ):
+            raise CopySignalSkip("signal is stale immediately before submission")
         attempt = repository.claim_entry_attempt(
             run_id=config.run_id,
             leader_alias=event.leader_id,
@@ -1230,10 +1448,11 @@ async def _attempt_entry(
             entry_cancel_at=quote.cancel_at,
             leader_latency_ms=max(
                 0,
-                int((now - event.executed_at).total_seconds() * 1000),
+                int((submission_checked_at - event.executed_at).total_seconds() * 1000),
             ),
             leader_price_difference=quote.price - event.executed_price,
-            claimed_at=_aware(clock()),
+            claimed_at=submission_checked_at,
+            reserved_event_id=event.event_id,
         )
         if attempt is None:
             raise TinyLiveCopyError("duplicate prevention blocked the entry attempt")
@@ -1254,6 +1473,8 @@ async def _attempt_entry(
         }
     )
     if config.dry_run:
+        if latency_metric is not None:
+            latency_metric["submission"] = "not_attempted_dry_run"
         runtime.report.classification = "DRY_RUN_APPROVED_NO_SUBMISSION"
         return True
     try:
@@ -1266,6 +1487,17 @@ async def _attempt_entry(
             expiration=quote.venue_expiration,
             before_submit=persist_attempt,
         )
+    except CopySignalSkip as error:
+        runtime.report.decisions.append(
+            {
+                "action": "SIGNAL_REJECTED_STALE_BEFORE_SUBMISSION",
+                "event_id": event.event_id,
+                "leader_alias": event.leader_id,
+                "reason": str(error),
+                "timestamp": _aware(clock()).isoformat(),
+            }
+        )
+        return False
     except Exception:
         if "number" in claim:
             repository.record_entry_submission(
@@ -1943,8 +2175,11 @@ async def _poll_aliases(
     start_at: datetime,
     end_at: datetime,
     purpose: LeaderReadPurpose,
+    clock: Clock = utc_now,
+    on_result: PollResultHandler | None = None,
 ) -> _PollBatch:
     semaphore = asyncio.Semaphore(10)
+    started_at = _aware(clock())
 
     async def read(
         alias: str,
@@ -2020,13 +2255,58 @@ async def _poll_aliases(
         except TradesSourceUnavailableError as error:
             return tuple(events), error
 
-    batches = await asyncio.gather(*(read(alias) for alias in aliases))
-    unavailable = [error for _, error in batches if error is not None]
+    async def timed_read(
+        alias: str,
+    ) -> tuple[
+        tuple[_ObservedLeaderEvent, ...],
+        TradesSourceUnavailableError | None,
+        datetime,
+    ]:
+        events, read_error = await read(alias)
+        return events, read_error, _aware(clock())
+
+    tasks = [asyncio.create_task(timed_read(alias)) for alias in aliases]
+    batches: list[
+        tuple[
+            tuple[_ObservedLeaderEvent, ...],
+            TradesSourceUnavailableError | None,
+            datetime,
+        ]
+    ] = []
+    try:
+        for completed in asyncio.as_completed(tasks):
+            events, read_error, completed_at = await completed
+            batches.append((events, read_error, completed_at))
+            if on_result is not None:
+                await on_result(
+                    _PollBatch(
+                        events=events,
+                        unavailable=read_error,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        response_count=1,
+                    )
+                )
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    unavailable_errors = [error for _, error, _ in batches if error is not None]
+    completed_at = max(
+        (completed for _, _, completed in batches),
+        default=started_at,
+    )
     return _PollBatch(
-        events=tuple(event for batch, _ in batches for event in batch),
+        events=tuple(event for batch, _, _ in batches for event in batch),
         unavailable=(
-            None if not unavailable else max(unavailable, key=lambda error: error.retry_at)
+            None
+            if not unavailable_errors
+            else max(unavailable_errors, key=lambda error: error.retry_at)
         ),
+        started_at=started_at,
+        completed_at=completed_at,
+        response_count=len(batches),
     )
 
 
@@ -2186,6 +2466,29 @@ def _update_discovery_report(
             "subset_digest": state.subset_digest,
         }
     )
+
+
+def _record_poll_batch(
+    report: TinyLiveCopyReport,
+    batch: _PollBatch,
+    *,
+    purpose: LeaderReadPurpose,
+) -> None:
+    if batch.started_at is None or batch.completed_at is None:
+        return
+    report.poll_batch_metrics.append(
+        {
+            "purpose": purpose.value,
+            "response_count": batch.response_count,
+            "started_at": batch.started_at.isoformat(),
+            "completed_at": batch.completed_at.isoformat(),
+            "full_batch_completion_ms": _elapsed_ms(
+                batch.started_at,
+                batch.completed_at,
+            ),
+        }
+    )
+    del report.poll_batch_metrics[:-120]
 
 
 def _refresh_source_report(
@@ -2430,8 +2733,11 @@ def _assert_market_mapping(
         raise CopySignalSkip("market is not active")
     if market.accepting_orders is not True or market.enable_order_book is not True:
         raise CopySignalSkip("market is not accepting orderbook orders")
-    if market.end_date is None or (_aware(market.end_date) - now).total_seconds() < 420:
-        raise CopySignalSkip("market has fewer than seven minutes remaining")
+    if (
+        market.end_date is None
+        or (_aware(market.end_date) - now).total_seconds() < TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END
+    ):
+        raise CopySignalSkip("market has fewer than four minutes remaining")
     if token_id not in {outcome.token_id for outcome in market.outcomes}:
         raise CopySignalSkip("leader outcome token is not mapped to the market")
     if (
@@ -2628,6 +2934,10 @@ def _aware(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _elapsed_ms(start: datetime, end: datetime) -> int:
+    return max(0, int((_aware(end) - _aware(start)).total_seconds() * 1000))
+
+
 def _heartbeat_is_fresh(last_seen: datetime, now: datetime) -> bool:
     return (
         timedelta(0)
@@ -2776,7 +3086,7 @@ def _safe_error(error: Exception) -> str:
 
 
 __all__ = [
-    "AUTHORIZATION_ID",
+    "AUTHORIZATION_ID_PREFIX",
     "TinyLiveCopyConfig",
     "TinyLiveCopyError",
     "TinyLiveCopyReport",

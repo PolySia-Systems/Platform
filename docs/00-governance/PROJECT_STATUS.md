@@ -4,25 +4,26 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-07-29 |
+| Review date | 2026-07-31 |
 | Source-of-truth branch | `main` |
-| Last deployed baseline before authorization 002 | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
+| Last verified deployed baseline | `2ed6a2cc7fc9b5d9c583ccc0fc92256710a7d930` |
 | Failed-safe runtime baseline | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
-| Active maintenance task | Tiny Live Copy reliability corrections |
+| Active maintenance task | Tiny Live Copy streaming and four-minute shadow validation |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `TINY_LIVE_COPY_002_AUTHORIZED_GATED` |
+| Phase status | `TINY_LIVE_COPY_003_SHADOW_GATED` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly
 proven closed zero-value historical positions are ignored. The exact merged
 commit was deployed before the first authorized worker run.
-PR `#40` recorded the failed-safe diagnostic. Authorization
-`POLYSIA-TINY-LIVE-COPY-002` permits only the bounded reliability repair,
-normal PR/CI/merge/deploy gates, read-only preflight, and one new 12-hour run if
-every gate passes.
+PR `#40` recorded the failed-safe diagnostic. PR `#41` delivered and deployed
+the reliability repair. Its authorization was consumed by the terminal
+12-hour run `tiny-live-copy-20260729T135013Z`. Authorization
+`POLYSIA-TINY-LIVE-COPY-003` is reserved for a separate future owner decision;
+the current task may prepare and validate it but may not claim it or launch Live.
 
 ## Completed stages
 
@@ -57,10 +58,10 @@ every gate passes.
   submissions, fills, positions, fees, collateral debit, and cumulative entry
   cost. The diagnostic also proved an independent Gamma market-time mapping
   defect. See the latest Tiny Live Copy diagnostic handoff.
-- The Tiny Live Copy 002 delivery candidate adds endpoint-aware pacing, shared
+- The deployed Tiny Live Copy 002 repair adds endpoint-aware pacing, shared
   429 recovery, follower-management priority, strict Gamma `eventStartTime`
   validation, rotating 48-alias discovery, and durable read/cooldown state.
-  Delivery and live-run evidence remain gated and are not claimed here.
+  Its 12-hour run finalized normally with zero venue attempts or mutations.
 
 ## Current architecture and runtime capabilities
 
@@ -161,10 +162,19 @@ evidence.
 
 ## Active work, blockers, and open decisions
 
-- The first bounded Tiny Live Copy worker run is terminal `FAILED_SAFE`. It
-  monitored 102 protected aliases, observed 25 new public events, deduplicated
-  46 repeated observations, and identified four fresh candidate signals before
-  stopping on Data API HTTP 429. It made zero venue attempts and mutations.
+- The second bounded Tiny Live Copy worker run is terminal `FINALIZED` with
+  classification `NO_SIGNAL_INCONCLUSIVE`. It observed 170 sanitized BTC
+  15-minute trades, including 33 `OPEN` and 137 `INCREASE` events, but made zero
+  venue attempts or mutations. Its only accepted signal reached the worker at
+  7.525 seconds old and was rejected at 13.159 seconds because the 48-response
+  `asyncio.gather` barrier delayed evaluation.
+- The current delivery candidate processes each wallet response as it completes,
+  adds an atomic durable pre-submit signal reservation that does not consume an
+  entry attempt, and retains a second ten-second freshness check immediately
+  before external submission.
+- The Tiny Live Copy-specific market-time gate is proposed at four minutes;
+  the shared domain default remains seven minutes. Existing 90-second
+  cancellation and 185-second GTD backstop controls remain unchanged.
 - The repair fixes the measured burst behavior with 48 active aliases, a
   100-attempt rolling `/trades` budget, an 80-attempt discovery budget, 20
   reserved attempts, and at most four calls in flight. Discovery is evenly
@@ -181,9 +191,10 @@ evidence.
 - Discovery ordering, cursor, active aliases, subset digest, cooldown metadata,
   per-alias read checkpoints, and sanitized pending events are durable. Raw
   candidate addresses remain protected runtime input.
-- Authorization `POLYSIA-TINY-LIVE-COPY-002` is exclusive to one new 12-hour
-  run. It does not authorize launch unless Draft PR review, required CI,
-  synchronized merged deployment, and zero-mutation preflight all pass.
+- Authorization IDs are supplied only through protected runtime input.
+  `POLYSIA-TINY-LIVE-COPY-003` has not been claimed, registered, or consumed.
+  A future Live run still requires separate owner approval for that exact ID and
+  an exact unclaimed Run ID after conclusive Replay and zero-mutation Shadow evidence.
 - Copy Trading Stage 0 established a conditional architecture GO. Stage 1
   proved official read surfaces, normalization, deduplication, strict BTC
   15-minute mapping, and restart-stable event identity, but closed `NO_GO` for
@@ -230,11 +241,12 @@ evidence.
 
 ## Single recommended next task
 
-**Complete the gated `POLYSIA-TINY-LIVE-COPY-002` delivery.** Pass the full
-repository and CI gates, merge normally, synchronize and deploy the exact merge
-commit, perform zero-mutation live preflight, and launch exactly one detached
-12-hour run only if every gate passes. After the initial read-only snapshot,
-leave the detached run alone; later owner-requested checks must be read-only.
+**Complete only the gated Tiny Live Copy 003 repair and Shadow stage.** Validate
+streaming signal processing and the scoped four-minute threshold, pass the full
+repository and CI gates, merge normally, deploy the exact merge commit, and run
+one bounded zero-mutation Shadow. Stop without Live if evidence is adverse,
+ambiguous, or inconclusive. Never claim the proposed authorization or Live Run
+ID during this stage.
 
 After a separately authorized experiment becomes terminal, the broader
 recommendation remains:

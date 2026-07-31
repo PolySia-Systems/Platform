@@ -117,9 +117,6 @@ from polysia.execution.manual_intervention_live_test import (
 )
 from polysia.execution.paper_broker import PaperBroker
 from polysia.execution.tiny_live_copy import (
-    AUTHORIZATION_ID as COPY_AUTHORIZATION_ID,
-)
-from polysia.execution.tiny_live_copy import (
     TinyLiveCopyConfig,
     run_tiny_live_copy,
 )
@@ -1817,11 +1814,18 @@ def tiny_live_copy(
         bool,
         typer.Option("--submit/--dry-run", help="Enable only the bounded owner-approved run."),
     ] = False,
+    authorization_id: Annotated[
+        str | None,
+        typer.Option(
+            "--authorization-id",
+            help="Protected runtime owner authorization; omit for Dry-run/Shadow.",
+        ),
+    ] = None,
     acknowledge: Annotated[
         str | None,
         typer.Option(
             "--acknowledge",
-            help=f"Required live acknowledgement: {COPY_AUTHORIZATION_ID}",
+            help="Required Live acknowledgement; must match --authorization-id exactly.",
         ),
     ] = None,
     verified_ci_commit: Annotated[
@@ -1853,7 +1857,8 @@ def tiny_live_copy(
                 candidate_file=candidate_file,
                 run_id=actual_run_id,
                 dry_run=not submit,
-                acknowledgement=acknowledge == COPY_AUTHORIZATION_ID,
+                authorization_id=authorization_id,
+                acknowledgement=(authorization_id is not None and acknowledge == authorization_id),
                 verified_ci_commit=verified_ci_commit,
                 maximum_poll_cycles=maximum_poll_cycles,
             )
