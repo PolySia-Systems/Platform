@@ -349,3 +349,55 @@ CREATE TABLE IF NOT EXISTS copytrading_pending_read_events (
     PRIMARY KEY (run_id, event_id),
     FOREIGN KEY (run_id) REFERENCES copytrading_live_runs(run_id)
 );
+
+-- Research/Replay evidence for the Signal Arbiter. These tables contain only
+-- protected internal leader keys; raw wallet addresses are prohibited by the
+-- domain and repository contracts.
+CREATE TABLE IF NOT EXISTS copytrading_wallet_signal_outcomes (
+    outcome_id TEXT NOT NULL,
+    leader_key TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    timeframe_seconds INTEGER NOT NULL CHECK(timeframe_seconds > 0),
+    opened_at TEXT NOT NULL,
+    closed_at TEXT NOT NULL,
+    net_return TEXT NOT NULL,
+    maximum_drawdown TEXT NOT NULL,
+    labeling_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (outcome_id, labeling_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_copytrading_wallet_outcomes_score
+    ON copytrading_wallet_signal_outcomes (
+        labeling_version, leader_key, market_type, timeframe_seconds, closed_at
+    );
+
+CREATE TABLE IF NOT EXISTS copytrading_follower_execution_outcomes (
+    execution_id TEXT PRIMARY KEY,
+    leader_key TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    timeframe_seconds INTEGER NOT NULL CHECK(timeframe_seconds > 0),
+    closed_at TEXT NOT NULL,
+    filled INTEGER NOT NULL CHECK(filled IN (0, 1)),
+    completed_cycle INTEGER NOT NULL CHECK(completed_cycle IN (0, 1)),
+    net_pnl TEXT,
+    execution_cost TEXT,
+    slippage TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_copytrading_follower_outcomes_score
+    ON copytrading_follower_execution_outcomes (
+        leader_key, market_type, timeframe_seconds, closed_at
+    );
+
+CREATE TABLE IF NOT EXISTS copytrading_concentration_events (
+    event_id TEXT PRIMARY KEY,
+    leader_key TEXT NOT NULL,
+    cause TEXT NOT NULL CHECK(cause IN ('LATE_SIGNAL', 'COMPLETED_CYCLE')),
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_copytrading_concentration_leader_time
+    ON copytrading_concentration_events (leader_key, occurred_at);

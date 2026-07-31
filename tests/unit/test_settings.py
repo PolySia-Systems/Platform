@@ -14,6 +14,7 @@ def test_defaults_are_data_only(monkeypatch) -> None:
     monkeypatch.delenv("POLYMARKET_WALLET_ADDRESS", raising=False)
     monkeypatch.delenv("TRADING_MODE", raising=False)
     monkeypatch.delenv("LIVE_TRADING_ENABLED", raising=False)
+    monkeypatch.delenv("POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED", raising=False)
     monkeypatch.delenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", raising=False)
     monkeypatch.delenv("POLYMARKET_LIVE_MAX_ORDER_SIZE", raising=False)
     monkeypatch.delenv("POLYMARKET_LIVE_MAX_ORDER_NOTIONAL", raising=False)
@@ -28,6 +29,7 @@ def test_defaults_are_data_only(monkeypatch) -> None:
     assert settings.trading_mode == TradingMode.DATA_ONLY
     assert settings.live_trading_enabled is False
     assert settings.live_trading_allowed is False
+    assert settings.copy_signal_arbiter_full_enabled is False
     assert settings.polymarket_live_token_allowlist == ()
     assert settings.polymarket_live_max_order_size == Decimal("1")
     assert settings.polymarket_live_max_order_notional == Decimal("1")
@@ -50,6 +52,24 @@ def test_live_trading_requires_live_mode_and_enable_flag(monkeypatch) -> None:
     assert settings.trading_mode == TradingMode.LIVE
     assert settings.live_trading_enabled is True
     assert settings.live_trading_allowed is True
+
+
+def test_experimental_full_arbiter_is_allowed_only_outside_live(monkeypatch) -> None:
+    monkeypatch.setenv("POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED", "true")
+
+    settings = AppSettings(_env_file=None)
+
+    assert settings.copy_signal_arbiter_full_enabled is True
+    assert settings.safe_public_dict()["copy_signal_arbiter_full_enabled"] is True
+
+
+def test_live_startup_fails_closed_for_experimental_full_arbiter(monkeypatch) -> None:
+    monkeypatch.setenv("TRADING_MODE", "LIVE")
+    monkeypatch.setenv("LIVE_TRADING_ENABLED", "true")
+    monkeypatch.setenv("POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED", "true")
+
+    with pytest.raises(ValueError, match="separate owner authorization"):
+        AppSettings(_env_file=None)
 
 
 def test_safe_public_dict_does_not_include_private_key(monkeypatch) -> None:

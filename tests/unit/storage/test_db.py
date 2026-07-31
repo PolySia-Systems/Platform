@@ -32,6 +32,9 @@ def test_initialize_database_creates_expected_tables() -> None:
         "live_lifecycle_alerts",
         "live_order_checkpoints",
         "live_round_trip_reconciliations",
+        "copytrading_wallet_signal_outcomes",
+        "copytrading_follower_execution_outcomes",
+        "copytrading_concentration_events",
     }.issubset(table_names)
 
 

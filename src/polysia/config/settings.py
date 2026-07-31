@@ -4,7 +4,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -32,6 +32,10 @@ class AppSettings(BaseSettings):
         validation_alias="TRADING_MODE",
     )
     live_trading_enabled: bool = Field(default=False, validation_alias="LIVE_TRADING_ENABLED")
+    copy_signal_arbiter_full_enabled: bool = Field(
+        default=False,
+        validation_alias="POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED",
+    )
     polymarket_private_key: SecretStr | None = Field(
         default=None,
         validation_alias="POLYMARKET_PRIVATE_KEY",
@@ -157,6 +161,16 @@ class AppSettings(BaseSettings):
             raise ValueError("POLYMARKET_SIGNATURE_TYPE must be 0, 1, 2, or 3")
         return value
 
+    @model_validator(mode="after")
+    def block_experimental_full_arbiter_live_authority(self) -> AppSettings:
+        """Keep the experimental FULL arbiter outside every Live authority path."""
+        if self.live_trading_allowed and self.copy_signal_arbiter_full_enabled:
+            raise ValueError(
+                "experimental FULL copy-signal arbiter requires a separate owner "
+                "authorization that this release does not accept; Live startup is blocked"
+            )
+        return self
+
     @property
     def live_trading_allowed(self) -> bool:
         """Live trading requires both LIVE mode and an explicit enable flag."""
@@ -171,6 +185,7 @@ class AppSettings(BaseSettings):
         """Return settings that are safe to log or print."""
         return {
             "app_env": self.app_env,
+            "copy_signal_arbiter_full_enabled": self.copy_signal_arbiter_full_enabled,
             "polymarket_funder_address_configured": bool(self.polymarket_funder_address),
             "live_trading_allowed": self.live_trading_allowed,
             "live_trading_enabled": self.live_trading_enabled,
