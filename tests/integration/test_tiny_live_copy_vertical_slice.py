@@ -674,6 +674,8 @@ def _live_config(
     *,
     run_id: str,
     maximum_poll_cycles: int,
+    dry_run: bool = False,
+    delete_candidate_file_on_terminal: bool = False,
 ) -> TinyLiveCopyConfig:
     return TinyLiveCopyConfig(
         settings=AppSettings(
@@ -689,12 +691,12 @@ def _live_config(
         database_path=tmp_path / "state.sqlite3",
         candidate_file=_candidate_file(tmp_path),
         run_id=run_id,
-        dry_run=False,
-        authorization_id="POLYSIA-TINY-LIVE-COPY-999",
-        acknowledgement=True,
-        verified_ci_commit="a" * 40,
+        dry_run=dry_run,
+        authorization_id=None if dry_run else "POLYSIA-TINY-LIVE-COPY-999",
+        acknowledgement=not dry_run,
+        verified_ci_commit=None if dry_run else "a" * 40,
         maximum_poll_cycles=maximum_poll_cycles,
-        delete_candidate_file_on_terminal=False,
+        delete_candidate_file_on_terminal=delete_candidate_file_on_terminal,
     )
 
 
@@ -731,6 +733,74 @@ async def test_final_crossing_book_is_rejected_locally_without_attempt(
     assert market.book_reads == 2
     assert any(
         decision["action"] == "SIGNAL_REJECTED_POST_ONLY_LOCAL"
+        for decision in report.decisions
+    )
+
+
+@pytest.mark.asyncio
+async def test_dry_run_exercises_final_crossing_recheck_without_mutation(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    market = CrossingFinalBookMarketPort(clock)
+    execution = ExecutionPort()
+
+    report = await run_tiny_live_copy(
+        _live_config(
+            tmp_path,
+            run_id="tiny-live-copy-dry-final-cross-local",
+            maximum_poll_cycles=1,
+            dry_run=True,
+            delete_candidate_file_on_terminal=True,
+        ),
+        source=Source(clock),
+        market_port=market,
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.total_entry_attempts == 0
+    assert execution.limit_calls == []
+    assert market.book_reads == 2
+    assert report.candidate_runtime_file_deleted is True
+    assert any(
+        decision["action"] == "SIGNAL_REJECTED_POST_ONLY_LOCAL"
+        for decision in report.decisions
+    )
+
+
+@pytest.mark.asyncio
+async def test_dry_run_passes_final_recheck_without_attempt_or_mutation(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    market = MarketPort(clock)
+    execution = ExecutionPort()
+
+    report = await run_tiny_live_copy(
+        _live_config(
+            tmp_path,
+            run_id="tiny-live-copy-dry-final-recheck-pass",
+            maximum_poll_cycles=1,
+            dry_run=True,
+            delete_candidate_file_on_terminal=True,
+        ),
+        source=Source(clock),
+        market_port=market,
+        execution_port=execution,
+        geoblock_port=Geoblock(),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert report.total_entry_attempts == 0
+    assert execution.limit_calls == []
+    assert market.book_reads == 2
+    assert report.candidate_runtime_file_deleted is True
+    assert any(
+        decision["action"] == "ENTRY_FINAL_RECHECK_PASSED_DRY_RUN"
         for decision in report.decisions
     )
 

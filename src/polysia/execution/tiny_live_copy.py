@@ -1643,8 +1643,45 @@ async def _attempt_entry(
         }
     )
     if config.dry_run:
+        try:
+            await refresh_before_submit()
+        except LocalPostOnlyCrossing as error:
+            runtime.report.decisions.append(
+                {
+                    "action": "SIGNAL_REJECTED_POST_ONLY_LOCAL",
+                    "event_id": event.event_id,
+                    "leader_alias": event.leader_id,
+                    "reason": str(error),
+                    "timestamp": _aware(clock()).isoformat(),
+                }
+            )
+            return False
+        except CopySignalSkip as error:
+            action = (
+                "SIGNAL_REJECTED_STALE_BEFORE_SUBMISSION"
+                if "stale" in str(error).casefold()
+                else "SIGNAL_REJECTED_FINAL_LOCAL_INELIGIBILITY"
+            )
+            runtime.report.decisions.append(
+                {
+                    "action": action,
+                    "event_id": event.event_id,
+                    "leader_alias": event.leader_id,
+                    "reason": str(error),
+                    "timestamp": _aware(clock()).isoformat(),
+                }
+            )
+            return False
         if latency_metric is not None:
-            latency_metric["submission"] = "not_attempted_dry_run"
+            latency_metric["submission"] = "final_recheck_passed_no_attempt_dry_run"
+        runtime.report.decisions.append(
+            {
+                "action": "ENTRY_FINAL_RECHECK_PASSED_DRY_RUN",
+                "event_id": event.event_id,
+                "leader_alias": event.leader_id,
+                "timestamp": _aware(clock()).isoformat(),
+            }
+        )
         runtime.report.classification = "DRY_RUN_APPROVED_NO_SUBMISSION"
         return True
     try:

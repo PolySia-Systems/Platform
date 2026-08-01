@@ -39,6 +39,8 @@ failure.
   Attempt, and perform no external mutation.
 - Re-run independent Risk on the final intent. Persist the Attempt only after
   the final refresh and before the single venue submission.
+- Dry-run executes the same final market, mapping, age, quote, and book checks
+  without signing, persisting an Attempt, or submitting an order.
 - Never automatically retry, reprice, replace, or convert the order after an
   external submission.
 
@@ -59,9 +61,11 @@ mistaken for active tradable positions or nonzero exposure.
 
 ## Validation evidence
 
-Focused validation passed 90 tests plus Ruff and Mypy. The complete repository
-suite passed 631 tests. Compileall, Ruff, Mypy, `pip check`, secret scan, build,
-strict OSV dependency audit, and CycloneDX SBOM generation also passed. Coverage includes the
+Focused repair validation passed 90 tests plus Ruff and Mypy. A separate
+Dry-run final-recheck regression passed 31 focused tests. The complete
+repository suite passed 633 tests. Compileall, Ruff, Mypy, `pip check`, secret
+scan, build, strict OSV dependency audit, and CycloneDX SBOM generation also
+passed. Coverage includes the
 official error classification, async final-refresh ordering, local crossing
 without Attempt consumption, wrong final outcome mapping, the first definitive
 Post-only rejection, the second same-Run rejection, ambiguous submission,
