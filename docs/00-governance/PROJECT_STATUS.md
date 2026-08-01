@@ -4,16 +4,16 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-07-31 |
+| Review date | 2026-08-01 |
 | Source-of-truth branch | `main` |
-| Last verified deployed baseline | `2ed6a2cc7fc9b5d9c583ccc0fc92256710a7d930` |
-| Failed-safe runtime baseline | `92e7746e983dcc5f77ea49a57017f2243fdd0a26` |
+| Last verified deployed baseline | `46efce066c95c0d1f4a230aae33c99d0b98ce7cd` |
+| Current merged repository baseline | `9b97f86039d02cc67471f05d680a1b8ff6a8de8b` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
-| Active maintenance task | Tiny Live Copy streaming and four-minute shadow validation |
+| Active maintenance task | Tiny Live Copy final Post-only recheck and zero-mutation validation |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `TINY_LIVE_COPY_003_SHADOW_GATED` |
+| Phase status | `TINY_LIVE_COPY_003_FAILED_SAFE_POST_ONLY_REPAIR` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly
@@ -22,8 +22,9 @@ commit was deployed before the first authorized worker run.
 PR `#40` recorded the failed-safe diagnostic. PR `#41` delivered and deployed
 the reliability repair. Its authorization was consumed by the terminal
 12-hour run `tiny-live-copy-20260729T135013Z`. Authorization
-`POLYSIA-TINY-LIVE-COPY-003` is reserved for a separate future owner decision;
-the current task may prepare and validate it but may not claim it or launch Live.
+`POLYSIA-TINY-LIVE-COPY-003` was consumed by failed-safe run
+`tiny-live-copy-20260731T180428Z`. That run made one venue attempt but created no
+order, fill, cycle, or follower exposure. No new Live authorization exists.
 
 ## Completed stages
 
@@ -192,9 +193,9 @@ evidence.
   per-alias read checkpoints, and sanitized pending events are durable. Raw
   candidate addresses remain protected runtime input.
 - Authorization IDs are supplied only through protected runtime input.
-  `POLYSIA-TINY-LIVE-COPY-003` has not been claimed, registered, or consumed.
-  A future Live run still requires separate owner approval for that exact ID and
-  an exact unclaimed Run ID after conclusive Replay and zero-mutation Shadow evidence.
+  `POLYSIA-TINY-LIVE-COPY-003` is consumed and terminal. Any future Live run
+  requires a different, explicit owner authorization and an exact unclaimed
+  Run ID after zero-mutation Shadow and all readiness gates pass.
 - Copy Trading Stage 0 established a conditional architecture GO. Stage 1
   proved official read surfaces, normalization, deduplication, strict BTC
   15-minute mapping, and restart-stable event identity, but closed `NO_GO` for
@@ -241,12 +242,12 @@ evidence.
 
 ## Single recommended next task
 
-**Complete only the gated Tiny Live Copy 003 repair and Shadow stage.** Validate
-streaming signal processing and the scoped four-minute threshold, pass the full
-repository and CI gates, merge normally, deploy the exact merge commit, and run
-one bounded zero-mutation Shadow. Stop without Live if evidence is adverse,
-ambiguous, or inconclusive. Never claim the proposed authorization or Live Run
-ID during this stage.
+**Complete only the final Post-only recheck repair and zero-mutation Shadow
+stage.** Pass the full repository and CI gates, merge normally, deploy only the
+final integrated merge commit, initialize additive schema safely, and run one
+fully isolated bounded Shadow. Stop without Live if evidence is adverse,
+ambiguous, or inconclusive. Do not create, claim, or consume another
+authorization or Live Run ID during this stage.
 
 After a separately authorized experiment becomes terminal, the broader
 recommendation remains:

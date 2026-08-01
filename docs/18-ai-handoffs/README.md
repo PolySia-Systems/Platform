@@ -8,6 +8,9 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`polysia-post-only-final-recheck.md`](polysia-post-only-final-recheck.md)
+  records the evidence-supported TOCTOU diagnosis, final order-book recheck,
+  and explicit local/definitive/ambiguous submission outcomes.
 - [`polysia-copy-signal-arbiter-experiment.md`](polysia-copy-signal-arbiter-experiment.md)
   records the isolated confidence-aware Arbiter, fail-closed historical Replay,
   and deferred non-interfering Shadow gate.

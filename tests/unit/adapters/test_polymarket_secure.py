@@ -44,6 +44,8 @@ class FakeSecureClient:
         self.cancel_order_kwargs: dict[str, Any] | None = None
         self.cancel_market_kwargs: dict[str, Any] | None = None
         self.limit_order_kwargs: dict[str, Any] | None = None
+        self.prepared_limit_order_kwargs: dict[str, Any] | None = None
+        self.posted_prepared_orders: list[Any] = []
         self.market_order_kwargs: dict[str, Any] | None = None
         self.position_kwargs: dict[str, Any] | None = None
         self.trade_kwargs: dict[str, Any] | None = None
@@ -90,6 +92,14 @@ class FakeSecureClient:
 
     async def place_limit_order(self, **kwargs: Any) -> dict[str, str]:
         self.limit_order_kwargs = kwargs
+        return {"status": "accepted"}
+
+    async def create_limit_order(self, **kwargs: Any) -> SimpleNamespace:
+        self.prepared_limit_order_kwargs = kwargs
+        return SimpleNamespace(signed=True)
+
+    async def post_order(self, prepared_order: Any) -> dict[str, str]:
+        self.posted_prepared_orders.append(prepared_order)
         return {"status": "accepted"}
 
     async def place_market_order(self, **kwargs: Any) -> dict[str, str]:
@@ -292,6 +302,74 @@ async def test_user_stream_probe_and_emergency_cancel_all_are_explicit(
     assert client.subscriptions[0].markets == ("condition-1",)
     assert client.cancel_all_calls == 1
     assert response == {"status": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_prepared_limit_order_is_signed_without_submission_then_posted_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeSecureClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> FakeSecureClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(client_factory=factory)
+    await adapter.connect()
+
+    prepared = await adapter.prepare_limit_order(
+        token_id="token-1",
+        side="BUY",
+        price=Decimal("0.50"),
+        size=Decimal("5"),
+        post_only=True,
+        expiration=123,
+    )
+
+    assert client.prepared_limit_order_kwargs == {
+        "token_id": "token-1",
+        "side": "BUY",
+        "price": Decimal("0.50"),
+        "size": Decimal("5"),
+        "post_only": True,
+        "expiration": 123,
+        "builder_code": None,
+    }
+    assert client.posted_prepared_orders == []
+
+    response = await adapter.post_prepared_limit_order(prepared)
+
+    assert response == {"status": "accepted"}
+    assert client.posted_prepared_orders == [prepared]
+
+
+@pytest.mark.asyncio
+async def test_post_prepared_limit_order_failure_is_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingPostClient(FakeSecureClient):
+        async def post_order(self, prepared_order: Any) -> dict[str, str]:
+            self.posted_prepared_orders.append(prepared_order)
+            raise TransportError("connection reset")
+
+    client = FailingPostClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> FailingPostClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(
+        client_factory=factory,
+        read_retry_policy=ReadRetryPolicy(max_attempts=3, backoff_seconds=0),
+    )
+    await adapter.connect()
+
+    with pytest.raises(PolymarketSecureAdapterError) as raised:
+        await adapter.post_prepared_limit_order(SimpleNamespace(signed=True))
+
+    assert len(client.posted_prepared_orders) == 1
+    assert raised.value.diagnostic is not None
+    assert raised.value.diagnostic.category.value == "NETWORK_ERROR"
 
 
 @pytest.mark.asyncio

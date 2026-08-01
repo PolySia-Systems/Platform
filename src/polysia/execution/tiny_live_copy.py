@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from polysia.adapters.polymarket.copytrading_source import PolymarketCopyTradingSource
+from polysia.adapters.polymarket.diagnostics import VenueErrorCategory
 from polysia.adapters.polymarket.geoblock import (
     GeoblockStatus,
     PreLiveOrderGeoblockCheck,
@@ -31,7 +32,10 @@ from polysia.adapters.polymarket.request_scheduling import (
     RESERVED_TRADES_BUDGET_PER_10_SECONDS,
     TradesSourceUnavailableError,
 )
-from polysia.adapters.polymarket.secure import PolymarketSecureAdapter
+from polysia.adapters.polymarket.secure import (
+    PolymarketSecureAdapter,
+    PolymarketSecureAdapterError,
+)
 from polysia.application.ports.copytrading import (
     LeaderMarketMetadata,
     LeaderReadPurpose,
@@ -41,6 +45,7 @@ from polysia.application.ports.copytrading import (
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.domain.copytrading import (
     CopyExperimentState,
+    EntryQuote,
     LeaderPositionEffect,
     LeaderTradeAction,
     LeaderTradeEvent,
@@ -60,7 +65,11 @@ from polysia.domain.copytrading.live_experiment import (
 )
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.execution.intents import OrderIntent
-from polysia.execution.live_broker import LiveBroker
+from polysia.execution.live_broker import (
+    LiveBroker,
+    LiveOrderRejectedError,
+    PreparedLimitOrder,
+)
 from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
@@ -108,6 +117,10 @@ class TinyLiveCopyError(RuntimeError):
 
 class CopySignalSkip(TinyLiveCopyError):
     """A proven local signal ineligibility that consumes no venue attempt."""
+
+
+class LocalPostOnlyCrossing(CopySignalSkip):
+    """The final local BUY quote would cross the current best ask."""
 
 
 class CopyMarketPort(Protocol):
@@ -170,6 +183,20 @@ class CopyExecutionPort(Protocol):
         expiration: int | None = None,
         builder_code: str | None = None,
     ) -> Any: ...
+
+    async def prepare_limit_order(
+        self,
+        *,
+        token_id: str,
+        side: str,
+        price: Decimal,
+        size: Decimal,
+        post_only: bool = False,
+        expiration: int | None = None,
+        builder_code: str | None = None,
+    ) -> Any: ...
+
+    async def post_prepared_limit_order(self, prepared_order: Any) -> Any: ...
 
     async def place_market_order(
         self,
@@ -1327,6 +1354,7 @@ async def _attempt_entry(
             expected_slug=metadata.external_slug,
             expected_condition=event.market_reference,
             token_id=event.outcome_reference,
+            expected_outcome_label=metadata.outcome_label,
             expected_start=metadata.starts_at,
             expected_end=metadata.ends_at,
             now=now,
@@ -1412,10 +1440,140 @@ async def _attempt_entry(
         open_orders_count=0,
         market_data_age_ms=_book_age_ms(book, now),
     )
-    claim: dict[str, int] = {}
+    claim: dict[str, object] = {}
+    submission: dict[str, object] = {}
+
+    async def refresh_before_submit() -> PreparedLimitOrder:
+        final_market = await market_port.get_market_by_slug(metadata.external_slug)
+        final_book = await market_port.get_order_book(event.outcome_reference)
+        final_checked_at = _aware(clock())
+        try:
+            _assert_market_mapping(
+                final_market,
+                expected_slug=metadata.external_slug,
+                expected_condition=event.market_reference,
+                token_id=event.outcome_reference,
+                expected_outcome_label=metadata.outcome_label,
+                expected_start=metadata.starts_at,
+                expected_end=metadata.ends_at,
+                now=final_checked_at,
+            )
+            if not signal_is_fresh(
+                executed_at=event.executed_at,
+                observed_at=final_checked_at,
+                market_end=metadata.ends_at,
+                minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
+            ):
+                raise CopySignalSkip("signal is stale at the final pre-submit recheck")
+            if (
+                final_book.best_ask is None
+                or _book_age_ms(final_book, final_checked_at) > MAXIMUM_BOOK_AGE_MS
+            ):
+                raise CopySignalSkip("final orderbook is empty or stale")
+            if quote.price >= final_book.best_ask.price:
+                runtime.report.orderbook_snapshots.append(
+                    _safe_book_snapshot(
+                        final_book,
+                        event=event,
+                        quote=quote,
+                        captured_at=final_checked_at,
+                    )
+                )
+                raise LocalPostOnlyCrossing(
+                    "final BUY price is equal to or above the current best ask"
+                )
+            final_preliminary_quote = calculate_entry_quote(
+                leader_fill_price=event.executed_price,
+                minimum_order_size=final_book.minimum_order_size,
+                tick_size=final_book.tick_size,
+                best_ask=final_book.best_ask.price,
+                expected_fee=Decimal("0"),
+                now=final_checked_at,
+                market_end=metadata.ends_at,
+                minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
+            )
+            final_expected_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
+                final_market,
+                price=final_preliminary_quote.price,
+                size=final_book.minimum_order_size,
+            )
+            final_quote = calculate_entry_quote(
+                leader_fill_price=event.executed_price,
+                minimum_order_size=final_book.minimum_order_size,
+                tick_size=final_book.tick_size,
+                best_ask=final_book.best_ask.price,
+                expected_fee=final_expected_fee,
+                now=final_checked_at,
+                market_end=metadata.ends_at,
+                minimum_seconds_to_end=TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END,
+            )
+            if final_quote.price >= final_book.best_ask.price:
+                raise LocalPostOnlyCrossing(
+                    "final BUY price is equal to or above the current best ask"
+                )
+            if final_quote.price != quote.price or final_quote.quantity != quote.quantity:
+                raise CopySignalSkip(
+                    "final quote changed after local order preparation"
+                )
+            calculate_take_profit_price(final_quote.price, tick_size=final_book.tick_size)
+            if (
+                repository.cumulative_entry_cost(config.run_id) + final_quote.maximum_debit
+                > MAXIMUM_EXPERIMENT_ENTRY_COST
+            ):
+                raise CopySignalSkip(
+                    "entry would exceed the 10.00 USD cumulative experiment-cost cap"
+                )
+        except LocalPostOnlyCrossing:
+            raise
+        except CopySignalSkip:
+            raise
+        except ValueError as error:
+            raise CopySignalSkip(str(error)) from error
+        final_intent = OrderIntent(
+            strategy_id=STRATEGY_ID,
+            token_id=event.outcome_reference,
+            side="BUY",
+            price=final_quote.price,
+            size=final_quote.quantity,
+            reason=f"copy proven OPEN from {event.leader_id}",
+            confidence=Decimal("1"),
+        )
+        final_risk_context = RiskContext(
+            trading_mode=TradingMode.LIVE,
+            live_trading_enabled=True,
+            current_position=Decimal("0"),
+            current_market_position=Decimal("0"),
+            daily_pnl=Decimal("0"),
+            open_orders_count=0,
+            market_data_age_ms=_book_age_ms(final_book, final_checked_at),
+        )
+        submission.update(
+            {
+                "book": final_book,
+                "checked_at": final_checked_at,
+                "market": final_market,
+                "quote": final_quote,
+            }
+        )
+        runtime.report.orderbook_snapshots.append(
+            _safe_book_snapshot(
+                final_book,
+                event=event,
+                quote=final_quote,
+                captured_at=final_checked_at,
+            )
+        )
+        return PreparedLimitOrder(
+            intent=final_intent,
+            context=final_risk_context,
+            expiration=quote.venue_expiration,
+        )
 
     def persist_attempt() -> None:
         submission_checked_at = _aware(clock())
+        final_quote = submission.get("quote")
+        if not isinstance(final_quote, EntryQuote):
+            raise TinyLiveCopyError("final pre-submit quote evidence is unavailable")
         if latency_metric is not None:
             reserved_at = datetime.fromisoformat(str(latency_metric["reserved_at"]))
             latency_metric["submission_checked_at"] = submission_checked_at.isoformat()
@@ -1441,22 +1599,34 @@ async def _attempt_entry(
             market_id=event.market_reference,
             market_slug=metadata.external_slug,
             token_id=event.outcome_reference,
-            entry_price=quote.price,
-            entry_quantity=quote.quantity,
-            entry_debit=quote.maximum_debit,
-            entry_fee=quote.expected_fee,
-            entry_cancel_at=quote.cancel_at,
+            entry_price=final_quote.price,
+            entry_quantity=final_quote.quantity,
+            entry_debit=final_quote.maximum_debit,
+            entry_fee=final_quote.expected_fee,
+            entry_cancel_at=final_quote.cancel_at,
             leader_latency_ms=max(
                 0,
                 int((submission_checked_at - event.executed_at).total_seconds() * 1000),
             ),
-            leader_price_difference=quote.price - event.executed_price,
+            leader_price_difference=final_quote.price - event.executed_price,
             claimed_at=submission_checked_at,
             reserved_event_id=event.event_id,
         )
         if attempt is None:
             raise TinyLiveCopyError("duplicate prevention blocked the entry attempt")
         claim["number"] = attempt
+        claim["claimed_at"] = submission_checked_at
+        runtime.report.decisions.append(
+            {
+                "action": "ENTRY_FINAL_RECHECK_PASSED",
+                "event_id": event.event_id,
+                "leader_alias": event.leader_id,
+                "maximum_debit": str(final_quote.maximum_debit),
+                "price": str(final_quote.price),
+                "quantity": str(final_quote.quantity),
+                "timestamp": submission_checked_at.isoformat(),
+            }
+        )
 
     runtime.report.orderbook_snapshots.append(
         _safe_book_snapshot(book, event=event, quote=quote, captured_at=now)
@@ -1485,12 +1655,13 @@ async def _attempt_entry(
             dry_run=False,
             post_only=True,
             expiration=quote.venue_expiration,
+            refresh_before_submit=refresh_before_submit,
             before_submit=persist_attempt,
         )
-    except CopySignalSkip as error:
+    except LocalPostOnlyCrossing as error:
         runtime.report.decisions.append(
             {
-                "action": "SIGNAL_REJECTED_STALE_BEFORE_SUBMISSION",
+                "action": "SIGNAL_REJECTED_POST_ONLY_LOCAL",
                 "event_id": event.event_id,
                 "leader_alias": event.leader_id,
                 "reason": str(error),
@@ -1498,18 +1669,87 @@ async def _attempt_entry(
             }
         )
         return False
-    except Exception:
+    except CopySignalSkip as error:
+        action = (
+            "SIGNAL_REJECTED_STALE_BEFORE_SUBMISSION"
+            if "stale" in str(error).casefold()
+            else "SIGNAL_REJECTED_FINAL_LOCAL_INELIGIBILITY"
+        )
+        runtime.report.decisions.append(
+            {
+                "action": action,
+                "event_id": event.event_id,
+                "leader_alias": event.leader_id,
+                "reason": str(error),
+                "timestamp": _aware(clock()).isoformat(),
+            }
+        )
+        return False
+    except Exception as error:
         if "number" in claim:
-            repository.record_entry_submission(
-                run_id=config.run_id,
-                attempt_number=claim["number"],
-                venue_order_id=None,
-                state="SUBMISSION_REJECTED_OR_UNKNOWN",
-                updated_at=_aware(clock()),
-            )
+            attempt_number = cast(int, claim["number"])
+            if _is_definitive_post_only_rejection(error):
+                try:
+                    await _reconcile_definitive_post_only_rejection(
+                        execution_port,
+                        event=event,
+                        claimed_at=cast(datetime, claim["claimed_at"]),
+                        now=_aware(clock()),
+                    )
+                except Exception as reconciliation_error:
+                    repository.record_ambiguous_entry_submission(
+                        run_id=config.run_id,
+                        attempt_number=attempt_number,
+                        updated_at=_aware(clock()),
+                    )
+                    runtime.report.decisions.append(
+                        {
+                            "action": "ENTRY_SUBMISSION_OUTCOME_AMBIGUOUS",
+                            "attempt_number": attempt_number,
+                            "event_id": event.event_id,
+                            "leader_alias": event.leader_id,
+                            "timestamp": _aware(clock()).isoformat(),
+                        }
+                    )
+                    raise TinyLiveCopyError(
+                        "Post-only rejection reconciliation could not prove zero mutation"
+                    ) from reconciliation_error
+                rejection_count = repository.record_definitive_post_only_rejection(
+                    run_id=config.run_id,
+                    attempt_number=attempt_number,
+                    updated_at=_aware(clock()),
+                )
+                runtime.report.decisions.append(
+                    {
+                        "action": "ENTRY_POST_ONLY_REJECTED_DEFINITIVE",
+                        "attempt_number": attempt_number,
+                        "event_id": event.event_id,
+                        "leader_alias": event.leader_id,
+                        "run_post_only_rejection_count": rejection_count,
+                        "timestamp": _aware(clock()).isoformat(),
+                    }
+                )
+                if rejection_count >= 2:
+                    raise TinyLiveCopyError(
+                        "second definitive Post-only rejection in the same run"
+                    ) from error
+                return False
+            if _is_definitive_venue_rejection(error):
+                repository.record_definitive_entry_rejection(
+                    run_id=config.run_id,
+                    attempt_number=attempt_number,
+                    terminal_reason=_definitive_rejection_reason(error),
+                    updated_at=_aware(clock()),
+                )
+            else:
+                repository.record_ambiguous_entry_submission(
+                    run_id=config.run_id,
+                    attempt_number=attempt_number,
+                    updated_at=_aware(clock()),
+                )
         raise
     order_id = _order_id(result.response)
-    attempt_number = claim["number"]
+    attempt_number = cast(int, claim["number"])
     repository.record_entry_submission(
         run_id=config.run_id,
         attempt_number=attempt_number,
@@ -1518,11 +1758,15 @@ async def _attempt_entry(
         updated_at=_aware(clock()),
     )
     runtime.active_attempt_number = attempt_number
-    runtime.active_market = market
+    final_market = submission.get("market")
+    final_quote = submission.get("quote")
+    if not isinstance(final_market, MarketDetails) or not isinstance(final_quote, EntryQuote):
+        raise TinyLiveCopyError("final submission evidence is unavailable after acceptance")
+    runtime.active_market = final_market
     runtime.active_token_id = event.outcome_reference
-    runtime.active_entry_price = quote.price
-    runtime.active_entry_fee = expected_fee
-    runtime.active_cancel_at = quote.cancel_at
+    runtime.active_entry_price = final_quote.price
+    runtime.active_entry_fee = final_quote.expected_fee
+    runtime.active_cancel_at = final_quote.cancel_at
     runtime.report.current_order_or_fill_exists = True
     return True
 
@@ -2029,6 +2273,116 @@ async def _refresh_safety_gates(
         raise TinyLiveCopyError("outcome-token allowance is unreadable")
     if min(_base_units(value) for value in allowances.values()) < required_size:
         raise TinyLiveCopyError("existing outcome-token allowance cannot support the exit")
+
+
+async def _reconcile_definitive_post_only_rejection(
+    execution_port: CopyExecutionPort,
+    *,
+    event: LeaderTradeEvent,
+    claimed_at: datetime,
+    now: datetime,
+) -> None:
+    """Prove that a definitive Post-only rejection produced no account mutation."""
+
+    open_orders = await execution_port.get_open_orders()
+    positions = await execution_port.list_positions(size_threshold=0)
+    trades = await execution_port.list_account_trades(
+        token_id=event.outcome_reference,
+        market=event.market_reference,
+    )
+    if open_orders:
+        raise TinyLiveCopyError("rejected Post-only submission left an open order")
+    if _positions_requiring_isolation(positions, now=now):
+        raise TinyLiveCopyError("rejected Post-only submission left nonzero exposure")
+    if any(
+        _trade_may_follow_submission(
+            trade,
+            event=event,
+            claimed_at=claimed_at,
+        )
+        for trade in trades
+    ):
+        raise TinyLiveCopyError("rejected Post-only submission has unexpected fill evidence")
+
+
+def _trade_may_follow_submission(
+    trade: Any,
+    *,
+    event: LeaderTradeEvent,
+    claimed_at: datetime,
+) -> bool:
+    matched_at = _trade_matched_at(trade)
+    if matched_at is not None:
+        return matched_at >= _aware(claimed_at) - timedelta(seconds=1)
+    return (
+        str(_read(trade, "token_id", _read(trade, "asset_id", "")))
+        == event.outcome_reference
+        or str(_read(trade, "condition_id", _read(trade, "market", "")))
+        == event.market_reference
+    )
+
+
+def _trade_matched_at(trade: Any) -> datetime | None:
+    value = _read(
+        trade,
+        "matched_at",
+        _read(trade, "match_time", _read(trade, "timestamp")),
+    )
+    if isinstance(value, datetime):
+        return None if value.tzinfo is None else value.astimezone(UTC)
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        seconds = float(value)
+        if seconds > 10_000_000_000:
+            seconds /= 1000
+        try:
+            return datetime.fromtimestamp(seconds, tz=UTC)
+        except (OSError, OverflowError, ValueError):
+            return None
+    if isinstance(value, str):
+        try:
+            if value.isdigit():
+                seconds = int(value)
+                if seconds > 10_000_000_000:
+                    seconds /= 1000
+                return datetime.fromtimestamp(seconds, tz=UTC)
+            parsed = datetime.fromisoformat(value)
+            return None if parsed.tzinfo is None else parsed.astimezone(UTC)
+        except (OSError, OverflowError, ValueError):
+            return None
+    return None
+
+
+def _is_definitive_post_only_rejection(error: BaseException) -> bool:
+    if isinstance(error, LiveOrderRejectedError):
+        return error.code == "post_only_would_cross" or (
+            error.venue_message.casefold()
+            == "invalid post-only order: order crosses book"
+        )
+    if not isinstance(error, PolymarketSecureAdapterError) or error.diagnostic is None:
+        return False
+    return (
+        error.diagnostic.status_code == 400
+        and error.diagnostic.category is VenueErrorCategory.POST_ONLY_WOULD_CROSS
+    )
+
+
+def _is_definitive_venue_rejection(error: BaseException) -> bool:
+    if isinstance(error, LiveOrderRejectedError):
+        return True
+    if not isinstance(error, PolymarketSecureAdapterError) or error.diagnostic is None:
+        return False
+    return error.diagnostic.status_code is not None and (
+        400 <= error.diagnostic.status_code < 500
+        and error.diagnostic.status_code not in {408, 409, 429}
+    )
+
+
+def _definitive_rejection_reason(error: BaseException) -> str:
+    if isinstance(error, LiveOrderRejectedError):
+        return error.code
+    if isinstance(error, PolymarketSecureAdapterError) and error.diagnostic is not None:
+        return error.diagnostic.category.value
+    return "DEFINITIVE_VENUE_REJECTION"
 
 
 async def _refresh_active_health(
@@ -2721,6 +3075,7 @@ def _assert_market_mapping(
     expected_slug: str,
     expected_condition: str,
     token_id: str,
+    expected_outcome_label: str,
     expected_start: datetime,
     expected_end: datetime,
     now: datetime,
@@ -2738,8 +3093,17 @@ def _assert_market_mapping(
         or (_aware(market.end_date) - now).total_seconds() < TINY_LIVE_COPY_MINIMUM_SECONDS_TO_END
     ):
         raise CopySignalSkip("market has fewer than four minutes remaining")
-    if token_id not in {outcome.token_id for outcome in market.outcomes}:
+    if (
+        len(market.outcomes) != 2
+        or {outcome.label.casefold() for outcome in market.outcomes} != {"up", "down"}
+        or len({outcome.token_id for outcome in market.outcomes}) != 2
+    ):
+        raise CopySignalSkip("market binary Up/Down mapping is inconsistent")
+    matching_outcomes = [outcome for outcome in market.outcomes if outcome.token_id == token_id]
+    if len(matching_outcomes) != 1:
         raise CopySignalSkip("leader outcome token is not mapped to the market")
+    if matching_outcomes[0].label.casefold() != expected_outcome_label.casefold():
+        raise CopySignalSkip("leader outcome label does not match the selected token")
     if (
         market.end_date is None
         or abs((_aware(market.end_date) - _aware(expected_end)).total_seconds()) > 1

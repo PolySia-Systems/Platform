@@ -156,11 +156,12 @@ Stop the affected action and preserve evidence when:
 ## Owner-bounded Tiny Live Copy experiment
 
 This section applies only to an exact, separately owner-authorized Tiny Live
-Copy run. It is not a general live-trading procedure. Authorizations 001 and
-002 are consumed historical evidence. `POLYSIA-TINY-LIVE-COPY-003` may be
-prepared and shadow-validated, but it must not be claimed or used for Live
-without a later owner instruction naming that exact authorization and Run ID.
-Stages 2 through 6 of the Copy Trading plan remain incomplete.
+Copy run. It is not a general live-trading procedure. Authorizations 001, 002,
+and 003 are consumed historical evidence. Authorization 003 ended failed-safe
+after one definitive Post-only rejection and created no order, fill, or
+exposure. Any future Live run requires a different explicit owner authorization
+and an exact unclaimed Run ID. Stages 2 through 6 of the Copy Trading plan
+remain incomplete.
 
 The experiment runs as the `copy-experiment` Compose profile with:
 

@@ -170,6 +170,54 @@ def test_rejected_or_unknown_venue_submission_still_consumes_attempt(tmp_path) -
         database.close()
 
 
+def test_definitive_post_only_rejection_releases_capacity_but_consumes_attempt(
+    tmp_path,
+) -> None:
+    database, repository = _repository(tmp_path)
+    try:
+        assert _claim(repository, index=1) == 1
+
+        count = repository.record_definitive_post_only_rejection(
+            run_id="tiny-live-copy-test",
+            attempt_number=1,
+            updated_at=NOW,
+        )
+
+        snapshot = repository.get("tiny-live-copy-test")
+        assert snapshot is not None
+        assert count == 1
+        assert snapshot.state is CopyExperimentState.MONITORING
+        assert snapshot.total_entry_attempts == 1
+        assert snapshot.active_event_id is None
+        attempt = repository.attempts("tiny-live-copy-test")[0]
+        assert attempt["state"] == "SUBMISSION_REJECTED_DEFINITIVE_POST_ONLY"
+        assert attempt["terminal_reason"] == "POST_ONLY_WOULD_CROSS"
+    finally:
+        database.close()
+
+
+def test_ambiguous_submission_preserves_fail_closed_capacity(tmp_path) -> None:
+    database, repository = _repository(tmp_path)
+    try:
+        assert _claim(repository, index=1) == 1
+
+        repository.record_ambiguous_entry_submission(
+            run_id="tiny-live-copy-test",
+            attempt_number=1,
+            updated_at=NOW,
+        )
+
+        snapshot = repository.get("tiny-live-copy-test")
+        assert snapshot is not None
+        assert snapshot.state is CopyExperimentState.ENTRY_SUBMITTING
+        assert snapshot.active_event_id is not None
+        attempt = repository.attempts("tiny-live-copy-test")[0]
+        assert attempt["state"] == "SUBMISSION_OUTCOME_UNKNOWN"
+        assert attempt["terminal_reason"] == "RECONCILIATION_REQUIRED"
+    finally:
+        database.close()
+
+
 def test_three_unfilled_attempts_finalize_and_fourth_is_impossible(tmp_path) -> None:
     database, repository = _repository(tmp_path)
     try:

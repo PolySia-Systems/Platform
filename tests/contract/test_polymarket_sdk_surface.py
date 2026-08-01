@@ -41,6 +41,7 @@ def test_secure_sdk_methods_used_by_adapter_exist() -> None:
         "cancel_market_orders",
         "cancel_order",
         "create",
+        "create_limit_order",
         "get_balance_allowance",
         "get_market",
         "get_order_book",
@@ -50,6 +51,7 @@ def test_secure_sdk_methods_used_by_adapter_exist() -> None:
         "list_positions",
         "place_limit_order",
         "place_market_order",
+        "post_order",
     }
 
     assert required <= set(dir(AsyncSecureClient))
@@ -117,6 +119,10 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
 def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
     market_parameters = inspect.signature(AsyncSecureClient.place_market_order).parameters
     limit_parameters = inspect.signature(AsyncSecureClient.place_limit_order).parameters
+    create_limit_parameters = inspect.signature(
+        AsyncSecureClient.create_limit_order
+    ).parameters
+    post_parameters = inspect.signature(AsyncSecureClient.post_order).parameters
 
     assert {"amount", "max_price", "max_spend", "order_type", "side", "token_id"} <= set(
         market_parameters
@@ -124,6 +130,10 @@ def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
     assert {"post_only", "price", "side", "size", "token_id"} <= set(
         limit_parameters
     )
+    assert {"post_only", "price", "side", "size", "token_id"} <= set(
+        create_limit_parameters
+    )
+    assert "signed_order" in post_parameters
 
 
 def test_pinned_sdk_gtd_minimum_buffer_contract(

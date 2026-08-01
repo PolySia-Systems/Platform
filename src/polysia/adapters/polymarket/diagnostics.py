@@ -38,6 +38,7 @@ class VenueErrorCategory(StrEnum):
     INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
     INSUFFICIENT_ALLOWANCE = "INSUFFICIENT_ALLOWANCE"
     INSUFFICIENT_LIQUIDITY = "INSUFFICIENT_LIQUIDITY"
+    POST_ONLY_WOULD_CROSS = "POST_ONLY_WOULD_CROSS"
     ORDER_TYPE_INCOMPATIBILITY = "ORDER_TYPE_INCOMPATIBILITY"
     ORDER_CONSTRAINT_VIOLATION = "ORDER_CONSTRAINT_VIOLATION"
     MARKET_UNAVAILABLE = "MARKET_UNAVAILABLE"
@@ -215,6 +216,10 @@ def _category_from_error(
         (
             ("fok", "fak", "gtc", "fill-or-kill", "fill-and-kill"),
             VenueErrorCategory.ORDER_CONSTRAINT_VIOLATION,
+        ),
+        (
+            ("invalid post-only order: order crosses book",),
+            VenueErrorCategory.POST_ONLY_WOULD_CROSS,
         ),
         (("order type", "post only", "post-only"), VenueErrorCategory.ORDER_TYPE_INCOMPATIBILITY),
         (

@@ -1,5 +1,11 @@
 # PolySia Tiny Live Copy Streaming 003 Handoff
 
+> **Historical pre-run record:** authorization 003 was later consumed by
+> `tiny-live-copy-20260731T180428Z`, which stopped failed-safe after one
+> definitive Post-only rejection with no order, fill, cycle, or exposure. The
+> current continuation is
+> [`polysia-post-only-final-recheck.md`](polysia-post-only-final-recheck.md).
+
 ## Document control
 
 | Field | Verified value |

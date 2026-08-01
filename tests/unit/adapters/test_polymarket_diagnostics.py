@@ -61,6 +61,13 @@ from polysia.adapters.polymarket.diagnostics import (
             VenueErrorCategory.ORDER_TYPE_INCOMPATIBILITY,
         ),
         (
+            RequestRejectedError(
+                "invalid post-only order: order crosses book",
+                status=400,
+            ),
+            VenueErrorCategory.POST_ONLY_WOULD_CROSS,
+        ),
+        (
             RequestRejectedError("FOK constraint", status=400),
             VenueErrorCategory.ORDER_CONSTRAINT_VIOLATION,
         ),
