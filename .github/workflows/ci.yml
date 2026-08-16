@@ -67,6 +67,7 @@ jobs:
             'src/*',
             'tests/*',
             'scripts/*',
+            'standards/*',
             'pyproject.toml',
             'environment.yml',
             'locks/*',
@@ -125,6 +126,14 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python scripts/check_changed_docs.py --base "$env:BASE_SHA" --head "$env:GITHUB_SHA"
+      - name: Standards validation
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: >-
+          python scripts/validate_standards.py
+          --mode changed
+          --base "$env:BASE_SHA"
+          --head "$env:GITHUB_SHA"
       - name: Secret scan
         env:
           PYTHONPATH: src

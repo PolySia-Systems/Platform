@@ -1,0 +1,199 @@
+schema_version = 1
+record_id = "ADP-PLATFORM-001"
+status = "active_with_temporary_baseline"
+consumer = "PolySia-Systems/Platform"
+accountable_owner = "PolySia Platform Owner"
+adoption_date = "2026-08-17"
+review_trigger = "2026-11-17 or earlier on a Standards, profile, Python-support, public-interface, environment-vocabulary, or consumer-boundary change"
+standards_repository = "PolySia-Systems/Standards"
+standards_release = "v0.1.1"
+standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
+standards_release_id = 368473737
+standards_release_immutable = true
+profiles = ["PRF-BASE", "PRF-PYS"]
+component_roots = [".", "src/polysia", "tests", "scripts"]
+excluded_boundaries = [
+  "PolySia-Systems/Standards",
+  "PolySia-Systems/Infrastructure",
+  "PolySia-Systems/Market-Data",
+  "external deployments and live systems",
+  "third-party and generated identifiers",
+  "historical records under docs/13-ai-handoffs, docs/18-ai-handoffs, and docs/99-archive",
+]
+conformance_claim = "not_claimed_until_full_enforcement"
+
+[enforcement]
+mode = "changed"
+validator = "scripts/validate_standards.py"
+baseline = "standards/baseline.toml"
+network_access = false
+
+[consumer_facts]
+controlled_repository = true
+primary_runtime = "Python"
+supported_python = ">=3.14,<3.15"
+installable_project = true
+reusable_library_interface = true
+public_cli = true
+python_serialized_models = true
+external_effect_tests_by_default = false
+repeatable_verification_environment = true
+
+[consumer_fact_evidence]
+installable_project = "pyproject.toml; src/polysia"
+reusable_library_interface = "src/polysia/__init__.py and explicit package exports"
+public_cli = "pyproject.toml [project.scripts] and src/polysia/cli.py"
+python_serialized_models = "src/polysia domain models and explicit JSON boundaries"
+external_effect_tests_by_default = "AGENTS.md runtime safety rules and tests"
+repeatable_verification_environment = "locks/pip-py314.lock; environment.yml; CI"
+
+[python]
+distribution = "polysia"
+import_root = "polysia"
+source_root = "src/polysia"
+test_root = "tests"
+cli_entry_point = "polysia=polysia.cli:app"
+canonical_metadata = "pyproject.toml"
+canonical_test_command = "python -m pytest -q"
+type_check_scope = "src"
+
+[python.dependency_imports]
+polymarket = "polymarket-client"
+pydantic = "pydantic"
+pydantic_settings = "pydantic-settings"
+structlog = "structlog"
+typer = "typer"
+
+[environment]
+group_applies = true
+implemented_base_classes = ["development", "test", "production"]
+not_implemented_base_classes = ["staging"]
+additional_classes = [
+  "research",
+  "sandbox",
+  "paper",
+  "shadow",
+  "limited-live",
+  "disaster-recovery",
+]
+legacy_aliases = ["local=development", "server=production"]
+alias_exit_trigger = "Canonicalize repository-owned APP_ENV values during full remediation; retain input compatibility only when a verified consumer requires it"
+
+[[requirement_groups]]
+name = "profile-framework-consumer"
+outcome = "applicable"
+condition = "The consumer adopts released profiles and produces an assessment."
+ids = ["PRF-FRM-005", "PRF-FRM-006", "PRF-FRM-007", "PRF-FRM-010", "PRF-FRM-013", "PRF-FRM-014"]
+evidence = "standards/adoption.toml; docs/00-governance/standards-adoption-v0.1.1.md"
+
+[[requirement_groups]]
+name = "profile-framework-absent-events"
+outcome = "not_applicable"
+condition = "No scoped refinement, unresolved profile conflict, or profile change exists."
+ids = ["PRF-FRM-008", "PRF-FRM-011", "PRF-FRM-015"]
+evidence = "Adoption review and profile-resolution record"
+
+[[requirement_groups]]
+name = "profile-framework-source-authority"
+outcome = "source_authority"
+condition = "These requirements govern the profile artifacts and Profile Owner in the immutable Standards release, not the consumer implementation."
+ids = ["PRF-FRM-001", "PRF-FRM-002", "PRF-FRM-003", "PRF-FRM-004", "PRF-FRM-009", "PRF-FRM-012", "PRF-FRM-016"]
+evidence = "PolySia-Systems/Standards v0.1.1 profiles"
+
+[[requirement_groups]]
+name = "base-profile-consumer"
+outcome = "applicable"
+condition = "Platform is a PolySia-controlled repository with durable paths, documents, and an explicit adoption."
+ids = ["PRF-BASE-001", "PRF-BASE-002", "PRF-BASE-003", "PRF-BASE-004", "PRF-BASE-005", "PRF-BASE-006", "PRF-BASE-007", "PRF-BASE-008"]
+evidence = "Consumer boundary, environment map, and resolved requirement groups"
+
+[[requirement_groups]]
+name = "base-profile-owner-review"
+outcome = "source_authority"
+condition = "The quarterly Profile review belongs to the external Profile Owner."
+ids = ["PRF-BASE-009"]
+evidence = "PolySia-Systems/Standards v0.1.1 PRF-BASE"
+
+[[requirement_groups]]
+name = "python-profile-consumer"
+outcome = "applicable"
+condition = "Platform is a maintained, installable Python project with metadata, repeatable verification, exported interfaces, and a public CLI."
+ids = ["PRF-PYS-001", "PRF-PYS-002", "PRF-PYS-003", "PRF-PYS-004", "PRF-PYS-005", "PRF-PYS-006"]
+evidence = "pyproject.toml; src/polysia; tests; locks; consumer facts"
+
+[[requirement_groups]]
+name = "python-profile-owner-review"
+outcome = "source_authority"
+condition = "The quarterly Profile review belongs to the external Profile Owner."
+ids = ["PRF-PYS-007"]
+evidence = "PolySia-Systems/Standards v0.1.1 PRF-PYS"
+
+[[requirement_groups]]
+name = "core-interpretation-and-assessment"
+outcome = "applicable"
+condition = "The consumer interprets and assesses the selected requirements."
+ids = ["CORE-REQ-020", "CORE-REQ-021", "CORE-REQ-022", "CORE-REQ-024", "CORE-REQ-026", "CORE-REQ-029", "CORE-REQ-030", "CORE-REQ-032", "CORE-REQ-034", "CORE-REQ-052", "CORE-REQ-057", "CORE-REQ-059"]
+evidence = "Resolved applicability and conformance records"
+
+[[requirement_groups]]
+name = "core-conflict-and-exception-events"
+outcome = "not_applicable"
+condition = "No incompatible requirement set, conflict, or approved mandatory exception exists."
+ids = ["CORE-REQ-027", "CORE-REQ-053", "CORE-REQ-054", "CORE-REQ-055"]
+evidence = "Conflict and exception inventory"
+
+[[requirement_groups]]
+name = "base-core-naming"
+outcome = "applicable"
+condition = "PolySia controls the repository identity, durable paths, names, and current documents."
+ids = ["CORE-NAM-025", "CORE-NAM-028", "CORE-NAM-029", "CORE-NAM-031", "CORE-NAM-032", "CORE-NAM-033", "CORE-NAM-061", "CORE-NAM-062", "CORE-NAM-070", "CORE-NAM-071", "CORE-NAM-075", "CORE-NAM-082"]
+evidence = "Repository metadata, validator, path/link checks, Secret Scan, and human review"
+
+[[requirement_groups]]
+name = "base-environment"
+outcome = "applicable"
+condition = "The repository defines development, test, production, and additional environment or exposure classes."
+ids = ["CORE-NAM-054", "CORE-NAM-055", "CORE-NAM-056"]
+evidence = "Environment mapping in this manifest and canonical configuration"
+
+[[requirement_groups]]
+name = "ephemeral-environment"
+outcome = "not_applicable"
+condition = "No repository-owned ephemeral environment is implemented."
+ids = ["CORE-NAM-057"]
+evidence = "Repository and deployment inventory"
+
+[[requirement_groups]]
+name = "released-authority"
+outcome = "applicable"
+condition = "Platform adopts the final immutable release and has production-facing behavior."
+ids = ["CORE-LCY-001", "CORE-VER-012"]
+evidence = "Exact release pin, profile set, adoption review, and immutable release verification"
+
+[[requirement_groups]]
+name = "python-core-naming"
+outcome = "applicable"
+condition = "The requirements govern repository-controlled Python assets and the current standardization and rename evidence."
+ids = ["CORE-NAM-036", "CORE-NAM-037", "CORE-NAM-038", "CORE-NAM-039", "CORE-NAM-040", "CORE-NAM-042", "CORE-NAM-085", "CORE-NAM-088", "CORE-NAM-089", "CORE-NAM-093", "CORE-NAM-094", "CORE-NAM-096", "CORE-NAM-097", "CORE-NAM-098", "CORE-NAM-099", "CORE-NAM-100", "CORE-NAM-101", "CORE-NAM-102", "CORE-NAM-104", "CORE-NAM-105"]
+evidence = "Python validator, public-interface inventory, migration records, automated checks, and PR review"
+
+[[requirement_groups]]
+name = "python-naming-absent-events"
+outcome = "not_applicable"
+condition = "No current public Python rename, collision, naming exception, or incompatible domain constraint exists."
+ids = ["CORE-NAM-041", "CORE-NAM-086", "CORE-NAM-087", "CORE-NAM-090", "CORE-NAM-091", "CORE-NAM-092", "CORE-NAM-095"]
+evidence = "Public-interface, collision, exception, and domain-constraint inventory"
+
+[[requirement_groups]]
+name = "python-engineering"
+outcome = "applicable"
+condition = "All consumer facts that trigger ENG-PY-001 through ENG-PY-020 are present."
+ids = ["ENG-PY-001", "ENG-PY-002", "ENG-PY-003", "ENG-PY-004", "ENG-PY-005", "ENG-PY-006", "ENG-PY-007", "ENG-PY-008", "ENG-PY-009", "ENG-PY-010", "ENG-PY-011", "ENG-PY-012", "ENG-PY-013", "ENG-PY-014", "ENG-PY-015", "ENG-PY-016", "ENG-PY-017", "ENG-PY-018", "ENG-PY-019", "ENG-PY-020"]
+evidence = "pyproject.toml, source and test trees, locks, CI, build/wheel smoke, interface inventory, and safety tests"
+
+[[requirement_groups]]
+name = "python-standard-owner-review"
+outcome = "source_authority"
+condition = "The quarterly Python Standard review belongs to the external Engineering Domain Owner."
+ids = ["ENG-PY-021"]
+evidence = "PolySia-Systems/Standards v0.1.1 ENG-PY"

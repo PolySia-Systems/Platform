@@ -1,4 +1,4 @@
-.PHONY: install test lint typecheck security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff
+.PHONY: install test lint typecheck standards security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff
 
 install:
 	python -m pip install -e ".[dev]"
@@ -12,6 +12,9 @@ lint:
 typecheck:
 	python -m mypy src
 
+standards:
+	python scripts/validate_standards.py --mode full --allow-baseline
+
 security:
 	python -m polysia.security.secret_scan
 
@@ -24,7 +27,7 @@ build:
 sbom:
 	cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json
 
-check: lint typecheck test security
+check: lint typecheck standards test security
 	python -m pip check
 
 health:
