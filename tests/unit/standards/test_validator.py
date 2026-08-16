@@ -16,7 +16,7 @@ from scripts.validate_standards import (
 REPOSITORY = Path(__file__).resolve().parents[3]
 
 
-def test_adoption_manifest_and_temporary_baseline_are_consistent() -> None:
+def test_adoption_manifest_is_remediated_and_baseline_is_resolved() -> None:
     manifest = _load_toml(REPOSITORY / "standards/adoption.toml")
     findings = scan_repository(REPOSITORY, manifest)
     baseline = _baseline_fingerprints(REPOSITORY / "standards/baseline.toml")
@@ -31,8 +31,8 @@ def test_adoption_manifest_and_temporary_baseline_are_consistent() -> None:
         )
         for outcome in EXPECTED_OUTCOME_COUNTS
     } == EXPECTED_OUTCOME_COUNTS
-    assert len(findings) == 10
-    assert {finding.fingerprint for finding in findings} == baseline
+    assert findings == []
+    assert len(baseline) == 10
 
 
 def test_changed_baseline_path_must_be_remediated() -> None:

@@ -62,6 +62,11 @@ EXPECTED_OUTCOME_COUNTS = {
     "not_applicable": 15,
     "source_authority": 10,
 }
+EXPECTED_CONFORMANCE_VERDICTS = {
+    "applicable": "pass",
+    "not_applicable": "not_applicable",
+    "source_authority": "verified_source_authority",
+}
 SNAKE_CASE = re.compile(r"^_?[a-z][a-z0-9_]*$")
 CAP_WORDS = re.compile(r"^_?[A-Z][A-Za-z0-9]*$")
 KEBAB_CASE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -209,6 +214,129 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
             facts.get("external_effect_tests_by_default") is False,
             "ENG-PY-019",
             "External-effect tests must remain disabled by default",
+        )
+    return findings
+
+
+def _conformance_findings(repository: Path) -> list[Finding]:
+    path = "standards/conformance.toml"
+    target = repository / path
+    if not target.exists():
+        return [Finding("PRF-FRM-014", path, "Complete conformance report is missing")]
+    report = _load_toml(target)
+    findings: list[Finding] = []
+
+    def require(condition: bool, requirement_id: str, message: str) -> None:
+        if not condition:
+            findings.append(Finding(requirement_id, path, message))
+
+    require(report.get("schema_version") == 1, "PRF-FRM-013", "schema_version must be 1")
+    require(
+        report.get("standards_release") == EXPECTED_RELEASE,
+        "CORE-VER-012",
+        f"Conformance release must be pinned to {EXPECTED_RELEASE}",
+    )
+    require(
+        report.get("standards_commit") == EXPECTED_COMMIT,
+        "CORE-LCY-001",
+        f"Conformance commit must be pinned to {EXPECTED_COMMIT}",
+    )
+    require(
+        set(report.get("profiles", [])) == EXPECTED_PROFILES,
+        "PRF-FRM-006",
+        "Conformance profiles must be exactly PRF-BASE and PRF-PYS",
+    )
+    require(
+        report.get("status") in {"remediated_pending_full_enforcement", "conformant"},
+        "PRF-FRM-014",
+        "Conformance status is invalid",
+    )
+    require(
+        report.get("enforcement") in {"changed", "full"},
+        "PRF-FRM-014",
+        "Conformance enforcement mode is invalid",
+    )
+    require(
+        report.get("unresolved_findings") == 0,
+        "CORE-REQ-052",
+        "Conformance report must have zero unresolved findings",
+    )
+    require(
+        report.get("approved_exceptions") == [],
+        "CORE-REQ-053",
+        "This adoption has no approved exceptions",
+    )
+    require(
+        report.get("deferred_requirements") == [],
+        "CORE-REQ-020",
+        "Future requirements must not be represented as deferred consumer obligations",
+    )
+
+    observed: set[str] = set()
+    duplicates: set[str] = set()
+    counts: dict[str, int] = {}
+    results = report.get("results", [])
+    require(isinstance(results, list), "PRF-FRM-014", "results must be an array")
+    if isinstance(results, list):
+        for result in results:
+            if not isinstance(result, dict):
+                findings.append(Finding("PRF-FRM-014", path, "Every result must be a table"))
+                continue
+            classification = str(result.get("classification", ""))
+            verdict = str(result.get("verdict", ""))
+            ids = result.get("ids", [])
+            require(
+                classification in EXPECTED_OUTCOME_COUNTS,
+                "PRF-FRM-007",
+                f"Unknown conformance classification {classification!r}",
+            )
+            require(
+                verdict == EXPECTED_CONFORMANCE_VERDICTS.get(classification),
+                "PRF-FRM-014",
+                f"Invalid verdict {verdict!r} for {classification!r}",
+            )
+            require(
+                bool(str(result.get("evidence", "")).strip()),
+                "PRF-FRM-014",
+                f"Conformance result {result.get('name')!r} has no evidence",
+            )
+            if not isinstance(ids, list):
+                findings.append(Finding("PRF-FRM-014", path, "Result ids must be an array"))
+                continue
+            counts[classification] = counts.get(classification, 0) + len(ids)
+            for requirement_id in map(str, ids):
+                if requirement_id in observed:
+                    duplicates.add(requirement_id)
+                observed.add(requirement_id)
+    require(not duplicates, "PRF-PYS-003", f"Duplicate conformance IDs: {sorted(duplicates)}")
+    require(
+        observed == EXPECTED_REQUIREMENTS,
+        "PRF-PYS-005",
+        "Conformance IDs differ from the resolved v0.1.1 requirement universe: "
+        f"missing={sorted(EXPECTED_REQUIREMENTS - observed)}, "
+        f"unexpected={sorted(observed - EXPECTED_REQUIREMENTS)}",
+    )
+    require(
+        counts == EXPECTED_OUTCOME_COUNTS,
+        "PRF-FRM-007",
+        f"Conformance classifications must be {EXPECTED_OUTCOME_COUNTS}, got {counts}",
+    )
+    totals = report.get("totals", {})
+    require(isinstance(totals, dict), "PRF-FRM-014", "totals must be a table")
+    if isinstance(totals, dict):
+        expected_totals = {
+            "requirements": 114,
+            "applicable": 89,
+            "not_applicable": 15,
+            "source_authority": 10,
+            "pass": 89,
+            "verified_source_authority": 10,
+            "unresolved": 0,
+        }
+        require(
+            totals == expected_totals,
+            "PRF-FRM-014",
+            f"Conformance totals must be {expected_totals}, got {totals}",
         )
     return findings
 
@@ -494,6 +622,7 @@ def scan_repository(repository: Path, manifest: dict[str, object]) -> list[Findi
     paths = _tracked_paths(repository)
     findings = [
         *_manifest_findings(manifest),
+        *_conformance_findings(repository),
         *_path_findings(paths),
         *_documentation_findings(repository, paths),
         *_python_name_findings(repository, paths),

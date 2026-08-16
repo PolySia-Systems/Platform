@@ -127,7 +127,7 @@ unselected domain is inherited.
 release version, deployment instance, traffic stage, and trading authorization
 must not be conflated.
 
-## Temporary Baseline and Enforcement
+## Remediated Baseline and Enforcement
 
 [`standards/baseline.toml`](../../standards/baseline.toml) records ten existing
 findings at pre-adoption revision
@@ -135,11 +135,12 @@ findings at pre-adoption revision
 tokens, four non-snake-case Python utility filenames, and one Python module
 filename that collides with the standard library.
 
-The baseline is not an exception and grants no conformance claim. During the
-first adoption stage, CI rejects unrecorded findings and rejects a recorded
-finding when its path is changed without remediation. Full-repository baseline
-audit remains available locally. The next remediation stage must resolve all
-ten findings, and the final enforcement stage must remove the baseline.
+The baseline is not an exception and grants no conformance claim. All ten
+recorded findings were resolved in the remediation stage. The baseline remains
+only as migration evidence until the final enforcement stage removes it. The
+complete repository result is recorded in
+[`standards/conformance.toml`](../../standards/conformance.toml); full enforcement
+is not claimed until CI switches from changed-file to full-repository mode.
 
 ## Exceptions and Deviations
 
@@ -161,7 +162,7 @@ claim of full conformance, not an approved departure from a mandatory rule.
 
 | Field | Value |
 |---|---|
-| Adoption disposition | Accepted for active use with temporary changed-file enforcement |
+| Adoption disposition | Remediated; accepted pending full-repository enforcement |
 | Decision record | This owner-authorized adoption and its three sequential PRs |
 | Next review owner | PolySia Platform Owner |
 | Next review date or trigger | 2026-11-17, Profile or release upgrade, boundary change, or a material consumer-fact change |
@@ -170,5 +171,7 @@ claim of full conformance, not an approved departure from a mandatory rule.
 
 - [`standards/adoption.toml`](../../standards/adoption.toml)
 - [`standards/baseline.toml`](../../standards/baseline.toml)
+- [`standards/conformance.toml`](../../standards/conformance.toml)
 - [Project naming pack](naming-pack.md)
 - [Project status](PROJECT_STATUS.md)
+- [Remediation and rollback](../10-operations/standards-v0.1.1-remediation.md)

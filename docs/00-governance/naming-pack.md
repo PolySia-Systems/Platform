@@ -12,6 +12,13 @@
 | Technical language | English |
 | First venue adapter | Polymarket |
 
+Canonical `APP_ENV` base values are `development`, `test`, `staging`, and
+`production`. Repository-owned examples use only these tokens. At the settings
+input boundary, legacy aliases remain accepted and are normalized as follows:
+`local`/`dev` to `development`, `qa`/`testing` to `test`, `stage`/`stg` to
+`staging`, and `server`/`prod`/`prd` to `production`. This compatibility mapping
+can be removed only after verified consumers no longer send legacy values.
+
 Generic runtime variables use `POLYSIA_` as they are introduced. Venue-specific
 variables retain `POLYMARKET_`. Existing generic variables remain supported only
 until a tested migration provides aliases and rollback notes.

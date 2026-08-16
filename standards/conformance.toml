@@ -1,0 +1,142 @@
+schema_version = 1
+record_id = "CNF-PLATFORM-001"
+status = "remediated_pending_full_enforcement"
+consumer = "PolySia-Systems/Platform"
+evaluated_at = "2026-08-17"
+evaluated_revision = "codex/standards-remediation from c5060ff7f8b1b9c410c2024b60b8196896390b47"
+standards_repository = "PolySia-Systems/Standards"
+standards_release = "v0.1.1"
+standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
+profiles = ["PRF-BASE", "PRF-PYS"]
+enforcement = "changed"
+unresolved_findings = 0
+approved_exceptions = []
+deferred_requirements = []
+
+[totals]
+requirements = 114
+applicable = 89
+not_applicable = 15
+source_authority = 10
+pass = 89
+verified_source_authority = 10
+unresolved = 0
+
+[[results]]
+name = "profile-framework-consumer"
+classification = "applicable"
+verdict = "pass"
+ids = ["PRF-FRM-005", "PRF-FRM-006", "PRF-FRM-007", "PRF-FRM-010", "PRF-FRM-013", "PRF-FRM-014"]
+evidence = "standards/adoption.toml; docs/00-governance/standards-adoption-v0.1.1.md; scripts/validate_standards.py"
+
+[[results]]
+name = "profile-framework-absent-events"
+classification = "not_applicable"
+verdict = "not_applicable"
+ids = ["PRF-FRM-008", "PRF-FRM-011", "PRF-FRM-015"]
+evidence = "No scoped refinement, unresolved profile conflict, or profile change exists."
+
+[[results]]
+name = "profile-framework-source-authority"
+classification = "source_authority"
+verdict = "verified_source_authority"
+ids = ["PRF-FRM-001", "PRF-FRM-002", "PRF-FRM-003", "PRF-FRM-004", "PRF-FRM-009", "PRF-FRM-012", "PRF-FRM-016"]
+evidence = "Immutable PolySia-Systems/Standards v0.1.1 profile artifacts."
+
+[[results]]
+name = "base-profile-consumer"
+classification = "applicable"
+verdict = "pass"
+ids = ["PRF-BASE-001", "PRF-BASE-002", "PRF-BASE-003", "PRF-BASE-004", "PRF-BASE-005", "PRF-BASE-006", "PRF-BASE-007", "PRF-BASE-008"]
+evidence = "standards/adoption.toml; naming pack; repository validator"
+
+[[results]]
+name = "base-profile-owner-review"
+classification = "source_authority"
+verdict = "verified_source_authority"
+ids = ["PRF-BASE-009"]
+evidence = "Immutable PolySia-Systems/Standards v0.1.1 PRF-BASE."
+
+[[results]]
+name = "python-profile-consumer"
+classification = "applicable"
+verdict = "pass"
+ids = ["PRF-PYS-001", "PRF-PYS-002", "PRF-PYS-003", "PRF-PYS-004", "PRF-PYS-005", "PRF-PYS-006"]
+evidence = "pyproject.toml; src/polysia; tests; locks/pip-py314.lock; CI"
+
+[[results]]
+name = "python-profile-owner-review"
+classification = "source_authority"
+verdict = "verified_source_authority"
+ids = ["PRF-PYS-007"]
+evidence = "Immutable PolySia-Systems/Standards v0.1.1 PRF-PYS."
+
+[[results]]
+name = "core-interpretation-and-assessment"
+classification = "applicable"
+verdict = "pass"
+ids = ["CORE-REQ-020", "CORE-REQ-021", "CORE-REQ-022", "CORE-REQ-024", "CORE-REQ-026", "CORE-REQ-029", "CORE-REQ-030", "CORE-REQ-032", "CORE-REQ-034", "CORE-REQ-052", "CORE-REQ-057", "CORE-REQ-059"]
+evidence = "standards/adoption.toml; standards/conformance.toml; adoption review"
+
+[[results]]
+name = "core-conflict-and-exception-events"
+classification = "not_applicable"
+verdict = "not_applicable"
+ids = ["CORE-REQ-027", "CORE-REQ-053", "CORE-REQ-054", "CORE-REQ-055"]
+evidence = "No incompatible requirement set, conflict, or approved mandatory exception exists."
+
+[[results]]
+name = "base-core-naming"
+classification = "applicable"
+verdict = "pass"
+ids = ["CORE-NAM-025", "CORE-NAM-028", "CORE-NAM-029", "CORE-NAM-031", "CORE-NAM-032", "CORE-NAM-033", "CORE-NAM-061", "CORE-NAM-062", "CORE-NAM-070", "CORE-NAM-071", "CORE-NAM-075", "CORE-NAM-082"]
+evidence = "Repository metadata; naming pack; path/link checks; Secret Scan; repository validator"
+
+[[results]]
+name = "base-environment"
+classification = "applicable"
+verdict = "pass"
+ids = ["CORE-NAM-054", "CORE-NAM-055", "CORE-NAM-056"]
+evidence = "Canonical APP_ENV examples; AppSettings compatibility mapping; naming pack; tests"
+
+[[results]]
+name = "ephemeral-environment"
+classification = "not_applicable"
+verdict = "not_applicable"
+ids = ["CORE-NAM-057"]
+evidence = "No repository-owned ephemeral environment is implemented."
+
+[[results]]
+name = "released-authority"
+classification = "applicable"
+verdict = "pass"
+ids = ["CORE-LCY-001", "CORE-VER-012"]
+evidence = "Exact immutable v0.1.1 release and commit pin in adoption and conformance records."
+
+[[results]]
+name = "python-core-naming"
+classification = "applicable"
+verdict = "pass"
+ids = ["CORE-NAM-036", "CORE-NAM-037", "CORE-NAM-038", "CORE-NAM-039", "CORE-NAM-040", "CORE-NAM-042", "CORE-NAM-085", "CORE-NAM-088", "CORE-NAM-089", "CORE-NAM-093", "CORE-NAM-094", "CORE-NAM-096", "CORE-NAM-097", "CORE-NAM-098", "CORE-NAM-099", "CORE-NAM-100", "CORE-NAM-101", "CORE-NAM-102", "CORE-NAM-104", "CORE-NAM-105"]
+evidence = "Snake-case utility paths; structured_logging module; pyproject metadata; public CLI and exports; tests"
+
+[[results]]
+name = "python-naming-absent-events"
+classification = "not_applicable"
+verdict = "not_applicable"
+ids = ["CORE-NAM-041", "CORE-NAM-086", "CORE-NAM-087", "CORE-NAM-090", "CORE-NAM-091", "CORE-NAM-092", "CORE-NAM-095"]
+evidence = "No public Python rename, approved naming exception, or incompatible domain constraint exists."
+
+[[results]]
+name = "python-engineering"
+classification = "applicable"
+verdict = "pass"
+ids = ["ENG-PY-001", "ENG-PY-002", "ENG-PY-003", "ENG-PY-004", "ENG-PY-005", "ENG-PY-006", "ENG-PY-007", "ENG-PY-008", "ENG-PY-009", "ENG-PY-010", "ENG-PY-011", "ENG-PY-012", "ENG-PY-013", "ENG-PY-014", "ENG-PY-015", "ENG-PY-016", "ENG-PY-017", "ENG-PY-018", "ENG-PY-019", "ENG-PY-020"]
+evidence = "pyproject.toml; src/polysia; tests; locks; CI; build and wheel smoke; strict OSV audit; SBOM"
+
+[[results]]
+name = "python-standard-owner-review"
+classification = "source_authority"
+verdict = "verified_source_authority"
+ids = ["ENG-PY-021"]
+evidence = "Immutable PolySia-Systems/Standards v0.1.1 Python Standard."

@@ -92,9 +92,9 @@ from polysia.cli_support import (
 from polysia.cli_support import (
     safe_order_response as _safe_order_response,
 )
-from polysia.config.logging import configure_logging
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.config.status import build_configuration_status
+from polysia.config.structured_logging import configure_logging
 from polysia.deployment.automation import run_deployment_automation
 from polysia.deployment.final_handoff import render_final_handoff_markdown
 from polysia.deployment.manifest import build_release_manifest

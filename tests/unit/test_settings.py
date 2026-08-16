@@ -8,6 +8,7 @@ from polysia.config.settings import AppSettings, TradingMode
 
 
 def test_defaults_are_data_only(monkeypatch) -> None:
+    monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("POLYMARKET_PRIVATE_KEY", raising=False)
     monkeypatch.delenv("POLYMARKET_FUNDER_ADDRESS", raising=False)
     monkeypatch.delenv("POLYMARKET_SIGNATURE_TYPE", raising=False)
@@ -26,6 +27,7 @@ def test_defaults_are_data_only(monkeypatch) -> None:
 
     settings = AppSettings(_env_file=None)
 
+    assert settings.app_env == "development"
     assert settings.trading_mode == TradingMode.DATA_ONLY
     assert settings.live_trading_enabled is False
     assert settings.live_trading_allowed is False
@@ -41,6 +43,27 @@ def test_defaults_are_data_only(monkeypatch) -> None:
     assert settings.polymarket_read_backoff_seconds == Decimal("0.25")
     assert settings.polymarket_server_time_timeout_seconds == Decimal("5")
     assert settings.polymarket_max_clock_drift_seconds == Decimal("5")
+
+
+@pytest.mark.parametrize(
+    ("legacy_value", "canonical_value"),
+    [
+        ("local", "development"),
+        ("server", "production"),
+        ("qa", "test"),
+        ("stage", "staging"),
+    ],
+)
+def test_legacy_app_environment_aliases_remain_compatible(
+    monkeypatch,
+    legacy_value: str,
+    canonical_value: str,
+) -> None:
+    monkeypatch.setenv("APP_ENV", legacy_value)
+
+    settings = AppSettings(_env_file=None)
+
+    assert settings.app_env == canonical_value
 
 
 def test_live_trading_requires_live_mode_and_enable_flag(monkeypatch) -> None:
