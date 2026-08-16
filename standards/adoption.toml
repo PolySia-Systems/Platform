@@ -1,6 +1,6 @@
 schema_version = 1
 record_id = "ADP-PLATFORM-001"
-status = "active_remediated_pending_full_enforcement"
+status = "active_conformant"
 consumer = "PolySia-Systems/Platform"
 accountable_owner = "PolySia Platform Owner"
 adoption_date = "2026-08-17"
@@ -20,12 +20,11 @@ excluded_boundaries = [
   "third-party and generated identifiers",
   "historical records under docs/13-ai-handoffs, docs/18-ai-handoffs, and docs/99-archive",
 ]
-conformance_claim = "remediation_complete; full_enforcement_pending"
+conformance_claim = "conformant_with_v0.1.1_for_selected_profiles"
 
 [enforcement]
-mode = "changed"
+mode = "full"
 validator = "scripts/validate_standards.py"
-baseline = "standards/baseline.toml"
 network_access = false
 
 [consumer_facts]

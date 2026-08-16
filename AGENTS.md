@@ -51,7 +51,8 @@ This repository adopts the exact immutable
 `921db357c07bf1d940f72cfbb662d940288132ca`, selecting only `PRF-BASE` and
 `PRF-PYS`. The authoritative consumer record and resolved applicability set are
 [`standards/adoption.toml`](standards/adoption.toml) and
-[`docs/00-governance/standards-adoption-v0.1.1.md`](docs/00-governance/standards-adoption-v0.1.1.md).
+[`standards/conformance.toml`](standards/conformance.toml), with the human review
+at [`docs/00-governance/standards-conformance-v0.1.1.md`](docs/00-governance/standards-conformance-v0.1.1.md).
 
 Within that selected set, the pinned Standards release owns requirement meaning,
 levels, Profile conditions, and exception semantics. This repository owns its
@@ -61,8 +62,9 @@ weaken, reinterpret, or expand the adopted requirement set. A material conflict
 must be recorded and escalated before claiming conformance. No unselected,
 Draft, Deferred, future, or transitive Standards requirement applies.
 
-Normal CI validates the recorded pin and local evidence without network access
-or credentials for the private Standards repository.
+Normal CI validates the entire tracked repository, recorded pin, and local
+evidence without network access or credentials for the private Standards
+repository. The adopted requirement set has no grandfathered baseline.
 
 Codex's default project-guidance budget is 32 KiB for the combined instruction
 chain. Keep this root file compact enough to leave room for future nested files.
@@ -297,6 +299,7 @@ Use the appropriate layers:
 The current CI quality gates are:
 
 ```bash
+python scripts/validate_standards.py --mode full
 python -m compileall -q src tests
 python -m ruff check .
 python -m mypy src

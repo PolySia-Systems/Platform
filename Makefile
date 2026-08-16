@@ -13,7 +13,7 @@ typecheck:
 	python -m mypy src
 
 standards:
-	python scripts/validate_standards.py --mode full --allow-baseline
+	python scripts/validate_standards.py --mode full
 
 security:
 	python -m polysia.security.secret_scan

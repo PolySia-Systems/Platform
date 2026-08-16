@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Record ID | `ADP-PLATFORM-001` |
-| Record status | Approved; active with a temporary remediation baseline |
-| Authority | Active consumer adoption; full conformance is not claimed until full enforcement passes |
+| Record status | Approved; active and fully enforced |
+| Authority | Conformant consumer adoption for the selected v0.1.1 profiles |
 | Consumer identity | `PolySia-Systems/Platform` |
 | Accountable Consumer Owner | PolySia Platform Owner |
 | Standards release | `v0.1.1` |
@@ -127,25 +127,21 @@ unselected domain is inherited.
 release version, deployment instance, traffic stage, and trading authorization
 must not be conflated.
 
-## Remediated Baseline and Enforcement
+## Full Enforcement
 
-[`standards/baseline.toml`](../../standards/baseline.toml) records ten existing
-findings at pre-adoption revision
+The temporary baseline recorded ten findings at pre-adoption revision
 `35a6c2236188e5bc47742c2a802d4383b6dc1c8c`: five noncanonical `APP_ENV`
 tokens, four non-snake-case Python utility filenames, and one Python module
 filename that collides with the standard library.
 
-The baseline is not an exception and grants no conformance claim. All ten
-recorded findings were resolved in the remediation stage. The baseline remains
-only as migration evidence until the final enforcement stage removes it. The
-complete repository result is recorded in
-[`standards/conformance.toml`](../../standards/conformance.toml); full enforcement
-is not claimed until CI switches from changed-file to full-repository mode.
+All ten findings were resolved, full-repository validation passed, and the
+temporary baseline was removed. CI now evaluates the complete tracked
+repository on every run. The complete 114-requirement result is recorded in
+[`standards/conformance.toml`](../../standards/conformance.toml).
 
 ## Exceptions and Deviations
 
-None. The temporary baseline is an owner-authorized migration state with no
-claim of full conformance, not an approved departure from a mandatory rule.
+None. No baseline, grandfathered finding, or approved exception remains.
 
 ## Adoption Review
 
@@ -162,7 +158,7 @@ claim of full conformance, not an approved departure from a mandatory rule.
 
 | Field | Value |
 |---|---|
-| Adoption disposition | Remediated; accepted pending full-repository enforcement |
+| Adoption disposition | Accepted and fully enforced for PRF-BASE and PRF-PYS |
 | Decision record | This owner-authorized adoption and its three sequential PRs |
 | Next review owner | PolySia Platform Owner |
 | Next review date or trigger | 2026-11-17, Profile or release upgrade, boundary change, or a material consumer-fact change |
@@ -170,8 +166,8 @@ claim of full conformance, not an approved departure from a mandatory rule.
 ## Related Records
 
 - [`standards/adoption.toml`](../../standards/adoption.toml)
-- [`standards/baseline.toml`](../../standards/baseline.toml)
 - [`standards/conformance.toml`](../../standards/conformance.toml)
+- [Final conformance review](standards-conformance-v0.1.1.md)
 - [Project naming pack](naming-pack.md)
 - [Project status](PROJECT_STATUS.md)
 - [Remediation and rollback](../10-operations/standards-v0.1.1-remediation.md)
