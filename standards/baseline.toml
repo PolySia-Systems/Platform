@@ -1,0 +1,62 @@
+schema_version = 1
+status = "temporary"
+standards_release = "v0.1.1"
+standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
+source_revision = "35a6c2236188e5bc47742c2a802d4383b6dc1c8c"
+recorded_at = "2026-08-17"
+removal_gate = "Remove after every recorded finding is remediated and full-repository validation passes."
+
+[[findings]]
+requirement_id = "CORE-NAM-055"
+path = ".env.example"
+line = 1
+message = "APP_ENV uses noncanonical token 'local'; map it to 'development'"
+
+[[findings]]
+requirement_id = "CORE-NAM-055"
+path = "Dockerfile"
+line = 25
+message = "APP_ENV uses noncanonical token 'server'; map it to 'production'"
+
+[[findings]]
+requirement_id = "CORE-NAM-055"
+path = "compose.yaml"
+line = 15
+message = "APP_ENV uses noncanonical token 'server'; map it to 'production'"
+
+[[findings]]
+requirement_id = "CORE-NAM-055"
+path = "deploy/polysia.env.example"
+line = 3
+message = "APP_ENV uses noncanonical token 'server'; map it to 'production'"
+
+[[findings]]
+requirement_id = "CORE-NAM-055"
+path = "src/polysia/config/settings.py"
+line = 29
+message = "APP_ENV uses noncanonical token 'local'; map it to 'development'"
+
+[[findings]]
+requirement_id = "ENG-PY-006"
+path = "scripts/build-copy-signal-arbiter-replay-input.py"
+message = "Python module filename must be lowercase snake_case"
+
+[[findings]]
+requirement_id = "ENG-PY-006"
+path = "scripts/check-secrets.py"
+message = "Python module filename must be lowercase snake_case"
+
+[[findings]]
+requirement_id = "ENG-PY-006"
+path = "scripts/copy-signal-arbiter-replay.py"
+message = "Python module filename must be lowercase snake_case"
+
+[[findings]]
+requirement_id = "ENG-PY-006"
+path = "scripts/copytrading-stage1.py"
+message = "Python module filename must be lowercase snake_case"
+
+[[findings]]
+requirement_id = "ENG-PY-006"
+path = "src/polysia/config/logging.py"
+message = "Module filename collides with Python standard-library module 'logging'"
