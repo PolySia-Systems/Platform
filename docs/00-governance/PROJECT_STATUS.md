@@ -4,14 +4,14 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-01 |
+| Review date | 2026-08-16 |
 | Source-of-truth branch | `main` |
 | Last verified deployed baseline | `46efce066c95c0d1f4a230aae33c99d0b98ce7cd` |
 | Post-only repair merge baseline | `89d2dbbadbf3f4fadc7501805b50bc52cc0fb533` |
 | Repository | `https://github.com/Movafeghm/polysia.git` |
 | Active maintenance task | Tiny Live Copy final Post-only recheck and zero-mutation validation |
 | Primary runtime | CPython `3.14.6` |
-| Supported CI runtimes | Python `3.11`, `3.13`, and `3.14` |
+| Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.2.0` |
 | Phase status | `TINY_LIVE_COPY_003_FAILED_SAFE_POST_ONLY_REPAIR` |
 
@@ -137,10 +137,12 @@ evidence.
   vulnerabilities and generated a CycloneDX JSON SBOM.
 - A second Conda environment recreated from `environment.yml` and the portable
   pip lock, passed `pip check`, and passed all five SDK surface contracts.
-- CI now verifies Python 3.11, 3.13, and 3.14 on Windows, runs a Python 3.14
-  Linux build/test/wheel smoke, and performs strict OSV/SBOM validation from
-  the exact dependency lock. Final PR CI evidence is resolved from GitHub
-  history after this document is committed.
+- CI now verifies only Python 3.14. Pull requests receive lightweight diff,
+  local path/link, and secret checks; executable Python changes add complete
+  Windows quality and Linux build/test/wheel smoke; relevant deployment changes
+  add container validation. Strict OSV/SBOM validation runs for dependency
+  changes, on a weekly schedule, and by manual dispatch. Push workflows run only
+  on `main`, and superseded pull-request runs are cancelled.
 - The approved versions are `polymarket-client==0.2.0`, `mypy==2.3.0`, and
   `ruff==0.16.0`. `setuptools==83.0.0` removes the known 82.0.1 finding.
 - PR `#36` CI passed Python 3.11/3.13/3.14 quality jobs, Linux smoke,

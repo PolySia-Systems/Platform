@@ -44,5 +44,7 @@ boundaries, and the `condition_id` compatibility surface introduced before the
 stable 0.x releases. SDK objects remain confined to the adapter boundary.
 
 Any future upgrade requires a focused contract, lock, security, CI, and
-rollback change. The currently verified rollback returns to the Python 3.13.14
-and SDK 0.1.0b11 baseline without changing private credential values.
+rollback change. Current `main` supports only Python 3.14. Restoring the
+historical Python 3.13.14 and SDK 0.1.0b11 baseline requires reverting the
+associated compatibility and SDK decisions without changing private credential
+values.

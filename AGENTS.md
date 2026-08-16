@@ -234,8 +234,9 @@ and report.
 
 Follow `pyproject.toml`, repository tooling, and existing conventions.
 
-- Supported Python is `>=3.11`; CI verifies Python 3.11 and 3.13. Do not narrow or
-  widen support casually.
+- Supported Python is `>=3.14,<3.15`; CI verifies Python 3.14. Change the
+  supported minor line only through an explicit compatibility decision with
+  synchronized metadata, tooling, CI, and documentation updates.
 - Use clear type annotations for public interfaces and non-trivial internal
   boundaries.
 - Prefer small cohesive modules and explicit dependency injection over hidden

@@ -25,16 +25,21 @@ echoing matched values, and rejects tracked `.env`, key, and PEM files. Runtime
 
 ## CI
 
-Windows CI tests Python 3.11 and 3.13 with DATA_ONLY safety overrides. A separate
-supply-chain job audits dependencies and publishes an SBOM artifact. GitHub
-Actions and pip dependencies receive weekly Dependabot review.
+CI supports Python 3.14 only and keeps DATA_ONLY safety overrides. Pull requests
+always run diff, local path/link, and tracked-file secret checks. Full Windows
+quality and Linux smoke checks run for executable Python changes, while the
+container job runs only for relevant source, Docker, deployment, dependency, or
+configuration changes. The supply-chain job performs a strict OSV audit and
+publishes a CycloneDX SBOM for dependency changes, on a weekly schedule, and by
+manual dispatch. GitHub Actions and pip dependencies receive weekly Dependabot
+review.
 
 ## Limitations
 
-The Windows lock is the verified owner-workstation snapshot. CI installation
-from `pyproject.toml` validates supported Python versions but is not yet a
-cross-platform hash-locked resolution. Adding a portable lock remains a release
-hardening item. CODEOWNERS and repository protection require the owner's GitHub
+The Conda lock is the verified Windows owner-workstation snapshot. The exact
+pip lock is portable across compatible Windows and Linux Python 3.14
+environments but is not hash-locked; adding hashes remains a release-hardening
+item. CODEOWNERS and repository protection require the owner's GitHub
 account/repository configuration and cannot be invented locally.
 
 The default PyPI advisory endpoint remains unavailable through the workstation
