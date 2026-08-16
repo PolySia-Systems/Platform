@@ -19,7 +19,10 @@ aliases used by tests and internal callers remain available where verified.
 
 ## Characterization and boundaries
 
-- The exact current Typer inventory is locked at 35 command names.
+- The Phase F Typer inventory was locked at 35 command names. The current
+  inventory contains 41 top-level command or command-group names after later
+  approved capabilities, including one `control` group bounded to `plan`,
+  `apply`, `status`, and `history`.
 - Existing CLI, acceptance-renderer, and manual-intervention tests remain the
   primary behavioral characterization suite.
 - Architecture tests prevent renderer implementations from returning to the
@@ -28,6 +31,20 @@ aliases used by tests and internal callers remain available where verified.
 The earlier Phase A/Phase C references to 34 commands are a historical counting
 error: the Phase A Git snapshot itself contains 35 `@app.command` registrations.
 No command was added or removed by this decomposition.
+
+## Shadow Control Kernel boundary
+
+The first Control Kernel slice keeps typed immutable models, planning,
+validation, policy, idempotency, and reconciliation under `polysia.control`.
+Typer wiring is isolated in `polysia.control.cli`; SQLite serialization remains
+an outer adapter in `polysia.storage.control`. The existing deterministic
+`monitoring.shadow_run` loop accepts a narrow injected intent boundary directly
+before `BaseStrategy.on_market_event`.
+
+The boundary supports only `stale-price@0.1.0` in `SHADOW`. It is not a daemon,
+strategy orchestrator, Live controller, or replacement for the Strategy
+Registry. Architecture tests keep the control core venue-neutral and free of
+SQLite adapter imports.
 
 ## Remaining incremental debt
 

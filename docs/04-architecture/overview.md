@@ -26,17 +26,27 @@ The minimal Strategy Registry is CURRENT. It stores versioned definitions,
 lifecycle state, run evidence, and explicitly unrated performance summaries; it
 is not a generalized multi-strategy orchestrator.
 
+The first Control Kernel slice is CURRENT for the deterministic
+`stale-price@0.1.0` Shadow path only. Its CLI can plan and apply
+`RUNNING <-> PAUSED` with immutable SQLite revisions, optimistic concurrency,
+idempotency, separate desired/observed state, and append-only audit evidence.
+The in-process intent boundary prevents new strategy intents while paused; it
+does not stop Risk, reconciliation, monitoring, or emergency controls and it
+cannot reach Live trading.
+
 ## TARGET
 
 Generalized intent aggregation/conflict resolution, portfolio/capital
 allocation, OMS or Transaction Manager, generalized ledger, execution router,
-and adapter registry are approved target concepts only. They must not be shown
-or described as part of the current executable path.
+adapter registry, generalized runtime parameter mutation, and continuous
+control reconciliation are approved target concepts only. They must not be
+shown or described as part of the current executable path.
 
 ## FUTURE
 
 Additional venues, Web3/DeFi execution, cloud/distributed infrastructure,
-machine learning, and institutional availability are optional future directions
+machine learning, Control Kernel Web/API/AI interfaces, Live operational
+control, and institutional availability are optional future directions
 requiring evidence and separate decisions.
 
 ## EXTERNAL
