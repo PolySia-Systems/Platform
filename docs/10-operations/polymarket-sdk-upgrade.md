@@ -33,7 +33,8 @@ live gate weakens.
 
 ## Rollback
 
-Use the external `PolySia-py313-rollback-*` export or revert ADR-0011 and the
-upgrade commit to restore Python 3.13.14 and `polymarket-client==0.1.0b11`.
-Recreate the environment, reinstall the project, and rerun all local and public
-read-only gates. Never roll back by changing or replacing credential values.
+Revert ADR-0011 and the relevant upgrade/compatibility commits before restoring
+Python 3.13.14 and `polymarket-client==0.1.0b11`; those versions are not
+supported by current `main`. Recreate the reverted environment, reinstall the
+project, and rerun all local and public read-only gates. Never roll back by
+changing or replacing credential values.

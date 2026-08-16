@@ -2,10 +2,18 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   TRADING_MODE: DATA_ONLY
@@ -13,31 +21,138 @@ env:
   POLYMARKET_LIVE_TOKEN_ALLOWLIST: ""
 
 jobs:
-  quality:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13", "3.14"]
+  changes:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      container: ${{ steps.filter.outputs.container }}
+      dependencies: ${{ steps.filter.outputs.dependencies }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Classify changed paths
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          $base = $env:BASE_SHA
+          if ([string]::IsNullOrWhiteSpace($base) -or $base -match '^0+$') {
+            $base = git rev-parse "$env:GITHUB_SHA^"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to resolve a comparison base."
+            }
+          }
+
+          $files = @(git diff --name-only --diff-filter=ACMRTUXB $base $env:GITHUB_SHA)
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to classify changed paths."
+          }
+
+          function Test-PathGroup([string[]] $patterns) {
+            foreach ($file in $files) {
+              foreach ($pattern in $patterns) {
+                if ($file -like $pattern) {
+                  return $true
+                }
+              }
+            }
+            return $false
+          }
+
+          $python = Test-PathGroup @(
+            'src/*',
+            'tests/*',
+            'scripts/*',
+            'pyproject.toml',
+            'environment.yml',
+            'locks/*',
+            'Makefile',
+            'Dockerfile',
+            'compose.yaml',
+            'docker-compose.yml',
+            '.dockerignore',
+            '.env.example',
+            'deploy/*',
+            '.pre-commit-config.yaml',
+            '.github/dependabot.yml',
+            '.github/workflows/*',
+            '.github/actions/*'
+          )
+          $container = Test-PathGroup @(
+            'src/*',
+            'Dockerfile',
+            'compose.yaml',
+            'docker-compose.yml',
+            '.dockerignore',
+            '.env.example',
+            'deploy/*',
+            'locks/*',
+            'pyproject.toml',
+            'environment.yml',
+            'Makefile'
+          )
+          $dependencies = Test-PathGroup @(
+            'pyproject.toml',
+            'environment.yml',
+            'locks/*',
+            'Dockerfile',
+            '.pre-commit-config.yaml',
+            '.github/workflows/*',
+            '.github/dependabot.yml'
+          )
+
+          "python=$($python.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "container=$($container.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "dependencies=$($dependencies.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+  quality:
+    needs: changes
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r locks/pip-py314.lock
-      - run: python -m pip install --no-deps -e .
-      - run: python -m compileall -q src tests
-      - run: python -m ruff check .
-      - run: python -m mypy src
-      - run: python -m pytest -q
-      - run: python -m pip check
-      - run: python -m polysia.security.secret_scan
-      - run: python -m build
+      - name: Diff and path/link checks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python scripts/check_changed_docs.py --base "$env:BASE_SHA" --head "$env:GITHUB_SHA"
+      - name: Secret scan
+        env:
+          PYTHONPATH: src
+        run: python -m polysia.security.secret_scan
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m pip install --upgrade pip
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m pip install -r locks/pip-py314.lock
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m pip install --no-deps -e .
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m compileall -q src tests
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m ruff check .
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m mypy src
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m pytest -q
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m pip check
+      - if: needs.changes.outputs.python == 'true'
+        run: python -m build
 
   linux-smoke:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -58,7 +173,10 @@ jobs:
           .wheel-smoke/bin/python -m polysia.cli --help
 
   container:
+    needs: changes
+    if: needs.changes.outputs.container == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - run: docker build --tag polysia:ci .
@@ -81,7 +199,14 @@ jobs:
             init --database /var/lib/polysia/data/polysia.sqlite3
 
   supply-chain:
+    needs: changes
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.dependencies == 'true')
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -99,3 +224,4 @@ jobs:
         with:
           name: polysia-sbom
           path: artifacts/sbom.json
+          retention-days: 14

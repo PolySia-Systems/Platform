@@ -17,15 +17,16 @@
 
 1. Revert a phase commit for a narrow rollback.
 2. Recreate the current runtime from the environment and lock files.
-3. Use the external `PolySia-py313-rollback-*` environment export for a
-   dependency/runtime rollback.
+3. Revert the Python support decision and recreate the reverted environment if
+   an emergency rollback requires Python 3.11 or 3.13; current `main` supports
+   only Python 3.14.
 4. Use the preserved `Polymarket Python SDK` folder for side-by-side comparison.
 5. Use the external pre-migration backup for complete recovery, including the
    original local configuration, only in an access-controlled context.
 
 The legacy project folder remains preserved. The owner removed the old
-`polymarket` Conda environment before the Python 3.14 upgrade; PolySia does not
-depend on it.
+`polymarket` Conda environment and earlier workstation recovery exports after
+verification; PolySia does not depend on them.
 
 Never copy `.env`, keys, account identifiers, databases, or generated live
 evidence into a source archive or tracked handoff.

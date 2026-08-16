@@ -31,9 +31,10 @@
 - Keep Python 3.14.6, `polymarket-client==0.2.0`, Mypy 2.3.0, and Ruff 0.16.0
   pinned until new contract, lock, security, and rollback evidence approves an
   upgrade.
-- Preserve the legacy project, database, live evidence, verified recovery
-  package, and Python 3.13 rollback export until a separate owner-approved
-  retirement task.
+- Preserve the legacy project, database, live evidence, and verified recovery
+  package until a separate owner-approved retirement task. Current `main`
+  supports only Python 3.14; older runtime support requires a deliberate
+  compatibility rollback.
 - Add branch protection and portable cross-platform locking only through a
   focused governance/release-hardening task.
 
