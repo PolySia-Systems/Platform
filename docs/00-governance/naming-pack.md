@@ -3,7 +3,7 @@
 | Item | Canonical value |
 |---|---|
 | Official name | PolySia |
-| Repository slug | `polysia` |
+| Repository slug | `Platform` |
 | Python distribution | `polysia` |
 | Python namespace | `polysia` |
 | CLI | `polysia` |
@@ -21,4 +21,3 @@ No compatibility shim is planned because repository and environment inspection
 found no available external consumer; the preserved delivery folder and backup
 provide rollback. If a verified consumer appears, a time-bounded shim requires a
 new ADR amendment and removal gate.
-

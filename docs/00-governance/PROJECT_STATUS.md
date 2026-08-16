@@ -4,11 +4,11 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-16 |
+| Review date | 2026-08-17 |
 | Source-of-truth branch | `main` |
 | Last verified deployed baseline | `46efce066c95c0d1f4a230aae33c99d0b98ce7cd` |
 | Post-only repair merge baseline | `89d2dbbadbf3f4fadc7501805b50bc52cc0fb533` |
-| Repository | `https://github.com/Movafeghm/polysia.git` |
+| Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Active maintenance task | Tiny Live Copy final Post-only recheck and zero-mutation validation |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
