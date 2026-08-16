@@ -1,14 +1,14 @@
 schema_version = 1
 record_id = "CNF-PLATFORM-001"
-status = "remediated_pending_full_enforcement"
+status = "conformant"
 consumer = "PolySia-Systems/Platform"
 evaluated_at = "2026-08-17"
-evaluated_revision = "codex/standards-remediation from c5060ff7f8b1b9c410c2024b60b8196896390b47"
+evaluated_revision = "codex/standards-full-enforcement from 20bdafc176c1955be360a6ad5bac82364c106296"
 standards_repository = "PolySia-Systems/Standards"
 standards_release = "v0.1.1"
 standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
 profiles = ["PRF-BASE", "PRF-PYS"]
-enforcement = "changed"
+enforcement = "full"
 unresolved_findings = 0
 approved_exceptions = []
 deferred_requirements = []

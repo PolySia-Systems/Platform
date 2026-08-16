@@ -9,11 +9,11 @@
 | Last verified deployed baseline | `46efce066c95c0d1f4a230aae33c99d0b98ce7cd` |
 | Post-only repair merge baseline | `89d2dbbadbf3f4fadc7501805b50bc52cc0fb533` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Active maintenance task | Standards `v0.1.1` adoption and full-repository remediation |
+| Active maintenance task | Standards `v0.1.1` full enforcement complete |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `STANDARDS_V0_1_1_REMEDIATED_PENDING_ENFORCEMENT` |
+| Phase status | `STANDARDS_V0_1_1_FULLY_ENFORCED` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly

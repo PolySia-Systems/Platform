@@ -154,6 +154,30 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
         "PRF-FRM-006",
         "Selected profiles must be exactly PRF-BASE and PRF-PYS",
     )
+    require(
+        manifest.get("status") == "active_conformant",
+        "PRF-FRM-014",
+        "Adoption status must be active_conformant",
+    )
+    require(
+        manifest.get("conformance_claim")
+        == "conformant_with_v0.1.1_for_selected_profiles",
+        "PRF-FRM-014",
+        "Adoption conformance claim is not final",
+    )
+    enforcement = manifest.get("enforcement", {})
+    require(isinstance(enforcement, dict), "PRF-FRM-014", "enforcement must be a table")
+    if isinstance(enforcement, dict):
+        require(
+            enforcement.get("mode") == "full",
+            "PRF-FRM-014",
+            "Standards enforcement mode must be full",
+        )
+        require(
+            "baseline" not in enforcement,
+            "CORE-REQ-052",
+            "Full enforcement must not reference a baseline",
+        )
     groups = manifest.get("requirement_groups", [])
     require(isinstance(groups, list), "PRF-FRM-006", "requirement_groups must be an array")
     observed: set[str] = set()
@@ -247,14 +271,19 @@ def _conformance_findings(repository: Path) -> list[Finding]:
         "Conformance profiles must be exactly PRF-BASE and PRF-PYS",
     )
     require(
-        report.get("status") in {"remediated_pending_full_enforcement", "conformant"},
+        report.get("status") == "conformant",
         "PRF-FRM-014",
         "Conformance status is invalid",
     )
     require(
-        report.get("enforcement") in {"changed", "full"},
+        report.get("enforcement") == "full",
         "PRF-FRM-014",
         "Conformance enforcement mode is invalid",
+    )
+    require(
+        not (repository / "standards/baseline.toml").exists(),
+        "CORE-REQ-052",
+        "Temporary Standards baseline must be removed",
     )
     require(
         report.get("unresolved_findings") == 0,
@@ -632,64 +661,6 @@ def scan_repository(repository: Path, manifest: dict[str, object]) -> list[Findi
     return sorted(set(findings))
 
 
-def _baseline_fingerprints(path: Path | None) -> set[str]:
-    if path is None or not path.exists():
-        return set()
-    baseline = _load_toml(path)
-    raw_findings = baseline.get("findings", [])
-    if not isinstance(raw_findings, list):
-        raise ValueError("baseline findings must be an array")
-    return {
-        Finding(
-            requirement_id=str(item["requirement_id"]),
-            path=str(item["path"]),
-            line=int(item.get("line", 0)),
-            message=str(item["message"]),
-        ).fingerprint
-        for item in raw_findings
-        if isinstance(item, dict)
-    }
-
-
-def _changed_paths(repository: Path, base: str, head: str) -> set[str]:
-    resolved_base = base
-    if not resolved_base or re.fullmatch(r"0+", resolved_base):
-        resolved_base = _git(repository, "rev-parse", f"{head}^").stdout.decode().strip()
-    _git(repository, "cat-file", "-e", f"{resolved_base}^{{commit}}")
-    result = _git(
-        repository,
-        "diff",
-        "--name-only",
-        "--diff-filter=ACMRTUXB",
-        "-z",
-        resolved_base,
-        head,
-        "--",
-    )
-    return {item.decode() for item in result.stdout.split(b"\0") if item}
-
-
-def classify_findings(
-    findings: list[Finding],
-    baseline: set[str],
-    changed_paths: set[str],
-    mode: str,
-    allow_baseline: bool,
-) -> tuple[list[Finding], list[Finding]]:
-    acknowledged: list[Finding] = []
-    blocking: list[Finding] = []
-    for finding in findings:
-        baselined = finding.fingerprint in baseline
-        baseline_allowed = allow_baseline or (
-            mode == "changed" and finding.path not in changed_paths
-        )
-        if baselined and baseline_allowed:
-            acknowledged.append(finding)
-        else:
-            blocking.append(finding)
-    return blocking, acknowledged
-
-
 def _print_findings(label: str, findings: list[Finding]) -> None:
     for finding in findings:
         location = finding.path if finding.line == 0 else f"{finding.path}:{finding.line}"
@@ -698,30 +669,16 @@ def _print_findings(label: str, findings: list[Finding]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate PolySia Standards adoption.")
-    parser.add_argument("--mode", choices=("changed", "full"), default="changed")
-    parser.add_argument("--base", default="")
-    parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--mode", choices=("full",), default="full")
     parser.add_argument("--manifest", default="standards/adoption.toml")
-    parser.add_argument("--baseline", default="standards/baseline.toml")
-    parser.add_argument("--allow-baseline", action="store_true")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     arguments = parser.parse_args()
 
     repository = Path.cwd().resolve()
     manifest_path = (repository / arguments.manifest).resolve()
-    baseline_path = (repository / arguments.baseline).resolve() if arguments.baseline else None
     try:
         manifest = _load_toml(manifest_path)
-        findings = scan_repository(repository, manifest)
-        baseline = _baseline_fingerprints(baseline_path)
-        changed = (
-            _changed_paths(repository, arguments.base, arguments.head)
-            if arguments.mode == "changed"
-            else set()
-        )
-        blocking, acknowledged = classify_findings(
-            findings, baseline, changed, arguments.mode, arguments.allow_baseline
-        )
+        blocking = scan_repository(repository, manifest)
     except (OSError, UnicodeError, ValueError, tomllib.TOMLDecodeError) as error:
         print(f"Standards validation failed to execute: {error}")
         return 2
@@ -739,8 +696,7 @@ def main() -> int:
                     "standards_release": EXPECTED_RELEASE,
                     "mode": arguments.mode,
                     "blocking": [asdict(finding) for finding in blocking],
-                    "acknowledged_baseline": [asdict(finding) for finding in acknowledged],
-                    "total_findings": len(findings),
+                    "total_findings": len(blocking),
                 },
                 indent=2,
                 sort_keys=True,
@@ -748,11 +704,9 @@ def main() -> int:
         )
     else:
         _print_findings("BLOCK", blocking)
-        _print_findings("BASELINE", acknowledged)
         print(
             "Standards validation summary: "
-            f"mode={arguments.mode} blocking={len(blocking)} "
-            f"acknowledged_baseline={len(acknowledged)} total={len(findings)}"
+            f"mode={arguments.mode} blocking={len(blocking)} total={len(blocking)}"
         )
     if blocking:
         print("Standards validation failed")
