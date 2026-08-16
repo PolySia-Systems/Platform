@@ -21,7 +21,7 @@ from polysia.adapters.polymarket.diagnostics import (
     ReadRetryPolicy,
     classify_polymarket_error,
 )
-from polysia.config.logging import get_logger
+from polysia.config.structured_logging import get_logger
 from polysia.domain.market import VenueCapabilityProfile
 
 OrderSide = Literal["BUY", "SELL"]

@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from polysia.bus.events import MarketDataEvent
-from polysia.config.logging import get_logger
+from polysia.config.structured_logging import get_logger
 from polysia.domain.market import MarketSummary
 from polysia.execution.intents import OrderIntent
 from polysia.orderbook.book import LocalOrderBook

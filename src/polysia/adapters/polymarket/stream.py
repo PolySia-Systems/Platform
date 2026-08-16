@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from polysia.bus.events import MarketDataEvent
 from polysia.bus.in_memory_bus import InMemoryEventBus
-from polysia.config.logging import get_logger
+from polysia.config.structured_logging import get_logger
 
 ClientFactory = Callable[[], AbstractAsyncContextManager[Any]]
 Sleep = Callable[[float], Awaitable[None]]

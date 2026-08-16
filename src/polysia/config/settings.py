@@ -26,7 +26,7 @@ class AppSettings(BaseSettings):
         extra="ignore",
     )
 
-    app_env: str = Field(default="local", validation_alias="APP_ENV")
+    app_env: str = Field(default="development", validation_alias="APP_ENV")
     trading_mode: TradingMode = Field(
         default=TradingMode.DATA_ONLY,
         validation_alias="TRADING_MODE",
@@ -85,6 +85,23 @@ class AppSettings(BaseSettings):
         validation_alias="POLYMARKET_MAX_CLOCK_DRIFT_SECONDS",
     )
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def normalize_app_environment(cls, value: Any) -> str:
+        aliases = {
+            "dev": "development",
+            "local": "development",
+            "prd": "production",
+            "prod": "production",
+            "qa": "test",
+            "server": "production",
+            "stage": "staging",
+            "stg": "staging",
+            "testing": "test",
+        }
+        normalized = str(value).strip().lower()
+        return aliases.get(normalized, normalized)
 
     @field_validator("polymarket_live_token_allowlist", mode="before")
     @classmethod

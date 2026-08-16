@@ -1,9 +1,10 @@
 schema_version = 1
-status = "temporary"
+status = "resolved_pending_removal"
 standards_release = "v0.1.1"
 standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
 source_revision = "35a6c2236188e5bc47742c2a802d4383b6dc1c8c"
 recorded_at = "2026-08-17"
+resolved_at = "2026-08-17"
 removal_gate = "Remove after every recorded finding is remediated and full-repository validation passes."
 
 [[findings]]

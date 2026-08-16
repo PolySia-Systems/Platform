@@ -1,6 +1,6 @@
 schema_version = 1
 record_id = "ADP-PLATFORM-001"
-status = "active_with_temporary_baseline"
+status = "active_remediated_pending_full_enforcement"
 consumer = "PolySia-Systems/Platform"
 accountable_owner = "PolySia Platform Owner"
 adoption_date = "2026-08-17"
@@ -20,7 +20,7 @@ excluded_boundaries = [
   "third-party and generated identifiers",
   "historical records under docs/13-ai-handoffs, docs/18-ai-handoffs, and docs/99-archive",
 ]
-conformance_claim = "not_claimed_until_full_enforcement"
+conformance_claim = "remediation_complete; full_enforcement_pending"
 
 [enforcement]
 mode = "changed"
@@ -76,8 +76,8 @@ additional_classes = [
   "limited-live",
   "disaster-recovery",
 ]
-legacy_aliases = ["local=development", "server=production"]
-alias_exit_trigger = "Canonicalize repository-owned APP_ENV values during full remediation; retain input compatibility only when a verified consumer requires it"
+legacy_aliases = ["dev=development", "local=development", "prd=production", "prod=production", "qa=test", "server=production", "stage=staging", "stg=staging", "testing=test"]
+alias_exit_trigger = "Remove an input alias only after verified consumers no longer require it; repository-owned values are canonical"
 
 [[requirement_groups]]
 name = "profile-framework-consumer"

@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal, Protocol
 
-from polysia.config.logging import get_logger
+from polysia.config.structured_logging import get_logger
 from polysia.reconciliation.live_round_trip import (
     LiveRoundTripReconciliationConfig,
     LiveRoundTripReconciliationError,

@@ -13,7 +13,7 @@
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.2.0` |
-| Phase status | `STANDARDS_V0_1_1_BASELINE_ACTIVE` |
+| Phase status | `STANDARDS_V0_1_1_REMEDIATED_PENDING_ENFORCEMENT` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly

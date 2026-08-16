@@ -12,7 +12,7 @@ services:
       - path: ${POLYSIA_ENV_FILE:-/etc/polysia/polysia.env}
         required: true
     environment:
-      APP_ENV: server
+      APP_ENV: production
       LIVE_TRADING_ENABLED: "false"
       POLYSIA_COPY_SIGNAL_ARBITER_FULL_ENABLED: "false"
       POLYMARKET_LIVE_TOKEN_ALLOWLIST: ""

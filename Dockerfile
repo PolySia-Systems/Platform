@@ -22,7 +22,7 @@ FROM ${PYTHON_IMAGE} AS runtime
 
 ARG POLYSIA_BUILD_COMMIT=unknown
 
-ENV APP_ENV=server \
+ENV APP_ENV=production \
     LIVE_TRADING_ENABLED=false \
     PATH=/home/polysia/.local/bin:${PATH} \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

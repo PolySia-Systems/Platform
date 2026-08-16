@@ -16,8 +16,8 @@ from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
     sanitize_order_request,
 )
-from polysia.config.logging import get_logger
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.config.structured_logging import get_logger
 from polysia.execution.intents import ApprovedOrderIntent, OrderIntent
 from polysia.risk.checks import RiskContext, RiskEngine
 
