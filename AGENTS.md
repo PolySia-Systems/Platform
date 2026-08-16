@@ -101,7 +101,8 @@ correctness or safety.
 Use the canonical identity:
 
 - Product: `PolySia`
-- Repository/distribution: `polysia`
+- Repository: `Platform`
+- Python distribution: `polysia`
 - Python import namespace: `polysia`
 - CLI: `polysia`
 - Service prefix: `polysia-`
