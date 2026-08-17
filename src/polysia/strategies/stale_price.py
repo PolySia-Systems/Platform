@@ -29,10 +29,13 @@ class StalePriceStrategyConfig:
 class StalePriceStrategy(BaseStrategy):
     """Toy strategy that emits intents from microprice-vs-mid dislocation."""
 
+    strategy_id = "stale-price"
+    strategy_version = "0.1.0"
+
     def __init__(
         self,
         *,
-        strategy_id: str = "stale-price",
+        strategy_id: str = strategy_id,
         config: StalePriceStrategyConfig | None = None,
     ) -> None:
         super().__init__(strategy_id=strategy_id)

@@ -81,5 +81,5 @@ procedure. Restore follows the existing SQLite recovery runbook.
 Configuration revert is intentionally not implemented. A future revert will
 append a new forward revision based on an older desired state; it will not erase
 history or undo external-world activity. Code rollback is a normal commit revert.
-The additive control tables are inert when no Control Kernel command or opted-in
-Shadow run uses them.
+The additive control tables are inert when no Control Kernel command or Shadow
+run consumes them.

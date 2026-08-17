@@ -147,6 +147,101 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
         REFERENCES strategy_definitions(strategy_id, version)
 );
 
+-- The first Control Kernel slice is SHADOW-only. Plans, desired revisions,
+-- observations, commands, and audit records are immutable append-only evidence.
+CREATE TABLE IF NOT EXISTS control_change_plans (
+    plan_id TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    runtime_mode TEXT NOT NULL CHECK(runtime_mode = 'SHADOW'),
+    expected_revision INTEGER NOT NULL CHECK(expected_revision >= 0),
+    requested_state TEXT NOT NULL CHECK(requested_state IN ('RUNNING', 'PAUSED')),
+    plan_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS control_desired_state_revisions (
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    runtime_mode TEXT NOT NULL CHECK(runtime_mode = 'SHADOW'),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    previous_revision INTEGER NOT NULL CHECK(previous_revision >= 0),
+    desired_state TEXT NOT NULL CHECK(desired_state IN ('RUNNING', 'PAUSED')),
+    command_id TEXT NOT NULL UNIQUE,
+    plan_id TEXT NOT NULL,
+    revision_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, strategy_version, runtime_mode, revision),
+    FOREIGN KEY (plan_id) REFERENCES control_change_plans(plan_id),
+    CHECK(revision = previous_revision + 1)
+);
+
+CREATE TABLE IF NOT EXISTS control_observed_state_events (
+    observation_id TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    runtime_mode TEXT NOT NULL CHECK(runtime_mode = 'SHADOW'),
+    desired_revision INTEGER NOT NULL CHECK(desired_revision >= 0),
+    observed_state TEXT NOT NULL CHECK(observed_state IN ('RUNNING', 'PAUSED', 'UNKNOWN')),
+    reconciliation_status TEXT NOT NULL
+        CHECK(reconciliation_status IN ('PENDING', 'SUCCESS', 'FAILED')),
+    observation_json TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_control_observed_state_scope_revision
+    ON control_observed_state_events (
+        strategy_id, strategy_version, runtime_mode, desired_revision, observed_at
+    );
+
+CREATE TABLE IF NOT EXISTS control_commands (
+    command_id TEXT PRIMARY KEY,
+    payload_digest TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS control_audit_events (
+    audit_id TEXT PRIMARY KEY,
+    command_id TEXT NOT NULL UNIQUE,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    runtime_mode TEXT NOT NULL CHECK(runtime_mode = 'SHADOW'),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    reconciliation_status TEXT NOT NULL CHECK(reconciliation_status IN ('SUCCESS', 'FAILED')),
+    audit_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (command_id) REFERENCES control_commands(command_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_control_audit_scope_revision
+    ON control_audit_events (strategy_id, strategy_version, runtime_mode, revision);
+
+CREATE TRIGGER IF NOT EXISTS control_change_plans_no_update
+BEFORE UPDATE ON control_change_plans BEGIN SELECT RAISE(ABORT, 'control plans are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_change_plans_no_delete
+BEFORE DELETE ON control_change_plans BEGIN SELECT RAISE(ABORT, 'control plans are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_revisions_no_update
+BEFORE UPDATE ON control_desired_state_revisions
+BEGIN SELECT RAISE(ABORT, 'control revisions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_revisions_no_delete
+BEFORE DELETE ON control_desired_state_revisions
+BEGIN SELECT RAISE(ABORT, 'control revisions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_observations_no_update
+BEFORE UPDATE ON control_observed_state_events
+BEGIN SELECT RAISE(ABORT, 'control observations are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_observations_no_delete
+BEFORE DELETE ON control_observed_state_events
+BEGIN SELECT RAISE(ABORT, 'control observations are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_commands_no_update
+BEFORE UPDATE ON control_commands BEGIN SELECT RAISE(ABORT, 'control commands are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_commands_no_delete
+BEFORE DELETE ON control_commands BEGIN SELECT RAISE(ABORT, 'control commands are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_audit_no_update
+BEFORE UPDATE ON control_audit_events BEGIN SELECT RAISE(ABORT, 'control audit is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS control_audit_no_delete
+BEFORE DELETE ON control_audit_events BEGIN SELECT RAISE(ABORT, 'control audit is immutable'); END;
+
 CREATE TABLE IF NOT EXISTS live_entry_attempts (
     authorization_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,

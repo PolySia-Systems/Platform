@@ -8,10 +8,18 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from html import escape
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 from polysia.bus.events import MarketDataEvent
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.control.models import (
+    DesiredStateRevision,
+    ObservedOperationalState,
+    ReconciliationStatus,
+    RuntimeObservation,
+    StrategyControlKey,
+)
+from polysia.control.shadow_runtime import STALE_PRICE_SHADOW_TARGET, ShadowIntentBoundary
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.paper_broker import PaperBroker
 from polysia.orderbook.book import LocalOrderBook
@@ -25,7 +33,21 @@ from polysia.strategies.stale_price import StalePriceStrategy
 Clock = Callable[[], datetime]
 GitStatusReader = Callable[[Path], str]
 ReportFormat = Literal["json", "markdown", "html"]
-ShadowClassification = Literal["SHADOW_HEALTHY", "SHADOW_DEGRADED", "SHADOW_FAILED"]
+ShadowClassification = Literal[
+    "SHADOW_HEALTHY",
+    "SHADOW_PAUSED",
+    "SHADOW_DEGRADED",
+    "SHADOW_FAILED",
+]
+
+
+class ShadowControlStore(Protocol):
+    def current_desired(
+        self,
+        key: StrategyControlKey,
+    ) -> DesiredStateRevision | None: ...
+
+    def record_runtime_observation(self, observation: RuntimeObservation) -> None: ...
 
 
 def utc_now() -> datetime:
@@ -169,14 +191,20 @@ class ShadowRunReport:
     strategy: str
     metrics: ShadowRunMetrics
     samples: tuple[ShadowRunSample, ...]
+    operational_state: ObservedOperationalState = ObservedOperationalState.UNKNOWN
+    control_revision: int = 0
+    control_reconciliation_status: ReconciliationStatus = ReconciliationStatus.PENDING
 
     def to_dict(self) -> dict[str, object]:
         return {
             "classification": self.classification,
             "metrics": self.metrics.to_dict(),
+            "operational_state": self.operational_state.value,
             "reasons": list(self.reasons),
             "samples": [sample.to_dict() for sample in self.samples],
             "strategy": self.strategy,
+            "control_reconciliation_status": self.control_reconciliation_status.value,
+            "control_revision": self.control_revision,
             "timestamp": self.timestamp.isoformat(),
         }
 
@@ -187,6 +215,7 @@ async def build_shadow_run(
     clock: Clock = utc_now,
     git_status_reader: GitStatusReader | None = None,
     risk_engine: RiskEngine | None = None,
+    control_store: ShadowControlStore | None = None,
 ) -> ShadowRunReport:
     """Build one deterministic paper-only shadow-run report."""
 
@@ -230,6 +259,41 @@ async def build_shadow_run(
             samples=(),
         )
 
+    controlled_target = (
+        strategy.strategy_id == STALE_PRICE_SHADOW_TARGET.strategy_id
+        and getattr(strategy, "strategy_version", None)
+        == STALE_PRICE_SHADOW_TARGET.strategy_version
+    )
+    operational_boundary: ShadowIntentBoundary | None = None
+    observation: RuntimeObservation | None = None
+    if controlled_target:
+        operational_boundary = ShadowIntentBoundary(STALE_PRICE_SHADOW_TARGET, clock=clock)
+        try:
+            desired = (
+                control_store.current_desired(STALE_PRICE_SHADOW_TARGET)
+                if control_store is not None
+                else None
+            )
+            observation = (
+                operational_boundary.reconcile(desired)
+                if desired is not None
+                else operational_boundary.observe()
+            )
+            if control_store is not None:
+                control_store.record_runtime_observation(observation)
+        except Exception as error:
+            metrics = _empty_metrics(config, start=clock(), stream_health="blocked")
+            return ShadowRunReport(
+                timestamp=clock(),
+                classification="SHADOW_FAILED",
+                reasons=(f"{type(error).__name__}: Shadow control reconciliation failed",),
+                strategy=config.strategy,
+                metrics=metrics,
+                samples=(),
+                operational_state=ObservedOperationalState.UNKNOWN,
+                control_reconciliation_status=ReconciliationStatus.FAILED,
+            )
+
     active_risk_engine = risk_engine or RiskEngine()
     start = clock()
     token_id = config.token_id or "shadow-token"
@@ -240,6 +304,7 @@ async def build_shadow_run(
         risk_engine=active_risk_engine,
         start=start,
         clock=clock,
+        operational_boundary=operational_boundary,
     )
     metrics = _metrics_from_samples(
         config,
@@ -247,7 +312,14 @@ async def build_shadow_run(
         start=start,
         selected_token=token_id,
     )
-    classification, reasons = classify_shadow_run(metrics)
+    classification, reasons = classify_shadow_run(
+        metrics,
+        operational_state=(
+            observation.observed_state
+            if observation is not None
+            else ObservedOperationalState.RUNNING
+        ),
+    )
     return ShadowRunReport(
         timestamp=clock(),
         classification=classification,
@@ -255,10 +327,25 @@ async def build_shadow_run(
         strategy=config.strategy,
         metrics=metrics,
         samples=samples,
+        operational_state=(
+            observation.observed_state
+            if observation is not None
+            else ObservedOperationalState.RUNNING
+        ),
+        control_revision=observation.desired_revision if observation is not None else 0,
+        control_reconciliation_status=(
+            observation.reconciliation_status
+            if observation is not None
+            else ReconciliationStatus.SUCCESS
+        ),
     )
 
 
-def classify_shadow_run(metrics: ShadowRunMetrics) -> tuple[ShadowClassification, tuple[str, ...]]:
+def classify_shadow_run(
+    metrics: ShadowRunMetrics,
+    *,
+    operational_state: ObservedOperationalState = ObservedOperationalState.RUNNING,
+) -> tuple[ShadowClassification, tuple[str, ...]]:
     """Classify one shadow run conservatively."""
 
     if metrics.live_broker_used:
@@ -269,6 +356,23 @@ def classify_shadow_run(metrics: ShadowRunMetrics) -> tuple[ShadowClassification
         return ("SHADOW_FAILED", ("local orderbook did not update",))
     if metrics.stale_event_count > 0:
         return ("SHADOW_DEGRADED", ("stale market events were observed",))
+    if operational_state is ObservedOperationalState.PAUSED:
+        if any(
+            (
+                metrics.strategy_intent_count,
+                metrics.risk_approval_count,
+                metrics.risk_rejection_count,
+                metrics.paper_order_count,
+                metrics.paper_fill_count,
+            )
+        ):
+            return ("SHADOW_FAILED", ("PAUSED Shadow runtime produced downstream activity",))
+        return (
+            "SHADOW_PAUSED",
+            ("runtime acknowledged PAUSED and suppressed every new strategy intent",),
+        )
+    if operational_state is ObservedOperationalState.UNKNOWN:
+        return ("SHADOW_FAILED", ("Shadow operational state is unknown",))
     if metrics.strategy_intent_count == 0:
         return ("SHADOW_DEGRADED", ("strategy produced no paper intents",))
     if metrics.risk_approval_count == 0:
@@ -297,6 +401,9 @@ def render_shadow_run_markdown(report: ShadowRunReport) -> str:
             f"- Classification: {report.classification}",
             f"- Generated at: {report.timestamp.isoformat()}",
             f"- Strategy: {report.strategy}",
+            f"- Operational state: {report.operational_state.value}",
+            f"- Control revision: {report.control_revision}",
+            f"- Reconciliation: {report.control_reconciliation_status.value}",
             f"- Samples: {len(report.samples)}",
             "",
             "## Reasons",
@@ -353,6 +460,12 @@ def render_shadow_run_html(report: ShadowRunReport) -> str:
     <h1>PolySia — Polymarket Adapter — Shadow Run</h1>
     <p>{escape(report.timestamp.isoformat())}</p>
     <div class="badge">{escape(report.classification)}</div>
+    <section>
+      <h2>Operational Control</h2>
+      <p>State: {escape(report.operational_state.value)}</p>
+      <p>Revision: {report.control_revision}</p>
+      <p>Reconciliation: {escape(report.control_reconciliation_status.value)}</p>
+    </section>
     <h2>Reasons</h2>
     <ul>{reason_items}</ul>
     <section>
@@ -389,6 +502,7 @@ async def _run_mocked_public_shadow(
     risk_engine: RiskEngine,
     start: datetime,
     clock: Clock,
+    operational_boundary: ShadowIntentBoundary | None,
 ) -> tuple[ShadowRunSample, ...]:
     ledger = PositionLedger(cash=Decimal("100"))
     broker = PaperBroker(ledger=ledger, clock=clock)
@@ -406,7 +520,11 @@ async def _run_mocked_public_shadow(
             positions={token: position.size for token, position in ledger.positions.items()},
             clock=clock,
         )
-        intents = await strategy.on_market_event(event, context)
+        intents = (
+            await operational_boundary.on_market_event(strategy, event, context)
+            if operational_boundary is not None
+            else await strategy.on_market_event(event, context)
+        )
         approved = 0
         rejected = 0
         orders_before = len(broker.orders)

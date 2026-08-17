@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -95,6 +96,7 @@ from polysia.cli_support import (
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.config.status import build_configuration_status
 from polysia.config.structured_logging import configure_logging
+from polysia.control.cli import DEFAULT_CONTROL_DATABASE, control_app
 from polysia.deployment.automation import run_deployment_automation
 from polysia.deployment.final_handoff import render_final_handoff_markdown
 from polysia.deployment.manifest import build_release_manifest
@@ -247,12 +249,15 @@ from polysia.reconciliation.live_round_trip import (
 from polysia.risk.checks import RiskContext, RiskEngine
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
+from polysia.storage.control import ControlRepository
+from polysia.storage.db import SQLiteDatabase
 from polysia.strategies.base import StrategyContext
 
 app = typer.Typer(
     help="PolySia — Polymarket-first trading platform.",
     no_args_is_help=True,
 )
+app.add_typer(control_app, name="control")
 
 
 @dataclass(frozen=True, slots=True)
@@ -792,6 +797,13 @@ def shadow_run(
         str,
         typer.Option("--strategy"),
     ] = "stale-price",
+    control_database_path: Annotated[
+        Path,
+        typer.Option(
+            "--control-database-path",
+            help="Persisted SHADOW operational-state database.",
+        ),
+    ] = DEFAULT_CONTROL_DATABASE,
     output_dir: Annotated[
         Path,
         typer.Option("--output-dir", help="Directory for shadow-run reports."),
@@ -826,26 +838,31 @@ def shadow_run(
     configure_logging(settings)
 
     try:
-        report = asyncio.run(
-            build_shadow_run(
-                ShadowRunConfig(
-                    settings=settings,
-                    project_root=Path("."),
-                    duration_minutes=duration_minutes,
-                    market_slug=market_slug,
-                    token_id=token_id,
-                    strategy=strategy,
-                    sample_interval_seconds=sample_interval_seconds,
-                    max_events=max_events,
-                    require_clean_git=require_clean_git,
+        config = ShadowRunConfig(
+            settings=settings,
+            project_root=Path("."),
+            duration_minutes=duration_minutes,
+            market_slug=market_slug,
+            token_id=token_id,
+            strategy=strategy,
+            sample_interval_seconds=sample_interval_seconds,
+            max_events=max_events,
+            require_clean_git=require_clean_git,
+        )
+        with SQLiteDatabase(control_database_path) as database:
+            report = asyncio.run(
+                build_shadow_run(
+                    config,
+                    control_store=ControlRepository(database.connection),
                 )
             )
-        )
         formats = normalize_shadow_report_formats(
             json_enabled=json_report,
             markdown_enabled=markdown_report,
             html_enabled=html_report,
         )
+    except sqlite3.DatabaseError:
+        _print_error_and_exit(RuntimeError("Shadow control database failed safely."))
     except ValueError as error:
         _print_error_and_exit(error)
 
