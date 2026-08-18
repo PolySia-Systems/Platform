@@ -21,10 +21,9 @@ Target and future elements are not implementation claims.
 - [Design tokens](architecture-design-tokens.json)
 - [Diagram conventions](diagram-conventions.md)
 - [Traceability register](traceability-register.md)
-- [Figma/FigJam handoff](figma-handoff-spec.md)
 - `sources/`: canonical Mermaid files
 - `views/`: GitHub-readable architecture pages
 - `rendered/`: optional SVG exports only
 
-Update the Mermaid source and its paired view in the same change. Figma is a
-presentation derivative and never supersedes repository sources.
+Update the Mermaid source and its paired view in the same change. Rendered SVGs
+are presentation derivatives and never supersede repository sources.

@@ -145,7 +145,7 @@ it remains governed by reconciliation and the approved cleanup path.
 
 No new venue, dependency upgrade, full strategy orchestration, generalized
 allocator/OMS/router, recurring execution, scheduling, scaling, martingale,
-grid trading, averaging down, ML, Web3/DeFi, UI, Figma, Penpot, or unrelated
+grid trading, averaging down, ML, Web3/DeFi, UI, Penpot, or unrelated
 refactor.
 
 ## Future strategy evolution

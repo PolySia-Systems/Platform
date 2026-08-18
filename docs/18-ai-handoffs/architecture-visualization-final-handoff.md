@@ -9,9 +9,8 @@
 ## Objective
 
 Create an English, repository-first C4 and Mermaid architecture visualization
-system for the completed PolySia repository, plus a complete Figma/FigJam
-handoff, without changing runtime behavior, dependencies, credentials, or live
-controls.
+system for the completed PolySia repository, including validated SVG exports,
+without changing runtime behavior, dependencies, credentials, or live controls.
 
 ## Discovery summary
 
@@ -122,12 +121,6 @@ institutional hardening remain FUTURE.
 Complete. Mermaid CLI 11.16.0 parsed all sources and produced SVG derivatives.
 The Mermaid `.mmd` files remain canonical.
 
-## Figma handoff status
-
-Complete. The handoff defines pages, reusable components, semantic tokens,
-frame metadata, transfer order, and review checks. Validated SVGs are ready for
-import. No Figma file was created or treated as a source of truth.
-
 ## Known limitations
 
 - Dense component, multi-strategy, and sequence views require individual SVG
@@ -148,7 +141,6 @@ import. No Figma file was created or treated as a source of truth.
 ## Exact next step
 
 Review and approve the repository index and the multi-strategy, risk/emergency,
-current-container, trust-boundary, and roadmap views. After approval, import the
-matching SVGs into Figma/FigJam using `figma-handoff-spec.md`, rebuild only the
-high-value presentation frames, and record the final repository commit in every
-Figma frame.
+current-container, trust-boundary, and roadmap views. Regenerate any approved
+SVG changes from the matching canonical Mermaid sources and record the final
+repository commit in the architecture index.

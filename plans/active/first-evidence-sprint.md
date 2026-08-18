@@ -302,7 +302,7 @@ external-state rollback is required.
 - New strategy family, passive-market-maker comparison as a candidate strategy,
   multi-strategy orchestration, conflict resolution, generalized allocator,
   OMS, generalized ledger, or execution router.
-- Figma, Penpot, architecture visualization, UI work, Web3/DeFi/copy trading,
+- Penpot, architecture visualization, UI work, Web3/DeFi/copy trading,
   machine learning, microservices, Kubernetes, PostgreSQL, or production
   infrastructure.
 - Profitability claims, parameter fishing, synthetic outcome invention, or

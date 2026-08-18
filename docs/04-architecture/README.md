@@ -14,7 +14,6 @@ is authoritative; target and future elements are always labeled.
 - [Shadow Control Kernel decision](adrs/ADR-0012-shadow-control-kernel.md)
 - [Architecture visualization system](visual-system/README.md)
 - [Diagram index](visual-system/architecture-visualization-index.md)
-- [Figma/FigJam handoff](visual-system/figma-handoff-spec.md)
 
 The Mermaid sources under `visual-system/sources/` are the canonical diagrams.
 The Markdown pages under `visual-system/views/` add audience, scope,
