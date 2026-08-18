@@ -1,7 +1,7 @@
 # Architecture Visualization Index
 
-Baseline: `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
-Reviewed: 2026-07-11
+Baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+Reviewed: 2026-08-18
 Owner: PolySia project owner
 
 | ID | View | Status | Canonical Mermaid | Documentation | SVG |
@@ -37,5 +37,10 @@ Owners should read 01, 02, 03, 06, 10, 12, and 18. Developers should add 05,
 - Application ports exist, while application services are presently empty.
 - Current runtime enum values are DATA_ONLY, PAPER, and LIVE; shadow is a
   workflow.
-- The later Phase I OSV audit result supersedes the stale pending-audit text in
-  `before-after.md`.
+- The bounded Strategy Registry and SHADOW-only Control Kernel are CURRENT;
+  generalized orchestration, continuous control reconciliation, and Live
+  control remain TARGET or FUTURE.
+- The latest verified server deployment is older than this repository baseline;
+  repository truth must not be presented as deployed runtime truth.
+- `before-after.md` is a labeled historical comparison and is not current
+  dependency, CI, test-count, or deployment evidence.

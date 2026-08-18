@@ -343,8 +343,8 @@ Use:
 - Requirements and traceability documents for critical capabilities.
 - Runbooks for operational actions and recovery.
 - `docs/18-ai-handoffs/` for major task handoffs.
-- `docs/00-governance/PROJECT_STATUS.md` only if that file is introduced and
-  approved; it does not currently exist.
+- `docs/00-governance/PROJECT_STATUS.md` for the latest verified repository,
+  runtime, delivery, and operational status.
 - `prompts/active/` and `prompts/archive/` only if those directories exist in
   the current repository structure.
 

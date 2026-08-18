@@ -8,7 +8,12 @@ flowchart TB
 
   subgraph CORE["Inner contracts [CURRENT]"]
     Domain["domain/\nevents, market, orders, portfolio, risk, ledger, reconciliation"]:::domain
+    Registry["domain/strategy/\nminimal registry models"]:::domain
     Ports["application/ports/\nprotocol contracts"]:::application
+  end
+
+  subgraph CONTROL["Bounded operational control [CURRENT]"]
+    ControlKernel["control/\nSHADOW-only kernel"]:::application
   end
 
   subgraph PIPELINE["Data and decision [CURRENT]"]
@@ -28,13 +33,15 @@ flowchart TB
 
   Adapter["adapters/polymarket/\nSDK-confined boundary"]:::adapter
   Config["config/"]:::risk
-  SDK["polymarket-client b11\n[EXTERNAL]"]:::external
+  SDK["polymarket-client 0.2.0\n[EXTERNAL]"]:::external
 
   CLI --> Monitor
   CLI --> Deploy
   CLI --> Backtest
   CLI --> Adapter
   CLI --> Execution
+  CLI --> ControlKernel
+  CLI --> Storage
   Ports --> Domain
   Adapter --> Domain
   Adapter --> Bus
@@ -45,7 +52,7 @@ flowchart TB
   Strategies --> Features
   Strategies --> Book
   Strategies --> Domain
-  Strategies --> Execution
+  Strategies -.->|OrderIntent type only; no execution call| Execution
   Risk --> Execution
   Risk --> Config
   Execution --> Adapter
@@ -55,6 +62,11 @@ flowchart TB
   Portfolio --> Execution
   Storage --> Domain
   Storage --> Book
+  Storage --> Registry
+  Storage --> ControlKernel
+  ControlKernel --> Bus
+  ControlKernel --> Strategies
+  ControlKernel -.->|intent type and Shadow boundary| Execution
   Recon --> Risk
   Backtest --> Strategies
   Backtest --> Risk

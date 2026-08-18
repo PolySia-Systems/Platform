@@ -5,7 +5,8 @@
 - **Scope:** Owner workstation, controlled Helsinki host, Docker monitor, persistent state, secret boundaries, Polymarket endpoints, and configured CI.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, operators, developers, security reviewers, and deployment reviewers.
-- **Verified deployment source:** `52c1bcc980f7db797066f982b23ab755dca31f58`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Verified deployment source:** `62342fee801aa2fabffa6fd78a728e2ce5b7279d`
 
 ## Mermaid diagram
 
@@ -14,7 +15,7 @@ Canonical source: [`13-current-deployment-view.mmd`](../sources/13-current-deplo
 ```mermaid
 flowchart LR
   Operator["Owner / Operator\n[CURRENT]"]:::current
-  GitHost["GitHub repository / CI runtime\nremote and CI verified\n[EXTERNAL]"]:::external
+  GitHost["GitHub repository / CI\nPython 3.14 checks verified\n[EXTERNAL]"]:::external
   PublicAPI["Polymarket public endpoints\n[EXTERNAL]"]:::external
   SecureAPI["Polymarket authenticated endpoints\n[EXTERNAL]"]:::external
 
@@ -27,8 +28,8 @@ flowchart LR
   end
 
   subgraph SERVER["Hetzner Helsinki Ubuntu host [CURRENT]"]
-    Checkout["Read-only deploy-key checkout\nmain branch"]:::storage
-    Container["Non-root Docker monitor\nDATA_ONLY; no published port"]:::application
+    Checkout["Read-only deploy-key checkout\nverified deployed revision"]:::storage
+    Container["Non-root Docker monitor and reconciliation\nDATA_ONLY; no published port"]:::application
     ServerSecrets["/etc/polysia/polysia.env\nroot-only 0600"]:::risk
     ServerState[("/var/lib/polysia\nSQLite, reports, local backups")]:::storage
     DockerLogs["Rotating Docker logs\nhealth and reconciliation"]:::observability
@@ -83,8 +84,11 @@ continues in the `PolySia` Python 3.14.6 Conda environment. The continuously
 managed runtime is one non-root Docker container on the controlled Ubuntu host.
 It forces `DATA_ONLY`, disables live trading, clears the live allowlist, exposes
 no port, persists SQLite and reports, writes rotating logs, and runs read-only
-monitoring and reconciliation. GitHub CI verifies Python 3.11/3.13/3.14, Linux,
-the container, and supply-chain gates.
+monitoring and reconciliation. Current GitHub CI supports Python 3.14 only. It
+runs lightweight documentation/Standards/secret checks on every pull request,
+adds Windows and Linux quality/build checks for executable changes, adds
+container checks for deployment-relevant changes, and runs supply-chain checks
+for dependency changes, weekly schedules, and manual dispatch.
 
 ## Target/future elements
 
@@ -113,8 +117,9 @@ CAP-004, CAP-008, CAP-011, CAP-012; REQ-005, REQ-007
 
 ## Assumptions
 
-The server remains a single controlled host and operates only in read-only
-`DATA_ONLY` mode.
+The latest approved deployment evidence records one controlled host operating
+only in read-only `DATA_ONLY` mode. This documentation refresh did not contact
+or mutate the external host.
 
 ## Known limitations
 
@@ -122,6 +127,8 @@ The verified backup remains on the same server; encrypted off-host backup is
 not configured. External alert delivery and high availability are absent.
 SQLite remains limited to the current single-runtime workload. Credentials and
 operational state remain outside Git.
+The deployed revision predates this repository baseline; repository changes
+after `62342fee801aa2fabffa6fd78a728e2ce5b7279d` are not claimed as deployed.
 
 ## Review trigger
 

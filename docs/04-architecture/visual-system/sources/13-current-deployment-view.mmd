@@ -1,6 +1,6 @@
 flowchart LR
   Operator["Owner / Operator\n[CURRENT]"]:::current
-  GitHost["GitHub repository / CI runtime\nremote and CI verified\n[EXTERNAL]"]:::external
+  GitHost["GitHub repository / CI\nPython 3.14 checks verified\n[EXTERNAL]"]:::external
   PublicAPI["Polymarket public endpoints\n[EXTERNAL]"]:::external
   SecureAPI["Polymarket authenticated endpoints\n[EXTERNAL]"]:::external
 
@@ -13,8 +13,8 @@ flowchart LR
   end
 
   subgraph SERVER["Hetzner Helsinki Ubuntu host [CURRENT]"]
-    Checkout["Read-only deploy-key checkout\nmain branch"]:::storage
-    Container["Non-root Docker monitor\nDATA_ONLY; no published port"]:::application
+    Checkout["Read-only deploy-key checkout\nverified deployed revision"]:::storage
+    Container["Non-root Docker monitor and reconciliation\nDATA_ONLY; no published port"]:::application
     ServerSecrets["/etc/polysia/polysia.env\nroot-only 0600"]:::risk
     ServerState[("/var/lib/polysia\nSQLite, reports, local backups")]:::storage
     DockerLogs["Rotating Docker logs\nhealth and reconciliation"]:::observability

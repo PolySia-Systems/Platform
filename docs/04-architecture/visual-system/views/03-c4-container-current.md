@@ -5,14 +5,14 @@
 - **Scope:** Logical containers inside one deployable Python package/process; these are not independently deployed services.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, owner, maintainers, and architecture reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
 Canonical source: [`03-c4-container-current.mmd`](../sources/03-c4-container-current.mmd)
 
 ```mermaid
-flowchart LR
+flowchart TB
   Actor["Person: Owner / Researcher\n[CURRENT]"]:::current
   Venue["External System: Polymarket APIs\n[EXTERNAL]"]:::external
   DB[("SQLite / local files\n[CURRENT]")]:::storage
@@ -29,7 +29,9 @@ flowchart LR
 
     subgraph DECISION["Decision and control"]
       DomainPorts["Container: Domain Models and Application Ports\nvenue-neutral contracts"]:::domain
-      Strategies["Container: Strategy Framework\nstale-price, passive market maker"]:::strategy
+      Registry["Container: Minimal Strategy Registry\nversion, lifecycle, evidence"]:::strategy
+      Strategies["Container: Strategy Framework\nresearch and bounded Copy strategies"]:::strategy
+      Control["Container: SHADOW-only Control Kernel\nplan/apply, revisions, audit, intent gate"]:::application
       Risk["Container: Independent Risk and Kill Switch\napprove, reduce, reject, stop"]:::risk
     end
 
@@ -47,6 +49,10 @@ flowchart LR
   CLI --> Config
   CLI --> Ops
   CLI --> Adapter
+  CLI --> Control
+  Control ==>|desired/observed state and audit| Storage
+  Control -.->|gates new stale-price Shadow intents only| Strategies
+  Registry -.->|definition and lifecycle evidence| Strategies
   Adapter -.->|normalized events| Bus
   Bus -.-> Book
   Book --> Strategies
@@ -98,7 +104,11 @@ Follow operator commands into data ingestion, decisions and risk, execution/stat
 
 ## Current implementation mapping
 
-Every container maps to current packages: CLI/support, config, adapter, bus, orderbook/features, domain/ports, strategies, risk, execution, portfolio, storage, reconciliation, monitoring/backtesting/deployment.
+Every container maps to current packages: CLI/support, config, adapter, bus,
+orderbook/features, domain/ports, the bounded Strategy Registry, strategies,
+the SHADOW-only Control Kernel, risk, execution, portfolio, storage,
+reconciliation, and monitoring/backtesting/deployment. The Control Kernel gates
+only new `stale-price@0.1.0` Shadow intents and cannot reach Live trading.
 
 ## Target/future elements
 
@@ -106,15 +116,19 @@ No target container is claimed. OMS and orchestration are deliberately absent fr
 
 ## Related repository files
 
-`src/polysia/cli.py`, `src/polysia/cli_support/`, `src/polysia/config/`, `src/polysia/domain/`, `src/polysia/application/`, `src/polysia/adapters/`, `src/polysia/bus/`, `src/polysia/orderbook/`, `src/polysia/features/`, `src/polysia/strategies/`, `src/polysia/risk/`, `src/polysia/execution/`, `src/polysia/portfolio/`, `src/polysia/storage/`, `src/polysia/reconciliation/`, `src/polysia/monitoring/`
+`src/polysia/cli.py`, `src/polysia/cli_support/`, `src/polysia/config/`, `src/polysia/domain/`, `src/polysia/application/`, `src/polysia/adapters/`, `src/polysia/bus/`, `src/polysia/orderbook/`, `src/polysia/features/`, `src/polysia/strategies/`, `src/polysia/control/`, `src/polysia/risk/`, `src/polysia/execution/`, `src/polysia/portfolio/`, `src/polysia/storage/`, `src/polysia/reconciliation/`, `src/polysia/monitoring/`
 
 ## Related tests
 
-`tests/integration/test_paper_vertical_slice.py`, `tests/architecture/test_boundaries.py`, `tests/characterization/test_cli_contract.py`
+`tests/integration/test_paper_vertical_slice.py`,
+`tests/integration/test_shadow_control_vertical_slice.py`,
+`tests/unit/strategies/test_registry.py`,
+`tests/architecture/test_boundaries.py`,
+`tests/characterization/test_cli_contract.py`
 
 ## Related ADRs
 
-ADR-0001, ADR-0002, ADR-0004, ADR-0006, ADR-0008
+ADR-0001, ADR-0002, ADR-0004, ADR-0006, ADR-0008, ADR-0012
 
 ## Related capabilities/requirements
 

@@ -5,7 +5,7 @@
 - **Scope:** `TradingMode` enum, replay/paper/shadow/tiny-live workflows, and the evidence-based maturity path.
 - **Architecture status:** MIXED
 - **Audience:** Owner, operators, researchers, risk reviewers, and release reviewers.
-- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
@@ -23,6 +23,7 @@ flowchart LR
     Replay["Focused Backtest / Replay\nCURRENT"]:::current
     Paper["Paper Run\nCURRENT"]:::current
     Shadow["Shadow Workflow\nCURRENT workflow, not enum"]:::current
+    Control["SHADOW-only Control Kernel\nRUNNING / PAUSED for stale-price@0.1.0\nCURRENT bounded"]:::current
     Limited["Tiny / Limited Live Tooling\nCURRENT experimental, explicit authorization"]:::risk
   end
 
@@ -37,12 +38,14 @@ flowchart LR
   Replay --> OOS
   OOS --> Paper
   Paper --> Shadow
+  Control -->|gates new intents only; never cancels or closes| Shadow
   Shadow --> Micro
   Micro -.-> Scale
 
   DataOnly -->|permits reads/research| Research
   PaperMode --> Paper
   PaperMode --> Shadow
+  DataOnly --> Control
   LiveMode -->|flag + allowlist + caps + geoblock + ack + risk + kill switch| Limited
   Limited -.->|evidence only; owner-approved promotion| Micro
   DataOnly -->|rejects intents| LiveMode
@@ -72,8 +75,11 @@ Read current enum modes at the top, current workflows in the middle, and evidenc
 
 The actual enum is `DATA_ONLY`, `PAPER`, and `LIVE`. Replay, paper, local
 shadow, public real-data shadow, and guarded tiny-live commands are implemented
-workflows. LIVE-004 proves one bounded execution/reconciliation path, not a
-promotion decision.
+workflows. The Control Kernel can request `RUNNING` or `PAUSED` only for the
+deterministic `stale-price@0.1.0` Shadow path. `PAUSED` suppresses new intents;
+it is not cancellation, position closure, emergency control, or Live authority.
+LIVE-004 proves one bounded execution/reconciliation path, not a promotion
+decision.
 
 ## Target/future elements
 
@@ -84,15 +90,21 @@ is FUTURE and has no release date.
 
 ## Related repository files
 
-`src/polysia/config/settings.py`, `src/polysia/backtesting/`, `src/polysia/execution/paper_broker.py`, `src/polysia/monitoring/shadow_run.py`, `src/polysia/monitoring/real_data_shadow_run.py`, `src/polysia/execution/tiny_live_execution.py`
+`src/polysia/config/settings.py`, `src/polysia/backtesting/`,
+`src/polysia/control/`, `src/polysia/execution/paper_broker.py`,
+`src/polysia/monitoring/shadow_run.py`,
+`src/polysia/monitoring/real_data_shadow_run.py`,
+`src/polysia/execution/tiny_live_execution.py`
 
 ## Related tests
 
-settings, replay, paper broker, shadow run, real-data shadow, and tiny-live tests
+Settings, replay, paper broker, Shadow Control Kernel, real-data Shadow, and
+tiny-live tests, including
+`tests/integration/test_shadow_control_vertical_slice.py`
 
 ## Related ADRs
 
-ADR-0007, ADR-0008, ADR-0009
+ADR-0007, ADR-0008, ADR-0009, ADR-0012
 
 ## Related capabilities/requirements
 

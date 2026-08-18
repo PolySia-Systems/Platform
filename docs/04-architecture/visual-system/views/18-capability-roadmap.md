@@ -5,7 +5,7 @@
 - **Scope:** Foundation/MVP/limited-live capabilities, target orchestration and platform boundaries, and future multi-market/Web3/institutional categories.
 - **Architecture status:** MIXED
 - **Audience:** Owner, roadmap reviewers, architects, developers, and risk reviewers.
-- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
@@ -17,7 +17,8 @@ flowchart LR
     N1["Public data, stream, normalization, event bus, order book"]:::current
     N2["Research strategies, risk, kill switch, paper execution, P&L"]:::current
     N3["SQLite, minimal Strategy Registry, reconciliation, monitoring, backtesting"]:::current
-    N4["Authenticated reads and guarded tiny-live tools"]:::risk
+    N4["SHADOW-only Control Kernel: versioned desired / observed state and audit"]:::current
+    N5["Authenticated reads and bounded guarded tiny-live Copy tools"]:::risk
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
@@ -29,7 +30,7 @@ flowchart LR
 
   subgraph LATER["Later optional capabilities [FUTURE]"]
     F1["Additional prediction markets, exchanges, and brokers"]:::future
-    F2["Wallet intelligence and copy trading"]:::future
+    F2["Generalized wallet intelligence and Copy Trading"]:::future
     F3["Web3 / DeFi data and controlled execution"]:::future
     F4["Institutional hardening and justified high availability"]:::future
   end
@@ -38,7 +39,8 @@ flowchart LR
   N2 --> T1
   N2 --> T2
   N3 --> T3
-  N4 --> T4
+  N4 --> T1
+  N5 --> T4
   T1 -.-> F1
   T2 -.-> F2
   T3 -.-> F3
@@ -78,8 +80,9 @@ Read CURRENT capabilities, pass the evidence gate into TARGET priorities, then p
 Current capabilities include the verified Phase I foundation, a minimal
 Strategy Registry, the bounded FAK/actual-fill execution slice, delayed-fill
 reconciliation, lifecycle monitoring, fee-aware targets, runtime preflight, and
-the verified recovery package. The registry remains experimental support, not
-evidence of strategy quality.
+the verified recovery package. They also include the SHADOW-only Control Kernel
+and the owner-bounded Tiny Live Copy experiment. The registry and bounded Copy
+path are not evidence of strategy quality or general automation readiness.
 
 ## Target/future elements
 
@@ -87,7 +90,9 @@ Immediate work is historical data, realistic backtesting, and large
 Paper/Shadow validation. Strategy orchestration, allocator, OMS/generalized
 ledger, adapter registry, operator console, and portable hardening remain
 TARGET. Multi-venue, wallet intelligence/copy trading, Web3/DeFi, and
-institutional HA remain FUTURE.
+institutional HA remain FUTURE. Here, FUTURE Copy Trading means generalized or
+permanent capability; the bounded experimental path is already CURRENT and
+remains fail-closed.
 
 ## Related repository files
 
@@ -99,7 +104,7 @@ Phase I handoff; architecture, contract, integration, migration, property, and c
 
 ## Related ADRs
 
-ADR-0001–ADR-0010
+ADR-0001–ADR-0012
 
 ## Related capabilities/requirements
 

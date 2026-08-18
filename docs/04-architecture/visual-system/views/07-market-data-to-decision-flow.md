@@ -5,7 +5,7 @@
 - **Scope:** Public ingestion, normalization, timestamps, event bus, book, features, strategy intent, portfolio context, and independent risk.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, strategy researchers, risk reviewers, and data-flow reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
