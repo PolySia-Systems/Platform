@@ -690,7 +690,7 @@ UX requirements:
 - preserve a complete audit trail;
 - design first in low-fidelity flows, then component prototypes, then production UI.
 
-Figma or another design tool may be used for flows and prototypes, but design files must map to versioned requirements and acceptance criteria.
+A design tool may be used for flows and prototypes, but design files must map to versioned requirements and acceptance criteria.
 
 ## 47. Infrastructure Architecture and Capacity Planning
 
@@ -1116,7 +1116,7 @@ Possible tools include:
 - security-review agent;
 - documentation agent;
 - data/quant review agent;
-- UI design tool such as Figma;
+- UI design tool;
 - CI and static analysis tools;
 - open-source local models for repetitive tasks.
 

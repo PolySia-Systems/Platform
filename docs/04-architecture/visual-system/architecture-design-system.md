@@ -11,8 +11,6 @@ It uses no gradients, decorative shadows, or ornamental infrastructure.
 - Inter: titles, component names, descriptions, and annotations.
 - JetBrains Mono: paths, ports, events, commands, states, and identifiers.
 
-Font names are references for Figma; no font files are distributed.
-
 ## Status semantics
 
 | Status | Treatment | Meaning |

@@ -4,7 +4,7 @@
   "source_git_commit": "44a8ae0fbccd0de916a0621236ea5931e7c3a256",
   "architecture_pack_commit": "c5ffa54cd7c6d88c22d64c92c0e4b77f7e71c1fb",
   "final_git_ref": "HEAD",
-  "objective": "Create the English C4, Mermaid, SVG, and Figma handoff architecture visualization pack without runtime changes.",
+  "objective": "Create the English C4, Mermaid, and SVG architecture visualization pack without runtime changes.",
   "diagram_count": 18,
   "mermaid_sources": 18,
   "markdown_views": 18,
@@ -41,12 +41,11 @@
     "full_python_suite_rerun": false,
     "diff_check": "passed"
   },
-  "figma_handoff": "complete",
   "runtime_code_changed": false,
   "dependencies_changed": false,
   "credentials_changed": false,
   "live_controls_changed": false,
   "state_changing_live_operation_executed": false,
   "preexisting_untracked_instruction_files_preserved": true,
-  "exact_next_step": "Review the priority diagrams, then import validated SVGs into Figma/FigJam using the repository handoff specification."
+  "exact_next_step": "Review the priority diagrams and regenerate approved SVG changes from the canonical Mermaid sources."
 }
