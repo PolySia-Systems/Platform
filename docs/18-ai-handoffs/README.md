@@ -8,6 +8,12 @@ may link to the Phase A files rather than duplicate them.
 
 Current closure records:
 
+- [`architecture-truth-refresh-2026-08-18.md`](architecture-truth-refresh-2026-08-18.md)
+  records the repository-wide architecture evidence audit, refreshed visual
+  baseline, and automated drift-prevention checks.
+- [`polysia-tiny-live-copy-004-cancellation-diagnostic.md`](polysia-tiny-live-copy-004-cancellation-diagnostic.md)
+  records the fourth bounded Copy run's accepted unfilled Post-only order,
+  fail-safe cancellation-confirmation ambiguity, and proven flat account.
 - [`polysia-post-only-final-recheck.md`](polysia-post-only-final-recheck.md)
   records the evidence-supported TOCTOU diagnosis, final order-book recheck,
   and explicit local/definitive/ambiguous submission outcomes.

@@ -1,4 +1,4 @@
-flowchart LR
+flowchart TB
   Actor["Person: Owner / Researcher\n[CURRENT]"]:::current
   Venue["External System: Polymarket APIs\n[EXTERNAL]"]:::external
   DB[("SQLite / local files\n[CURRENT]")]:::storage
@@ -15,7 +15,9 @@ flowchart LR
 
     subgraph DECISION["Decision and control"]
       DomainPorts["Container: Domain Models and Application Ports\nvenue-neutral contracts"]:::domain
-      Strategies["Container: Strategy Framework\nstale-price, passive market maker"]:::strategy
+      Registry["Container: Minimal Strategy Registry\nversion, lifecycle, evidence"]:::strategy
+      Strategies["Container: Strategy Framework\nresearch and bounded Copy strategies"]:::strategy
+      Control["Container: SHADOW-only Control Kernel\nplan/apply, revisions, audit, intent gate"]:::application
       Risk["Container: Independent Risk and Kill Switch\napprove, reduce, reject, stop"]:::risk
     end
 
@@ -33,6 +35,10 @@ flowchart LR
   CLI --> Config
   CLI --> Ops
   CLI --> Adapter
+  CLI --> Control
+  Control ==>|desired/observed state and audit| Storage
+  Control -.->|gates new stale-price Shadow intents only| Strategies
+  Registry -.->|definition and lifecycle evidence| Strategies
   Adapter -.->|normalized events| Bus
   Bus -.-> Book
   Book --> Strategies

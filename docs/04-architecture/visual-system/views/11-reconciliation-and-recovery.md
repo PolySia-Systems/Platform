@@ -5,7 +5,7 @@
 - **Scope:** Expected/actual snapshots, detectors, event severity, status classification, safety pause, operator review, recovery, and audit output.
 - **Architecture status:** CURRENT
 - **Audience:** Operators, reconciliation developers, risk reviewers, and incident reviewers.
-- **Source commit:** `b7dce82976a5b4ff624d8efef687c7d0d3776732`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 

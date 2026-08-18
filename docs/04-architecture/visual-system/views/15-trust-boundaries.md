@@ -5,7 +5,7 @@
 - **Scope:** Security-relevant data and command crossings without any real identifiers or account data.
 - **Architecture status:** MIXED
 - **Audience:** Security reviewers, owner, operators, architects, and execution developers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
@@ -21,6 +21,7 @@ flowchart LR
 
   subgraph LOCAL["Trusted local runtime boundary [CURRENT]"]
     CLI["CLI and safe output"]:::application
+    Control["SHADOW-only Control Kernel\nno Live or credential authority"]:::application
     Core["Domain, strategy, risk, execution, reconciliation"]:::current
     Adapter["Polymarket adapter\nSDK confinement"]:::adapter
     Scan["Redaction and tracked-file secret scan"]:::risk
@@ -37,6 +38,8 @@ flowchart LR
 
   Operator -->|commands / approvals| CLI
   CLI --> Core
+  CLI --> Control
+  Control -.->|gates new stale-price Shadow intents| Core
   Env -->|runtime-only configuration| Adapter
   Core --> Adapter
   Adapter --> Public
@@ -75,7 +78,10 @@ Read from external actors/services into the trusted local runtime, then inspect 
 
 ## Current implementation mapping
 
-Current controls include ignored `.env`, safe settings output, SDK confinement, redaction, tracked-file secret scan, local SQLite, and ignored evidence.
+Current controls include ignored `.env`, safe settings output, SDK confinement,
+redaction, tracked-file secret scan, local SQLite, and ignored evidence. The
+Control Kernel is inside the trusted process but is bounded to Shadow intent
+gating; it has no Live or credential authority.
 
 ## Target/future elements
 
@@ -83,7 +89,9 @@ A future Web3 signer/chain integration requires a new isolated trust boundary. C
 
 ## Related repository files
 
-`.gitignore`, `src/polysia/config/settings.py`, `src/polysia/security/secret_scan.py`, `src/polysia/adapters/polymarket/`, `src/polysia/storage/`, `.github/workflows/ci.yml`
+`.gitignore`, `src/polysia/config/settings.py`, `src/polysia/control/`,
+`src/polysia/security/secret_scan.py`, `src/polysia/adapters/polymarket/`,
+`src/polysia/storage/`, `.github/workflows/ci.yml`
 
 ## Related tests
 
@@ -91,7 +99,7 @@ security scanner tests, redaction tests, `tests/architecture/test_boundaries.py`
 
 ## Related ADRs
 
-ADR-0004, ADR-0007, ADR-0008, ADR-0009
+ADR-0004, ADR-0007, ADR-0008, ADR-0009, ADR-0012
 
 ## Related capabilities/requirements
 

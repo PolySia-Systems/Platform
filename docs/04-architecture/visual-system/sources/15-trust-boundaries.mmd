@@ -7,6 +7,7 @@ flowchart LR
 
   subgraph LOCAL["Trusted local runtime boundary [CURRENT]"]
     CLI["CLI and safe output"]:::application
+    Control["SHADOW-only Control Kernel\nno Live or credential authority"]:::application
     Core["Domain, strategy, risk, execution, reconciliation"]:::current
     Adapter["Polymarket adapter\nSDK confinement"]:::adapter
     Scan["Redaction and tracked-file secret scan"]:::risk
@@ -23,6 +24,8 @@ flowchart LR
 
   Operator -->|commands / approvals| CLI
   CLI --> Core
+  CLI --> Control
+  Control -.->|gates new stale-price Shadow intents| Core
   Env -->|runtime-only configuration| Adapter
   Core --> Adapter
   Adapter --> Public

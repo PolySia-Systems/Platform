@@ -9,6 +9,7 @@ flowchart LR
     Replay["Focused Backtest / Replay\nCURRENT"]:::current
     Paper["Paper Run\nCURRENT"]:::current
     Shadow["Shadow Workflow\nCURRENT workflow, not enum"]:::current
+    Control["SHADOW-only Control Kernel\nRUNNING / PAUSED for stale-price@0.1.0\nCURRENT bounded"]:::current
     Limited["Tiny / Limited Live Tooling\nCURRENT experimental, explicit authorization"]:::risk
   end
 
@@ -23,12 +24,14 @@ flowchart LR
   Replay --> OOS
   OOS --> Paper
   Paper --> Shadow
+  Control -->|gates new intents only; never cancels or closes| Shadow
   Shadow --> Micro
   Micro -.-> Scale
 
   DataOnly -->|permits reads/research| Research
   PaperMode --> Paper
   PaperMode --> Shadow
+  DataOnly --> Control
   LiveMode -->|flag + allowlist + caps + geoblock + ack + risk + kill switch| Limited
   Limited -.->|evidence only; owner-approved promotion| Micro
   DataOnly -->|rejects intents| LiveMode

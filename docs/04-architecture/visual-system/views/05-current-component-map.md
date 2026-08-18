@@ -5,7 +5,7 @@
 - **Scope:** Top-level `src/polysia` packages; individual classes are shown in focused diagrams instead.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, maintainers, reviewers, and onboarding engineers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
@@ -22,7 +22,12 @@ flowchart TB
 
   subgraph CORE["Inner contracts [CURRENT]"]
     Domain["domain/\nevents, market, orders, portfolio, risk, ledger, reconciliation"]:::domain
+    Registry["domain/strategy/\nminimal registry models"]:::domain
     Ports["application/ports/\nprotocol contracts"]:::application
+  end
+
+  subgraph CONTROL["Bounded operational control [CURRENT]"]
+    ControlKernel["control/\nSHADOW-only kernel"]:::application
   end
 
   subgraph PIPELINE["Data and decision [CURRENT]"]
@@ -42,13 +47,15 @@ flowchart TB
 
   Adapter["adapters/polymarket/\nSDK-confined boundary"]:::adapter
   Config["config/"]:::risk
-  SDK["polymarket-client b11\n[EXTERNAL]"]:::external
+  SDK["polymarket-client 0.2.0\n[EXTERNAL]"]:::external
 
   CLI --> Monitor
   CLI --> Deploy
   CLI --> Backtest
   CLI --> Adapter
   CLI --> Execution
+  CLI --> ControlKernel
+  CLI --> Storage
   Ports --> Domain
   Adapter --> Domain
   Adapter --> Bus
@@ -59,7 +66,7 @@ flowchart TB
   Strategies --> Features
   Strategies --> Book
   Strategies --> Domain
-  Strategies --> Execution
+  Strategies -.->|OrderIntent type only; no execution call| Execution
   Risk --> Execution
   Risk --> Config
   Execution --> Adapter
@@ -69,6 +76,11 @@ flowchart TB
   Portfolio --> Execution
   Storage --> Domain
   Storage --> Book
+  Storage --> Registry
+  Storage --> ControlKernel
+  ControlKernel --> Bus
+  ControlKernel --> Strategies
+  ControlKernel -.->|intent type and Shadow boundary| Execution
   Recon --> Risk
   Backtest --> Strategies
   Backtest --> Risk
@@ -106,7 +118,11 @@ Read from interface/operations packages through data/decision and execution/stat
 
 ## Current implementation mapping
 
-All boxes are real packages. The diagram highlights actual broad imports while the traceability register provides evidence and capability mapping.
+All boxes are real packages. The map now includes `control/`, the bounded
+registry models under `domain/strategy/`, and the current SDK version. The
+strategy-to-execution edge is an `OrderIntent` type dependency only; it does
+not represent a direct execution call or bypass of Risk. The traceability
+register provides path and test evidence.
 
 ## Target/future elements
 
@@ -122,7 +138,7 @@ No target package is shown. Known debt is documented in the module-dependency vi
 
 ## Related ADRs
 
-ADR-0001, ADR-0002, ADR-0004
+ADR-0001, ADR-0002, ADR-0004, ADR-0011, ADR-0012
 
 ## Related capabilities/requirements
 
@@ -134,7 +150,9 @@ Principal edges are more useful than every individual import.
 
 ## Known limitations
 
-The map is not a generated exhaustive import graph; it intentionally groups high-volume monitoring and CLI dependencies.
+The map is not a generated exhaustive import graph; it intentionally groups
+high-volume monitoring and CLI dependencies. Runtime flow is authoritative in
+the signal-to-execution view, not inferred from type-import arrows here.
 
 ## Review trigger
 

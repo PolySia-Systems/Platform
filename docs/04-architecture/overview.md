@@ -34,6 +34,13 @@ The in-process intent boundary prevents new strategy intents while paused; it
 does not stop Risk, reconciliation, monitoring, or emergency controls and it
 cannot reach Live trading.
 
+The owner-bounded Tiny Live Copy path is CURRENT only as an experimental,
+persistently capped exception. Its fourth run created one accepted unfilled
+Post-only order and stopped `FAILED_SAFE` when one immediate read could not
+confirm cancellation. Later authenticated reads proved zero open orders,
+confirmed fills, exposure, and experiment cost. This is safety evidence, not
+general Copy Trading or production-readiness evidence.
+
 ## TARGET
 
 Generalized intent aggregation/conflict resolution, portfolio/capital
@@ -46,8 +53,8 @@ shown or described as part of the current executable path.
 
 Additional venues, Web3/DeFi execution, cloud/distributed infrastructure,
 machine learning, Control Kernel Web/API/AI interfaces, Live operational
-control, and institutional availability are optional future directions
-requiring evidence and separate decisions.
+control, generalized or permanent Copy Trading, and institutional availability
+are optional future directions requiring evidence and separate decisions.
 
 ## EXTERNAL
 

@@ -5,7 +5,7 @@ flowchart LR
   subgraph PS["PolySia target modular monolith — logical containers, not microservices"]
     Console["Operator Console\n[TARGET]"]:::target
     DataPlatform["Market Data and Normalization\n[CURRENT foundation]"]:::current
-    Registry["Strategy Registry and Orchestrator\n[TARGET]"]:::target
+    Registry["Strategy Registry Extensions and Orchestrator\n[TARGET over bounded CURRENT registry]"]:::target
     Intent["Intent Aggregator / Conflict Resolver\n[TARGET]"]:::target
     Allocator["Portfolio and Capital Allocation\n[TARGET]"]:::target
     Risk["Independent Risk and Emergency Control\n[CURRENT foundation]"]:::risk

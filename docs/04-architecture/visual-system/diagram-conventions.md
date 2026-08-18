@@ -38,5 +38,7 @@ SAFETY, red means BLOCK/EMERGENCY, and green means APPROVED/HEALTHY.
 - `SHADOW` is a current workflow, not a `TradingMode` enum value.
 - The current order state machine uses only code-defined states; extensions are
   separated as TARGET.
-- Current deployment is a local workstation process. CI configuration is shown
-  as configured but not remotely verified.
+- Current deployment views distinguish the owner workstation, the last verified
+  controlled single-host deployment revision, and newer repository-only work.
+- GitHub CI is remotely verified at the audited repository baseline; it supports
+  Python 3.14 only and selects heavier jobs by changed-path scope.

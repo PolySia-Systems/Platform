@@ -3,7 +3,8 @@ flowchart LR
     N1["Public data, stream, normalization, event bus, order book"]:::current
     N2["Research strategies, risk, kill switch, paper execution, P&L"]:::current
     N3["SQLite, minimal Strategy Registry, reconciliation, monitoring, backtesting"]:::current
-    N4["Authenticated reads and guarded tiny-live tools"]:::risk
+    N4["SHADOW-only Control Kernel: versioned desired / observed state and audit"]:::current
+    N5["Authenticated reads and bounded guarded tiny-live Copy tools"]:::risk
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
@@ -15,7 +16,7 @@ flowchart LR
 
   subgraph LATER["Later optional capabilities [FUTURE]"]
     F1["Additional prediction markets, exchanges, and brokers"]:::future
-    F2["Wallet intelligence and copy trading"]:::future
+    F2["Generalized wallet intelligence and Copy Trading"]:::future
     F3["Web3 / DeFi data and controlled execution"]:::future
     F4["Institutional hardening and justified high availability"]:::future
   end
@@ -24,7 +25,8 @@ flowchart LR
   N2 --> T1
   N2 --> T2
   N3 --> T3
-  N4 --> T4
+  N4 --> T1
+  N5 --> T4
   T1 -.-> F1
   T2 -.-> F2
   T3 -.-> F3

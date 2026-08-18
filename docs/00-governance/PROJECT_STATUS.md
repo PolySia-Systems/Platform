@@ -4,12 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-17 |
+| Review date | 2026-08-18 |
 | Source-of-truth branch | `main` |
-| Last verified deployed baseline | `46efce066c95c0d1f4a230aae33c99d0b98ce7cd` |
-| Post-only repair merge baseline | `89d2dbbadbf3f4fadc7501805b50bc52cc0fb533` |
+| Audited repository baseline | `449f1c308fc74bd2a541e0e905f281fd19e5cd9b` |
+| Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
+| Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Active maintenance task | SHADOW-only Control Kernel vertical slice |
+| Latest repository maintenance | Architecture truth baseline audited; no runtime change |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.2.0` |
@@ -24,7 +25,11 @@ the reliability repair. Its authorization was consumed by the terminal
 12-hour run `tiny-live-copy-20260729T135013Z`. Authorization
 `POLYSIA-TINY-LIVE-COPY-003` was consumed by failed-safe run
 `tiny-live-copy-20260731T180428Z`. That run made one venue attempt but created no
-order, fill, cycle, or follower exposure. No new Live authorization exists.
+order, fill, cycle, or follower exposure. `POLYSIA-TINY-LIVE-COPY-004` was then
+consumed by run `tiny-live-copy-20260801T003600Z`, which created one accepted
+unfilled Post-only order and stopped `FAILED_SAFE` when immediate cancellation
+confirmation remained ambiguous. Later authenticated reads proved zero open
+orders, fills, exposure, and experiment cost. No new Live authorization exists.
 
 ## Completed stages
 
@@ -63,6 +68,17 @@ order, fill, cycle, or follower exposure. No new Live authorization exists.
   429 recovery, follower-management priority, strict Gamma `eventStartTime`
   validation, rotating 48-alias discovery, and durable read/cooldown state.
   Its 12-hour run finalized normally with zero venue attempts or mutations.
+- The final pre-submit Post-only recheck, streaming signal handling, atomic
+  reservation, and scoped market-time gate were implemented and exercised by
+  Tiny Live Copy runs 003 and 004. Run 004 proved venue acceptance without a
+  fill, while preserving fail-safe behavior on uncertain cancellation state.
+- The exact Standards v0.1.1 `PRF-BASE` and `PRF-PYS` profiles are fully
+  enforced. CI is optimized for Python 3.14 with dependency security fixes,
+  path-conditional quality/container/supply-chain jobs, and lightweight
+  documentation checks.
+- The first SHADOW-only Control Kernel vertical slice is complete for
+  `stale-price@0.1.0`, with versioned desired state, optimistic concurrency,
+  idempotency, synchronous observed state, audit history, and no Live authority.
 
 ## Current architecture and runtime capabilities
 
@@ -136,9 +152,10 @@ evidence.
 
 ## Validation and CI
 
-- The current Python 3.14.6 environment passed compile, Ruff 0.16.0, Mypy 2.3.0
-  over 120 source files, all 508 Pytest tests, `pip check`, secret scan,
-  source/wheel build, isolated wheel installation, and CLI smoke.
+- The Python 3.14.6 baseline has passed compile, Ruff 0.16.0, Mypy 2.3.0,
+  Pytest, `pip check`, secret scan, source/wheel build, isolated wheel
+  installation, and CLI smoke. Exact run-specific counts belong in the
+  corresponding PR or handoff rather than this long-lived status document.
 - A clean locked dependency environment passed strict OSV audit with no known
   vulnerabilities and generated a CycloneDX JSON SBOM.
 - A second Conda environment recreated from `environment.yml` and the portable
@@ -151,9 +168,10 @@ evidence.
   on `main`, and superseded pull-request runs are cancelled.
 - The approved versions are `polymarket-client==0.2.0`, `mypy==2.3.0`, and
   `ruff==0.16.0`. `setuptools==83.0.0` removes the known 82.0.1 finding.
-- PR `#36` CI passed Python 3.11/3.13/3.14 quality jobs, Linux smoke,
-  supply-chain checks, and the new Linux container build/runtime/database
-  initialization job.
+- The audited `main` baseline passed GitHub CI run `32157187984`. Its
+  documentation-only classification correctly ran changes, quality,
+  Standards/path/link, and secret checks while skipping unrelated executable,
+  container, and supply-chain work.
 
 ## Recovery status
 
@@ -168,63 +186,34 @@ evidence.
   removed.
 - The server backup is local to the same host. An encrypted off-host copy is
   not yet configured and remains a recovery limitation.
+- The owner downloaded and verified two SQLite snapshots and 67 sanitized
+  server report files into an untracked workstation archive on 2026-08-02.
+  Protected candidate input remains outside Git. This is retained evidence,
+  not a replacement for automated encrypted off-host backups.
 
 ## Active work, blockers, and open decisions
 
-- The second bounded Tiny Live Copy worker run is terminal `FINALIZED` with
-  classification `NO_SIGNAL_INCONCLUSIVE`. It observed 170 sanitized BTC
-  15-minute trades, including 33 `OPEN` and 137 `INCREASE` events, but made zero
-  venue attempts or mutations. Its only accepted signal reached the worker at
-  7.525 seconds old and was rejected at 13.159 seconds because the 48-response
-  `asyncio.gather` barrier delayed evaluation.
-- The current delivery candidate processes each wallet response as it completes,
-  adds an atomic durable pre-submit signal reservation that does not consume an
-  entry attempt, and retains a second ten-second freshness check immediately
-  before external submission.
-- The Tiny Live Copy-specific market-time gate is proposed at four minutes;
-  the shared domain default remains seven minutes. Existing 90-second
-  cancellation and 185-second GTD backstop controls remain unchanged.
-- The repair fixes the measured burst behavior with 48 active aliases, a
-  100-attempt rolling `/trades` budget, an 80-attempt discovery budget, 20
-  reserved attempts, and at most four calls in flight. Discovery is evenly
-  paced and rotates every 30 minutes by step 34 only while flat.
-- One shared `/trades` circuit honors integer and HTTP-date `Retry-After`,
-  applies bounded deterministic fallback and jitter, permits one probe, and
-  finalizes a flat 120-second outage as `INCONCLUSIVE_DATA_SOURCE`.
-- Strict BTC interval mapping now verifies slug epoch against Gamma child
-  `eventStartTime` and verifies child `endDate` is exactly 900 seconds later.
-  Gamma `startDate` is ignored as interval-start evidence.
-- Active follower management and authenticated reconciliation precede public
-  leader reads. Public outage cannot block management of actual exposure, and
-  discovery remains off while capacity is occupied.
-- Discovery ordering, cursor, active aliases, subset digest, cooldown metadata,
-  per-alias read checkpoints, and sanitized pending events are durable. Raw
-  candidate addresses remain protected runtime input.
-- Authorization IDs are supplied only through protected runtime input.
-  `POLYSIA-TINY-LIVE-COPY-003` is consumed and terminal. Any future Live run
-  requires a different, explicit owner authorization and an exact unclaimed
-  Run ID after zero-mutation Shadow and all readiness gates pass.
-- Copy Trading Stage 0 established a conditional architecture GO. Stage 1
-  proved official read surfaces, normalization, deduplication, strict BTC
-  15-minute mapping, and restart-stable event identity, but closed `NO_GO` for
-  Stage 2 because no measured fresh-execution latency sample was captured.
-- The owner explicitly authorized one bounded exception that jumps from that
-  inconclusive evidence state to a maximum of three venue entry attempts and
-  three terminal filled cycles. This exception does not complete Stages 2
-  through 6 and does not authorize general or permanent Copy Trading.
-- The exception preserves the current Strategy/Policy -> Risk -> Execution ->
-  Polymarket Adapter path, uses exactly 102 protected candidate wallets through
-  aliases, accepts only proven zero-to-positive BTC 15-minute OPEN events, and
-  stores attempt/cycle limits durably before external submission.
-- Its USD 10 limit applies to cumulative experiment entry cost, not total wallet
-  collateral. Closed historical positions are ignored only with explicit
-  past-end, zero-price, zero-value, and non-mergeable evidence. A venue
-  `redeemable` label on a zero-value historical record does not alone block;
-  active, positive-value, mergeable, or ambiguous state still fails closed.
-- The pinned SDK requires a GTD timestamp at least 180 seconds ahead. The
-  experiment retains a 90-second operational cancellation TTL and skips any
-  signal whose 185-second venue backstop cannot expire before the final-entry
-  cutoff. This is a stricter eligibility rule, not a weakened safety control.
+- Tiny Live Copy run four is terminal `FAILED_SAFE`. One Post-only order was
+  accepted and remained unfilled during its 90-second operational lifetime.
+  The runtime sent a cancellation request, but its single immediate open-order
+  read did not confirm removal. Later authenticated reads proved the account
+  flat with zero open order, confirmed fill, exposure, and experiment cost.
+- The durable run intentionally retains ambiguous entry state. Do not alter it
+  without a separately reviewed reconciliation procedure. The protected
+  102-wallet input remains server-local and outside Git.
+- The narrow implementation gap is cancellation confirmation: one immediate
+  read is insufficient. A future repair should use a bounded authenticated
+  read-only confirmation window and remain fail-closed on any order, trade,
+  position, timeout, or inconsistent evidence.
+- The SDK terminal order-detail response currently has an `OpenOrder` contract
+  mismatch. Repair or adapt that boundary with contract tests before using it
+  as definitive terminal-state evidence.
+- All four Tiny Live Copy authorizations and entry-attempt capacity are
+  consumed. Any future Live run requires a new explicit owner authorization,
+  new Run ID, exact green commit, zero-mutation Shadow, and all readiness gates.
+- The bounded exception did not complete the broader Copy Trading stages and
+  does not authorize generalized or permanent Copy Trading. See the
+  [fourth-run diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md).
 
 - The private owner configuration now contains only the canonical funder
   variable. Redacted `configuration-status` reports no deprecated-variable
@@ -250,15 +239,13 @@ evidence.
 
 ## Single recommended next task
 
-**Complete only the final Post-only recheck repair and zero-mutation Shadow
-stage.** Pass the full repository and CI gates, merge normally, deploy only the
-final integrated merge commit, initialize additive schema safely, and run one
-fully isolated bounded Shadow. Stop without Live if evidence is adverse,
-ambiguous, or inconclusive. Do not create, claim, or consume another
-authorization or Live Run ID during this stage.
+**Implement only the bounded cancellation-confirmation and SDK response-contract
+repair under deterministic tests and zero-mutation validation.** Preserve the
+existing fail-closed result whenever open-order, trade, position, timeout, or
+SDK evidence is ambiguous. Do not deploy, reconcile the retained run, or create
+a new Live authorization during that engineering task.
 
-After a separately authorized experiment becomes terminal, the broader
-recommendation remains:
+In parallel or afterward, the broader non-Live recommendation remains:
 
 **Start a historical-data and strategy-validation slice for BTC Up/Down
 15-minute markets.** Define data-quality gates, acquire and validate a
@@ -267,9 +254,10 @@ backtest rules. Do not place live orders or expand platform architecture.
 
 ## Next three milestones
 
-1. Acquire and validate historical market, book, outcome, fee, and timing data
-   with completeness, timestamp, leakage, and reproducibility checks.
-2. Run realistic fee/slippage/liquidity-aware backtests against explicit
-   baselines and report net P&L, drawdown, calibration, and regime sensitivity.
-3. Run a large Paper/Shadow sample with promotion gates; consider a separately
-   authorized Tiny-Live test only if the statistical evidence passes.
+1. Repair cancellation confirmation and the SDK terminal-order contract with
+   deterministic tests; stop without Live or external mutation.
+2. Acquire reproducible historical data and run realistic fee/slippage-aware
+   backtests against explicit baselines.
+3. Run a large Paper/Shadow sample with promotion gates. Consider any new
+   Tiny-Live test only after the safety repair, statistical evidence, and a new
+   explicit owner authorization.

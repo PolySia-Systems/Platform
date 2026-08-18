@@ -5,7 +5,7 @@
 - **Scope:** Target logical containers for multi-strategy, portfolio, OMS, adapter discovery, generalized state, and operator control.
 - **Architecture status:** TARGET
 - **Audience:** Owner, architects, senior developers, risk reviewers, and roadmap reviewers.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 
@@ -19,7 +19,7 @@ flowchart LR
   subgraph PS["PolySia target modular monolith — logical containers, not microservices"]
     Console["Operator Console\n[TARGET]"]:::target
     DataPlatform["Market Data and Normalization\n[CURRENT foundation]"]:::current
-    Registry["Strategy Registry and Orchestrator\n[TARGET]"]:::target
+    Registry["Strategy Registry Extensions and Orchestrator\n[TARGET over bounded CURRENT registry]"]:::target
     Intent["Intent Aggregator / Conflict Resolver\n[TARGET]"]:::target
     Allocator["Portfolio and Capital Allocation\n[TARGET]"]:::target
     Risk["Independent Risk and Emergency Control\n[CURRENT foundation]"]:::risk
@@ -72,11 +72,17 @@ Follow data into strategy orchestration, conflict resolution, capital allocation
 
 ## Current implementation mapping
 
-Current foundations are market data, risk/kill switch, execution services, state, reconciliation, and monitoring. They are not evidence that target orchestration/OMS components already exist.
+Current foundations are market data, the bounded Strategy Registry, independent
+risk/kill switch, execution services, state, reconciliation, monitoring, and
+the separate SHADOW-only Control Kernel. They are not evidence that target
+orchestration or OMS components already exist.
 
 ## Target/future elements
 
-Strategy registry/orchestrator, intent resolver, allocator, OMS/Transaction Manager, execution router, adapter registry, generalized ledger, operator console, and stronger database boundary are TARGET.
+Strategy Registry extensions and orchestration, intent resolution, allocation,
+OMS/Transaction Manager, execution routing, adapter registry, generalized
+ledger, operator console, and a stronger database boundary are TARGET. The
+bounded current registry is not reclassified as TARGET by this view.
 
 ## Related repository files
 
@@ -88,7 +94,7 @@ Current foundation evidence: `tests/architecture/test_boundaries.py`, `tests/int
 
 ## Related ADRs
 
-ADR-0002, ADR-0004, ADR-0006, ADR-0008
+ADR-0002, ADR-0004, ADR-0006, ADR-0008, ADR-0012
 
 ## Related capabilities/requirements
 

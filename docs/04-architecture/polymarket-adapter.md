@@ -35,6 +35,21 @@ order-type, market, geoblock, rate-limit, clock, SDK, server, timeout, and
 unknown failures. Credentials, signatures, keys, tokens, and sensitive request
 payloads are never included.
 
+## Verified cancellation limitation
+
+Tiny Live Copy run four proved that a single immediate authenticated
+open-order read may not confirm a just-requested cancellation even when later
+reads show no open order or fill. The runtime correctly stopped `FAILED_SAFE`.
+A future repair must use a bounded read-only confirmation window across open
+orders, trades, and positions and must preserve ambiguity on timeout or
+inconsistent evidence.
+
+The current SDK terminal order-detail response also has a verified `OpenOrder`
+contract mismatch. Do not treat that endpoint as definitive terminal-state
+evidence until the adapter contract and tests are repaired. The sanitized
+[fourth-run diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md)
+contains the evidence and bounded recommendation.
+
 ## SDK contract
 
 The approved pinned baseline is the official unified

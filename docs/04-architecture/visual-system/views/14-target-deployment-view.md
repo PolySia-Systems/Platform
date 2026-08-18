@@ -5,7 +5,7 @@
 - **Scope:** Developer workstation, CI, controlled host/VPS, runtime profiles, secrets, persistent database, monitoring, backup, operator access, venue, and optional later HA.
 - **Architecture status:** TARGET
 - **Audience:** Owner, architects, operations engineers, security reviewers, and release planners.
-- **Source commit:** `44a8ae0fbccd0de916a0621236ea5931e7c3a256`
+- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
 
 ## Mermaid diagram
 

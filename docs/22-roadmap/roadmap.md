@@ -11,6 +11,24 @@
   bounded lifecycle monitoring, fee-aware target calculation, structured
   adapter diagnostics, server-clock preflight, runtime configuration reporting,
   bounded read retry, and verified recovery backup.
+- Platform maintenance: Python 3.14-only CI optimization, dependency security
+  fixes, exact Standards v0.1.1 enforcement, and repository identity cleanup.
+- Bounded control: a SHADOW-only Control Kernel for `stale-price@0.1.0` with
+  immutable desired-state revisions, optimistic concurrency, idempotency,
+  observed state, and audit history.
+- Tiny Live Copy run four: one accepted unfilled Post-only order, terminal
+  `FAILED_SAFE` on ambiguous immediate cancellation confirmation, and later
+  verified zero open orders, fills, exposure, and experiment cost.
+
+## Immediate safety maintenance gate
+
+1. Add a bounded authenticated read-only cancellation-confirmation window that
+   remains fail-closed on persistent or inconsistent order/trade/position state.
+2. Repair or adapt the SDK terminal-order response contract with deterministic
+   contract tests.
+3. Validate in unit/integration and zero-mutation Shadow only. Do not deploy,
+   alter retained ambiguous run state, or create a new Live authorization as
+   part of this engineering gate.
 
 ## Immediate next cycle: research and validation
 
@@ -23,8 +41,9 @@
    calibration, turnover, execution feasibility, and regime sensitivity.
 4. Run a large Paper/Shadow sample using the same accounting and promotion
    metrics.
-5. Consider a separately authorized Tiny-Live sample only after evidence-based
-   gates pass. Do not scale capital from the single profitable LIVE-004 result.
+5. Consider a separately authorized Tiny-Live sample only after the safety
+   maintenance gate and evidence-based promotion gates pass. Do not scale
+   capital from the single profitable LIVE-004 result.
 
 ## Parallel maintenance gates
 
@@ -37,9 +56,13 @@
   compatibility rollback.
 - Add branch protection and portable cross-platform locking only through a
   focused governance/release-hardening task.
+- Keep architecture Mermaid sources, views, SVGs, index metadata, and
+  traceability synchronized through the lightweight documentation validator and
+  human semantic/visual review.
 
 ## Explicitly deferred
 
-New strategies, additional venues, Web3/DeFi expansion, copy trading, AI/ML,
-cloud deployment, microservices, Kubernetes, operator web UI, generalized OMS,
-multi-strategy capital allocation, and capital scaling are not immediate work.
+New strategies, additional venues, Web3/DeFi expansion, generalized or
+permanent Copy Trading, AI/ML, cloud deployment, microservices, Kubernetes,
+operator web UI, generalized OMS, multi-strategy capital allocation, and
+capital scaling are not immediate work.
