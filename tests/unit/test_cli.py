@@ -1357,6 +1357,8 @@ def test_shadow_run_command_writes_sanitized_reports(monkeypatch, tmp_path: Path
             "shadow-run",
             "--max-events",
             "3",
+            "--control-database-path",
+            str(tmp_path / "control.sqlite3"),
             "--output-dir",
             str(output_dir),
         ],
@@ -1388,6 +1390,8 @@ def test_shadow_run_command_blocks_when_live_flag_enabled(monkeypatch, tmp_path:
         [
             "shadow-run",
             "--json",
+            "--control-database-path",
+            str(tmp_path / "control.sqlite3"),
             "--output-dir",
             str(tmp_path),
         ],

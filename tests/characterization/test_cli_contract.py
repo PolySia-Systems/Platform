@@ -14,6 +14,7 @@ EXPECTED_COMMANDS = {
     "backtest-jsonl",
     "controlled-second-tiny-live",
     "configuration-status",
+    "control",
     "deployment-automation",
     "deployment-readiness",
     "discover-markets",
@@ -57,6 +58,12 @@ def test_cli_command_inventory_is_preserved() -> None:
     command = typer.main.get_command(cli.app)
 
     assert set(command.commands) == EXPECTED_COMMANDS
+
+
+def test_control_command_inventory_is_bounded() -> None:
+    command = typer.main.get_command(cli.app)
+
+    assert set(command.commands["control"].commands) == {"apply", "history", "plan", "status"}
 
 
 def test_legacy_cli_helper_imports_delegate_to_support_modules() -> None:

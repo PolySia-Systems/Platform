@@ -9,7 +9,7 @@
 | Last verified deployed baseline | `46efce066c95c0d1f4a230aae33c99d0b98ce7cd` |
 | Post-only repair merge baseline | `89d2dbbadbf3f4fadc7501805b50bc52cc0fb533` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Active maintenance task | Standards `v0.1.1` full enforcement complete |
+| Active maintenance task | SHADOW-only Control Kernel vertical slice |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.2.0` |
@@ -81,6 +81,12 @@ order, fill, cycle, or follower exposure. No new Live authorization exists.
   lifecycle state, run evidence, and explicitly unrated performance summaries.
   Generalized orchestration, conflict resolution, capital allocation, OMS,
   generalized ledger, execution routing, and adapter registry remain TARGET.
+- The first Control Kernel slice is CURRENT only for
+  `stale-price@0.1.0` in deterministic SHADOW. It provides CLI plan/apply/status/
+  history, immutable desired-state revisions, optimistic concurrency,
+  idempotency, in-process intent gating, separate observed state, and append-only
+  audit evidence. It has no PAPER, LIVE, Web, API, AI, generalized parameter, or
+  background-controller authority.
 - The bounded BTC Up/Down 15-minute runner uses the smallest venue-valid
   quantity, one FAK entry, confirmed-fill reconciliation, and at most one GTC
   exit sized from actual available position. Duplicate authorization and entry

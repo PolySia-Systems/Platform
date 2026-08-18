@@ -59,3 +59,34 @@ def test_official_sdk_imports_are_confined_to_polymarket_adapter() -> None:
             findings[path.relative_to(ROOT).as_posix()] = forbidden
 
     assert findings == {}
+
+
+def test_control_kernel_is_venue_neutral() -> None:
+    control_root = PACKAGE / "control"
+    forbidden_prefixes = ("polymarket", "polysia.adapters")
+    findings: dict[str, list[str]] = {}
+
+    for path in control_root.rglob("*.py"):
+        forbidden = sorted(
+            name for name in _imports(path) if name.startswith(forbidden_prefixes)
+        )
+        if forbidden:
+            findings[path.relative_to(ROOT).as_posix()] = forbidden
+
+    assert findings == {}
+
+
+def test_control_core_does_not_depend_on_sqlite_adapter() -> None:
+    core_files = (
+        PACKAGE / "control" / "models.py",
+        PACKAGE / "control" / "service.py",
+        PACKAGE / "control" / "shadow_runtime.py",
+    )
+    findings = {
+        path.relative_to(ROOT).as_posix(): sorted(
+            name for name in _imports(path) if name.startswith("polysia.storage")
+        )
+        for path in core_files
+    }
+
+    assert {path: imports for path, imports in findings.items() if imports} == {}
