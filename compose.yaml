@@ -24,14 +24,14 @@ services:
       - |
         reconciliation_cycle=0
         while true; do
-          python -m polysia.cli tiny-live-monitor \
+          python -m polysia.cli ops tiny-live-monitor \
             --max-cycles 1 \
             --interval-seconds 60 \
             --output-dir /var/lib/polysia/reports
           reconciliation_cycle=$$((reconciliation_cycle + 1))
           if [ "$$reconciliation_cycle" -ge \
             "$${POLYSIA_RECONCILIATION_EVERY_CYCLES:-15}" ]; then
-            python -m polysia.cli post-live-reconciliation \
+            python -m polysia.cli ops post-live-reconciliation \
               --output-dir /var/lib/polysia/reports
             reconciliation_cycle=0
           fi
@@ -51,7 +51,7 @@ services:
         - CMD-SHELL
         - >-
           test -w /var/lib/polysia &&
-          python -m polysia.cli health >/dev/null
+          python -m polysia.cli system health >/dev/null
       interval: 30s
       timeout: 10s
       retries: 3
@@ -129,7 +129,7 @@ services:
         test -n "$${POLYSIA_VERIFIED_CI_COMMIT:-}"
         test -n "$${POLYSIA_COPY_RUN_ID:-}"
         status_path="/var/lib/polysia/reports/$${POLYSIA_COPY_RUN_ID}/status.json"
-        python -m polysia.cli tiny-live-copy \
+        python -m polysia.cli live tiny-copy \
           --candidate-file /var/lib/polysia/runtime/candidates.txt \
           --output-dir "/var/lib/polysia/reports/$${POLYSIA_COPY_RUN_ID}" \
           --database /var/lib/polysia/data/polysia.sqlite3 \

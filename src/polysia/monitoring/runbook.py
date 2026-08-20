@@ -55,9 +55,9 @@ def _runbook_sections(*, include_live: bool) -> tuple[OperatorRunbookSection, ..
             title="1. Start Of Day",
             objective="Confirm the local environment is safe before collecting data.",
             commands=(
-                "python -m polysia.cli health",
-                "python -m polysia.cli deployment-readiness",
-                "python -m polysia.cli operator-status",
+                "python -m polysia.cli system health",
+                "python -m polysia.cli ops deployment-readiness",
+                "python -m polysia.cli system status",
             ),
             checks=(
                 "health returns status ok",
@@ -73,8 +73,8 @@ def _runbook_sections(*, include_live: bool) -> tuple[OperatorRunbookSection, ..
             title="2. Data Collection",
             objective="Inspect public markets and stream one token without trading.",
             commands=(
-                "python -m polysia.cli discover-markets --limit 10",
-                "python -m polysia.cli stream-market --token-id YOUR_TOKEN_ID --max-events 5",
+                "python -m polysia.cli market discover --limit 10",
+                "python -m polysia.cli market stream --token-id YOUR_TOKEN_ID --max-events 5",
             ),
             checks=(
                 "market discovery returns active markets",
@@ -89,10 +89,11 @@ def _runbook_sections(*, include_live: bool) -> tuple[OperatorRunbookSection, ..
             title="3. Research Loop",
             objective="Test strategies only through paper trading and replay backtests.",
             commands=(
-                "python -m polysia.cli paper-trade --token-id YOUR_TOKEN_ID --order-size 1",
-                "python -m polysia.cli backtest-jsonl --input .\\events.jsonl "
+                "python -m polysia.cli research paper-trade "
+                "--token-id YOUR_TOKEN_ID --order-size 1",
+                "python -m polysia.cli research backtest --input .\\events.jsonl "
                 "--strategy stale-price",
-                "python -m polysia.cli backtest-jsonl --input .\\events.jsonl "
+                "python -m polysia.cli research backtest --input .\\events.jsonl "
                 "--strategy passive-market-maker --min-edge 0.05",
             ),
             checks=(
@@ -109,8 +110,8 @@ def _runbook_sections(*, include_live: bool) -> tuple[OperatorRunbookSection, ..
             title="4. Reporting",
             objective="Create a sanitized operator snapshot for review.",
             commands=(
-                "python -m polysia.cli operator-report --format markdown",
-                "python -m polysia.cli operator-report --format html "
+                "python -m polysia.cli system report --format markdown",
+                "python -m polysia.cli system report --format html "
                 "--output .\\operator-report.html",
             ),
             checks=(
@@ -125,12 +126,12 @@ def _runbook_sections(*, include_live: bool) -> tuple[OperatorRunbookSection, ..
                 title="5. Live Dry-Run Only",
                 objective="Preview tiny live operations before any actual submission.",
                 commands=(
-                    "python -m polysia.cli live-open-orders "
+                    "python -m polysia.cli live open-orders "
                     "--token-id YOUR_TOKEN_ID --i-understand-this-uses-live-account",
-                    "python -m polysia.cli live-cancel-market-orders "
+                    "python -m polysia.cli live cancel-market-orders "
                     "--token-id YOUR_TOKEN_ID --dry-run "
                     "--i-understand-this-modifies-live-orders",
-                    "python -m polysia.cli live-limit-order "
+                    "python -m polysia.cli live limit-order "
                     "--token-id YOUR_TOKEN_ID --side BUY --price 0.01 --size 1 "
                     "--dry-run --i-understand-this-places-real-orders",
                 ),
@@ -156,7 +157,7 @@ def _runbook_sections(*, include_live: bool) -> tuple[OperatorRunbookSection, ..
                 "Set LIVE_TRADING_ENABLED=false for the active shell or deployment environment.",
                 "Remove POLYMARKET_LIVE_TOKEN_ALLOWLIST from the active shell or "
                 "deployment environment.",
-                "Run python -m polysia.cli deployment-readiness again.",
+                "Run python -m polysia.cli ops deployment-readiness again.",
             ),
             checks=(
                 "deployment-readiness remains ready or clearly explains blocked checks",
