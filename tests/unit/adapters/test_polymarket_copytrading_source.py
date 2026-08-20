@@ -22,7 +22,7 @@ from polysia.domain.copytrading import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-FIXTURES = PROJECT_ROOT / "tests" / "fixtures" / "copytrading"
+FIXTURES = Path(__file__).with_name("fixtures") / "polymarket_copytrading"
 WALLET = "0x1111111111111111111111111111111111111111"
 OBSERVED_AT = datetime(2026, 7, 28, 16, 31, tzinfo=UTC)
 START_AT = datetime(2026, 7, 28, 16, 15, tzinfo=UTC)

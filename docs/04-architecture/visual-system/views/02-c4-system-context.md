@@ -73,7 +73,7 @@ An independent reviewer role and additional venue systems are TARGET/FUTURE.
 
 ## Related tests
 
-`tests/migration/test_identity.py`, `tests/integration/test_paper_vertical_slice.py`, `tests/architecture/test_boundaries.py`
+`tests/contract/test_distribution_identity.py`, `tests/integration/test_paper_vertical_slice.py`, `tests/architecture/test_boundaries.py`
 
 ## Related ADRs
 

@@ -124,7 +124,7 @@ No target container is claimed. OMS and orchestration are deliberately absent fr
 `tests/integration/test_shadow_control_vertical_slice.py`,
 `tests/unit/strategies/test_registry.py`,
 `tests/architecture/test_boundaries.py`,
-`tests/characterization/test_cli_contract.py`
+`tests/contract/test_cli_surface.py`
 
 ## Related ADRs
 

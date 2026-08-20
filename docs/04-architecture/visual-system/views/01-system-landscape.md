@@ -79,7 +79,7 @@ Risk reviewer/auditor interaction is TARGET. Additional prediction markets, exch
 
 ## Related tests
 
-`tests/migration/test_identity.py`, `tests/architecture/test_boundaries.py`, `tests/contract/test_polymarket_sdk_surface.py`
+`tests/contract/test_distribution_identity.py`, `tests/architecture/test_boundaries.py`, `tests/contract/test_polymarket_sdk_surface.py`
 
 ## Related ADRs
 
