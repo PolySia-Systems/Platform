@@ -15,8 +15,9 @@ live token allowlist. They must not receive test or production credentials.
 Network tests are opt-in and read-only unless a separately marked controlled
 validation has explicit owner authorization for that specific run.
 
-Every meaningful phase runs compile, Ruff, Mypy, pytest, and `pip check`.
-Packaging phases also run build and installed-wheel smoke tests. Supply-chain
+Every meaningful engineering change runs its applicable compile, Ruff, Mypy,
+pytest, and `pip check` gates. Packaging changes also run build and
+installed-wheel smoke tests. Supply-chain
 gates include a tracked-file secret scan, dependency audit, and CycloneDX SBOM.
 
 Priority test subjects are order states, Decimal arithmetic, risk limits,

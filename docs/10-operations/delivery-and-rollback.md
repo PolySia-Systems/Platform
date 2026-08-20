@@ -16,11 +16,13 @@
   the repository and excludes the preserved legacy folder and generated data.
 - Generated build, SBOM, shadow, and release evidence remains under ignored
   artifact directories.
-- Phase handoffs are under `docs/18-ai-handoffs`.
+- Current evidence is indexed under `docs/18-ai-handoffs`; completed repository
+  stabilization handoffs are retained under
+  `docs/99-archive/handoffs/repository-stabilization`.
 
 ## Recovery layers
 
-1. Revert a phase commit for a narrow rollback.
+1. Revert the relevant change commit for a narrow rollback.
 2. Recreate the current runtime from the environment and lock files.
 3. Revert the Python support decision and recreate the reverted environment if
    an emergency rollback requires Python 3.11 or 3.13; current `main` supports

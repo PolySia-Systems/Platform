@@ -2,7 +2,7 @@
 
 | ID | Type | Item | Status | Exit condition |
 |---|---|---|---|---|
-| ISS-001 | Missing input | Consolidated Phase 0 project record was not supplied. | Open, non-blocking | Replace reconstructed record if the original appears. |
+| ISS-001 | Missing input | Consolidated initial project record was not supplied; the [reconstructed record](../../99-archive/discovery/phase-0-project-record.md) is archived. | Open, non-blocking | Replace the reconstructed record if the original appears. |
 | ISS-002 | Repository | Original pre-migration Git history is unavailable. | Accepted limitation | Preserve current Git history, archive evidence, and verified recovery package honestly. |
 | ISS-003 | Operations | Local `.env` previously set canonical and deprecated funder variables together. | Closed 2026-07-28 | Deprecated `POLYMARKET_WALLET_ADDRESS` removed; redacted configuration status reports no conflict. |
 | ISS-004 | Research | Strategy has one profitable real round trip but no statistically meaningful evidence. | Open, blocks promotion/scaling | Valid historical data, realistic backtest, and large Paper/Shadow samples pass predefined gates. |
