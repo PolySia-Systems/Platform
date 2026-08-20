@@ -1,43 +1,58 @@
-# AI Handoffs
+# Current Evidence Index
 
 This is the canonical handoff directory selected by the Master Operating
-Charter. The modernization execution prompt specifically required the Phase A
-baseline at `docs/13-ai-handoffs/BASELINE_AUDIT.md`; that file remains there as
-an immutable path-level compliance artifact. New handoffs are created here and
-may link to the Phase A files rather than duplicate them.
+Charter. It contains both current closure evidence and retained historical
+records. Age alone does not make evidence disposable, but historical handoffs
+are not automatically current operating instructions.
 
-Current closure records:
+The Phase A baseline remains at
+[`docs/13-ai-handoffs/BASELINE_AUDIT.md`](../13-ai-handoffs/BASELINE_AUDIT.md)
+because that exact path is an immutable compliance artifact.
+
+## Repository truth
 
 - [`architecture-truth-refresh-2026-08-18.md`](architecture-truth-refresh-2026-08-18.md)
-  records the repository-wide architecture evidence audit, refreshed visual
-  baseline, and automated drift-prevention checks.
-- [`polysia-tiny-live-copy-004-cancellation-diagnostic.md`](polysia-tiny-live-copy-004-cancellation-diagnostic.md)
-  records the fourth bounded Copy run's accepted unfilled Post-only order,
-  fail-safe cancellation-confirmation ambiguity, and proven flat account.
-- [`polysia-post-only-final-recheck.md`](polysia-post-only-final-recheck.md)
-  records the evidence-supported TOCTOU diagnosis, final order-book recheck,
-  and explicit local/definitive/ambiguous submission outcomes.
-- [`polysia-copy-signal-arbiter-experiment.md`](polysia-copy-signal-arbiter-experiment.md)
-  records the isolated confidence-aware Arbiter, fail-closed historical Replay,
-  and deferred non-interfering Shadow gate.
-- [`polysia-tiny-live-copy-streaming-003.md`](polysia-tiny-live-copy-streaming-003.md)
-  is the current delivery handoff for response-streaming, atomic signal
-  reservation, the scoped four-minute gate, and the Shadow-only 003 workflow.
-- [`polysia-tiny-live-copy-reliability-002.md`](polysia-tiny-live-copy-reliability-002.md)
-  records the deployed reliability repair and consumed 002 workflow.
-- [`polysia-tiny-live-copy-diagnostic-handoff.md`](polysia-tiny-live-copy-diagnostic-handoff.md)
-  captures the first Tiny Live Copy worker's fail-safe HTTP 429 result, the
-  verified market-time mapping defect, and the bounded correction plan.
-- [`polysia-tiny-live-copy-experiment.md`](polysia-tiny-live-copy-experiment.md)
-  records the approved bounded experiment design and safety controls.
-- [`polysia-controlled-server-deployment-handoff.md`](polysia-controlled-server-deployment-handoff.md)
-  records the controlled Helsinki Docker deployment, validation, and recovery
-  evidence.
+  records the repository-wide architecture audit, refreshed visual baseline,
+  and automated drift prevention.
 - [`polysia-upgrade-006-handoff.md`](polysia-upgrade-006-handoff.md) records the
-  Python 3.14, dependency, SDK, reproducibility, and security baseline upgrade.
-- [`polysia-live-004-final-handoff.md`](polysia-live-004-final-handoff.md) records
-  the completed real round trip and delayed-fill reconciliation.
+  Python 3.14, dependency, SDK, reproducibility, and security baseline.
 - [`polysia-phase-closure-005-final-handoff.md`](polysia-phase-closure-005-final-handoff.md)
-  is the current engineering-phase closure handoff.
-- `polysia-phase-closure-005-final-handoff.json` is the machine-readable
-  companion record.
+  and its JSON companion record the latest completed engineering closure.
+
+## Current safety and operational evidence
+
+- [`polysia-tiny-live-copy-004-cancellation-diagnostic.md`](polysia-tiny-live-copy-004-cancellation-diagnostic.md)
+  records the accepted unfilled Post-only order, fail-safe cancellation
+  ambiguity, and later proof of a flat account with zero experiment cost.
+- [`polysia-post-only-final-recheck.md`](polysia-post-only-final-recheck.md)
+  records the TOCTOU diagnosis, final order-book recheck, and explicit
+  submission outcome model.
+- [`polysia-controlled-server-deployment-handoff.md`](polysia-controlled-server-deployment-handoff.md)
+  records the controlled read-only Helsinki deployment and recovery evidence.
+- [`polysia-live-004-final-handoff.md`](polysia-live-004-final-handoff.md)
+  records the completed bounded round trip and delayed-fill reconciliation.
+
+All recorded Live and Tiny Live Copy authorizations are consumed. These files
+do not authorize another external mutation.
+
+## Bounded experimental evidence
+
+- [`polysia-copy-signal-arbiter-experiment.md`](polysia-copy-signal-arbiter-experiment.md)
+  records the isolated confidence-aware Arbiter and fail-closed historical
+  Replay.
+- [`polysia-tiny-live-copy-streaming-003.md`](polysia-tiny-live-copy-streaming-003.md)
+  records response streaming, atomic signal reservation, and the scoped
+  SHADOW-only workflow.
+- [`polysia-tiny-live-copy-reliability-002.md`](polysia-tiny-live-copy-reliability-002.md)
+  records endpoint-aware pacing, bounded recovery, and follower-management
+  priority.
+- [`polysia-tiny-live-copy-experiment.md`](polysia-tiny-live-copy-experiment.md)
+  records the original bounded experiment design and safety controls.
+
+## Historical retention
+
+Other files in this directory remain retained provenance for completed
+migrations, validation stages, diagnostics, and delivery work. Consult the
+[Project Status](../00-governance/PROJECT_STATUS.md) and
+[Roadmap](../22-roadmap/roadmap.md) before treating any historical recommendation
+as current.

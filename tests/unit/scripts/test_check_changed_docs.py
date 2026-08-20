@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.check_changed_docs import _validate_architecture_docs
+from scripts.check_changed_docs import (
+    _validate_architecture_docs,
+    _validate_repository_hygiene,
+)
 
 BASELINE = "a" * 40
 SOURCE = "flowchart LR\n  A[\"Example [CURRENT]\"]"
@@ -91,6 +94,24 @@ def _architecture_repository(tmp_path: Path) -> Path:
     return root
 
 
+def _current_docs_repository(tmp_path: Path) -> tuple[Path, set[Path]]:
+    root = tmp_path / "repository"
+    required_targets = (
+        Path("docs/00-governance/PROJECT_STATUS.md"),
+        Path("docs/04-architecture/README.md"),
+        Path("docs/10-operations/server-deployment.md"),
+        Path("docs/18-ai-handoffs/README.md"),
+        Path("docs/22-roadmap/roadmap.md"),
+    )
+    links = "\n".join(
+        f"- [{target.stem}]({target.as_posix()})" for target in required_targets
+    )
+    _write(root / "README.md", f"# PolySia\n\n{links}\n")
+    for target in required_targets:
+        _write(root / target, f"# {target.stem}\n")
+    return root, {Path("README.md"), *required_targets}
+
+
 def test_architecture_validator_accepts_synchronized_corpus(tmp_path: Path) -> None:
     repository = _architecture_repository(tmp_path)
 
@@ -133,3 +154,34 @@ def test_architecture_validator_reports_missing_traceability_evidence(
     errors = _validate_architecture_docs(repository)
 
     assert any("CURRENT row has no verified test / evidence" in error for error in errors)
+
+
+def test_repository_hygiene_accepts_current_navigation(tmp_path: Path) -> None:
+    repository, tracked_paths = _current_docs_repository(tmp_path)
+
+    assert (
+        _validate_repository_hygiene(repository, tracked_paths=tracked_paths) == []
+    )
+
+
+def test_repository_hygiene_reports_obsolete_phase_and_temporary_paths(
+    tmp_path: Path,
+) -> None:
+    repository, tracked_paths = _current_docs_repository(tmp_path)
+    readme = repository / "README.md"
+    readme.write_text("# PolySia\n\n## Phase 12\n", encoding="utf-8")
+    obsolete = Path("prompts/POLYSIA_CODEX_START_FINAL.txt")
+    temporary = Path("artifacts/report.json")
+    _write(repository / obsolete, "obsolete\n")
+    _write(repository / temporary, "{}\n")
+    tracked_paths.update({obsolete, temporary})
+
+    errors = _validate_repository_hygiene(
+        repository,
+        tracked_paths=tracked_paths,
+    )
+
+    assert any("obsolete repository instruction is tracked" in error for error in errors)
+    assert any("temporary or generated path is tracked" in error for error in errors)
+    assert any("numeric Phase-history language" in error for error in errors)
+    assert any("lacks required current-document link" in error for error in errors)

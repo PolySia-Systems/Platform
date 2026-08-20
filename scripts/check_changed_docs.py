@@ -38,6 +38,39 @@ ARCHITECTURE_STATUS_MARKER = re.compile(
     r"\[(?:CURRENT|TARGET|FUTURE|EXTERNAL)(?:[^\]]*)\]"
 )
 BACKTICK_PATH = re.compile(r"`(?P<value>[^`]+)`")
+README_PHASE_HISTORY = re.compile(r"\bPhase\s+\d+(?:\.\d+)?\b", re.IGNORECASE)
+OBSOLETE_TRACKED_PATHS = frozenset(
+    {
+        Path("PMXT_FUTURE_NOTES.md"),
+        Path("README_SECRETS.md"),
+        Path("plans/active/first-evidence-sprint.md"),
+        Path("plans/active/tiny-live-round-trip-v1.md"),
+        Path("plans/active/tiny-live-round-trip-v2.md"),
+        Path("prompts/POLYSIA_CODEX_MASTER_PROMPT_FINAL_v1.1.md"),
+        Path("prompts/POLYSIA_CODEX_START_FINAL.txt"),
+    }
+)
+CURRENT_DOCUMENTS = (
+    Path("README.md"),
+    Path("docs/00-governance/PROJECT_STATUS.md"),
+    Path("docs/18-ai-handoffs/README.md"),
+    Path("docs/22-roadmap/roadmap.md"),
+)
+REQUIRED_README_LINKS = (
+    "docs/00-governance/PROJECT_STATUS.md",
+    "docs/04-architecture/README.md",
+    "docs/10-operations/server-deployment.md",
+    "docs/18-ai-handoffs/README.md",
+    "docs/22-roadmap/roadmap.md",
+)
+TEMPORARY_DIRECTORY_NAMES = frozenset(
+    {"__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+)
+TEMPORARY_ROOT_DIRECTORIES = frozenset(
+    {"artifacts", "build", "dist", "release-artifacts"}
+)
+TEMPORARY_FILE_NAMES = frozenset({".DS_Store", "Thumbs.db"})
+TEMPORARY_SUFFIXES = frozenset({".bak", ".orig", ".rej", ".tmp"})
 
 
 def _git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
@@ -68,6 +101,11 @@ def _changed_paths(repository: Path, base: str, head: str) -> list[Path]:
         "--",
     )
     return [Path(item.decode()) for item in result.stdout.split(b"\0") if item]
+
+
+def _tracked_paths(repository: Path) -> set[Path]:
+    result = _git(repository, "ls-files", "-z")
+    return {Path(item.decode()) for item in result.stdout.split(b"\0") if item}
 
 
 def _has_exact_case(repository: Path, target: Path) -> bool:
@@ -127,6 +165,58 @@ def _validate_links(repository: Path, markdown: Path) -> list[str]:
                 errors.append(
                     f"{markdown.relative_to(repository)}: link target has wrong case: {raw_target}"
                 )
+    return errors
+
+
+def _is_temporary_tracked_path(path: Path) -> bool:
+    if not path.parts:
+        return False
+    if path.parts[0] in TEMPORARY_ROOT_DIRECTORIES:
+        return True
+    if any(part in TEMPORARY_DIRECTORY_NAMES for part in path.parts):
+        return True
+    return (
+        path.name in TEMPORARY_FILE_NAMES
+        or path.name.endswith("~")
+        or path.suffix.lower() in TEMPORARY_SUFFIXES
+    )
+
+
+def _validate_repository_hygiene(
+    repository: Path,
+    *,
+    tracked_paths: set[Path] | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    tracked = _tracked_paths(repository) if tracked_paths is None else tracked_paths
+    present_tracked = {
+        path for path in tracked if (repository / path).exists()
+    }
+
+    for path in sorted(OBSOLETE_TRACKED_PATHS & present_tracked):
+        errors.append(f"obsolete repository instruction is tracked: {path.as_posix()}")
+    for path in sorted(present_tracked):
+        if _is_temporary_tracked_path(path):
+            errors.append(f"temporary or generated path is tracked: {path.as_posix()}")
+
+    readme = repository / "README.md"
+    if not readme.exists():
+        errors.append("README.md is missing")
+    else:
+        readme_text = readme.read_text(encoding="utf-8")
+        if README_PHASE_HISTORY.search(readme_text):
+            errors.append("README.md contains numeric Phase-history language")
+        link_text = INLINE_CODE.sub("", FENCED_CODE.sub("", readme_text))
+        for target in REQUIRED_README_LINKS:
+            if f"]({target})" not in link_text:
+                errors.append(f"README.md lacks required current-document link: {target}")
+
+    for relative in CURRENT_DOCUMENTS:
+        markdown = repository / relative
+        if not markdown.exists():
+            errors.append(f"current documentation path is missing: {relative.as_posix()}")
+        else:
+            errors.extend(_validate_links(repository, markdown))
     return errors
 
 
@@ -358,10 +448,11 @@ def validate(repository: Path, requested_base: str, head: str) -> list[str]:
         if target.suffix.lower() == ".md":
             errors.extend(_validate_links(repository, target))
 
-    architecture_errors = _validate_architecture_docs(repository)
-    errors.extend(architecture_errors)
+    errors.extend(_validate_repository_hygiene(repository))
+    errors.extend(_validate_architecture_docs(repository))
 
     print(f"checked {len(changed_paths)} changed path(s) from {base} to {head}")
+    print("checked repository documentation hygiene")
     print("checked architecture documentation consistency")
     return errors
 
