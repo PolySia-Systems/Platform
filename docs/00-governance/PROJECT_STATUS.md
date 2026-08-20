@@ -4,13 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-20 |
+| Review date | 2026-08-21 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `f7f42c3ed23ac886b775093f390ed4aac5431b44` |
+| Audited repository baseline | `e2d236e82745a85c2f5454464acb844362e485dc` |
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Architecture truth baseline audited; no runtime change |
+| Latest repository maintenance | Development and CI dependencies refreshed; no runtime dependency change |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.2.0` |
@@ -152,7 +152,7 @@ evidence.
 
 ## Validation and CI
 
-- The Python 3.14.6 baseline has passed compile, Ruff 0.16.0, Mypy 2.3.0,
+- The Python 3.14.6 baseline has passed compile, Ruff 0.16.4, Mypy 2.3.0,
   Pytest, `pip check`, secret scan, source/wheel build, isolated wheel
   installation, and CLI smoke. Exact run-specific counts belong in the
   corresponding PR or handoff rather than this long-lived status document.
@@ -166,12 +166,13 @@ evidence.
   add container validation. Strict OSV/SBOM validation runs for dependency
   changes, on a weekly schedule, and by manual dispatch. Push workflows run only
   on `main`, and superseded pull-request runs are cancelled.
-- The approved versions are `polymarket-client==0.2.0`, `mypy==2.3.0`, and
-  `ruff==0.16.0`. `setuptools==83.0.0` removes the known 82.0.1 finding.
-- The audited `main` baseline passed GitHub CI run `32161813164`. Its
-  documentation-only classification correctly ran changes, quality,
-  Standards/path/link, and secret checks while skipping unrelated executable,
-  container, and supply-chain work.
+- The approved versions include `polymarket-client==0.2.0`, `mypy==2.3.0`,
+  `hypothesis==6.165.10`, `pre-commit==4.6.2`, `ruff==0.16.4`, and
+  `setuptools==84.0.0` in the completed pip environment. The Conda bootstrap
+  remains on the latest available Python 3.14 build, `setuptools==83.0.0`,
+  before the portable pip lock promotes it to `84.0.0`.
+- The audited `main` baseline passed GitHub CI run `32414343316`, including
+  Windows quality, Linux smoke, container, and supply-chain jobs.
 
 ## Recovery status
 

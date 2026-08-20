@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-28
-- Last amended: 2026-08-16
+- Last amended: 2026-08-21
 - Supersedes: ADR-0005
 
 ## Context
@@ -28,9 +28,13 @@ runtime without redundant compatibility jobs.
 - Configure Ruff, Mypy, Windows quality, and Linux smoke validation for Python
   3.14 only.
 - Pin the official unified Polymarket SDK to `0.2.0`.
-- Pin direct development tools and the portable transitive lock to the
-  versions verified by `POLYSIA-UPGRADE-006`.
-- Require `setuptools==83.0.0`.
+- Pin direct development tools and the portable transitive lock to versions
+  verified by repository quality and supply-chain gates.
+- Require `setuptools==84.0.0` in the final pip-managed development
+  environment. Retain `setuptools==83.0.0` only as the latest Python 3.14
+  bootstrap available from the Conda `defaults` channel; installing the
+  portable pip lock deterministically promotes the completed environment to
+  `84.0.0`.
 - Keep the SDK confined to the existing Polymarket adapter boundary.
 
 No strategy, risk, execution, reconciliation, credential, or live-control
