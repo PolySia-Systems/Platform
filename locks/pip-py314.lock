@@ -1,6 +1,7 @@
 # Exact pip baseline for Windows/Linux and Python 3.14.6.
 # Generated from the verified PolySia-py314-upgrade environment on 2026-07-28;
-# the h2 security pin was refreshed on 2026-08-16.
+# the h2 security pin was refreshed on 2026-08-16 and direct development
+# tools were refreshed on 2026-08-21.
 # The editable PolySia project itself is intentionally excluded.
 annotated-doc==0.0.4
 annotated-types==0.8.0
@@ -41,7 +42,7 @@ hpack==4.2.0
 httpcore==1.0.9
 httpx==0.28.1
 hyperframe==6.1.0
-hypothesis==6.163.0
+hypothesis==6.165.10
 identify==2.6.19
 idna==3.18
 iniconfig==2.3.0
@@ -69,7 +70,7 @@ pip_audit==2.10.1
 platformdirs==4.11.0
 pluggy==1.6.0
 polymarket-client==0.2.0
-pre_commit==4.6.1
+pre_commit==4.6.2
 py-serializable==2.1.0
 pycryptodome==3.23.0
 pydantic==2.13.4
@@ -93,8 +94,8 @@ rfc3987-syntax==1.1.0
 rich==15.0.0
 rlp==4.1.0
 rpds-py==2026.6.3
-ruff==0.16.0
-setuptools==83.0.0
+ruff==0.16.4
+setuptools==84.0.0
 shellingham==1.5.4
 six==1.17.0
 sortedcontainers==2.4.0
