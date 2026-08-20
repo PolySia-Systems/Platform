@@ -53,13 +53,15 @@ contains the evidence and bounded recommendation.
 ## SDK contract
 
 The approved pinned baseline is the official unified
-`polymarket-client==0.2.0`. Contract tests assert the installed version, the
+`polymarket-client==0.6.0`. Contract tests assert the installed version, the
 SDK methods used by the public, secure, streaming, and reconciliation
-boundaries, and the `condition_id` compatibility surface introduced before the
-stable 0.x releases. SDK objects remain confined to the adapter boundary.
+boundaries, signer/private-key and funder/wallet creation inputs, and the
+`condition_id` compatibility surface introduced before the stable 0.x
+releases. SDK objects remain confined to the adapter boundary.
 
 Any future upgrade requires a focused contract, lock, security, CI, and
-rollback change. Current `main` supports only Python 3.14. Restoring the
-historical Python 3.13.14 and SDK 0.1.0b11 baseline requires reverting the
-associated compatibility and SDK decisions without changing private credential
-values.
+rollback change. To restore 0.2.0, revert the 0.6.0 migration as one unit and
+revalidate both portable locks. Current `main` supports only Python 3.14.
+Restoring the historical Python 3.13.14 and SDK 0.1.0b11 baseline requires
+reverting the associated compatibility and SDK decisions without changing
+private credential values.

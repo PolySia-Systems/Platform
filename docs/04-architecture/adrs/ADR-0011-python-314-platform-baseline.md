@@ -1,4 +1,4 @@
-# ADR-0011: Python 3.14 and Polymarket SDK 0.2 Baseline
+# ADR-0011: Python 3.14 and Polymarket SDK 0.6 Baseline
 
 - Status: Accepted
 - Date: 2026-07-28
@@ -10,7 +10,9 @@
 Before this decision, PolySia's verified baseline used Python 3.13.14 and
 `polymarket-client==0.1.0b11`. The promoted and locked workstation baseline is
 Python 3.14.6. The official Polymarket unified SDK left beta and released
-`polymarket-client==0.2.0`.
+`polymarket-client==0.2.0`. Official stable releases 0.3.0 through 0.6.0 were
+subsequently reviewed on 2026-08-21, and 0.6.0 is the latest compatible stable
+release.
 
 The existing environment also contained vulnerable `setuptools==82.0.1`.
 Project delivery requires a reproducible Windows workstation baseline, a
@@ -27,7 +29,7 @@ runtime without redundant compatibility jobs.
   CI resolves the latest available Python 3.14 maintenance release.
 - Configure Ruff, Mypy, Windows quality, and Linux smoke validation for Python
   3.14 only.
-- Pin the official unified Polymarket SDK to `0.2.0`.
+- Pin the official unified Polymarket SDK to `0.6.0`.
 - Pin direct development tools and the portable transitive lock to versions
   verified by repository quality and supply-chain gates.
 - Require `setuptools==84.0.0` in the final pip-managed development
@@ -43,9 +45,11 @@ behavior changes as part of this decision.
 ## Compatibility and validation
 
 The SDK surface contracts verify the public and secure client methods, order
-parameters, and model fields consumed by PolySia. The 0.2.0 `condition_id`
-field is explicitly covered while the deprecated `market` compatibility field
-remains accepted at the adapter boundary.
+parameters, signer/private-key and funder/wallet creation inputs, and model
+fields consumed by PolySia. The `condition_id` field is explicitly covered
+while the deprecated `market` compatibility field remains accepted at the
+adapter boundary. The 0.6.0 migration preserves the existing transitive
+dependency set and does not adopt its new perps or combo RFQ capabilities.
 
 Python 3.14 is the only CI target. Python 3.14 wheel installation, CLI smoke,
 complete repository validation, strict dependency audit, and SBOM generation

@@ -10,10 +10,10 @@
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Development and CI dependencies refreshed; no runtime dependency change |
+| Latest repository maintenance | Development/CI dependencies refreshed and Polymarket SDK migrated to 0.6.0 |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
-| Polymarket SDK | `polymarket-client==0.2.0` |
+| Polymarket SDK | `polymarket-client==0.6.0` |
 | Phase status | `STANDARDS_V0_1_1_FULLY_ENFORCED` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
@@ -166,7 +166,7 @@ evidence.
   add container validation. Strict OSV/SBOM validation runs for dependency
   changes, on a weekly schedule, and by manual dispatch. Push workflows run only
   on `main`, and superseded pull-request runs are cancelled.
-- The approved versions include `polymarket-client==0.2.0`, `mypy==2.3.0`,
+- The approved versions include `polymarket-client==0.6.0`, `mypy==2.3.0`,
   `hypothesis==6.165.10`, `pre-commit==4.6.2`, `ruff==0.16.4`, and
   `setuptools==84.0.0` in the completed pip environment. The Conda bootstrap
   remains on the latest available Python 3.14 build, `setuptools==83.0.0`,

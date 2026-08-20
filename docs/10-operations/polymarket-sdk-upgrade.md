@@ -4,10 +4,17 @@
 
 - Distribution: `polymarket-client`
 - Import namespace: `polymarket`
-- Verified version: `0.2.0`
+- Verified version: `0.6.0`
 - Status: official stable 0.x unified SDK
-- Reviewed release: `0.2.0` (2026-07-24)
+- Reviewed release: `0.6.0` (2026-08-13)
 - Primary runtime: CPython `3.14.6`
+
+The 2026-08-21 review covered each official stable release from 0.2.0 through
+0.6.0. Relevant changes include broader activity defaults in 0.3.0, isolated
+margin and tick-size documentation in 0.4.0, order-market metadata caching in
+0.5.0, and combo RFQ plus sparse-last-trade handling in 0.6.0. PolySia does not
+consume the new perps or combo RFQ surfaces. The distribution dependency set is
+unchanged from 0.2.0, so the migration does not require transitive lock churn.
 
 ## Upgrade procedure
 
@@ -33,8 +40,10 @@ live gate weakens.
 
 ## Rollback
 
-Revert ADR-0011 and the relevant upgrade/compatibility commits before restoring
-Python 3.13.14 and `polymarket-client==0.1.0b11`; those versions are not
-supported by current `main`. Recreate the reverted environment, reinstall the
-project, and rerun all local and public read-only gates. Never roll back by
-changing or replacing credential values.
+Revert the 0.6.0 migration commits as one unit. This restores the direct pin,
+both portable locks, approved runtime constants, SDK contracts, and current
+documentation to 0.2.0 without changing Python support. Recreate the reverted
+environment, reinstall the project, and rerun all local and public read-only
+gates before promotion. Restoring Python 3.13.14 and SDK 0.1.0b11 is a separate
+historical compatibility rollback. Never roll back by changing or replacing
+credential values.
