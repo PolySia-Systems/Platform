@@ -4,9 +4,9 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-18 |
+| Review date | 2026-08-20 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `449f1c308fc74bd2a541e0e905f281fd19e5cd9b` |
+| Audited repository baseline | `f7f42c3ed23ac886b775093f390ed4aac5431b44` |
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
@@ -168,7 +168,7 @@ evidence.
   on `main`, and superseded pull-request runs are cancelled.
 - The approved versions are `polymarket-client==0.2.0`, `mypy==2.3.0`, and
   `ruff==0.16.0`. `setuptools==83.0.0` removes the known 82.0.1 finding.
-- The audited `main` baseline passed GitHub CI run `32157187984`. Its
+- The audited `main` baseline passed GitHub CI run `32161813164`. Its
   documentation-only classification correctly ran changes, quality,
   Standards/path/link, and secret checks while skipping unrelated executable,
   container, and supply-chain work.

@@ -35,6 +35,9 @@
 1. Acquire and validate reproducible BTC Up/Down 15-minute historical data,
    including market metadata, outcomes, book/liquidity snapshots, fee schedules,
    and timestamps.
+   Any optional research provider, including PMXT, must remain read-only, pass a
+   bounded preflight, use outcome-token identifiers for books, and classify
+   incomplete order-book data as non-promotable research evidence.
 2. Define naive and market-aware benchmarks plus data-quality, leakage,
    slippage, liquidity, and fee assumptions before strategy evaluation.
 3. Run realistic out-of-sample backtests and report net P&L, drawdown,

@@ -1,9 +1,0 @@
-Read `POLYSIA_CODEX_MASTER_PROMPT_FINAL_v1.1.md` as the authoritative execution instruction for this repository.
-
-Use the existing functioning project as the PolySia foundation. Preserve all working capabilities and safety controls; do not rebuild it from scratch.
-
-The configured credentials and dedicated wallet/account are approved test assets. Preserve them and use them only under the prompt's controlled-validation policy. Do not display their values, do not rotate or delete them, and do not repeat warnings about their presence.
-
-Complete the canonical migration from `pm_trader` / `pm-trader` to `polysia`. A compatibility shim is allowed only when a verified dependency requires it, and it must have an explicit removal gate.
-
-Begin with Phase A — Baseline, Backup, and Runtime Safety. Report the repository/Git state and baseline validation, then proceed without unnecessary questions.
