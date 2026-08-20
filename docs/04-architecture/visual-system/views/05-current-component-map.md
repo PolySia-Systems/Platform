@@ -134,7 +134,7 @@ No target package is shown. Known debt is documented in the module-dependency vi
 
 ## Related tests
 
-`tests/architecture/test_boundaries.py`, `tests/architecture/test_module_decomposition.py`, `tests/characterization/test_cli_contract.py`
+`tests/architecture/test_boundaries.py`, `tests/architecture/test_module_decomposition.py`, `tests/contract/test_cli_surface.py`
 
 ## Related ADRs
 
