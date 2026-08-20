@@ -13,7 +13,7 @@ Canonical source: [`16-module-dependency-map.mmd`](../sources/16-module-dependen
 
 ```mermaid
 flowchart TB
-  Interface["Interfaces: cli, cli_support, monitoring, deployment, backtesting\n[CURRENT]"]:::application
+  Interface["Interfaces: cli + cli_commands + cli_support\nmonitoring, deployment, backtesting\n[CURRENT]"]:::application
   Runtime["Runtime services: execution, reconciliation, bus, orderbook, features, portfolio, risk, strategies\n[CURRENT]"]:::current
   Storage["Storage adapters and repositories\n[CURRENT]"]:::storage
   Control["Control core and Shadow intent boundary\n[CURRENT bounded; venue-neutral]"]:::application
@@ -45,7 +45,7 @@ flowchart TB
   Tests --> Forbidden3
   Tests --> Forbidden4
 
-  Debt1["Technical debt: CLI command wiring remains large"]:::risk
+  Debt1["Technical debt: operations/live command modules\nretain broad orchestration"]:::risk
   Debt2["Technical debt: oversized monitoring/live modules"]:::risk
   Debt3["Application services are not yet populated"]:::risk
   Interface -.-> Debt1
@@ -114,7 +114,9 @@ Dependency direction is assessed at architectural zones; outer operational modul
 
 ## Known limitations
 
-This is not an exhaustive generated import graph. CLI and monitoring remain intentionally broad and are tracked debt.
+This is not an exhaustive generated import graph. The CLI facade is
+composition-only; operations/live command modules and monitoring retain broad
+orchestration that remains tracked debt.
 
 ## Review trigger
 

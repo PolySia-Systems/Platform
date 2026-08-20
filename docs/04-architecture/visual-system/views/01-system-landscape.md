@@ -67,7 +67,11 @@ Read from people to PolySia, then from PolySia to current external dependencies 
 
 ## Current implementation mapping
 
-PolySia is implemented under `src/polysia/`; the operator surface is `src/polysia/cli.py`; the current venue boundary is `src/polysia/adapters/polymarket/`; CI configuration is `.github/workflows/ci.yml`.
+PolySia is implemented under `src/polysia/`; the operator entry point and
+composition facade is `src/polysia/cli.py`, with command ownership under
+`src/polysia/cli_commands/`; the current venue boundary is
+`src/polysia/adapters/polymarket/`; CI configuration is
+`.github/workflows/ci.yml`.
 
 ## Target/future elements
 
@@ -75,7 +79,9 @@ Risk reviewer/auditor interaction is TARGET. Additional prediction markets, exch
 
 ## Related repository files
 
-`src/polysia/`, `src/polysia/cli.py`, `src/polysia/adapters/polymarket/`, `.github/workflows/ci.yml`, `docs/22-roadmap/roadmap.md`
+`src/polysia/`, `src/polysia/cli.py`, `src/polysia/cli_commands/`,
+`src/polysia/adapters/polymarket/`, `.github/workflows/ci.yml`,
+`docs/22-roadmap/roadmap.md`
 
 ## Related tests
 

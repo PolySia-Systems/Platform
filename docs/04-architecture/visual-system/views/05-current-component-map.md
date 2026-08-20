@@ -14,7 +14,7 @@ Canonical source: [`05-current-component-map.mmd`](../sources/05-current-compone
 ```mermaid
 flowchart TB
   subgraph INTERFACE["Interface and operations [CURRENT]"]
-    CLI["cli.py + cli_support/"]:::application
+    CLI["cli.py\ncli_commands/ + cli_support/"]:::application
     Monitor["monitoring/"]:::observability
     Deploy["deployment/"]:::observability
     Backtest["backtesting/"]:::application
@@ -118,11 +118,13 @@ Read from interface/operations packages through data/decision and execution/stat
 
 ## Current implementation mapping
 
-All boxes are real packages. The map now includes `control/`, the bounded
-registry models under `domain/strategy/`, and the current SDK version. The
-strategy-to-execution edge is an `OrderIntent` type dependency only; it does
-not represent a direct execution call or bypass of Risk. The traceability
-register provides path and test evidence.
+All boxes are real packages. The interface grouping includes the composition-only
+`cli.py` facade, responsibility-owned `cli_commands/`, and command-neutral
+`cli_support/`. The map also includes `control/`, the bounded registry models
+under `domain/strategy/`, and the current SDK version. The strategy-to-execution
+edge is an `OrderIntent` type dependency only; it does not represent a direct
+execution call or bypass of Risk. The traceability register provides path and
+test evidence.
 
 ## Target/future elements
 
@@ -151,8 +153,9 @@ Principal edges are more useful than every individual import.
 ## Known limitations
 
 The map is not a generated exhaustive import graph; it intentionally groups
-high-volume monitoring and CLI dependencies. Runtime flow is authoritative in
-the signal-to-execution view, not inferred from type-import arrows here.
+high-volume monitoring and responsibility-bounded CLI command dependencies.
+Runtime flow is authoritative in the signal-to-execution view, not inferred
+from type-import arrows here.
 
 ## Review trigger
 

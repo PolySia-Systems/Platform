@@ -104,7 +104,7 @@ Follow operator commands into data ingestion, decisions and risk, execution/stat
 
 ## Current implementation mapping
 
-Every container maps to current packages: CLI/support, config, adapter, bus,
+Every container maps to current packages: CLI composition/commands/support, config, adapter, bus,
 orderbook/features, domain/ports, the bounded Strategy Registry, strategies,
 the SHADOW-only Control Kernel, risk, execution, portfolio, storage,
 reconciliation, and monitoring/backtesting/deployment. The Control Kernel gates
@@ -116,7 +116,14 @@ No target container is claimed. OMS and orchestration are deliberately absent fr
 
 ## Related repository files
 
-`src/polysia/cli.py`, `src/polysia/cli_support/`, `src/polysia/config/`, `src/polysia/domain/`, `src/polysia/application/`, `src/polysia/adapters/`, `src/polysia/bus/`, `src/polysia/orderbook/`, `src/polysia/features/`, `src/polysia/strategies/`, `src/polysia/control/`, `src/polysia/risk/`, `src/polysia/execution/`, `src/polysia/portfolio/`, `src/polysia/storage/`, `src/polysia/reconciliation/`, `src/polysia/monitoring/`
+`src/polysia/cli.py`, `src/polysia/cli_commands/`,
+`src/polysia/cli_support/`, `src/polysia/config/`, `src/polysia/domain/`,
+`src/polysia/application/`, `src/polysia/adapters/`, `src/polysia/bus/`,
+`src/polysia/orderbook/`, `src/polysia/features/`,
+`src/polysia/strategies/`, `src/polysia/control/`, `src/polysia/risk/`,
+`src/polysia/execution/`, `src/polysia/portfolio/`,
+`src/polysia/storage/`, `src/polysia/reconciliation/`,
+`src/polysia/monitoring/`
 
 ## Related tests
 
