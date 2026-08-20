@@ -2,12 +2,12 @@
 
 ## Delivered foundation
 
-- Phases A-I: migration baseline, governance, canonical identity,
+- Repository modernization: migration baseline, governance, canonical identity,
   venue-neutral boundaries, Polymarket adapter, modular-monolith decomposition,
   testing/CI/supply-chain controls, controlled validation, and delivery.
 - Limited-live slice: minimum-size FAK entry, actual-fill-sized GTC exit,
   persistent one-attempt authorization, and complete local execution evidence.
-- Phase closure: delayed-fill reconciliation, idempotent ledger/P&L updates,
+- Runtime closure: delayed-fill reconciliation, idempotent ledger/P&L updates,
   bounded lifecycle monitoring, fee-aware target calculation, structured
   adapter diagnostics, server-clock preflight, runtime configuration reporting,
   bounded read retry, and verified recovery backup.

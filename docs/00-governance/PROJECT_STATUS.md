@@ -6,7 +6,7 @@
 |---|---|
 | Review date | 2026-08-21 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `e2d236e82745a85c2f5454464acb844362e485dc` |
+| Audited repository baseline | `88a5eb0cec0a80d2d60fb16e4f5573bbb02ae79a` |
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
@@ -14,7 +14,7 @@
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
-| Phase status | `STANDARDS_V0_1_1_FULLY_ENFORCED` |
+| Conformance status | `STANDARDS_V0_1_1_FULLY_ENFORCED` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly
@@ -33,7 +33,7 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
 
 ## Completed stages
 
-- Phases A-I completed baseline recovery, governance, canonical `polysia`
+- Repository modernization milestones completed baseline recovery, governance, canonical `polysia`
   naming, venue-neutral boundaries, Polymarket adapter consolidation, module
   decomposition, quality/supply-chain controls, controlled validation, and
   delivery verification.
@@ -159,7 +159,7 @@ evidence.
 - A clean locked dependency environment passed strict OSV audit with no known
   vulnerabilities and generated a CycloneDX JSON SBOM.
 - A second Conda environment recreated from `environment.yml` and the portable
-  pip lock, passed `pip check`, and passed all five SDK surface contracts.
+  pip lock, passed `pip check`, and passed the pinned SDK surface contracts.
 - CI now verifies only Python 3.14. Pull requests receive lightweight diff,
   local path/link, and secret checks; executable Python changes add complete
   Windows quality and Linux build/test/wheel smoke; relevant deployment changes
@@ -171,7 +171,7 @@ evidence.
   `setuptools==84.0.0` in the completed pip environment. The Conda bootstrap
   remains on the latest available Python 3.14 build, `setuptools==83.0.0`,
   before the portable pip lock promotes it to `84.0.0`.
-- The audited `main` baseline passed GitHub CI run `32414343316`, including
+- The audited `main` baseline passed GitHub CI run `32421857083`, including
   Windows quality, Linux smoke, container, and supply-chain jobs.
 
 ## Recovery status

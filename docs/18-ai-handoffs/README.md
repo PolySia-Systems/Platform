@@ -1,11 +1,10 @@
 # Current Evidence Index
 
-This is the canonical handoff directory selected by the Master Operating
-Charter. It contains both current closure evidence and retained historical
-records. Age alone does not make evidence disposable, but historical handoffs
-are not automatically current operating instructions.
+This is the canonical index for current repository, safety, operational, and
+delivery evidence selected by the Master Operating Charter. Historical records
+remain evidence, not current operating instructions.
 
-The Phase A baseline remains at
+The immutable baseline remains at
 [`docs/13-ai-handoffs/BASELINE_AUDIT.md`](../13-ai-handoffs/BASELINE_AUDIT.md)
 because that exact path is an immutable compliance artifact.
 
@@ -51,8 +50,10 @@ do not authorize another external mutation.
 
 ## Historical retention
 
-Other files in this directory remain retained provenance for completed
-migrations, validation stages, diagnostics, and delivery work. Consult the
+Completed repository-stabilization handoffs are retained in the
+[historical archive](../99-archive/handoffs/repository-stabilization/). Other
+historical evidence remains in this directory when it still supports current
+safety, operations, or delivery claims. Consult the
 [Project Status](../00-governance/PROJECT_STATUS.md) and
 [Roadmap](../22-roadmap/roadmap.md) before treating any historical recommendation
 as current.

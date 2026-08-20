@@ -20,9 +20,9 @@ needs private helper aliases.
 
 ## Characterization and boundaries
 
-- The Phase F Typer inventory was locked at 35 command names. The pre-consolidation
-  inventory contained 41 top-level command or command-group names after later
-  approved capabilities. The canonical surface now contains six top-level
+- The original Typer characterization inventory was locked at 35 command
+  names. The pre-consolidation inventory contained 41 top-level command or
+  command-group names after later approved capabilities. The canonical surface now contains six top-level
   groups: `system`, `market`, `research`, `ops`, `control`, and `live`.
   Forty former flat commands remain as hidden compatibility aliases with a
   post-`v0.2.0`, evidence-gated removal condition. The `control` group remains
@@ -35,8 +35,11 @@ needs private helper aliases.
   service modules, prevent Typer command wiring from entering CLI support, and
   keep `polysia.cli` as one-way composition over the command modules.
 
-The earlier Phase A/Phase C references to 34 commands are a historical counting
-error: the Phase A Git snapshot itself contains 35 `@app.command` registrations.
+## Historical decomposition evidence
+
+Earlier baseline and naming-migration references to 34 commands contain a
+historical counting error: the original Git snapshot itself contains 35
+`@app.command` registrations.
 The earlier support extraction reduced `polysia.cli` from 2,866 to 2,582 lines;
 later approved capabilities increased it to 2,876 lines before the structural
 decomposition. That decomposition reduced the facade to 63 lines without a

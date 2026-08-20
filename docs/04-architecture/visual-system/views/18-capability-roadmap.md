@@ -96,7 +96,7 @@ remains fail-closed.
 
 ## Related repository files
 
-`docs/01-discovery/capability-catalog.md`, `docs/22-roadmap/roadmap.md`, `docs/00-governance/master-operating-charter.md`, `docs/18-ai-handoffs/phase-i-final-handoff.md`
+`docs/01-discovery/capability-catalog.md`, `docs/22-roadmap/roadmap.md`, `docs/00-governance/master-operating-charter.md`, `docs/99-archive/handoffs/repository-stabilization/phase-i-final-handoff.md`
 
 ## Related tests
 

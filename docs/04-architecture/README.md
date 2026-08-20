@@ -7,7 +7,7 @@ is authoritative; target and future elements are always labeled.
 ## Navigation
 
 - [Architecture overview](overview.md)
-- [Before and after](before-after.md)
+- [Historical before-and-after comparison](../99-archive/architecture-history/before-after.md)
 - [Module decomposition](module-decomposition.md)
 - [Polymarket adapter](polymarket-adapter.md)
 - [Architecture decision records](adrs/)
