@@ -7,6 +7,11 @@
   describe the verified Python 3.14 owner-workstation environment. The pip lock
   is version-pinned and portable to compatible Windows and Linux Python 3.14
   installations; the explicit Conda lock is Windows-specific.
+- The Conda definitions retain `setuptools==83.0.0`, the latest Python 3.14
+  bootstrap currently available from the `defaults` channel. The portable pip
+  lock then promotes the completed development environment to the verified
+  `setuptools==84.0.0`; both layers are intentional and must be applied in
+  order.
 - `scripts/export-source.ps1` creates a credential-free source archive outside
   the repository and excludes the preserved legacy folder and generated data.
 - Generated build, SBOM, shadow, and release evidence remains under ignored
