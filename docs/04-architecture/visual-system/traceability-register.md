@@ -3,7 +3,7 @@
 | Diagram element | Status | Repository path | Test / evidence | Capability | ADR | Notes |
 |---|---|---|---|---|---|---|
 | PolySia modular monolith | CURRENT | `src/polysia/`, `pyproject.toml` | `tests/contract/test_distribution_identity.py`, `tests/architecture/test_boundaries.py` | CAP-001–012 | ADR-0001, ADR-0002 | One Python distribution and deployable modular monolith |
-| CLI and safe support | CURRENT | `src/polysia/cli.py`, `src/polysia/cli_support/` | `tests/contract/test_cli_surface.py` | CAP-011, CAP-012 | ADR-0002 | Contract-tested command inventory, including the bounded `control` group |
+| CLI commands and safe support | CURRENT | `src/polysia/cli.py`, `src/polysia/cli_commands/`, `src/polysia/cli_support/` | `tests/contract/test_cli_surface.py`, `tests/unit/cli/` | CAP-011, CAP-012 | ADR-0002 | Composition-only facade with a contract-tested flat 41-name inventory, including the bounded `control` group |
 | Domain models | CURRENT | `src/polysia/domain/` | `tests/unit/domain/test_models.py`, `tests/architecture/test_boundaries.py` | CAP-001–010 | ADR-0002, ADR-0004 | Venue-neutral inner layer |
 | Application ports | CURRENT | `src/polysia/application/ports/` | `tests/architecture/test_boundaries.py` | CAP-001–010 | ADR-0002 | Protocols exist; services are not yet populated |
 | Polymarket adapter | CURRENT | `src/polysia/adapters/polymarket/` | `tests/contract/test_polymarket_sdk_surface.py`, `tests/unit/adapters/` | CAP-001, CAP-008, CAP-009 | ADR-0004, ADR-0011 | SDK confined here |

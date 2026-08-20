@@ -1,21 +1,22 @@
 # Module Decomposition
 
-Phase F applies incremental extraction to the working implementation. Public
-module imports and CLI command behavior remain compatible while command-neutral
-logic, models, and renderers gain explicit homes.
+The repository applies incremental extraction to the working implementation.
+Public CLI behavior remains compatible while command ownership, command-neutral
+support, models, and renderers gain explicit homes.
 
 ## Completed split
 
 | Original module | Before | After | Extracted boundary |
 |---|---:|---:|---|
-| `polysia.cli` | 2,866 lines | 2,582 lines | parsing, safe output, runtime credential bridging, and research helpers under `polysia.cli_support` |
+| `polysia.cli` | 2,876 lines | 63 lines | flat Typer composition in `cli.py`; command ownership under `polysia.cli_commands`; neutral support under `polysia.cli_support` |
 | `monitoring.acceptance_audit` | 926 lines | 676 lines | acceptance data models and JSON/Markdown/HTML renderers |
 | `execution.manual_intervention_live_test` | 909 lines | 848 lines | JSON/Markdown renderers |
 
-The persistence boundary was already separate under `polysia.storage`; Phase F
+The persistence boundary remains separate under `polysia.storage`; this work
 does not rewrite it. Compatibility re-exports preserve established imports from
-the original acceptance and manual-intervention modules. Private CLI helper
-aliases used by tests and internal callers remain available where verified.
+the original acceptance and manual-intervention modules. CLI command modules use
+module-qualified `cli_support` functions, so the composition facade no longer
+needs private helper aliases.
 
 ## Characterization and boundaries
 
@@ -24,13 +25,19 @@ aliases used by tests and internal callers remain available where verified.
   approved capabilities, including one `control` group bounded to `plan`,
   `apply`, `status`, and `history`.
 - Existing CLI, acceptance-renderer, and manual-intervention tests remain the
-  primary behavioral characterization suite.
+  primary behavioral characterization suite. CLI unit tests mirror `core`,
+  `research`, `operations`, and `live` command ownership, with safety defaults
+  retained as an independent concern.
 - Architecture tests prevent renderer implementations from returning to the
-  service modules and prevent Typer command wiring from entering CLI support.
+  service modules, prevent Typer command wiring from entering CLI support, and
+  keep `polysia.cli` as one-way composition over the command modules.
 
 The earlier Phase A/Phase C references to 34 commands are a historical counting
 error: the Phase A Git snapshot itself contains 35 `@app.command` registrations.
-No command was added or removed by this decomposition.
+The earlier support extraction reduced `polysia.cli` from 2,866 to 2,582 lines;
+later approved capabilities increased it to 2,876 lines before the structural
+decomposition. No command was added, removed, renamed, hidden, or regrouped by
+the current decomposition.
 
 ## Shadow Control Kernel boundary
 
@@ -48,9 +55,10 @@ SQLite adapter imports.
 
 ## Remaining incremental debt
 
-The main CLI still contains the Typer command functions and is intentionally
-large. Splitting command groups further requires converting tests that monkeypatch
-module globals into explicit dependency injection. Oversized monitoring and live
-execution services should continue to move models, persistence, and rendering to
-focused modules when each area is next changed; this is tracked debt, not a reason
-to perform a high-risk rewrite during migration.
+The root CLI is now composition-only. The `operations` and `live` command
+modules still contain broad orchestration and some module-global seams used by
+tests. Future focused changes may move that orchestration behind explicit
+services and dependency injection without changing the flat command surface.
+Oversized monitoring and live execution services should likewise continue to
+move models, persistence, and rendering to focused modules when each area is
+next changed; this is tracked debt, not a reason for a high-risk rewrite.

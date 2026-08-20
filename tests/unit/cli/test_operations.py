@@ -1,14 +1,49 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
 from polysia.cli import app
+from polysia.reconciliation.live_round_trip import LiveRoundTripReconciliationReport
 
 runner = CliRunner()
+
+
+def _live_round_trip_reconciliation_report() -> LiveRoundTripReconciliationReport:
+    return LiveRoundTripReconciliationReport(
+        run_id="live-run",
+        authorization_id="POLYSIA-LIVE-004",
+        classification="COMPLETED_ROUND_TRIP",
+        status="ready",
+        observed_order_status="MATCHED",
+        confirmed_exit_size=Decimal("5"),
+        expected_remaining_position=Decimal("0"),
+        observed_position_size=Decimal("0"),
+        weighted_average_exit_price=Decimal("0.58"),
+        gross_exit_proceeds=Decimal("2.90"),
+        allocated_entry_cost=Decimal("2.68736"),
+        exit_fee=Decimal("0"),
+        fee_status="confirmed",
+        net_realized_pnl=Decimal("0.21264"),
+        fill_count=1,
+        new_fill_count=1,
+        new_ledger_event_count=2,
+        duplicate_fill_count=0,
+        observation_recorded=True,
+        observation_id="observation-1",
+        warnings=(),
+        blocking_reasons=(),
+    )
+
+
+def _write_json_file(path: Path, payload: dict[str, object]) -> Path:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def test_operator_status_command_returns_sanitized_payload(monkeypatch) -> None:
@@ -136,7 +171,7 @@ def test_production_gap_audit_command_writes_reports(monkeypatch, tmp_path: Path
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "polysia.cli.write_production_gap_audit_reports",
+        "polysia.cli_commands.operations.write_production_gap_audit_reports",
         fake_write_production_gap_audit_reports,
     )
 
@@ -174,7 +209,7 @@ def test_main_merge_review_command_writes_reports(monkeypatch, tmp_path: Path) -
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "polysia.cli.write_main_merge_review_reports",
+        "polysia.cli_commands.operations.write_main_merge_review_reports",
         fake_write_main_merge_review_reports,
     )
 
@@ -211,7 +246,7 @@ def test_local_release_closeout_command_writes_reports(
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
-        "polysia.cli.write_local_release_closeout_reports",
+        "polysia.cli_commands.operations.write_local_release_closeout_reports",
         fake_write_local_release_closeout_reports,
     )
 
@@ -248,7 +283,9 @@ def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -
             trading_should_pause=False,
         )
 
-    monkeypatch.setattr("polysia.cli._reconcile_account", fake_reconcile_account)
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations._reconcile_account", fake_reconcile_account
+    )
 
     result = runner.invoke(
         app,
@@ -433,10 +470,211 @@ def test_acceptance_audit_command_writes_sanitized_reports(
     assert (output_dir / "acceptance_audit.json").is_file()
     assert (output_dir / "acceptance_audit.md").is_file()
     assert (output_dir / "acceptance_audit.html").is_file()
-    combined = result.stdout + (output_dir / "acceptance_audit.json").read_text(
-        encoding="utf-8"
-    )
+    combined = result.stdout + (output_dir / "acceptance_audit.json").read_text(encoding="utf-8")
     assert "not-for-output" not in combined
     assert "0xfunder" not in combined
     assert "0xwallet" not in combined
     assert "token-secret" not in combined
+
+
+def test_reconcile_live_round_trip_command_uses_read_only_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    reader = object()
+
+    async def fake_reconcile(config, *, venue_reader):
+        captured["config"] = config
+        captured["reader"] = venue_reader
+        return _live_round_trip_reconciliation_report()
+
+    monkeypatch.setattr("polysia.cli_commands.operations.configure_logging", lambda _settings: None)
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations.cli_support.apply_secure_env_from_settings",
+        lambda _settings: None,
+    )
+    monkeypatch.setattr("polysia.cli_commands.operations.PolymarketRoundTripReader", lambda: reader)
+    monkeypatch.setattr("polysia.cli_commands.operations.reconcile_live_round_trip", fake_reconcile)
+
+    database_path = tmp_path / "state.sqlite3"
+    result = runner.invoke(
+        app,
+        [
+            "reconcile-live-round-trip",
+            "--run-id",
+            "live-run",
+            "--database",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["classification"] == "COMPLETED_ROUND_TRIP"
+    assert payload["net_realized_pnl"] == "0.21264"
+    assert captured["reader"] is reader
+    assert captured["config"].database_path == database_path
+
+
+def test_monitor_live_round_trip_command_uses_bounded_read_only_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    venue_reader = object()
+    health_reader = object()
+
+    async def fake_monitor(config, *, venue_reader, health_reader):
+        captured["config"] = config
+        captured["venue_reader"] = venue_reader
+        captured["health_reader"] = health_reader
+        return SimpleNamespace(
+            status="warning",
+            cycles=(
+                SimpleNamespace(
+                    alerts=(SimpleNamespace(code="EXIT_ORDER_STALE"),),
+                ),
+            ),
+            new_alert_count=1,
+            duplicate_alert_count=0,
+        )
+
+    def fake_write(_report, output_dir: Path):
+        return {
+            "json": output_dir / "live-round-trip-monitor.json",
+            "markdown": output_dir / "live-round-trip-monitor.md",
+        }
+
+    monkeypatch.setattr("polysia.cli_commands.operations.configure_logging", lambda _settings: None)
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations.cli_support.apply_secure_env_from_settings",
+        lambda _settings: None,
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations.PolymarketRoundTripReader", lambda: venue_reader
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations.PolymarketLifecycleHealthReader", lambda: health_reader
+    )
+    monkeypatch.setattr("polysia.cli_commands.operations.monitor_live_round_trip", fake_monitor)
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations.write_live_round_trip_monitor_reports", fake_write
+    )
+
+    database_path = tmp_path / "state.sqlite3"
+    result = runner.invoke(
+        app,
+        [
+            "monitor-live-round-trip",
+            "--run-id",
+            "live-run",
+            "--database",
+            str(database_path),
+            "--output-dir",
+            str(tmp_path / "reports"),
+            "--max-cycles",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["monitor_status"] == "warning"
+    assert payload["alert_codes"] == ["EXIT_ORDER_STALE"]
+    assert captured["venue_reader"] is venue_reader
+    assert captured["health_reader"] is health_reader
+    assert captured["config"].database_path == database_path
+    assert captured["config"].max_cycles == 2
+
+
+def test_tiny_live_monitor_command_writes_reports(monkeypatch, tmp_path: Path) -> None:
+    output_dir = tmp_path / "monitor"
+
+    async def fake_write_monitor_reports(config):
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+        (config.output_dir / "tiny-live-monitor.json").write_text(
+            json.dumps({"status": "ready"}),
+            encoding="utf-8",
+        )
+        (config.output_dir / "tiny-live-monitor.md").write_text(
+            "# PolySia — Polymarket Adapter — Tiny Live Monitor\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(status="ready")
+
+    monkeypatch.setattr(
+        "polysia.cli_commands.operations.write_tiny_live_monitor_reports",
+        fake_write_monitor_reports,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "tiny-live-monitor",
+            "--output-dir",
+            str(output_dir),
+            "--redact-secrets",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["monitor_status"] == "ready"
+    assert (output_dir / "tiny-live-monitor.json").is_file()
+    assert (output_dir / "tiny-live-monitor.md").is_file()
+
+
+def test_tiny_live_readiness_command_writes_sanitized_reports(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "not-for-output")
+    output_dir = tmp_path / "reports"
+    output_dir.mkdir()
+    acceptance = _write_json_file(
+        tmp_path / "acceptance_audit.json",
+        {"final_result": "READY_FOR_SHADOW"},
+    )
+    shadow = _write_json_file(
+        tmp_path / "shadow_run.json",
+        {"classification": "SHADOW_HEALTHY"},
+    )
+    strategy = _write_json_file(
+        tmp_path / "strategy_evaluation.json",
+        {"classification": "STRATEGY_READY_FOR_SHADOW"},
+    )
+    fill = _write_json_file(
+        tmp_path / "fill_simulation_audit.json",
+        {"classification": "FILL_MODEL_NEEDS_MORE_DATA"},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "tiny-live-readiness",
+            "--acceptance-audit",
+            str(acceptance),
+            "--shadow-run",
+            str(shadow),
+            "--strategy-evaluation",
+            str(strategy),
+            "--fill-simulation-audit",
+            str(fill),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["final_result"] == "READY_FOR_TINY_LIVE_DRY_RUN_ONLY"
+    assert payload["no_live_order_placed"] is True
+    reports = [
+        output_dir / "tiny_live_readiness.json",
+        output_dir / "tiny_live_readiness.md",
+        output_dir / "tiny_live_readiness.html",
+    ]
+    assert all(path.is_file() for path in reports)
+    combined = result.stdout + "".join(path.read_text(encoding="utf-8") for path in reports)
+    assert "not-for-output" not in combined
+    assert "No live order was placed" in combined

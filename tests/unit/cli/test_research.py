@@ -47,9 +47,7 @@ def _real_data_shadow_report() -> RealDataShadowRunReport:
     )
 
 
-def test_strategy_evaluation_command_writes_sanitized_reports(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_strategy_evaluation_command_writes_sanitized_reports(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "not-for-output")
     input_path = tmp_path / "shadow_run.json"
     output_dir = tmp_path / "reports"
@@ -93,9 +91,7 @@ def test_strategy_evaluation_command_writes_sanitized_reports(
         output_dir / "strategy_evaluation.html",
     ]
     assert all(path.is_file() for path in reports)
-    combined = result.stdout + "".join(
-        path.read_text(encoding="utf-8") for path in reports
-    )
+    combined = result.stdout + "".join(path.read_text(encoding="utf-8") for path in reports)
     assert "not-for-output" not in combined
 
 
@@ -213,9 +209,7 @@ def test_fill_simulation_audit_command_writes_sanitized_reports(
         output_dir / "fill_simulation_audit.html",
     ]
     assert all(path.is_file() for path in reports)
-    combined = result.stdout + "".join(
-        path.read_text(encoding="utf-8") for path in reports
-    )
+    combined = result.stdout + "".join(path.read_text(encoding="utf-8") for path in reports)
     assert "not-for-output" not in combined
     assert "No live trading" in combined
 
@@ -259,9 +253,7 @@ def test_shadow_run_command_writes_sanitized_reports(monkeypatch, tmp_path: Path
     assert (output_dir / "shadow_run.md").is_file()
     assert (output_dir / "shadow_run.html").is_file()
     assert (output_dir / "shadow_run_timeseries.jsonl").is_file()
-    combined = result.stdout + (output_dir / "shadow_run.json").read_text(
-        encoding="utf-8"
-    )
+    combined = result.stdout + (output_dir / "shadow_run.json").read_text(encoding="utf-8")
     assert "not-for-output" not in combined
     assert "0xfunder" not in combined
     assert "0xwallet" not in combined
@@ -281,7 +273,7 @@ def test_shadow_run_real_data_command_writes_sanitized_reports(
     monkeypatch.setenv("POLYMARKET_FUNDER_ADDRESS", "0xfunder")
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-secret")
-    monkeypatch.setattr("polysia.cli.build_real_data_shadow_run", fake_build)
+    monkeypatch.setattr("polysia.cli_commands.research.build_real_data_shadow_run", fake_build)
     output_dir = tmp_path / "real-shadow"
 
     result = runner.invoke(

@@ -64,7 +64,7 @@ def test_configuration_status_cli_outputs_no_secret_values(monkeypatch) -> None:
         POLYMARKET_PRIVATE_KEY="never-print-this",
         POLYMARKET_FUNDER_ADDRESS="0xprivate-funder",
     )
-    monkeypatch.setattr("polysia.cli.AppSettings", lambda: settings)
+    monkeypatch.setattr("polysia.cli_commands.core.AppSettings", lambda: settings)
 
     result = CliRunner().invoke(app, ["configuration-status"])
 
