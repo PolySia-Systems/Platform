@@ -3,11 +3,7 @@ import inspect
 import typer
 
 from polysia import cli
-from polysia.cli_support import (
-    apply_secure_env_from_settings,
-    safe_open_order_to_dict,
-    safe_order_response,
-)
+from polysia.cli_commands import core, live, operations, research
 
 EXPECTED_COMMANDS = {
     "acceptance-audit",
@@ -66,14 +62,26 @@ def test_control_command_inventory_is_bounded() -> None:
     assert set(command.commands["control"].commands) == {"apply", "history", "plan", "status"}
 
 
-def test_legacy_cli_helper_imports_delegate_to_support_modules() -> None:
-    assert cli._apply_secure_env_from_settings is apply_secure_env_from_settings
-    assert cli._safe_open_order_to_dict is safe_open_order_to_dict
-    assert cli._safe_order_response is safe_order_response
+def test_cli_composes_responsibility_owned_commands() -> None:
+    command = typer.main.get_command(cli.app)
+
+    assert inspect.unwrap(command.commands["health"].callback) is core.health
+    assert (
+        inspect.unwrap(command.commands["strategy-evaluation"].callback)
+        is research.strategy_evaluation
+    )
+    assert (
+        inspect.unwrap(command.commands["operator-status"].callback)
+        is operations.operator_status
+    )
+    assert (
+        inspect.unwrap(command.commands["live-limit-order"].callback)
+        is live.live_limit_order
+    )
 
 
 def test_tiny_live_round_trip_command_is_dry_run_by_default() -> None:
-    signature = inspect.signature(cli.tiny_live_round_trip)
+    signature = inspect.signature(live.tiny_live_round_trip)
 
     assert signature.parameters["submit"].default is False
     assert signature.parameters["verified_ci_commit"].default is None

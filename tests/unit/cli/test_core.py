@@ -42,7 +42,7 @@ def test_discover_markets_command_prints_active_markets(monkeypatch) -> None:
                 )
             ]
 
-    monkeypatch.setattr("polysia.cli.PolymarketPublicAdapter", FakeAdapter)
+    monkeypatch.setattr("polysia.cli_commands.core.PolymarketPublicAdapter", FakeAdapter)
 
     result = runner.invoke(app, ["discover-markets", "--limit", "3"])
 
@@ -58,7 +58,7 @@ def test_discover_markets_command_handles_adapter_errors(monkeypatch) -> None:
         async def list_active_markets(self, page_size: int = 20) -> list[MarketSummary]:
             raise PolymarketPublicAdapterError("Could not list active Polymarket markets.")
 
-    monkeypatch.setattr("polysia.cli.PolymarketPublicAdapter", FakeAdapter)
+    monkeypatch.setattr("polysia.cli_commands.core.PolymarketPublicAdapter", FakeAdapter)
 
     result = runner.invoke(app, ["discover-markets", "--limit", "3"])
 
@@ -84,7 +84,7 @@ def test_stream_market_command_delegates_to_async_runner(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("polysia.cli._stream_market", fake_stream_market)
+    monkeypatch.setattr("polysia.cli_commands.core._stream_market", fake_stream_market)
 
     result = runner.invoke(
         app,

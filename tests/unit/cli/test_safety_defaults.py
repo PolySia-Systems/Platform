@@ -9,7 +9,8 @@ import pytest
 from typer.testing import CliRunner
 
 from polysia.adapters.polymarket.geoblock import GeoblockStatus
-from polysia.cli import _live_limit_order, app
+from polysia.cli import app
+from polysia.cli_commands.live import _live_limit_order
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.execution.live_broker import LiveBrokerError
 from polysia.execution.tiny_live_execution import TinyLiveExecutionReport
@@ -91,9 +92,7 @@ class AllowGeoblock:
         )
 
 
-def test_tiny_live_execute_no_dry_run_blocks_without_ack(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_tiny_live_execute_no_dry_run_blocks_without_ack(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TRADING_MODE", "LIVE")
     monkeypatch.setenv("LIVE_TRADING_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-yes")
@@ -126,9 +125,7 @@ def test_tiny_live_execute_no_dry_run_blocks_without_ack(
     assert payload["order_submitted"] is False
 
 
-def test_tiny_live_execute_no_dry_run_blocks_without_allowlist(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_tiny_live_execute_no_dry_run_blocks_without_allowlist(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TRADING_MODE", "LIVE")
     monkeypatch.setenv("LIVE_TRADING_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "not-for-output")
@@ -162,16 +159,14 @@ def test_tiny_live_execute_no_dry_run_blocks_without_allowlist(
     assert payload["live_attempt_count"] == 0
 
 
-def test_tiny_live_execute_cli_geoblock_blocked_with_mock(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_tiny_live_execute_cli_geoblock_blocked_with_mock(monkeypatch, tmp_path: Path) -> None:
     async def fake_run(*_args: object, **_kwargs: object) -> TinyLiveExecutionReport:
         return _tiny_execution_report(
             final_result="LIVE_ORDER_BLOCKED",
             blocking_reasons=("Polymarket geoblock check failed closed.",),
         )
 
-    monkeypatch.setattr("polysia.cli.run_tiny_live_execution", fake_run)
+    monkeypatch.setattr("polysia.cli_commands.live.run_tiny_live_execution", fake_run)
 
     result = runner.invoke(
         app,
@@ -275,7 +270,7 @@ def test_live_cancel_order_command_defaults_to_dry_run(monkeypatch) -> None:
             "submitted": False,
         }
 
-    monkeypatch.setattr("polysia.cli._live_cancel_order", fake_live_cancel_order)
+    monkeypatch.setattr("polysia.cli_commands.live._live_cancel_order", fake_live_cancel_order)
 
     result = runner.invoke(
         app,
@@ -340,7 +335,7 @@ def test_live_limit_order_command_defaults_to_dry_run(monkeypatch) -> None:
             "submitted": False,
         }
 
-    monkeypatch.setattr("polysia.cli._live_limit_order", fake_live_limit_order)
+    monkeypatch.setattr("polysia.cli_commands.live._live_limit_order", fake_live_limit_order)
 
     result = runner.invoke(
         app,
@@ -368,7 +363,7 @@ def test_live_limit_order_command_defaults_to_dry_run(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_live_limit_order_dry_run_does_not_connect(monkeypatch) -> None:
     FakeSecureAdapter.instances.clear()
-    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeSecureAdapter)
+    monkeypatch.setattr("polysia.cli_commands.live.PolymarketSecureAdapter", FakeSecureAdapter)
     settings = AppSettings(
         TRADING_MODE=TradingMode.LIVE,
         LIVE_TRADING_ENABLED=True,
@@ -413,7 +408,7 @@ async def test_live_limit_order_dry_run_does_not_connect(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_live_limit_order_submit_uses_allowlisted_fake_adapter(monkeypatch) -> None:
     FakeSecureAdapter.instances.clear()
-    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeSecureAdapter)
+    monkeypatch.setattr("polysia.cli_commands.live.PolymarketSecureAdapter", FakeSecureAdapter)
     monkeypatch.setattr(
         "polysia.execution.live_broker.PreLiveOrderGeoblockCheck",
         lambda: AllowGeoblock(),
@@ -474,7 +469,7 @@ async def test_live_limit_order_submit_uses_allowlisted_fake_adapter(monkeypatch
 @pytest.mark.asyncio
 async def test_live_limit_order_rejects_size_above_tiny_cap(monkeypatch) -> None:
     FakeSecureAdapter.instances.clear()
-    monkeypatch.setattr("polysia.cli.PolymarketSecureAdapter", FakeSecureAdapter)
+    monkeypatch.setattr("polysia.cli_commands.live.PolymarketSecureAdapter", FakeSecureAdapter)
     settings = AppSettings(
         TRADING_MODE=TradingMode.LIVE,
         LIVE_TRADING_ENABLED=True,
