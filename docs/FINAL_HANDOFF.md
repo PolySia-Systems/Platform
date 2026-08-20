@@ -3,7 +3,7 @@
 Use this command for the final local project handoff:
 
 ```powershell
-python -m polysia.cli final-handoff --require-clean-git
+python -m polysia.cli ops final-handoff --require-clean-git
 ```
 
 The command runs the deployment automation, generates the release manifest,

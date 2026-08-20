@@ -109,15 +109,17 @@ polysia control --help
 Run local health and paper-only examples:
 
 ```powershell
-polysia health
-polysia discover-markets --limit 10
-polysia paper-trade --token-id YOUR_TOKEN_ID --order-size 1
+polysia system health
+polysia market discover --limit 10
+polysia research paper-trade --token-id YOUR_TOKEN_ID --order-size 1
 ```
 
-`discover-markets` uses public venue data. `paper-trade` uses a deterministic
-local simulation and does not call Live trading APIs. Commands that read an
-authenticated account or can mutate external state have additional explicit
-gates; their presence does not grant authorization to use them.
+`market discover` uses public venue data. `research paper-trade` uses a
+deterministic local simulation and does not call Live trading APIs. Commands
+that read an authenticated account or can mutate external state have
+additional explicit gates; their presence does not grant authorization to use
+them. See the [CLI capability migration](docs/10-operations/cli-capability-migration.md)
+for canonical paths and the bounded flat-alias removal policy.
 
 ## Validation
 

@@ -16,7 +16,7 @@ conda activate PolySia
 python -m pip uninstall -y polymarket-trading-system
 python -m pip install --no-deps -e .
 polysia --help
-python -m polysia.cli health
+python -m polysia.cli system health
 ```
 
 Venue-specific variables retain their `POLYMARKET_` names. Current generic
@@ -40,4 +40,3 @@ Reset to commit `aec9dfa`, uninstall `polysia`, and reinstall that commit in the
 unchanged `PolySia` environment. For full recovery, use the preserved
 `Polymarket Python SDK` folder or the verified pre-migration archive documented
 in the Phase A baseline audit. Rollback must not alter `.env` values.
-

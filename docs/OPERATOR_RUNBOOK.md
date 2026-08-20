@@ -4,8 +4,8 @@ This runbook defines the safe operating order for the local Polymarket trading
 system. Runtime-generated runbooks are available with:
 
 ```powershell
-python -m polysia.cli operator-runbook
-python -m polysia.cli operator-runbook --include-live
+python -m polysia.cli system runbook
+python -m polysia.cli system runbook --include-live
 ```
 
 ## Start Of Day
@@ -13,10 +13,10 @@ python -m polysia.cli operator-runbook --include-live
 Run the safe local checks before collecting market data.
 
 ```powershell
-python -m polysia.cli health
-python -m polysia.cli configuration-status
-python -m polysia.cli deployment-readiness
-python -m polysia.cli operator-status
+python -m polysia.cli system health
+python -m polysia.cli system configuration
+python -m polysia.cli ops deployment-readiness
+python -m polysia.cli system status
 ```
 
 Continue only when `health` is ok and readiness is ready. The output must never
@@ -53,8 +53,8 @@ must never perform either action automatically.
 After manual synchronization, rerun:
 
 ```powershell
-python -m polysia.cli configuration-status
-python -m polysia.cli tiny-live-round-trip --dry-run
+python -m polysia.cli system configuration
+python -m polysia.cli live tiny-round-trip --dry-run
 ```
 
 Continue only when the clock preflight reports `pass`. A timeout, missing server
@@ -65,8 +65,8 @@ time, unreadable response, or excessive positive or negative drift is blocking.
 Use public endpoints first.
 
 ```powershell
-python -m polysia.cli discover-markets --limit 10
-python -m polysia.cli stream-market --token-id YOUR_TOKEN_ID --max-events 5
+python -m polysia.cli market discover --limit 10
+python -m polysia.cli market stream --token-id YOUR_TOKEN_ID --max-events 5
 ```
 
 Stop if public SDK or websocket errors repeat, or if normalized events look
@@ -77,9 +77,9 @@ wrong.
 Use only local paper execution for strategy checks.
 
 ```powershell
-python -m polysia.cli paper-trade --token-id YOUR_TOKEN_ID --order-size 1
-python -m polysia.cli backtest-jsonl --input .\events.jsonl --strategy stale-price
-python -m polysia.cli backtest-jsonl --input .\events.jsonl --strategy passive-market-maker --min-edge 0.05
+python -m polysia.cli research paper-trade --token-id YOUR_TOKEN_ID --order-size 1
+python -m polysia.cli research backtest --input .\events.jsonl --strategy stale-price
+python -m polysia.cli research backtest --input .\events.jsonl --strategy passive-market-maker --min-edge 0.05
 ```
 
 Continue only when risk decisions, fills, positions, and PnL are explainable and
@@ -90,8 +90,8 @@ reproducible.
 Create a sanitized operator snapshot.
 
 ```powershell
-python -m polysia.cli operator-report --format markdown
-python -m polysia.cli operator-report --format html --output .\operator-report.html
+python -m polysia.cli system report --format markdown
+python -m polysia.cli system report --format html --output .\operator-report.html
 ```
 
 ## Read-Only Live Lifecycle Recovery
@@ -103,7 +103,7 @@ or alert records, but they cannot submit, cancel, replace, or retry an order.
 Run one reconciliation observation:
 
 ```powershell
-python -m polysia.cli reconcile-live-round-trip `
+python -m polysia.cli ops reconcile-live-round-trip `
   --run-id YOUR_RUN_ID `
   --authorization-id YOUR_CONSUMED_AUTHORIZATION_ID
 ```
@@ -111,7 +111,7 @@ python -m polysia.cli reconcile-live-round-trip `
 Run one scheduler-friendly monitoring cycle:
 
 ```powershell
-python -m polysia.cli monitor-live-round-trip `
+python -m polysia.cli ops monitor-live-round-trip `
   --run-id YOUR_RUN_ID `
   --authorization-id YOUR_CONSUMED_AUTHORIZATION_ID `
   --max-cycles 1
@@ -131,9 +131,9 @@ and explicit acknowledgement flags. Before any real submission, preview the
 operation with dry-run commands.
 
 ```powershell
-python -m polysia.cli live-open-orders --token-id YOUR_TOKEN_ID --i-understand-this-uses-live-account
-python -m polysia.cli live-cancel-market-orders --token-id YOUR_TOKEN_ID --dry-run --i-understand-this-modifies-live-orders
-python -m polysia.cli live-limit-order --token-id YOUR_TOKEN_ID --side BUY --price 0.01 --size 1 --dry-run --i-understand-this-places-real-orders
+python -m polysia.cli live open-orders --token-id YOUR_TOKEN_ID --i-understand-this-uses-live-account
+python -m polysia.cli live cancel-market-orders --token-id YOUR_TOKEN_ID --dry-run --i-understand-this-modifies-live-orders
+python -m polysia.cli live limit-order --token-id YOUR_TOKEN_ID --side BUY --price 0.01 --size 1 --dry-run --i-understand-this-places-real-orders
 ```
 
 Stop if readiness is blocked, operator status reports warnings, caps are not
@@ -146,8 +146,8 @@ Return to a no-live-order state by setting `TRADING_MODE=DATA_ONLY`,
 active shell or deployment environment. Then run:
 
 ```powershell
-python -m polysia.cli deployment-readiness
-python -m polysia.cli operator-status
+python -m polysia.cli ops deployment-readiness
+python -m polysia.cli system status
 ```
 
 The expected result is that tiny live orders are not ready.
