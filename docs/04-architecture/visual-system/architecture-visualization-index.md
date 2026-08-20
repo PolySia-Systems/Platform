@@ -42,5 +42,5 @@ Owners should read 01, 02, 03, 06, 10, 12, and 18. Developers should add 05,
   control remain TARGET or FUTURE.
 - The latest verified server deployment is older than this repository baseline;
   repository truth must not be presented as deployed runtime truth.
-- `before-after.md` is a labeled historical comparison and is not current
+- The [archived before-and-after comparison](../../99-archive/architecture-history/before-after.md) is not current
   dependency, CI, test-count, or deployment evidence.

@@ -3,8 +3,8 @@
 > **Historical comparison:** this document records the 2026-07-11 Phase I
 > transition. Its dependency versions, test counts, CI matrix, environment,
 > and audit state are preserved as historical evidence. Use
-> [PROJECT_STATUS](../00-governance/PROJECT_STATUS.md) and the
-> [architecture overview](overview.md) for current truth.
+> [PROJECT_STATUS](../../00-governance/PROJECT_STATUS.md) and the
+> [architecture overview](../../04-architecture/overview.md) for current truth.
 
 | Area | Preserved baseline | PolySia delivery |
 |---|---|---|

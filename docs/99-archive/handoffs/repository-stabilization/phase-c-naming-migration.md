@@ -50,7 +50,7 @@ were neither changed nor exposed.
 ## Compatibility impact
 
 Operators must use `conda activate PolySia`, `polysia`, or
-`python -m polysia.cli`. See `docs/10-operations/naming-migration.md` for exact
+`python -m polysia.cli`. See `docs/99-archive/migrations/naming-migration.md` for exact
 migration and rollback commands.
 
 ## Rollback
