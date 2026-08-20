@@ -1,5 +1,6 @@
 # Exact production runtime baseline for Linux and Python 3.14.6.
 # Development, test, build, and audit tools are intentionally excluded.
+# The Polymarket SDK was refreshed on 2026-08-21.
 annotated-doc==0.0.4
 annotated-types==0.8.0
 anyio==4.14.2
@@ -25,7 +26,7 @@ markdown-it-py==4.2.0
 mdurl==0.1.2
 msgpack==1.2.1
 parsimonious==0.10.0
-polymarket-client==0.2.0
+polymarket-client==0.6.0
 pycryptodome==3.23.0
 pydantic==2.13.4
 pydantic_core==2.46.4

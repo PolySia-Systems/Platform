@@ -18,7 +18,7 @@ from polymarket.models.gamma.market import FeeSchedule, MarketState, MarketTradi
 
 
 def test_pinned_polymarket_sdk_version() -> None:
-    assert version("polymarket-client") == "0.2.0"
+    assert version("polymarket-client") == "0.6.0"
 
 
 def test_public_sdk_methods_used_by_adapter_exist() -> None:
@@ -55,6 +55,12 @@ def test_secure_sdk_methods_used_by_adapter_exist() -> None:
     }
 
     assert required <= set(dir(AsyncSecureClient))
+
+
+def test_secure_sdk_creation_preserves_signer_and_funder_inputs() -> None:
+    create_parameters = inspect.signature(AsyncSecureClient.create).parameters
+
+    assert {"private_key", "wallet"} <= set(create_parameters)
 
 
 def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:

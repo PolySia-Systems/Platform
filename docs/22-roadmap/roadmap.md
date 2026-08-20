@@ -50,7 +50,7 @@
 
 ## Parallel maintenance gates
 
-- Keep Python 3.14.6, `polymarket-client==0.2.0`, Mypy 2.3.0, and Ruff 0.16.0
+- Keep Python 3.14.6, `polymarket-client==0.6.0`, Mypy 2.3.0, and Ruff 0.16.4
   pinned until new contract, lock, security, and rollback evidence approves an
   upgrade.
 - Preserve the legacy project, database, live evidence, and verified recovery

@@ -47,7 +47,7 @@ flowchart TB
 
   Adapter["adapters/polymarket/\nSDK-confined boundary"]:::adapter
   Config["config/"]:::risk
-  SDK["polymarket-client 0.2.0\n[EXTERNAL]"]:::external
+  SDK["polymarket-client 0.6.0\n[EXTERNAL]"]:::external
 
   CLI --> Monitor
   CLI --> Deploy
