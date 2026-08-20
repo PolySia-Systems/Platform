@@ -18,7 +18,7 @@ def test_health_command_returns_safe_payload(monkeypatch) -> None:
     monkeypatch.delenv("TRADING_MODE", raising=False)
     monkeypatch.delenv("LIVE_TRADING_ENABLED", raising=False)
 
-    result = runner.invoke(app, ["health"])
+    result = runner.invoke(app, ["system", "health"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -44,7 +44,7 @@ def test_discover_markets_command_prints_active_markets(monkeypatch) -> None:
 
     monkeypatch.setattr("polysia.cli_commands.core.PolymarketPublicAdapter", FakeAdapter)
 
-    result = runner.invoke(app, ["discover-markets", "--limit", "3"])
+    result = runner.invoke(app, ["market", "discover", "--limit", "3"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -60,7 +60,7 @@ def test_discover_markets_command_handles_adapter_errors(monkeypatch) -> None:
 
     monkeypatch.setattr("polysia.cli_commands.core.PolymarketPublicAdapter", FakeAdapter)
 
-    result = runner.invoke(app, ["discover-markets", "--limit", "3"])
+    result = runner.invoke(app, ["market", "discover", "--limit", "3"])
 
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
@@ -89,7 +89,8 @@ def test_stream_market_command_delegates_to_async_runner(monkeypatch) -> None:
     result = runner.invoke(
         app,
         [
-            "stream-market",
+            "market",
+            "stream",
             "--token-id",
             "token-1",
             "--max-events",
@@ -113,6 +114,7 @@ def test_paper_trade_command_runs_local_simulation() -> None:
     result = runner.invoke(
         app,
         [
+            "research",
             "paper-trade",
             "--token-id",
             "token-1",
@@ -143,6 +145,7 @@ def test_paper_trade_command_supports_passive_market_maker() -> None:
     result = runner.invoke(
         app,
         [
+            "research",
             "paper-trade",
             "--strategy",
             "passive-market-maker",
@@ -195,7 +198,8 @@ def test_backtest_jsonl_command_replays_local_file(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "backtest-jsonl",
+            "research",
+            "backtest",
             "--input",
             str(events_path),
             "--initial-cash",
@@ -237,7 +241,8 @@ def test_backtest_jsonl_command_supports_passive_market_maker(tmp_path: Path) ->
     result = runner.invoke(
         app,
         [
-            "backtest-jsonl",
+            "research",
+            "backtest",
             "--input",
             str(events_path),
             "--strategy",
@@ -263,7 +268,7 @@ def test_backtest_jsonl_command_handles_bad_input(tmp_path: Path) -> None:
     events_path = tmp_path / "bad.jsonl"
     events_path.write_text("{bad", encoding="utf-8")
 
-    result = runner.invoke(app, ["backtest-jsonl", "--input", str(events_path)])
+    result = runner.invoke(app, ["research", "backtest", "--input", str(events_path)])
 
     assert result.exit_code == 1
     payload = json.loads(result.stderr)

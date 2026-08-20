@@ -71,7 +71,8 @@ def test_strategy_evaluation_command_writes_sanitized_reports(monkeypatch, tmp_p
     result = runner.invoke(
         app,
         [
-            "strategy-evaluation",
+            "research",
+            "evaluate",
             "--input",
             str(input_path),
             "--output-dir",
@@ -99,7 +100,7 @@ def test_strategy_evaluation_command_rejects_malformed_input(tmp_path: Path) -> 
     input_path = tmp_path / "bad.json"
     input_path.write_text("{bad", encoding="utf-8")
 
-    result = runner.invoke(app, ["strategy-evaluation", "--input", str(input_path)])
+    result = runner.invoke(app, ["research", "evaluate", "--input", str(input_path)])
 
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
@@ -134,7 +135,8 @@ def test_strategy_evaluation_extended_command_writes_reports(tmp_path: Path) -> 
     result = runner.invoke(
         app,
         [
-            "strategy-evaluation-extended",
+            "research",
+            "evaluate-extended",
             "--input",
             str(input_path),
             "--output-dir",
@@ -187,7 +189,8 @@ def test_fill_simulation_audit_command_writes_sanitized_reports(
     result = runner.invoke(
         app,
         [
-            "fill-simulation-audit",
+            "research",
+            "fill-audit",
             "--input",
             str(input_path),
             "--output-dir",
@@ -215,7 +218,7 @@ def test_fill_simulation_audit_command_writes_sanitized_reports(
 
 
 def test_fill_simulation_audit_command_rejects_bad_model() -> None:
-    result = runner.invoke(app, ["fill-simulation-audit", "--model", "optimistic"])
+    result = runner.invoke(app, ["research", "fill-audit", "--model", "optimistic"])
 
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
@@ -235,7 +238,8 @@ def test_shadow_run_command_writes_sanitized_reports(monkeypatch, tmp_path: Path
     result = runner.invoke(
         app,
         [
-            "shadow-run",
+            "research",
+            "shadow",
             "--max-events",
             "3",
             "--control-database-path",
@@ -279,7 +283,8 @@ def test_shadow_run_real_data_command_writes_sanitized_reports(
     result = runner.invoke(
         app,
         [
-            "shadow-run-real-data",
+            "research",
+            "shadow-public",
             "--auto-btc-5m",
             "--max-events",
             "1",

@@ -102,7 +102,8 @@ def test_tiny_live_execute_no_dry_run_blocks_without_ack(monkeypatch, tmp_path: 
     result = runner.invoke(
         app,
         [
-            "tiny-live-execute",
+            "live",
+            "tiny-execute",
             "--token-id",
             "token-yes",
             "--side",
@@ -135,7 +136,8 @@ def test_tiny_live_execute_no_dry_run_blocks_without_allowlist(monkeypatch, tmp_
     result = runner.invoke(
         app,
         [
-            "tiny-live-execute",
+            "live",
+            "tiny-execute",
             "--token-id",
             "token-yes",
             "--side",
@@ -171,7 +173,8 @@ def test_tiny_live_execute_cli_geoblock_blocked_with_mock(monkeypatch, tmp_path:
     result = runner.invoke(
         app,
         [
-            "tiny-live-execute",
+            "live",
+            "tiny-execute",
             "--token-id",
             "token-yes",
             "--side",
@@ -204,6 +207,7 @@ def test_acceptance_audit_command_blocks_when_live_flag_enabled(
     result = runner.invoke(
         app,
         [
+            "ops",
             "acceptance-audit",
             "--json",
             "--output-dir",
@@ -225,7 +229,8 @@ def test_shadow_run_command_blocks_when_live_flag_enabled(monkeypatch, tmp_path:
     result = runner.invoke(
         app,
         [
-            "shadow-run",
+            "research",
+            "shadow",
             "--json",
             "--control-database-path",
             str(tmp_path / "control.sqlite3"),
@@ -248,7 +253,7 @@ def test_live_open_orders_blocks_by_default(monkeypatch) -> None:
 
     result = runner.invoke(
         app,
-        ["live-open-orders", "--i-understand-this-uses-live-account"],
+        ["live", "open-orders", "--i-understand-this-uses-live-account"],
     )
 
     assert result.exit_code == 1
@@ -275,7 +280,8 @@ def test_live_cancel_order_command_defaults_to_dry_run(monkeypatch) -> None:
     result = runner.invoke(
         app,
         [
-            "live-cancel-order",
+            "live",
+            "cancel-order",
             "--order-id",
             "order-1",
             "--i-understand-this-modifies-live-orders",
@@ -299,7 +305,8 @@ def test_live_limit_order_blocks_by_default(monkeypatch) -> None:
     result = runner.invoke(
         app,
         [
-            "live-limit-order",
+            "live",
+            "limit-order",
             "--token-id",
             "token-1",
             "--price",
@@ -340,7 +347,8 @@ def test_live_limit_order_command_defaults_to_dry_run(monkeypatch) -> None:
     result = runner.invoke(
         app,
         [
-            "live-limit-order",
+            "live",
+            "limit-order",
             "--token-id",
             "token-1",
             "--price",
