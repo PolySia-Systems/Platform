@@ -31,19 +31,19 @@ check: lint typecheck standards test security
 	python -m pip check
 
 health:
-	python -m polysia.cli health
+	python -m polysia.cli system health
 
 readiness:
-	python -m polysia.cli deployment-readiness
+	python -m polysia.cli ops deployment-readiness
 
 runbook:
-	python -m polysia.cli operator-runbook
+	python -m polysia.cli system runbook
 
 release-manifest:
-	python -m polysia.cli release-manifest
+	python -m polysia.cli ops release-manifest
 
 deploy-check:
-	python -m polysia.cli deployment-automation
+	python -m polysia.cli ops deployment-automation
 
 final-handoff:
-	python -m polysia.cli final-handoff
+	python -m polysia.cli ops final-handoff

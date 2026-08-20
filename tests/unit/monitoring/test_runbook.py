@@ -20,7 +20,7 @@ def test_operator_runbook_includes_safe_default_sections(tmp_path) -> None:
     assert "## 2. Data Collection" in runbook
     assert "## 3. Research Loop" in runbook
     assert "## Emergency Stop" in runbook
-    assert "live-limit-order" not in runbook
+    assert "live limit-order" not in runbook
 
 
 def test_operator_runbook_can_include_live_dry_run_section(tmp_path) -> None:
@@ -34,7 +34,7 @@ def test_operator_runbook_can_include_live_dry_run_section(tmp_path) -> None:
     )
 
     assert "## 5. Live Dry-Run Only" in runbook
-    assert "live-limit-order" in runbook
+    assert "live limit-order" in runbook
     assert "--dry-run" in runbook
     assert "--submit" not in runbook
 

@@ -66,7 +66,7 @@ def test_configuration_status_cli_outputs_no_secret_values(monkeypatch) -> None:
     )
     monkeypatch.setattr("polysia.cli_commands.core.AppSettings", lambda: settings)
 
-    result = CliRunner().invoke(app, ["configuration-status"])
+    result = CliRunner().invoke(app, ["system", "configuration"])
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["status"] == "ready"

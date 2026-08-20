@@ -131,7 +131,8 @@ def _shadow_run(database_path: Path, output_dir: Path) -> dict[str, object]:
     result = runner.invoke(
         app,
         [
-            "shadow-run",
+            "research",
+            "shadow",
             "--max-events",
             "4",
             "--control-database-path",

@@ -54,7 +54,7 @@ def test_operator_status_command_returns_sanitized_payload(monkeypatch) -> None:
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-1")
 
-    result = runner.invoke(app, ["operator-status"])
+    result = runner.invoke(app, ["system", "status"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -77,7 +77,7 @@ def test_operator_report_command_prints_markdown(monkeypatch) -> None:
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-1")
 
-    result = runner.invoke(app, ["operator-report", "--format", "markdown"])
+    result = runner.invoke(app, ["system", "report", "--format", "markdown"])
 
     assert result.exit_code == 0
     assert result.stdout.startswith("# PolySia — Polymarket Adapter — Operator Report")
@@ -99,7 +99,7 @@ def test_operator_report_command_writes_html_file(monkeypatch, tmp_path: Path) -
 
     result = runner.invoke(
         app,
-        ["operator-report", "--format", "html", "--output", str(output)],
+        ["system", "report", "--format", "html", "--output", str(output)],
     )
 
     assert result.exit_code == 0
@@ -129,7 +129,7 @@ def test_observability_snapshot_command_writes_sanitized_artifacts(
 
     result = runner.invoke(
         app,
-        ["observability-snapshot", "--output-dir", str(output_dir)],
+        ["system", "observability", "--output-dir", str(output_dir)],
     )
 
     assert result.exit_code == 0
@@ -177,7 +177,7 @@ def test_production_gap_audit_command_writes_reports(monkeypatch, tmp_path: Path
 
     result = runner.invoke(
         app,
-        ["production-gap-audit", "--output-dir", str(output_dir)],
+        ["ops", "production-gap-audit", "--output-dir", str(output_dir)],
     )
 
     assert result.exit_code == 0
@@ -215,7 +215,7 @@ def test_main_merge_review_command_writes_reports(monkeypatch, tmp_path: Path) -
 
     result = runner.invoke(
         app,
-        ["main-merge-review", "--output-dir", str(output_dir)],
+        ["ops", "main-merge-review", "--output-dir", str(output_dir)],
     )
 
     assert result.exit_code == 0
@@ -252,7 +252,7 @@ def test_local_release_closeout_command_writes_reports(
 
     result = runner.invoke(
         app,
-        ["local-release-closeout", "--output-dir", str(output_dir)],
+        ["ops", "local-release-closeout", "--output-dir", str(output_dir)],
     )
 
     assert result.exit_code == 0
@@ -289,7 +289,7 @@ def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -
 
     result = runner.invoke(
         app,
-        ["reconcile-account", "--output-dir", str(output_dir)],
+        ["ops", "reconcile-account", "--output-dir", str(output_dir)],
     )
 
     assert result.exit_code == 0
@@ -303,7 +303,7 @@ def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -
 
 
 def test_operator_report_command_rejects_unknown_format() -> None:
-    result = runner.invoke(app, ["operator-report", "--format", "pdf"])
+    result = runner.invoke(app, ["system", "report", "--format", "pdf"])
 
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
@@ -318,7 +318,7 @@ def test_deployment_readiness_command_returns_sanitized_payload(monkeypatch) -> 
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-1")
 
-    result = runner.invoke(app, ["deployment-readiness"])
+    result = runner.invoke(app, ["ops", "deployment-readiness"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -336,7 +336,7 @@ def test_operator_runbook_command_prints_markdown(monkeypatch) -> None:
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-1")
 
-    result = runner.invoke(app, ["operator-runbook", "--include-live"])
+    result = runner.invoke(app, ["system", "runbook", "--include-live"])
 
     assert result.exit_code == 0
     assert result.stdout.startswith("# PolySia — Polymarket Adapter — Operator Runbook")
@@ -349,7 +349,7 @@ def test_operator_runbook_command_prints_markdown(monkeypatch) -> None:
 def test_operator_runbook_command_writes_markdown_file(tmp_path: Path) -> None:
     output = tmp_path / "operator-runbook.md"
 
-    result = runner.invoke(app, ["operator-runbook", "--output", str(output)])
+    result = runner.invoke(app, ["system", "runbook", "--output", str(output)])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -367,7 +367,7 @@ def test_release_manifest_command_prints_sanitized_json(monkeypatch) -> None:
     monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", "0xwallet")
     monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-1")
 
-    result = runner.invoke(app, ["release-manifest"])
+    result = runner.invoke(app, ["ops", "release-manifest"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -382,7 +382,7 @@ def test_release_manifest_command_prints_sanitized_json(monkeypatch) -> None:
 def test_release_manifest_command_writes_json_file(tmp_path: Path) -> None:
     output = tmp_path / "release-manifest.json"
 
-    result = runner.invoke(app, ["release-manifest", "--output", str(output)])
+    result = runner.invoke(app, ["ops", "release-manifest", "--output", str(output)])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -399,6 +399,7 @@ def test_deployment_automation_command_writes_artifacts(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
+            "ops",
             "deployment-automation",
             "--skip-quality-checks",
             "--output-dir",
@@ -421,6 +422,7 @@ def test_final_handoff_command_writes_markdown(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
+            "ops",
             "final-handoff",
             "--skip-quality-checks",
             "--output-dir",
@@ -457,6 +459,7 @@ def test_acceptance_audit_command_writes_sanitized_reports(
     result = runner.invoke(
         app,
         [
+            "ops",
             "acceptance-audit",
             "--output-dir",
             str(output_dir),
@@ -501,6 +504,7 @@ def test_reconcile_live_round_trip_command_uses_read_only_service(
     result = runner.invoke(
         app,
         [
+            "ops",
             "reconcile-live-round-trip",
             "--run-id",
             "live-run",
@@ -566,6 +570,7 @@ def test_monitor_live_round_trip_command_uses_bounded_read_only_service(
     result = runner.invoke(
         app,
         [
+            "ops",
             "monitor-live-round-trip",
             "--run-id",
             "live-run",
@@ -611,6 +616,7 @@ def test_tiny_live_monitor_command_writes_reports(monkeypatch, tmp_path: Path) -
     result = runner.invoke(
         app,
         [
+            "ops",
             "tiny-live-monitor",
             "--output-dir",
             str(output_dir),
@@ -650,7 +656,8 @@ def test_tiny_live_readiness_command_writes_sanitized_reports(monkeypatch, tmp_p
     result = runner.invoke(
         app,
         [
-            "tiny-live-readiness",
+            "live",
+            "readiness",
             "--acceptance-audit",
             str(acceptance),
             "--shadow-run",

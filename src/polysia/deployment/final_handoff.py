@@ -52,34 +52,34 @@ def render_final_handoff_markdown(result: DeploymentAutomationResult) -> str:
             "",
             "## Final Operator Commands",
             "",
-            "- `python -m polysia.cli health`",
-            "- `python -m polysia.cli deployment-automation --require-clean-git "
+            "- `python -m polysia.cli system health`",
+            "- `python -m polysia.cli ops deployment-automation --require-clean-git "
             "--include-live-runbook`",
-            "- `python -m polysia.cli operator-runbook --include-live`",
-            "- `python -m polysia.cli release-manifest --require-clean-git`",
-            "- `python -m polysia.cli post-live-reconciliation --output-dir "
+            "- `python -m polysia.cli system runbook --include-live`",
+            "- `python -m polysia.cli ops release-manifest --require-clean-git`",
+            "- `python -m polysia.cli ops post-live-reconciliation --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli observability-snapshot --output-dir "
+            "- `python -m polysia.cli system observability --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli shadow-run-real-data --auto-btc-5m "
+            "- `python -m polysia.cli research shadow-public --auto-btc-5m "
             "--max-events 100 --output-dir .\\release-artifacts`",
-            "- `python -m polysia.cli strategy-evaluation-extended --input "
+            "- `python -m polysia.cli research evaluate-extended --input "
             ".\\release-artifacts\\shadow-run-real-data.json --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli tiny-live-monitor --output-dir "
+            "- `python -m polysia.cli ops tiny-live-monitor --output-dir "
             ".\\release-artifacts --redact-secrets`",
-            "- `python -m polysia.cli controlled-second-tiny-live --auto-btc-5m "
+            "- `python -m polysia.cli live controlled-second-attempt --auto-btc-5m "
             "--side BUY --outcome YES --max-notional 1.00 --order-type FOK "
             "--dry-run --output-dir .\\release-artifacts`",
-            "- `python -m polysia.cli production-gap-audit --output-dir "
+            "- `python -m polysia.cli ops production-gap-audit --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli main-merge-review --output-dir "
+            "- `python -m polysia.cli ops main-merge-review --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli local-release-closeout --output-dir "
+            "- `python -m polysia.cli ops local-release-closeout --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli reconcile-account --output-dir "
+            "- `python -m polysia.cli ops reconcile-account --output-dir "
             ".\\release-artifacts`",
-            "- `python -m polysia.cli manual-intervention-live-test --auto-btc-5m "
+            "- `python -m polysia.cli live manual-intervention-test --auto-btc-5m "
             "--outcome YES --side BUY --max-notional 1.00 --order-type FOK "
             "--dry-run --output-dir .\\release-artifacts`",
             "",

@@ -86,7 +86,8 @@ def test_controlled_second_tiny_live_command_writes_reports(
     result = runner.invoke(
         app,
         [
-            "controlled-second-tiny-live",
+            "live",
+            "controlled-second-attempt",
             "--token-id",
             "token-yes",
             "--market-slug",
@@ -168,7 +169,8 @@ def test_manual_intervention_live_test_command_writes_dry_run_reports(
     result = runner.invoke(
         app,
         [
-            "manual-intervention-live-test",
+            "live",
+            "manual-intervention-test",
             "--auto-btc-5m",
             "--outcome",
             "YES",
@@ -203,7 +205,8 @@ def test_tiny_live_execute_dry_run_writes_sanitized_reports(monkeypatch, tmp_pat
     result = runner.invoke(
         app,
         [
-            "tiny-live-execute",
+            "live",
+            "tiny-execute",
             "--token-id",
             "token-yes",
             "--side",
@@ -278,7 +281,8 @@ def test_live_smoke_test_auto_btc_5m_selects_market(monkeypatch) -> None:
     result = runner.invoke(
         app,
         [
-            "live-smoke-test",
+            "live",
+            "smoke-test",
             "--auto-btc-5m",
             "--outcome",
             "YES",
@@ -298,7 +302,7 @@ def test_live_smoke_test_auto_btc_5m_selects_market(monkeypatch) -> None:
 
 
 def test_live_smoke_test_requires_selection_without_auto() -> None:
-    result = runner.invoke(app, ["live-smoke-test", "--dry-run"])
+    result = runner.invoke(app, ["live", "smoke-test", "--dry-run"])
 
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
@@ -362,7 +366,8 @@ def test_live_open_orders_command_delegates_to_async_runner(monkeypatch) -> None
     result = runner.invoke(
         app,
         [
-            "live-open-orders",
+            "live",
+            "open-orders",
             "--token-id",
             "token-1",
             "--i-understand-this-uses-live-account",
@@ -401,7 +406,8 @@ def test_live_cancel_market_orders_command_delegates_token(monkeypatch) -> None:
     result = runner.invoke(
         app,
         [
-            "live-cancel-market-orders",
+            "live",
+            "cancel-market-orders",
             "--token-id",
             "token-1",
             "--i-understand-this-modifies-live-orders",

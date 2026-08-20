@@ -94,7 +94,7 @@ tiny FOK/FAK order, the report records the rejection.
 Before a real smoke test, run:
 
 ```powershell
-python -m polysia.cli live-account-status --redact-secrets
+python -m polysia.cli live account-status --redact-secrets
 ```
 
 Expected safe fields:
@@ -113,7 +113,7 @@ No raw secret, private key, wallet address, or funder address should appear.
 ## Dry-Run Command
 
 ```powershell
-python -m polysia.cli live-smoke-test `
+python -m polysia.cli live smoke-test `
   --auto-btc-5m `
   --outcome YES `
   --side BUY `
@@ -132,7 +132,7 @@ Run this only after diagnostics and dry-run pass:
 $env:TRADING_MODE="LIVE"
 $env:LIVE_TRADING_ENABLED="true"
 
-python -m polysia.cli live-smoke-test `
+python -m polysia.cli live smoke-test `
   --auto-btc-5m `
   --outcome YES `
   --side BUY `
@@ -171,4 +171,3 @@ Check these items first:
 5. Confirm geoblock returns `blocked=false`.
 6. Run dry-run first and inspect `live_smoke_test.json`.
 7. Only then run the real FOK/FAK command once.
-

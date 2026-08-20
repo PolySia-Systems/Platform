@@ -74,7 +74,7 @@ Run these commands from `/opt/polysia`:
 ```bash
 docker compose ps
 docker compose logs --tail 100 monitor
-docker compose exec monitor python -m polysia.cli health
+docker compose exec monitor python -m polysia.cli system health
 docker compose restart monitor
 docker compose stop monitor
 docker compose up --detach monitor

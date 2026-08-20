@@ -183,7 +183,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker build --tag polysia:ci .
-      - run: docker run --rm polysia:ci health
+      - run: docker run --rm polysia:ci system health
       - shell: bash
         run: |
           mkdir -p .ci-state

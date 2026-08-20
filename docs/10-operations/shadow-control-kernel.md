@@ -42,7 +42,7 @@ The deterministic Shadow CLI uses the persisted control database by default.
 Pass the same explicit path when operating outside the default working directory:
 
 ```powershell
-polysia shadow-run `
+polysia research shadow `
   --max-events 4 `
   --control-database-path data/polysia.sqlite3 `
   --json
