@@ -183,8 +183,11 @@ evidence.
 - Before the Linux-first migration, representative PR run `32479986498` ran the
   same 686-test suite in about 340 seconds on Windows and 29 seconds on Linux;
   the corresponding jobs took 503 and 74 seconds. This measured duplication is
-  the optimization baseline. Run-specific post-migration evidence belongs in
-  the corresponding PR and delivery report.
+  the optimization baseline. PR `#72` comprehensive run `32494449623` passed
+  694 tests on both platforms, reduced canonical Linux Quality to 101 seconds,
+  and retained strict OSV/SBOM, container, and final CI Gate evidence. The
+  79.9% Quality-job reduction excludes Windows from ordinary PR critical paths;
+  that migration run intentionally executed Windows in 283 seconds.
 
 ## Recovery status
 

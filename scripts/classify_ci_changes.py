@@ -46,8 +46,7 @@ PYTHON_PATTERNS = (
 PACKAGE_PATTERNS = (
     "src/**",
     "pyproject.toml",
-    "environment.yml",
-    "locks/**",
+    "locks/pip-runtime-py314.lock",
     "Makefile",
 )
 CONTAINER_PATTERNS = (
