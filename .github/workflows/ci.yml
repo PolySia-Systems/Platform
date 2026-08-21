@@ -202,24 +202,28 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: locks/pip-py314.lock
-      - run: python -m venv .audit-venv
-      - run: .audit-venv/bin/python -m pip install --upgrade pip
-      - run: .audit-venv/bin/python -m pip install -r locks/pip-py314.lock
-      - run: .audit-venv/bin/python -m pip_audit --strict --vulnerability-service osv
+      - run: python -m venv "$RUNNER_TEMP/polysia-audit-venv"
+      - run: |
+          "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install --upgrade pip
+      - run: |
+          "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install -r locks/pip-py314.lock
+      - run: |
+          "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip_audit --strict --vulnerability-service osv
       - name: Generate SBOM
         shell: bash
         run: |
           mkdir -p artifacts
-          .audit-venv/bin/cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json
+          "$RUNNER_TEMP/polysia-audit-venv/bin/cyclonedx-py" environment --output-format JSON --output-file artifacts/sbom.json
       - name: Build compatibility wheel
-        run: .audit-venv/bin/python -m build
+        run: |
+          "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m build
       - name: Allowed-range compatibility smoke
         shell: bash
         run: |
-          python -m venv .compat-venv
-          .compat-venv/bin/python -m pip install dist/*.whl
-          .compat-venv/bin/python -m pip check
-          .compat-venv/bin/python -m polysia.cli --help
+          python -m venv "$RUNNER_TEMP/polysia-compat-venv"
+          "$RUNNER_TEMP/polysia-compat-venv/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/polysia-compat-venv/bin/python" -m pip check
+          "$RUNNER_TEMP/polysia-compat-venv/bin/python" -m polysia.cli --help
       - uses: actions/upload-artifact@v7
         with:
           name: polysia-sbom
