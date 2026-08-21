@@ -16,6 +16,21 @@ margin and tick-size documentation in 0.4.0, order-market metadata caching in
 consume the new perps or combo RFQ surfaces. The distribution dependency set is
 unchanged from 0.2.0, so the migration does not require transitive lock churn.
 
+## Verified order and cancellation contract
+
+The 2026-08-21 contract review verified the official 0.6.0 `OpenOrder` wire
+aliases (`market`, `asset_id`, `expiration`, and timestamp fields), Decimal
+parsing, durable order/trade identifiers, and `CancelOrdersResponse` with both
+`canceled` and `not_canceled` results. Deterministic local fixtures pin these
+consumed shapes.
+
+The secure adapter returns an explicit not-found result only for a verified
+HTTP 404. Invalid, malformed, unavailable, or unexpected order-detail payloads
+remain sanitized errors and cannot prove terminal absence. Open-order reads
+consume every SDK page before account-wide cancellation evidence is considered
+complete. No SDK version, dependency, lock, signer, funder, or credential
+semantics changed in this contract-hardening work.
+
 ## Upgrade procedure
 
 1. Review only official Polymarket documentation, repository tags, changelog,
@@ -39,6 +54,11 @@ method is missing, canonical mapping changes silently, redaction fails, or any
 live gate weakens.
 
 ## Rollback
+
+To roll back only cancellation contract hardening, revert its focused commits;
+no dependency, lock, schema, or credential migration is involved. This removes
+the finality gate and canonical evidence mappings but restores the known unsafe
+single-read limitation, so do not promote or run the Tiny Live path afterward.
 
 Revert the 0.6.0 migration commits as one unit. This restores the direct pin,
 both portable locks, approved runtime constants, SDK contracts, and current

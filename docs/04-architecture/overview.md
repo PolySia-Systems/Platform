@@ -41,6 +41,13 @@ confirm cancellation. Later authenticated reads proved zero open orders,
 confirmed fills, exposure, and experiment cost. This is safety evidence, not
 general Copy Trading or production-readiness evidence.
 
+The path now uses a durable cancellation-finality gate for pending entries and
+emergency cancel-all. The gate permits one possible cancellation mutation per
+operation, performs only bounded canonical reads after that boundary, requires
+consecutive clean observations for no-fill, and never automatically resends on
+restart. Existing SQLite checkpoints persist sanitized operation, response,
+observation, outcome, and reason evidence without a schema change.
+
 ## TARGET
 
 Generalized intent aggregation/conflict resolution, portfolio/capital

@@ -19,16 +19,18 @@
 - Tiny Live Copy run four: one accepted unfilled Post-only order, terminal
   `FAILED_SAFE` on ambiguous immediate cancellation confirmation, and later
   verified zero open orders, fills, exposure, and experiment cost.
+- Cancellation safety closure: a durable venue-neutral finality gate with one
+  possible cancel send, restart-safe no-resend behavior, fully paginated open
+  orders, explicit outcomes, consecutive clean observations, and independent
+  order-detail, linked-trade, and position evidence. SDK 0.6.0 wire fixtures
+  cover order aliases, Decimal fields, and mixed cancel results.
 
-## Immediate safety maintenance gate
+## Completed safety maintenance gate
 
-1. Add a bounded authenticated read-only cancellation-confirmation window that
-   remains fail-closed on persistent or inconsistent order/trade/position state.
-2. Repair or adapt the SDK terminal-order response contract with deterministic
-   contract tests.
-3. Validate in unit/integration and zero-mutation Shadow only. Do not deploy,
-   alter retained ambiguous run state, or create a new Live authorization as
-   part of this engineering gate.
+The bounded cancellation-confirmation and terminal order-response repair is
+implemented and deterministically tested without credentials, network access,
+Live mutation, deployment, or changes to retained historical run evidence.
+Operational promotion remains a separate authorization and deployment task.
 
 ## Immediate next cycle: research and validation
 

@@ -10,7 +10,7 @@
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Development/CI dependencies refreshed and Polymarket SDK migrated to 0.6.0 |
+| Latest repository maintenance | Cancellation finality and SDK order/cancel contracts hardened |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -122,6 +122,12 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
   closed above the configured threshold, whose maximum is five seconds. Read
   retries are bounded and apply only to idempotent calls; trading mutations are
   never automatically retried.
+- The CURRENT cancellation finality gate durably marks the mutation boundary,
+  permits at most one cancellation send per operation, and then uses only
+  bounded read-only order, trade, and position evidence. It requires two
+  consecutive complete clean observations before `CONFIRMED_NO_FILL`; fill,
+  still-open, unknown, timeout, endpoint-failure, and conflicting outcomes are
+  explicit and fail safe. A restart never automatically resends cancellation.
 
 ## LIVE-004 final state
 
@@ -202,13 +208,14 @@ evidence.
 - The durable run intentionally retains ambiguous entry state. Do not alter it
   without a separately reviewed reconciliation procedure. The protected
   102-wallet input remains server-local and outside Git.
-- The narrow implementation gap is cancellation confirmation: one immediate
-  read is insufficient. A future repair should use a bounded authenticated
-  read-only confirmation window and remain fail-closed on any order, trade,
-  position, timeout, or inconsistent evidence.
-- The SDK terminal order-detail response currently has an `OpenOrder` contract
-  mismatch. Repair or adapt that boundary with contract tests before using it
-  as definitive terminal-state evidence.
+- The cancellation-confirmation implementation gap is closed in repository
+  code. The secure adapter now maps complete paginated order evidence into
+  venue-neutral contracts, treats only a verified 404 as not found, and rejects
+  malformed or unavailable order detail. Deterministic fixtures cover the
+  pinned SDK's `OpenOrder` aliases/Decimals and mixed cancellation response.
+- This engineering change did not deploy, mutate an external account, or alter
+  the retained ambiguous Tiny Live run. Any future operational use still needs
+  a separately reviewed deployment and explicit authorization.
 - All four Tiny Live Copy authorizations and entry-attempt capacity are
   consumed. Any future Live run requires a new explicit owner authorization,
   new Run ID, exact green commit, zero-mutation Shadow, and all readiness gates.
@@ -240,14 +247,6 @@ evidence.
 
 ## Single recommended next task
 
-**Implement only the bounded cancellation-confirmation and SDK response-contract
-repair under deterministic tests and zero-mutation validation.** Preserve the
-existing fail-closed result whenever open-order, trade, position, timeout, or
-SDK evidence is ambiguous. Do not deploy, reconcile the retained run, or create
-a new Live authorization during that engineering task.
-
-In parallel or afterward, the broader non-Live recommendation remains:
-
 **Start a historical-data and strategy-validation slice for BTC Up/Down
 15-minute markets.** Define data-quality gates, acquire and validate a
 reproducible historical dataset, and establish fee/slippage-aware benchmark and
@@ -255,10 +254,10 @@ backtest rules. Do not place live orders or expand platform architecture.
 
 ## Next three milestones
 
-1. Repair cancellation confirmation and the SDK terminal-order contract with
-   deterministic tests; stop without Live or external mutation.
-2. Acquire reproducible historical data and run realistic fee/slippage-aware
+1. Acquire reproducible historical data and run realistic fee/slippage-aware
    backtests against explicit baselines.
-3. Run a large Paper/Shadow sample with promotion gates. Consider any new
+2. Run a large Paper/Shadow sample with promotion gates. Consider any new
    Tiny-Live test only after the safety repair, statistical evidence, and a new
    explicit owner authorization.
+3. Add branch protection and encrypted off-host backup through separate
+   governance and operational tasks.

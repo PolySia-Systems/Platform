@@ -194,6 +194,11 @@ seconds in the future. PolySia therefore cancels and confirms the entry at the
 90-second operational TTL, while allowing a 185-second venue GTD backstop only
 when that backstop still expires before the final-entry cutoff. Signals that
 cannot satisfy both constraints are skipped. Do not weaken either boundary.
+Cancellation confirmation requires two consecutive complete observations over
+paginated open orders, explicit order detail, linked trades, and the recorded
+position baseline. Timeout, endpoint failure, `not_canceled`, persistent open
+state, or contradictory evidence stops fail safe. A durable pre-send marker
+prevents automatic cancellation resend after restart.
 
 Before launch, verify synchronized clean `main`, green CI for the exact commit,
 host NTP, official geoblock, sufficient collateral, no unrelated open order or

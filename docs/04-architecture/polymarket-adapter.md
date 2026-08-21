@@ -35,20 +35,26 @@ order-type, market, geoblock, rate-limit, clock, SDK, server, timeout, and
 unknown failures. Credentials, signatures, keys, tokens, and sensitive request
 payloads are never included.
 
-## Verified cancellation limitation
+## Cancellation finality boundary
 
 Tiny Live Copy run four proved that a single immediate authenticated
 open-order read may not confirm a just-requested cancellation even when later
 reads show no open order or fill. The runtime correctly stopped `FAILED_SAFE`.
-A future repair must use a bounded read-only confirmation window across open
-orders, trades, and positions and must preserve ambiguity on timeout or
-inconsistent evidence.
+The CURRENT repair retains that historical evidence and replaces the unsafe
+single-read conclusion with a venue-neutral execution gate. The adapter maps
+fully paginated open orders, explicit 404-versus-error detail, order-linked
+trades, positions, and cancellation acknowledgements into canonical contracts.
+SDK models do not cross this boundary.
 
-The current SDK terminal order-detail response also has a verified `OpenOrder`
-contract mismatch. Do not treat that endpoint as definitive terminal-state
-evidence until the adapter contract and tests are repaired. The sanitized
+Before the external mutation, the gate persists a marker that means the send
+may have occurred. It sends at most once, never automatically resends after a
+restart, and performs only bounded reads afterward. `CONFIRMED_NO_FILL`
+requires at least two consecutive complete observations; delayed/full/partial
+fills, persistent open state, `not_canceled`, malformed evidence, endpoint
+failure, timeout, and contradiction remain explicit terminal or fail-safe
+outcomes. The sanitized
 [fourth-run diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md)
-contains the evidence and bounded recommendation.
+remains historical evidence and was not retroactively modified.
 
 ## SDK contract
 
@@ -58,6 +64,11 @@ SDK methods used by the public, secure, streaming, and reconciliation
 boundaries, signer/private-key and funder/wallet creation inputs, and the
 `condition_id` compatibility surface introduced before the stable 0.x
 releases. SDK objects remain confined to the adapter boundary.
+
+Contract fixtures also parse a representative official `OpenOrder` payload and
+a mixed `CancelOrdersResponse`. Only a verified HTTP 404 maps to not found;
+unexpected or malformed order-detail responses retain actionable sanitized
+error context.
 
 Any future upgrade requires a focused contract, lock, security, CI, and
 rollback change. To restore 0.2.0, revert the 0.6.0 migration as one unit and
