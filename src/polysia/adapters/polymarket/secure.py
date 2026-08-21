@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from polymarket import (
     AsyncSecureClient,
@@ -20,6 +20,13 @@ from polysia.adapters.polymarket.diagnostics import (
     PolymarketErrorDiagnostic,
     ReadRetryPolicy,
     classify_polymarket_error,
+)
+from polysia.application.ports.cancellation import (
+    CancellationResponse,
+    OpenOrderEvidence,
+    OrderDetailEvidence,
+    OrderLookupStatus,
+    OrderTradeEvidence,
 )
 from polysia.config.structured_logging import get_logger
 from polysia.domain.market import VenueCapabilityProfile
@@ -224,13 +231,12 @@ class PolymarketSecureAdapter:
         order_id: str | None = None,
         market: str | None = None,
     ) -> list[Any]:
-        """Return one page of open orders from the authenticated account."""
+        """Return every matching open order from the authenticated account."""
         client = self._require_client()
 
         async def read() -> list[Any]:
             paginator = client.list_open_orders(token_id=token_id, id=order_id, market=market)
-            page = await paginator.first_page()
-            return list(page.items)
+            return [order async for order in paginator.iter_items()]
 
         try:
             return await self._run_read("get_open_orders", read)
@@ -268,19 +274,113 @@ class PolymarketSecureAdapter:
                 order_id=order_id,
             ) from error
         except UnexpectedResponseError as error:
-            diagnostic = classify_polymarket_error("get_order", error)
-            self._logger.info(
-                "polymarket_secure_order_detail_unavailable",
-                **diagnostic.to_dict(),
+            raise self._adapter_error(
+                "get_order",
+                "Polymarket order detail was unavailable or malformed.",
+                error,
                 order_id=order_id,
-            )
-            return None
+            ) from error
         except PolymarketError as error:
             raise self._adapter_error(
                 "get_order",
                 "Could not fetch Polymarket order.",
                 error,
                 order_id=order_id,
+            ) from error
+
+    async def observe_open_orders(
+        self,
+        *,
+        order_id: str | None = None,
+    ) -> tuple[OpenOrderEvidence, ...]:
+        """Map every matching SDK open order into the cancellation evidence contract."""
+
+        try:
+            orders = await self.get_open_orders(order_id=order_id)
+            return tuple(_order_evidence(order) for order in orders)
+        except PolymarketSecureAdapterError:
+            raise
+        except (TypeError, ValueError) as error:
+            raise PolymarketSecureAdapterError(
+                "Polymarket open-order evidence was malformed."
+            ) from error
+
+    async def observe_order_detail(self, *, order_id: str) -> OrderDetailEvidence:
+        """Return an explicit found or verified-404 order-detail result."""
+
+        order = await self.get_order(order_id=order_id)
+        if order is None:
+            return OrderDetailEvidence(status=OrderLookupStatus.NOT_FOUND)
+        try:
+            return OrderDetailEvidence(
+                status=OrderLookupStatus.FOUND,
+                order=_order_evidence(order),
+            )
+        except (TypeError, ValueError) as error:
+            raise PolymarketSecureAdapterError(
+                "Polymarket order-detail evidence was malformed."
+            ) from error
+
+    async def observe_order_trades(
+        self,
+        *,
+        order_id: str,
+        token_id: str,
+    ) -> tuple[OrderTradeEvidence, ...]:
+        """Map all account trades linked to one order into canonical contributions."""
+
+        trades = await self.list_account_trades(token_id=token_id)
+        evidence: list[OrderTradeEvidence] = []
+        try:
+            for trade in trades:
+                trade_id = _required_text(trade, "id")
+                status = _required_text(trade, "status").upper()
+                if _optional_text(_field(trade, "taker_order_id")) == order_id:
+                    evidence.append(
+                        OrderTradeEvidence(
+                            evidence_id=f"{trade_id}:taker",
+                            order_id=order_id,
+                            token_id=token_id,
+                            status=status,
+                            size=_required_decimal(trade, "size"),
+                            price=_required_decimal(trade, "price"),
+                        )
+                    )
+                for index, maker in enumerate(_object_sequence(_field(trade, "maker_orders"))):
+                    if _optional_text(_field(maker, "order_id")) != order_id:
+                        continue
+                    evidence.append(
+                        OrderTradeEvidence(
+                            evidence_id=f"{trade_id}:maker:{index}",
+                            order_id=order_id,
+                            token_id=token_id,
+                            status=status,
+                            size=_required_decimal(maker, "matched_amount"),
+                            price=_required_decimal(maker, "price"),
+                        )
+                    )
+        except (TypeError, ValueError) as error:
+            raise PolymarketSecureAdapterError(
+                "Polymarket order-linked trade evidence was malformed."
+            ) from error
+        return tuple(evidence)
+
+    async def observe_position_size(self, *, token_id: str) -> Decimal:
+        """Return the canonical current position size for one token."""
+
+        positions = await self.list_positions(size_threshold=0)
+        try:
+            return sum(
+                (
+                    _required_decimal(position, "size")
+                    for position in positions
+                    if _required_text(position, "token_id") == token_id
+                ),
+                Decimal("0"),
+            )
+        except (TypeError, ValueError) as error:
+            raise PolymarketSecureAdapterError(
+                "Polymarket position evidence was malformed."
             ) from error
 
     async def get_market(
@@ -430,6 +530,11 @@ class PolymarketSecureAdapter:
                 order_id=order_id,
             ) from error
 
+    async def cancel_order_for_finality(self, *, order_id: str) -> CancellationResponse:
+        """Cancel one order and map the SDK acknowledgement at the adapter boundary."""
+
+        return _cancellation_response(await self.cancel_order(order_id=order_id))
+
     async def cancel_market_orders(
         self,
         *,
@@ -461,6 +566,11 @@ class PolymarketSecureAdapter:
                 "Could not execute Polymarket emergency cancel-all.",
                 error,
             ) from error
+
+    async def cancel_all_for_finality(self) -> CancellationResponse:
+        """Cancel all account orders and map the SDK acknowledgement."""
+
+        return _cancellation_response(await self.cancel_all())
 
     async def place_limit_order(
         self,
@@ -694,3 +804,79 @@ def _signature_type_for_wallet_type(wallet_type: str | None) -> int | None:
         "GNOSIS_SAFE": 2,
         "DEPOSIT_WALLET": 3,
     }.get(wallet_type)
+
+
+def _order_evidence(value: object) -> OpenOrderEvidence:
+    side = _required_text(value, "side").upper()
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("order side is unsupported")
+    associated = _object_sequence(_field(value, "associate_trades"))
+    return OpenOrderEvidence(
+        order_id=_required_text(value, "id"),
+        token_id=_required_text(value, "token_id", alias="asset_id"),
+        side=cast(OrderSide, side),
+        status=_required_text(value, "status").upper(),
+        original_size=_required_decimal(value, "original_size"),
+        matched_size=_required_decimal(value, "size_matched"),
+        associated_trade_ids=tuple(str(item) for item in associated),
+    )
+
+
+def _cancellation_response(value: object) -> CancellationResponse:
+    try:
+        canceled = _field(value, "canceled")
+        not_canceled = _field(value, "not_canceled")
+        if isinstance(canceled, (str, bytes)) or not isinstance(not_canceled, Mapping):
+            raise TypeError("invalid cancellation response collections")
+        return CancellationResponse(
+            canceled_order_ids=tuple(str(item) for item in _object_sequence(canceled)),
+            not_canceled={str(key): str(reason) for key, reason in not_canceled.items()},
+        )
+    except (TypeError, ValueError) as error:
+        raise PolymarketSecureAdapterError(
+            "Polymarket cancellation response was malformed."
+        ) from error
+
+
+def _field(value: object, name: str) -> object:
+    if isinstance(value, Mapping):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _object_sequence(value: object) -> tuple[object, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, Iterable):
+        raise TypeError("value must be a non-string sequence")
+    return tuple(value)
+
+
+def _required_text(value: object, name: str, *, alias: str | None = None) -> str:
+    raw = _field(value, name)
+    if raw is None and alias is not None:
+        raw = _field(value, alias)
+    text = _optional_text(raw)
+    if text is None:
+        raise ValueError(f"{name} is required")
+    return text
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
+def _required_decimal(value: object, name: str) -> Decimal:
+    raw = _field(value, name)
+    if isinstance(raw, bool) or raw is None:
+        raise ValueError(f"{name} must be a decimal value")
+    try:
+        result = Decimal(str(raw))
+    except ArithmeticError as error:
+        raise ValueError(f"{name} must be a decimal value") from error
+    if not result.is_finite():
+        raise ValueError(f"{name} must be a finite decimal value")
+    return result

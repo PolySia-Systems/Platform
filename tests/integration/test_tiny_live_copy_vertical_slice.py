@@ -13,6 +13,13 @@ from polysia.adapters.polymarket.geoblock import GeoblockStatus
 from polysia.adapters.polymarket.request_scheduling import (
     TradesSourceUnavailableError,
 )
+from polysia.application.ports.cancellation import (
+    CancellationResponse,
+    OpenOrderEvidence,
+    OrderDetailEvidence,
+    OrderLookupStatus,
+    OrderTradeEvidence,
+)
 from polysia.application.ports.copytrading import (
     LeaderInventorySnapshot,
     LeaderMarketMetadata,
@@ -33,6 +40,8 @@ from polysia.domain.market import (
     OrderBookLevel,
 )
 from polysia.execution.tiny_live_copy import TinyLiveCopyConfig, run_tiny_live_copy
+from polysia.storage.db import SQLiteDatabase
+from polysia.storage.repositories import LiveOrderCheckpointRepository
 
 NOW = datetime(2026, 7, 29, 12, tzinfo=UTC)
 CONDITION = "0x" + ("a" * 64)
@@ -259,6 +268,45 @@ class ExecutionPort:
     async def get_order(self, *, order_id: str) -> Any | None:
         return {"id": order_id}
 
+    async def observe_open_orders(
+        self,
+        *,
+        order_id: str | None = None,
+    ) -> tuple[OpenOrderEvidence, ...]:
+        orders = await self.get_open_orders(order_id=order_id)
+        return tuple(
+            OpenOrderEvidence(
+                order_id=str(order["id"]),
+                token_id=str(order["token_id"]),
+                side="BUY" if order["id"] == "entry" else "SELL",
+                status="LIVE",
+                original_size=Decimal("5"),
+                matched_size=Decimal("0"),
+            )
+            for order in orders
+        )
+
+    async def observe_order_detail(self, *, order_id: str) -> OrderDetailEvidence:
+        open_orders = await self.get_open_orders(order_id=order_id)
+        if open_orders:
+            return OrderDetailEvidence(
+                status=OrderLookupStatus.FOUND,
+                order=(await self.observe_open_orders(order_id=order_id))[0],
+            )
+        trades = await self.observe_order_trades(order_id=order_id, token_id=TOKEN)
+        matched_size = sum((trade.size for trade in trades), Decimal("0"))
+        return OrderDetailEvidence(
+            status=OrderLookupStatus.FOUND,
+            order=OpenOrderEvidence(
+                order_id=order_id,
+                token_id=TOKEN,
+                side="BUY" if order_id == "entry" else "SELL",
+                status="CANCELED",
+                original_size=Decimal("5"),
+                matched_size=matched_size,
+            ),
+        )
+
     async def list_positions(self, **kwargs: Any) -> list[Any]:
         if not self.entry_submitted:
             return []
@@ -281,6 +329,39 @@ class ExecutionPort:
                 "taker_order_id": "other",
             }
         ]
+
+    async def observe_order_trades(
+        self,
+        *,
+        order_id: str,
+        token_id: str,
+    ) -> tuple[OrderTradeEvidence, ...]:
+        evidence: list[OrderTradeEvidence] = []
+        for index, trade in enumerate(await self.list_account_trades(token_id=token_id)):
+            for maker_index, maker in enumerate(trade.get("maker_orders", ())):
+                if maker.get("order_id") != order_id:
+                    continue
+                evidence.append(
+                    OrderTradeEvidence(
+                        evidence_id=f"trade-{index}:maker:{maker_index}",
+                        order_id=order_id,
+                        token_id=token_id,
+                        status=str(trade["status"]),
+                        size=Decimal(str(maker["matched_amount"])),
+                        price=Decimal(str(maker["price"])),
+                    )
+                )
+        return tuple(evidence)
+
+    async def observe_position_size(self, *, token_id: str) -> Decimal:
+        return sum(
+            (
+                Decimal(str(position["size"]))
+                for position in await self.list_positions(size_threshold=0)
+                if str(position["token_id"]) == token_id
+            ),
+            Decimal("0"),
+        )
 
     async def place_limit_order(self, **kwargs: Any) -> dict[str, object]:
         self.limit_calls.append(dict(kwargs))
@@ -319,6 +400,15 @@ class ExecutionPort:
         self.entry_open = False
         self.exit_open = False
         return {"cancelled": True}
+
+    async def cancel_order_for_finality(self, *, order_id: str) -> CancellationResponse:
+        await self.cancel_order(order_id=order_id)
+        return CancellationResponse((order_id,), {})
+
+    async def cancel_all_for_finality(self) -> CancellationResponse:
+        order_ids = tuple(str(order["id"]) for order in await self.get_open_orders())
+        await self.cancel_all()
+        return CancellationResponse(order_ids, {})
 
     async def probe_user_stream(self, *, market: str | None = None) -> None:
         del market
@@ -1426,6 +1516,14 @@ async def test_fixture_dry_run_records_one_unfilled_attempt_and_resumes_capacity
     assert report.current_order_or_fill_exists is False
     assert report.state == "MONITORING"
     assert any(decision["action"] == "ENTRY_UNFILLED_CANCELLED" for decision in report.decisions)
+    with SQLiteDatabase(tmp_path / "state.sqlite3") as database:
+        checkpoints = LiveOrderCheckpointRepository(database.connection).list_for_run(
+            "tiny-live-copy-20260729T120004Z"
+        )
+    finality = next(
+        item for item in checkpoints if str(item["phase"]).startswith("cancellation_finality:")
+    )
+    assert finality["payload"]["outcome"] == "CONFIRMED_NO_FILL"  # type: ignore[index]
     assert execution.limit_calls[0]["side"] == "BUY"
     assert source.read_purposes.count(LeaderReadPurpose.DISCOVERY) == 96
     assert source.read_purposes.count(LeaderReadPurpose.SELECTED_LEADER) > 0
