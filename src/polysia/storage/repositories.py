@@ -529,10 +529,7 @@ class StrategyRegistryRepository:
             ORDER BY strategy_id, version
             """
         ).fetchall()
-        return [
-            StrategyDefinition.model_validate_json(str(row["definition_json"]))
-            for row in rows
-        ]
+        return [StrategyDefinition.model_validate_json(str(row["definition_json"])) for row in rows]
 
     def update_lifecycle(
         self,
@@ -796,6 +793,58 @@ class LiveOrderCheckpointRepository:
                     _datetime_to_text(persisted_at),
                 ),
             )
+
+    def insert_if_absent(
+        self,
+        *,
+        run_id: str,
+        phase: str,
+        client_order_id: str,
+        venue_order_id: str | None,
+        payload: Mapping[str, Any],
+        persisted_at: datetime,
+    ) -> bool:
+        """Insert a durable boundary marker without replacing prior evidence."""
+
+        with transaction(self._connection) as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO live_order_checkpoints (
+                    run_id, phase, client_order_id, venue_order_id,
+                    payload_json, persisted_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    phase,
+                    client_order_id,
+                    venue_order_id,
+                    _json_dumps(dict(payload)),
+                    _datetime_to_text(persisted_at),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def get(self, *, run_id: str, phase: str) -> dict[str, object] | None:
+        """Return one durable checkpoint by its run and phase identity."""
+
+        row = self._connection.execute(
+            """
+            SELECT * FROM live_order_checkpoints
+            WHERE run_id = ? AND phase = ?
+            """,
+            (run_id, phase),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "client_order_id": str(row["client_order_id"]),
+            "payload": _json_loads(str(row["payload_json"])),
+            "persisted_at": str(row["persisted_at"]),
+            "phase": str(row["phase"]),
+            "run_id": str(row["run_id"]),
+            "venue_order_id": _optional_str(row["venue_order_id"]),
+        }
 
     def list_for_run(self, run_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(

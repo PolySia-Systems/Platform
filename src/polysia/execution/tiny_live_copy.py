@@ -36,6 +36,11 @@ from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapter,
     PolymarketSecureAdapterError,
 )
+from polysia.application.ports.cancellation import (
+    CancellationEvidencePort,
+    CancellationResponse,
+    OpenOrderEvidence,
+)
 from polysia.application.ports.copytrading import (
     LeaderMarketMetadata,
     LeaderReadPurpose,
@@ -62,8 +67,16 @@ from polysia.domain.copytrading.live_experiment import (
     MAXIMUM_EXPERIMENT_ENTRY_COST,
     MAXIMUM_TOTAL_ENTRY_ATTEMPTS,
     TERMINAL_STATES,
+    CopyExperimentSnapshot,
 )
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
+from polysia.execution.cancellation_finality import (
+    CancellationFinalityGate,
+    CancellationFinalityOutcome,
+    CancellationFinalityResult,
+    CancellationTarget,
+    cancellation_operation_id,
+)
 from polysia.execution.intents import OrderIntent
 from polysia.execution.live_broker import (
     LiveBroker,
@@ -79,6 +92,7 @@ from polysia.storage.copytrading import (
     CopyExperimentRepository,
 )
 from polysia.storage.db import SQLiteDatabase
+from polysia.storage.repositories import LiveOrderCheckpointRepository
 from polysia.strategies.btc_15m_favorite_take_profit import (
     Btc15mFavoriteTakeProfitStrategy,
 )
@@ -129,7 +143,7 @@ class CopyMarketPort(Protocol):
     async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot: ...
 
 
-class CopyExecutionPort(Protocol):
+class CopyExecutionPort(CancellationEvidencePort, Protocol):
     @property
     def is_connected(self) -> bool: ...
 
@@ -215,6 +229,10 @@ class CopyExecutionPort(Protocol):
     async def cancel_order(self, *, order_id: str) -> Any: ...
 
     async def cancel_all(self) -> Any: ...
+
+    async def cancel_order_for_finality(self, *, order_id: str) -> CancellationResponse: ...
+
+    async def cancel_all_for_finality(self) -> CancellationResponse: ...
 
     async def probe_user_stream(self, *, market: str | None = None) -> None: ...
 
@@ -472,6 +490,7 @@ async def run_tiny_live_copy(
 
     with SQLiteDatabase(config.database_path) as database:
         repository = CopyExperimentRepository(database.connection)
+        finality_checkpoints = LiveOrderCheckpointRepository(database.connection)
         existing = repository.get(config.run_id)
         runtime_authorization_id = (
             f"{DRY_RUN_AUTHORIZATION_PREFIX}{config.run_id}"
@@ -538,6 +557,8 @@ async def run_tiny_live_copy(
                     run_id=config.run_id,
                     report=report,
                     clock=clock,
+                    sleeper=sleeper,
+                    finality_checkpoints=finality_checkpoints,
                 )
                 report.classification = "FAILED_SAFE"
                 report.stop_reason = "restarted failed-safe run reconciled without new action"
@@ -558,8 +579,12 @@ async def run_tiny_live_copy(
                 repository=repository,
                 market_port=active_market_port,
                 execution_port=active_execution_port,
+                geoblock_port=active_geoblock,
+                kill_switch=active_kill_switch,
                 runtime=runtime,
                 clock=clock,
+                sleeper=sleeper,
+                finality_checkpoints=finality_checkpoints,
             )
             if existing is not None and repository.release_orphaned_signal_reservation(
                 config.run_id
@@ -608,6 +633,7 @@ async def run_tiny_live_copy(
                 runtime=runtime,
                 clock=clock,
                 sleeper=sleeper,
+                finality_checkpoints=finality_checkpoints,
             )
         except asyncio.CancelledError:
             await _emergency_cancel_if_needed(
@@ -616,6 +642,8 @@ async def run_tiny_live_copy(
                 run_id=config.run_id,
                 report=report,
                 clock=clock,
+                sleeper=sleeper,
+                finality_checkpoints=finality_checkpoints,
             )
             raise
         except Exception as error:
@@ -635,6 +663,8 @@ async def run_tiny_live_copy(
                 run_id=config.run_id,
                 report=report,
                 clock=clock,
+                sleeper=sleeper,
+                finality_checkpoints=finality_checkpoints,
             )
         finally:
             if active_execution_port.is_connected:
@@ -831,6 +861,7 @@ async def _monitor(
     runtime: _Runtime,
     clock: Clock,
     sleeper: Sleeper,
+    finality_checkpoints: LiveOrderCheckpointRepository,
 ) -> None:
     cycles = 0
     while True:
@@ -881,6 +912,8 @@ async def _monitor(
                 repository=repository,
                 runtime=runtime,
                 clock=clock,
+                sleeper=sleeper,
+                finality_checkpoints=finality_checkpoints,
                 cancel_pending_for_leader_close=False,
             )
             runtime.report.active_management_priority_cycles += 1
@@ -977,6 +1010,8 @@ async def _monitor(
                         repository=repository,
                         runtime=runtime,
                         clock=clock,
+                        sleeper=sleeper,
+                        finality_checkpoints=finality_checkpoints,
                         cancel_pending_for_leader_close=True,
                     )
                 elif leader_closed and refreshed.position_size > 0:
@@ -989,6 +1024,8 @@ async def _monitor(
                         repository=repository,
                         runtime=runtime,
                         clock=clock,
+                        sleeper=sleeper,
+                        finality_checkpoints=finality_checkpoints,
                     )
         else:
             discovery = repository.discovery_state(config.run_id)
@@ -1818,6 +1855,8 @@ async def _manage_active(
     repository: CopyExperimentRepository,
     runtime: _Runtime,
     clock: Clock,
+    sleeper: Sleeper,
+    finality_checkpoints: LiveOrderCheckpointRepository,
     cancel_pending_for_leader_close: bool = False,
 ) -> None:
     snapshot = repository.get(config.run_id)
@@ -1832,56 +1871,55 @@ async def _manage_active(
                 settings=config.settings,
             )
         except Exception:
-            await execution_port.cancel_order(order_id=snapshot.entry_order_id)
-            await _confirm_not_open(execution_port, snapshot.entry_order_id)
-            repository.record_no_fill(
-                run_id=config.run_id,
-                attempt_number=(runtime.active_attempt_number or snapshot.total_entry_attempts),
-                updated_at=now,
-                signal_window_open=False,
-            )
-            raise
-        fill_size, fill_price = await _confirmed_fill(
-            execution_port,
-            order_id=snapshot.entry_order_id,
-            token_id=runtime.active_token_id,
-        )
-        if fill_size > 0:
-            await execution_port.cancel_order(order_id=snapshot.entry_order_id)
-            await _confirm_not_open(execution_port, snapshot.entry_order_id)
-            position_size = await _account_position(
-                execution_port,
-                runtime.active_token_id,
-            )
-            if position_size <= 0 or position_size > fill_size:
-                raise TinyLiveCopyError("partial/full fill position reconciliation failed")
-            attempt_number = runtime.active_attempt_number or snapshot.total_entry_attempts
-            if runtime.active_market is None:
-                raise TinyLiveCopyError("active market is unavailable after fill")
-            entry_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
-                runtime.active_market,
-                price=fill_price,
-                size=position_size,
-            )
-            repository.record_fill(
-                run_id=config.run_id,
-                attempt_number=attempt_number,
-                position_size=position_size,
-                fill_price=fill_price,
-                entry_fee=entry_fee,
-                updated_at=now,
-            )
-            runtime.active_fill_size = position_size
-            runtime.active_fill_price = fill_price
-            runtime.active_entry_fee = entry_fee
-            await _place_take_profit(
+            result = await _cancel_entry_with_finality(
                 config,
+                execution_port=execution_port,
+                checkpoints=finality_checkpoints,
+                snapshot=snapshot,
+                clock=clock,
+                sleeper=sleeper,
+            )
+            await _apply_entry_finality(
+                config,
+                result=result,
                 execution_port=execution_port,
                 market_port=market_port,
                 geoblock_port=geoblock_port,
                 kill_switch=kill_switch,
                 repository=repository,
                 runtime=runtime,
+                snapshot=snapshot,
+                signal_window_open=False,
+                place_take_profit=False,
+                clock=clock,
+            )
+            raise
+        fill_size, _ = await _confirmed_fill(
+            execution_port,
+            order_id=snapshot.entry_order_id,
+            token_id=runtime.active_token_id,
+        )
+        if fill_size > 0:
+            result = await _cancel_entry_with_finality(
+                config,
+                execution_port=execution_port,
+                checkpoints=finality_checkpoints,
+                snapshot=snapshot,
+                clock=clock,
+                sleeper=sleeper,
+            )
+            await _apply_entry_finality(
+                config,
+                result=result,
+                execution_port=execution_port,
+                market_port=market_port,
+                geoblock_port=geoblock_port,
+                kill_switch=kill_switch,
+                repository=repository,
+                runtime=runtime,
+                snapshot=snapshot,
+                signal_window_open=False,
+                place_take_profit=True,
                 clock=clock,
             )
             return
@@ -1890,15 +1928,31 @@ async def _manage_active(
             or runtime.active_cancel_at is None
             or now >= runtime.active_cancel_at
         ):
-            await execution_port.cancel_order(order_id=snapshot.entry_order_id)
-            await _confirm_not_open(execution_port, snapshot.entry_order_id)
-            attempt_number = runtime.active_attempt_number or snapshot.total_entry_attempts
-            repository.record_no_fill(
-                run_id=config.run_id,
-                attempt_number=attempt_number,
-                updated_at=now,
-                signal_window_open=now < runtime.report.signal_window_end,
+            result = await _cancel_entry_with_finality(
+                config,
+                execution_port=execution_port,
+                checkpoints=finality_checkpoints,
+                snapshot=snapshot,
+                clock=clock,
+                sleeper=sleeper,
             )
+            attempt_number = runtime.active_attempt_number or snapshot.total_entry_attempts
+            filled = await _apply_entry_finality(
+                config,
+                result=result,
+                execution_port=execution_port,
+                market_port=market_port,
+                geoblock_port=geoblock_port,
+                kill_switch=kill_switch,
+                repository=repository,
+                runtime=runtime,
+                snapshot=snapshot,
+                signal_window_open=now < runtime.report.signal_window_end,
+                place_take_profit=True,
+                clock=clock,
+            )
+            if filled:
+                return
             runtime.report.decisions.append(
                 {
                     "action": (
@@ -1922,13 +1976,17 @@ async def _manage_active(
         exit_price = Decimal("0")
         exit_fee = Decimal("0")
         if snapshot.exit_order_id is not None:
-            exit_size, observed_exit_price = await _confirmed_fill(
-                execution_port,
-                order_id=snapshot.exit_order_id,
-                token_id=runtime.active_token_id,
+            result = await _cancel_exit_with_finality(
+                config,
+                execution_port=execution_port,
+                checkpoints=finality_checkpoints,
+                snapshot=snapshot,
+                clock=clock,
+                sleeper=sleeper,
             )
-            if exit_size > 0:
-                exit_price = observed_exit_price
+            if result.outcome is CancellationFinalityOutcome.FULL_FILL_DETECTED:
+                exit_size = result.fill_size
+                exit_price = result.fill_price
                 if runtime.active_market is None:
                     raise TinyLiveCopyError("active market is unavailable at exit")
                 exit_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
@@ -1936,8 +1994,10 @@ async def _manage_active(
                     price=exit_price,
                     size=exit_size,
                 )
-            await execution_port.cancel_order(order_id=snapshot.exit_order_id)
-            await _confirm_not_open(execution_port, snapshot.exit_order_id)
+            else:
+                raise TinyLiveCopyError(
+                    f"closed-position exit finality remained {result.outcome.value.lower()}"
+                )
         if exit_size == snapshot.position_size and runtime.active_fill_price is not None:
             gross_pnl, net_pnl = calculate_realized_pnl(
                 entry_price=runtime.active_fill_price,
@@ -1977,8 +2037,18 @@ async def _manage_active(
         market_end = _aware(runtime.active_market.end_date)
         if now >= market_end:
             if snapshot.exit_order_id is not None:
-                await execution_port.cancel_order(order_id=snapshot.exit_order_id)
-                await _confirm_not_open(execution_port, snapshot.exit_order_id)
+                result = await _cancel_exit_with_finality(
+                    config,
+                    execution_port=execution_port,
+                    checkpoints=finality_checkpoints,
+                    snapshot=snapshot,
+                    clock=clock,
+                    sleeper=sleeper,
+                )
+                if result.outcome is not CancellationFinalityOutcome.CONFIRMED_NO_FILL:
+                    raise TinyLiveCopyError(
+                        f"resolution exit finality remained {result.outcome.value.lower()}"
+                    )
                 repository.clear_exit_order(
                     run_id=config.run_id,
                     state=CopyExperimentState.AWAITING_RESOLUTION,
@@ -2141,6 +2211,8 @@ async def _handle_leader_close(
     repository: CopyExperimentRepository,
     runtime: _Runtime,
     clock: Clock,
+    sleeper: Sleeper,
+    finality_checkpoints: LiveOrderCheckpointRepository,
 ) -> None:
     snapshot = repository.get(config.run_id)
     assert snapshot is not None
@@ -2180,8 +2252,18 @@ async def _handle_leader_close(
         )
         return
     if snapshot.exit_order_id is not None:
-        await execution_port.cancel_order(order_id=snapshot.exit_order_id)
-        await _confirm_not_open(execution_port, snapshot.exit_order_id)
+        cancellation = await _cancel_exit_with_finality(
+            config,
+            execution_port=execution_port,
+            checkpoints=finality_checkpoints,
+            snapshot=snapshot,
+            clock=clock,
+            sleeper=sleeper,
+        )
+        if cancellation.outcome is not CancellationFinalityOutcome.CONFIRMED_NO_FILL:
+            raise TinyLiveCopyError(
+                f"leader-close exit finality remained {cancellation.outcome.value.lower()}"
+            )
         repository.clear_exit_order(
             run_id=config.run_id,
             state=CopyExperimentState.POSITION_OPEN,
@@ -2449,8 +2531,12 @@ async def _reconcile_restart(
     repository: CopyExperimentRepository,
     market_port: CopyMarketPort,
     execution_port: CopyExecutionPort,
+    geoblock_port: CopyGeoblockPort,
+    kill_switch: KillSwitch,
     runtime: _Runtime,
     clock: Clock,
+    sleeper: Sleeper,
+    finality_checkpoints: LiveOrderCheckpointRepository,
 ) -> None:
     snapshot = repository.get(config.run_id)
     assert snapshot is not None
@@ -2469,9 +2555,9 @@ async def _reconcile_restart(
         raise TinyLiveCopyError(
             "restart found an ambiguous entry submission; attempt remains consumed"
         )
-    entry_orders: list[Any] | None = None
+    entry_orders: tuple[OpenOrderEvidence, ...] | None = None
     if snapshot.entry_order_id is not None:
-        entry_orders = await execution_port.get_open_orders(order_id=snapshot.entry_order_id)
+        entry_orders = await execution_port.observe_open_orders(order_id=snapshot.entry_order_id)
         if len(entry_orders) > 1:
             raise TinyLiveCopyError("restart reconciliation found duplicate entry orders")
         runtime.active_attempt_number = snapshot.total_entry_attempts
@@ -2495,48 +2581,32 @@ async def _reconcile_restart(
                 price=snapshot.fill_price,
                 size=snapshot.position_size,
             )
-    if snapshot.entry_order_id is not None and entry_orders == []:
-        fill_size, fill_price = await _confirmed_fill(
-            execution_port,
-            order_id=snapshot.entry_order_id,
-            token_id=snapshot.active_token_id,
+    if snapshot.entry_order_id is not None and not entry_orders:
+        result = await _cancel_entry_with_finality(
+            config,
+            execution_port=execution_port,
+            checkpoints=finality_checkpoints,
+            snapshot=snapshot,
+            clock=clock,
+            sleeper=sleeper,
+            allow_new_mutation=False,
         )
-        if fill_size == 0:
-            repository.record_no_fill(
-                run_id=config.run_id,
-                attempt_number=snapshot.total_entry_attempts,
-                updated_at=_aware(clock()),
-                signal_window_open=(_aware(clock()) < repository.signal_window_end(config.run_id)),
-            )
+        filled = await _apply_entry_finality(
+            config,
+            result=result,
+            execution_port=execution_port,
+            market_port=market_port,
+            geoblock_port=geoblock_port,
+            kill_switch=kill_switch,
+            repository=repository,
+            runtime=runtime,
+            snapshot=snapshot,
+            signal_window_open=(_aware(clock()) < repository.signal_window_end(config.run_id)),
+            place_take_profit=False,
+            clock=clock,
+        )
+        if not filled:
             return
-        actual = await _account_position(execution_port, snapshot.active_token_id)
-        if actual <= 0 or actual > fill_size:
-            raise TinyLiveCopyError("restart entry-fill reconciliation failed")
-        repository.record_fill(
-            run_id=config.run_id,
-            attempt_number=snapshot.total_entry_attempts,
-            position_size=actual,
-            fill_price=fill_price,
-            entry_fee=(
-                Btc15mFavoriteTakeProfitStrategy.expected_fee(
-                    runtime.active_market,
-                    price=fill_price,
-                    size=actual,
-                )
-                if runtime.active_market is not None
-                else snapshot.entry_fee
-            ),
-            updated_at=_aware(clock()),
-        )
-        runtime.active_fill_price = fill_price
-        runtime.active_fill_size = actual
-        if runtime.active_market is None:
-            raise TinyLiveCopyError("restart market context is unavailable after fill")
-        runtime.active_entry_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
-            runtime.active_market,
-            price=fill_price,
-            size=actual,
-        )
         snapshot = repository.get(config.run_id)
         assert snapshot is not None
     if snapshot.position_size > 0:
@@ -2915,30 +2985,182 @@ async def _restore_source_circuit(
         )
 
 
+async def _cancel_entry_with_finality(
+    config: TinyLiveCopyConfig,
+    *,
+    execution_port: CopyExecutionPort,
+    checkpoints: LiveOrderCheckpointRepository,
+    snapshot: CopyExperimentSnapshot,
+    clock: Clock,
+    sleeper: Sleeper,
+    allow_new_mutation: bool = True,
+) -> CancellationFinalityResult:
+    order_id = snapshot.entry_order_id
+    token_id = snapshot.active_token_id
+    expected_size = snapshot.entry_quantity
+    if order_id is None or token_id is None or expected_size is None:
+        raise TinyLiveCopyError("entry cancellation evidence is incomplete")
+    operation_id = cancellation_operation_id(config.run_id, "entry", (order_id,))
+
+    async def cancel() -> CancellationResponse:
+        return await execution_port.cancel_order_for_finality(order_id=order_id)
+
+    result = await CancellationFinalityGate(
+        evidence_port=execution_port,
+        checkpoints=checkpoints,
+        run_id=config.run_id,
+        clock=clock,
+        sleeper=sleeper,
+    ).run(
+        operation_id=operation_id,
+        targets=(
+            CancellationTarget(
+                order_id=order_id,
+                token_id=token_id,
+                side="BUY",
+                expected_size=expected_size,
+            ),
+        ),
+        position_baselines={token_id: Decimal("0")},
+        mutation=cancel if allow_new_mutation else None,
+    )
+    return result
+
+
+async def _cancel_exit_with_finality(
+    config: TinyLiveCopyConfig,
+    *,
+    execution_port: CopyExecutionPort,
+    checkpoints: LiveOrderCheckpointRepository,
+    snapshot: CopyExperimentSnapshot,
+    clock: Clock,
+    sleeper: Sleeper,
+) -> CancellationFinalityResult:
+    order_id = snapshot.exit_order_id
+    token_id = snapshot.active_token_id
+    expected_size = snapshot.position_size
+    if order_id is None or token_id is None or expected_size <= 0:
+        raise TinyLiveCopyError("exit cancellation evidence is incomplete")
+    operation_id = cancellation_operation_id(config.run_id, "exit", (order_id,))
+
+    async def cancel() -> CancellationResponse:
+        return await execution_port.cancel_order_for_finality(order_id=order_id)
+
+    return await CancellationFinalityGate(
+        evidence_port=execution_port,
+        checkpoints=checkpoints,
+        run_id=config.run_id,
+        clock=clock,
+        sleeper=sleeper,
+    ).run(
+        operation_id=operation_id,
+        targets=(
+            CancellationTarget(
+                order_id=order_id,
+                token_id=token_id,
+                side="SELL",
+                expected_size=expected_size,
+            ),
+        ),
+        position_baselines={token_id: expected_size},
+        mutation=cancel,
+    )
+
+
+async def _apply_entry_finality(
+    config: TinyLiveCopyConfig,
+    *,
+    result: CancellationFinalityResult,
+    execution_port: CopyExecutionPort,
+    market_port: CopyMarketPort,
+    geoblock_port: CopyGeoblockPort,
+    kill_switch: KillSwitch,
+    repository: CopyExperimentRepository,
+    runtime: _Runtime,
+    snapshot: CopyExperimentSnapshot,
+    signal_window_open: bool,
+    place_take_profit: bool,
+    clock: Clock,
+) -> bool:
+    attempt_number = runtime.active_attempt_number or snapshot.total_entry_attempts
+    now = _aware(clock())
+    if result.outcome is CancellationFinalityOutcome.CONFIRMED_NO_FILL:
+        repository.record_no_fill(
+            run_id=config.run_id,
+            attempt_number=attempt_number,
+            updated_at=now,
+            signal_window_open=signal_window_open,
+        )
+        return False
+    if result.outcome not in {
+        CancellationFinalityOutcome.FULL_FILL_DETECTED,
+        CancellationFinalityOutcome.PARTIAL_FILL_DETECTED,
+    }:
+        raise TinyLiveCopyError(
+            f"entry cancellation finality remained {result.outcome.value.lower()}"
+        )
+    position_size = await _account_position(execution_port, snapshot.active_token_id)
+    if position_size <= 0 or position_size != result.fill_size:
+        raise TinyLiveCopyError("cancellation fill position reconciliation failed")
+    if runtime.active_market is None:
+        raise TinyLiveCopyError("active market is unavailable after cancellation fill")
+    entry_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
+        runtime.active_market,
+        price=result.fill_price,
+        size=position_size,
+    )
+    repository.record_fill(
+        run_id=config.run_id,
+        attempt_number=attempt_number,
+        position_size=position_size,
+        fill_price=result.fill_price,
+        entry_fee=entry_fee,
+        updated_at=now,
+    )
+    runtime.active_fill_size = position_size
+    runtime.active_fill_price = result.fill_price
+    runtime.active_entry_fee = entry_fee
+    runtime.report.decisions.append(
+        {
+            "action": result.outcome.value,
+            "attempt_number": attempt_number,
+            "cancellation_operation_id": result.operation_id,
+            "timestamp": now.isoformat(),
+        }
+    )
+    if place_take_profit:
+        await _place_take_profit(
+            config,
+            execution_port=execution_port,
+            market_port=market_port,
+            geoblock_port=geoblock_port,
+            kill_switch=kill_switch,
+            repository=repository,
+            runtime=runtime,
+            clock=clock,
+        )
+    return True
+
+
 async def _confirmed_fill(
     execution_port: CopyExecutionPort,
     *,
     order_id: str,
     token_id: str | None,
 ) -> tuple[Decimal, Decimal]:
-    trades = await execution_port.list_account_trades(token_id=token_id)
+    if token_id is None:
+        raise TinyLiveCopyError("token identity is required for order-linked fill evidence")
+    trades = await execution_port.observe_order_trades(
+        order_id=order_id,
+        token_id=token_id,
+    )
     size = Decimal("0")
     notional = Decimal("0")
     for trade in trades:
-        if str(_read(trade, "status", "")).upper() not in {"CONFIRMED", "MINED"}:
+        if trade.status.upper() != "CONFIRMED":
             continue
-        trade_price = _decimal(_read(trade, "price", "0"))
-        if str(_read(trade, "taker_order_id", "")) == order_id:
-            trade_size = _decimal(_read(trade, "size", "0"))
-            size += trade_size
-            notional += trade_size * trade_price
-        for maker in _read(trade, "maker_orders", ()) or ():
-            if str(_read(maker, "order_id", "")) != order_id:
-                continue
-            maker_size = _decimal(_read(maker, "matched_amount", "0"))
-            maker_price = _decimal(_read(maker, "price", trade_price))
-            size += maker_size
-            notional += maker_size * maker_price
+        size += trade.size
+        notional += trade.size * trade.price
     return size, (notional / size if size > 0 else Decimal("0"))
 
 
@@ -2957,14 +3179,6 @@ async def _account_position(
     )
 
 
-async def _confirm_not_open(
-    execution_port: CopyExecutionPort,
-    order_id: str,
-) -> None:
-    if await execution_port.get_open_orders(order_id=order_id):
-        raise TinyLiveCopyError("order cancellation was not confirmed")
-
-
 async def _emergency_cancel_if_needed(
     execution_port: CopyExecutionPort,
     *,
@@ -2972,24 +3186,74 @@ async def _emergency_cancel_if_needed(
     run_id: str,
     report: TinyLiveCopyReport,
     clock: Clock,
+    sleeper: Sleeper,
+    finality_checkpoints: LiveOrderCheckpointRepository,
 ) -> None:
     if not execution_port.is_connected:
         return
     try:
-        open_orders = await execution_port.get_open_orders()
+        open_orders = await execution_port.observe_open_orders()
         if not open_orders:
             report.emergency_cancel_status = "not_needed_no_open_orders"
             return
-        await execution_port.cancel_all()
-        if await execution_port.get_open_orders():
+        targets = tuple(
+            CancellationTarget(
+                order_id=order.order_id,
+                token_id=order.token_id,
+                side=order.side,
+                expected_size=order.remaining_size,
+                matched_size_baseline=order.matched_size,
+            )
+            for order in open_orders
+            if order.remaining_size > 0
+        )
+        if len(targets) != len(open_orders):
+            raise TinyLiveCopyError("emergency open-order evidence has an invalid remainder")
+        baselines = {
+            token_id: await execution_port.observe_position_size(token_id=token_id)
+            for token_id in sorted({target.token_id for target in targets})
+        }
+
+        async def cancel_all() -> CancellationResponse:
+            return await execution_port.cancel_all_for_finality()
+
+        operation_id = cancellation_operation_id(
+            run_id,
+            "emergency-all",
+            tuple(target.order_id for target in targets),
+        )
+        result = await CancellationFinalityGate(
+            evidence_port=execution_port,
+            checkpoints=finality_checkpoints,
+            run_id=run_id,
+            clock=clock,
+            sleeper=sleeper,
+        ).run(
+            operation_id=operation_id,
+            targets=targets,
+            position_baselines=baselines,
+            mutation=cancel_all,
+            account_wide=True,
+        )
+        if result.outcome not in {
+            CancellationFinalityOutcome.CONFIRMED_NO_FILL,
+            CancellationFinalityOutcome.FULL_FILL_DETECTED,
+            CancellationFinalityOutcome.PARTIAL_FILL_DETECTED,
+        }:
             report.emergency_cancel_status = "invoked_unconfirmed"
-            raise TinyLiveCopyError("emergency cancel-all was not confirmed")
+            raise TinyLiveCopyError(
+                f"emergency cancellation remained {result.outcome.value.lower()}"
+            )
         snapshot = repository.get(run_id)
         remaining = await _account_position(
             execution_port,
             None if snapshot is None else snapshot.active_token_id,
         )
-        report.emergency_cancel_status = "invoked_confirmed"
+        report.emergency_cancel_status = (
+            "invoked_confirmed"
+            if result.outcome is CancellationFinalityOutcome.CONFIRMED_NO_FILL
+            else "invoked_confirmed_fill_detected"
+        )
         repository.record_emergency_cancellation(
             run_id=run_id,
             remaining_position=remaining,

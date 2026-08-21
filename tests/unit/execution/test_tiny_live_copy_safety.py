@@ -9,6 +9,13 @@ from typing import Any
 import pytest
 
 from polysia.adapters.polymarket.geoblock import GeoblockStatus
+from polysia.application.ports.cancellation import (
+    CancellationResponse,
+    OpenOrderEvidence,
+    OrderDetailEvidence,
+    OrderLookupStatus,
+    OrderTradeEvidence,
+)
 from polysia.config.settings import AppSettings
 from polysia.domain.copytrading import CopyExperimentState
 from polysia.domain.market import (
@@ -28,6 +35,7 @@ from polysia.execution.tiny_live_copy import (
 from polysia.risk.kill_switch import KillSwitch
 from polysia.storage.copytrading import CopyExperimentRepository
 from polysia.storage.db import SQLiteDatabase
+from polysia.storage.repositories import LiveOrderCheckpointRepository
 
 NOW = datetime(2026, 7, 29, 12, tzinfo=UTC)
 CONDITION = "0x" + ("a" * 64)
@@ -274,10 +282,54 @@ class _EmergencyExecution:
         del kwargs
         return [{"id": "open"}] if self.open else []
 
+    async def observe_open_orders(
+        self,
+        *,
+        order_id: str | None = None,
+    ) -> tuple[OpenOrderEvidence, ...]:
+        if not self.open or order_id not in {None, "open"}:
+            return ()
+        return (
+            OpenOrderEvidence(
+                order_id="open",
+                token_id=TOKEN,
+                side="BUY",
+                status="LIVE",
+                original_size=Decimal("5"),
+                matched_size=Decimal("0"),
+            ),
+        )
+
+    async def observe_order_detail(self, *, order_id: str) -> OrderDetailEvidence:
+        assert order_id == "open"
+        return OrderDetailEvidence(
+            status=OrderLookupStatus.FOUND,
+            order=OpenOrderEvidence(
+                order_id="open",
+                token_id=TOKEN,
+                side="BUY",
+                status="LIVE" if self.open else "CANCELED",
+                original_size=Decimal("5"),
+                matched_size=Decimal("0"),
+            ),
+        )
+
+    async def observe_order_trades(self, **kwargs: Any) -> tuple[OrderTradeEvidence, ...]:
+        del kwargs
+        return ()
+
+    async def observe_position_size(self, *, token_id: str) -> Decimal:
+        assert token_id == TOKEN
+        return Decimal("0")
+
     async def cancel_all(self) -> dict[str, bool]:
         self.cancel_calls += 1
         self.open = False
         return {"cancelled": True}
+
+    async def cancel_all_for_finality(self) -> CancellationResponse:
+        await self.cancel_all()
+        return CancellationResponse(("open",), {})
 
     async def list_positions(self, **kwargs: Any) -> list[Any]:
         del kwargs
@@ -303,12 +355,17 @@ async def test_emergency_cancel_all_is_confirmed_and_persisted(tmp_path: Path) -
         execution = _EmergencyExecution()
         report = SimpleNamespace(emergency_cancel_status="not_invoked")
 
+        async def no_sleep(seconds: float) -> None:
+            del seconds
+
         await _emergency_cancel_if_needed(
             execution,  # type: ignore[arg-type]
             repository=repository,
             run_id="tiny-live-copy-test",
             report=report,  # type: ignore[arg-type]
             clock=lambda: NOW,
+            sleeper=no_sleep,
+            finality_checkpoints=LiveOrderCheckpointRepository(database.connection),
         )
 
         snapshot = repository.get("tiny-live-copy-test")
@@ -316,6 +373,13 @@ async def test_emergency_cancel_all_is_confirmed_and_persisted(tmp_path: Path) -
         assert report.emergency_cancel_status == "invoked_confirmed"
         assert snapshot is not None
         assert snapshot.state is CopyExperimentState.FAILED_SAFE
+        checkpoints = LiveOrderCheckpointRepository(database.connection).list_for_run(
+            "tiny-live-copy-test"
+        )
+        finality = next(
+            item for item in checkpoints if str(item["phase"]).startswith("cancellation_finality:")
+        )
+        assert finality["payload"]["outcome"] == "CONFIRMED_NO_FILL"  # type: ignore[index]
 
 
 def test_copy_runtime_cannot_bypass_risk_or_execution() -> None:
