@@ -123,6 +123,15 @@ for canonical paths and the bounded flat-alias removal policy.
 
 ## Validation
 
+Run the fast, cross-platform pre-push check for immediate local feedback:
+
+```powershell
+python scripts/fast_check.py
+```
+
+This fail-fast command checks diffs, Standards, secrets, compilation, Ruff,
+Mypy, and environment integrity. It does not replace complete Pytest or CI.
+
 The repository quality gates are:
 
 ```powershell
