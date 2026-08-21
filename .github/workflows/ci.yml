@@ -193,7 +193,7 @@ jobs:
   supply-chain:
     needs: changes
     if: needs.changes.outputs.dependencies == 'true'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -203,13 +203,23 @@ jobs:
           cache: pip
           cache-dependency-path: locks/pip-py314.lock
       - run: python -m venv .audit-venv
-      - run: .\.audit-venv\Scripts\python.exe -m pip install --upgrade pip
-      - run: .\.audit-venv\Scripts\python.exe -m pip install -r locks/pip-py314.lock
-      - run: .\.audit-venv\Scripts\python.exe -m pip_audit --strict --vulnerability-service osv
-      - shell: pwsh
+      - run: .audit-venv/bin/python -m pip install --upgrade pip
+      - run: .audit-venv/bin/python -m pip install -r locks/pip-py314.lock
+      - run: .audit-venv/bin/python -m pip_audit --strict --vulnerability-service osv
+      - name: Generate SBOM
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
-          .\.audit-venv\Scripts\cyclonedx-py.exe environment --output-format JSON --output-file artifacts/sbom.json
+          mkdir -p artifacts
+          .audit-venv/bin/cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json
+      - name: Build compatibility wheel
+        run: .audit-venv/bin/python -m build
+      - name: Allowed-range compatibility smoke
+        shell: bash
+        run: |
+          python -m venv .compat-venv
+          .compat-venv/bin/python -m pip install dist/*.whl
+          .compat-venv/bin/python -m pip check
+          .compat-venv/bin/python -m polysia.cli --help
       - uses: actions/upload-artifact@v7
         with:
           name: polysia-sbom

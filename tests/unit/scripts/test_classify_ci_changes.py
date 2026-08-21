@@ -31,6 +31,7 @@ def test_source_tests_and_tooling_receive_distinct_risk_maps() -> None:
 def test_packaging_dependency_container_and_windows_changes_are_explicit() -> None:
     package = classify_paths(("pyproject.toml",))
     runtime_lock = classify_paths(("locks/pip-runtime-py314.lock",))
+    development_lock = classify_paths(("locks/pip-py314.lock",))
     deployment = classify_paths(("compose.yaml",))
     powershell = classify_paths(("scripts/operator-check.ps1",))
 
@@ -44,6 +45,8 @@ def test_packaging_dependency_container_and_windows_changes_are_explicit() -> No
         windows=True,
         comprehensive=False,
     )
+    assert development_lock.dependencies and development_lock.windows
+    assert development_lock.python and not development_lock.package
     assert deployment.container and not deployment.python
     assert powershell.windows and not powershell.python
 
