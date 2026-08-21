@@ -393,7 +393,7 @@ async def test_get_order_maps_venue_not_found_to_none(
 
 
 @pytest.mark.asyncio
-async def test_get_order_maps_unparseable_terminal_detail_to_none(
+async def test_get_order_rejects_unparseable_terminal_detail_with_sanitized_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class TerminalOrderClient(FakeSecureClient):
@@ -409,7 +409,117 @@ async def test_get_order_maps_unparseable_terminal_detail_to_none(
     adapter = PolymarketSecureAdapter(client_factory=factory)
     await adapter.connect()
 
-    assert await adapter.get_order(order_id="terminal-order") is None
+    with pytest.raises(PolymarketSecureAdapterError) as raised:
+        await adapter.get_order(order_id="terminal-order")
+
+    assert raised.value.diagnostic is not None
+    assert raised.value.diagnostic.operation == "get_order"
+    assert "terminal-order" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_evidence_maps_sdk_models_and_all_open_order_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order = SimpleNamespace(
+        id="order-1",
+        token_id="token-1",
+        side="BUY",
+        status="LIVE",
+        original_size=Decimal("5"),
+        size_matched=Decimal("1"),
+        associate_trades=("trade-1",),
+    )
+    second_order = SimpleNamespace(
+        id="order-2",
+        token_id="token-2",
+        side="SELL",
+        status="LIVE",
+        original_size=Decimal("3"),
+        size_matched=Decimal("0"),
+        associate_trades=(),
+    )
+
+    class MultiPagePaginator(FakePaginator):
+        async def first_page(self) -> SimpleNamespace:
+            return SimpleNamespace(items=(order,))
+
+    class EvidenceClient(FakeSecureClient):
+        def list_open_orders(self, **kwargs: Any) -> FakePaginator:
+            self.open_order_kwargs = kwargs
+            return MultiPagePaginator((order, second_order))
+
+        async def get_order(self, **kwargs: Any) -> SimpleNamespace:
+            self.get_order_kwargs = kwargs
+            return order
+
+        def list_account_trades(self, **kwargs: Any) -> FakePaginator:
+            self.trade_kwargs = kwargs
+            return FakePaginator(
+                (
+                    SimpleNamespace(
+                        id="trade-1",
+                        status="CONFIRMED",
+                        taker_order_id="order-1",
+                        size=Decimal("1"),
+                        price=Decimal("0.42"),
+                        maker_orders=(),
+                    ),
+                )
+            )
+
+        def list_positions(self, **kwargs: Any) -> FakePaginator:
+            self.position_kwargs = kwargs
+            return FakePaginator((SimpleNamespace(token_id="token-1", size=Decimal("1")),))
+
+    client = EvidenceClient()
+
+    async def factory(*, private_key: str, wallet: str | None) -> EvidenceClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(client_factory=factory)
+    await adapter.connect()
+
+    open_orders = await adapter.observe_open_orders()
+    detail = await adapter.observe_order_detail(order_id="order-1")
+    trades = await adapter.observe_order_trades(order_id="order-1", token_id="token-1")
+    position = await adapter.observe_position_size(token_id="token-1")
+
+    assert [item.order_id for item in open_orders] == ["order-1", "order-2"]
+    assert detail.order is not None
+    assert detail.order.remaining_size == Decimal("4")
+    assert trades[0].evidence_id == "trade-1:taker"
+    assert trades[0].size == Decimal("1")
+    assert position == Decimal("1")
+
+
+@pytest.mark.asyncio
+async def test_finality_cancellation_response_maps_canceled_and_not_canceled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeSecureClient()
+
+    async def cancel_order(**kwargs: Any) -> SimpleNamespace:
+        client.cancel_order_kwargs = kwargs
+        return SimpleNamespace(
+            canceled=("order-1",),
+            not_canceled={"order-2": "already matched"},
+        )
+
+    client.cancel_order = cancel_order  # type: ignore[method-assign]
+
+    async def factory(*, private_key: str, wallet: str | None) -> FakeSecureClient:
+        return client
+
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "test-private-key")
+    adapter = PolymarketSecureAdapter(client_factory=factory)
+    await adapter.connect()
+
+    response = await adapter.cancel_order_for_finality(order_id="order-1")
+
+    assert response.canceled_order_ids == ("order-1",)
+    assert response.not_canceled == {"order-2": "already matched"}
 
 
 def test_sanitize_order_request_redacts_sensitive_values() -> None:

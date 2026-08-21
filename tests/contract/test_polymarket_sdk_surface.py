@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import json
 from decimal import Decimal
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
 from polymarket import (
@@ -14,7 +16,10 @@ from polymarket import (
     UserInputError,
 )
 from polymarket.models.clob.account import ClobTrade, MakerOrder, OpenOrder
+from polymarket.models.clob.cancel import CancelOrdersResponse
 from polymarket.models.gamma.market import FeeSchedule, MarketState, MarketTrading
+
+FIXTURE = Path(__file__).with_name("fixtures") / "polymarket_order_cancellation_v0_6.json"
 
 
 def test_pinned_polymarket_sdk_version() -> None:
@@ -120,6 +125,35 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
         "enable_order_book",
         "end_date",
     } <= set(MarketState.model_fields)
+
+
+def test_open_order_wire_fixture_preserves_aliases_decimals_and_identifiers() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))["open_order"]
+
+    order = OpenOrder.model_validate(payload)
+
+    assert order.id == "0xorder123"
+    assert str(order.condition_id) == payload["market"]
+    assert str(order.market) == payload["market"]
+    assert str(order.token_id) == payload["asset_id"]
+    assert order.maker_address == payload["maker_address"]
+    assert order.price == Decimal("0.420000")
+    assert order.original_size == Decimal("10.500000")
+    assert order.size_matched == Decimal("2.250000")
+    assert order.associate_trades == ("trade-1",)
+    assert order.expires_at is None
+    assert order.created_at.tzinfo is not None
+
+
+def test_cancel_orders_response_fixture_preserves_mixed_results() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))["cancel_orders_response"]
+
+    response = CancelOrdersResponse.model_validate(payload)
+
+    assert tuple(str(order_id) for order_id in response.canceled) == ("0xorder123",)
+    assert {str(order_id): reason for order_id, reason in response.not_canceled.items()} == {
+        "0xorder456": "order is already matched"
+    }
 
 
 def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
