@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      validation_scope:
+        description: Validation breadth for a manual run
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - full
   schedule:
     - cron: "17 4 * * 1"
 
@@ -22,98 +31,57 @@ env:
 
 jobs:
   changes:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      quality: ${{ steps.filter.outputs.quality }}
       python: ${{ steps.filter.outputs.python }}
+      package: ${{ steps.filter.outputs.package }}
       container: ${{ steps.filter.outputs.container }}
       dependencies: ${{ steps.filter.outputs.dependencies }}
+      windows: ${{ steps.filter.outputs.windows }}
+      comprehensive: ${{ steps.filter.outputs.comprehensive }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
-        name: Classify changed paths
+        name: Classify validation scope
         shell: pwsh
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VALIDATION_SCOPE: ${{ inputs.validation_scope || 'auto' }}
         run: |
-          $base = $env:BASE_SHA
-          if ([string]::IsNullOrWhiteSpace($base) -or $base -match '^0+$') {
-            $base = git rev-parse "$env:GITHUB_SHA^"
-            if ($LASTEXITCODE -ne 0) {
-              throw "Unable to resolve a comparison base."
-            }
-          }
-
-          $files = @(git diff --name-only --diff-filter=ACMRTUXB $base $env:GITHUB_SHA)
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to classify changed paths."
-          }
-
-          function Test-PathGroup([string[]] $patterns) {
-            foreach ($file in $files) {
-              foreach ($pattern in $patterns) {
-                if ($file -like $pattern) {
-                  return $true
-                }
+          $eventName = $env:GITHUB_EVENT_NAME
+          $files = @()
+          if ($eventName -in @('pull_request', 'push')) {
+            $base = $env:BASE_SHA
+            if ([string]::IsNullOrWhiteSpace($base) -or $base -match '^0+$') {
+              $base = git rev-parse "$env:GITHUB_SHA^"
+              if ($LASTEXITCODE -ne 0) {
+                throw "Unable to resolve a comparison base."
               }
             }
-            return $false
+            $files = @(git diff --name-only --diff-filter=ACDMRTUXB $base $env:GITHUB_SHA)
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to classify changed paths."
+            }
           }
 
-          $python = Test-PathGroup @(
-            'src/*',
-            'tests/*',
-            'scripts/*',
-            'standards/*',
-            'pyproject.toml',
-            'environment.yml',
-            'locks/*',
-            'Makefile',
-            'Dockerfile',
-            'compose.yaml',
-            'docker-compose.yml',
-            '.dockerignore',
-            '.env.example',
-            'deploy/*',
-            '.pre-commit-config.yaml',
-            '.github/dependabot.yml',
-            '.github/workflows/*',
-            '.github/actions/*'
-          )
-          $container = Test-PathGroup @(
-            'src/*',
-            'Dockerfile',
-            'compose.yaml',
-            'docker-compose.yml',
-            '.dockerignore',
-            '.env.example',
-            'deploy/*',
-            'locks/*',
-            'pyproject.toml',
-            'environment.yml',
-            'Makefile'
-          )
-          $dependencies = Test-PathGroup @(
-            'pyproject.toml',
-            'environment.yml',
-            'locks/*',
-            'Dockerfile',
-            '.pre-commit-config.yaml',
-            '.github/workflows/*',
-            '.github/dependabot.yml'
-          )
-
-          "python=$($python.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "container=$($container.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "dependencies=$($dependencies.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          $output = $files | python scripts/classify_ci_changes.py `
+            --event $eventName `
+            --validation-scope $env:VALIDATION_SCOPE `
+            --format github-output
+          if ($LASTEXITCODE -ne 0) {
+            throw "CI change classification failed."
+          }
+          $output | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 
   quality:
     needs: changes
-    runs-on: windows-latest
-    timeout-minutes: 30
+    if: needs.changes.outputs.quality == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -122,39 +90,56 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+          cache-dependency-path: locks/pip-py314.lock
       - name: Diff and path/link checks
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python scripts/check_changed_docs.py --base "$env:BASE_SHA" --head "$env:GITHUB_SHA"
+        run: python scripts/check_changed_docs.py --base "$BASE_SHA" --head "$GITHUB_SHA"
       - name: Standards validation
         run: python scripts/validate_standards.py --mode full
-      - name: Secret scan
+      - name: Secret Scan
         env:
           PYTHONPATH: src
         run: python -m polysia.security.secret_scan
-      - if: needs.changes.outputs.python == 'true'
-        run: python -m pip install --upgrade pip
-      - if: needs.changes.outputs.python == 'true'
-        run: python -m pip install -r locks/pip-py314.lock
-      - if: needs.changes.outputs.python == 'true'
-        run: python -m pip install --no-deps -e .
-      - if: needs.changes.outputs.python == 'true'
+      - name: Install quality environment
+        if: needs.changes.outputs.python == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r locks/pip-py314.lock
+          python -m pip install --no-deps -e .
+      - name: Compile
+        if: needs.changes.outputs.python == 'true'
         run: python -m compileall -q src tests
-      - if: needs.changes.outputs.python == 'true'
+      - name: Ruff
+        if: needs.changes.outputs.python == 'true'
         run: python -m ruff check .
-      - if: needs.changes.outputs.python == 'true'
+      - name: Mypy
+        if: needs.changes.outputs.python == 'true'
         run: python -m mypy src
-      - if: needs.changes.outputs.python == 'true'
+      - name: Full Pytest
+        if: needs.changes.outputs.python == 'true'
         run: python -m pytest -q
-      - if: needs.changes.outputs.python == 'true'
+      - name: Environment integrity
+        if: needs.changes.outputs.python == 'true'
         run: python -m pip check
-      - if: needs.changes.outputs.python == 'true'
+      - name: Build package
+        if: needs.changes.outputs.package == 'true'
         run: python -m build
+      - name: Locked wheel smoke
+        if: needs.changes.outputs.package == 'true'
+        shell: bash
+        run: |
+          python -m venv .wheel-smoke
+          .wheel-smoke/bin/python -m pip install -r locks/pip-runtime-py314.lock
+          .wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
+          .wheel-smoke/bin/python -c "import polysia"
+          .wheel-smoke/bin/python -m polysia.cli --help
 
-  linux-smoke:
+  windows-compatibility:
+    name: Windows Compatibility
     needs: changes
-    if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -162,18 +147,22 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r locks/pip-py314.lock
-      - run: python -m pip install --no-deps -e .
-      - run: python -m compileall -q src tests
-      - run: python -m pytest -q
-      - run: python -m pip check
-      - run: python -m build
-      - run: python -m venv .wheel-smoke
-      - shell: bash
+          cache-dependency-path: locks/pip-py314.lock
+      - name: Install compatibility environment
         run: |
-          .wheel-smoke/bin/python -m pip install dist/*.whl
-          .wheel-smoke/bin/python -m polysia.cli --help
+          python -m pip install --upgrade pip
+          python -m pip install -r locks/pip-py314.lock
+          python -m pip install --no-deps -e .
+      - name: Compile
+        run: python -m compileall -q src tests
+      - name: Full Pytest
+        run: python -m pytest -q
+      - name: Environment integrity
+        run: python -m pip check
+      - name: Build package
+        run: python -m build
+      - name: CLI smoke
+        run: python -m polysia.cli --help
 
   container:
     needs: changes
@@ -203,11 +192,7 @@ jobs:
 
   supply-chain:
     needs: changes
-    if: >-
-      always() &&
-      (github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      needs.changes.outputs.dependencies == 'true')
+    if: needs.changes.outputs.dependencies == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -216,6 +201,7 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+          cache-dependency-path: locks/pip-py314.lock
       - run: python -m venv .audit-venv
       - run: .\.audit-venv\Scripts\python.exe -m pip install --upgrade pip
       - run: .\.audit-venv\Scripts\python.exe -m pip install -r locks/pip-py314.lock
@@ -229,3 +215,54 @@ jobs:
           name: polysia-sbom
           path: artifacts/sbom.json
           retention-days: 14
+
+  ci-gate:
+    name: CI Gate
+    needs:
+      - changes
+      - quality
+      - windows-compatibility
+      - container
+      - supply-chain
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      QUALITY_REQUIRED: ${{ needs.changes.outputs.quality }}
+      QUALITY_RESULT: ${{ needs.quality.result }}
+      WINDOWS_REQUIRED: ${{ needs.changes.outputs.windows }}
+      WINDOWS_RESULT: ${{ needs.windows-compatibility.result }}
+      CONTAINER_REQUIRED: ${{ needs.changes.outputs.container }}
+      CONTAINER_RESULT: ${{ needs.container.result }}
+      SUPPLY_CHAIN_REQUIRED: ${{ needs.changes.outputs.dependencies }}
+      SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
+    steps:
+      - name: Verify required jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "changes job did not succeed: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          check_job() {
+            local name="$1"
+            local required="$2"
+            local result="$3"
+            if [[ "$required" == "true" && "$result" != "success" ]]; then
+              echo "$name was required but concluded: $result"
+              exit 1
+            fi
+            if [[ "$required" != "true" && "$result" != "skipped" ]]; then
+              echo "$name was not required but concluded: $result"
+              exit 1
+            fi
+          }
+
+          check_job quality "$QUALITY_REQUIRED" "$QUALITY_RESULT"
+          check_job windows-compatibility "$WINDOWS_REQUIRED" "$WINDOWS_RESULT"
+          check_job container "$CONTAINER_REQUIRED" "$CONTAINER_RESULT"
+          check_job supply-chain "$SUPPLY_CHAIN_REQUIRED" "$SUPPLY_CHAIN_RESULT"
+          echo "All required CI jobs succeeded."
