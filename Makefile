@@ -1,7 +1,10 @@
-.PHONY: install test lint typecheck standards security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff
+.PHONY: install fast test lint typecheck standards security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff
 
 install:
 	python -m pip install -e ".[dev]"
+
+fast:
+	python scripts/fast_check.py
 
 test:
 	python -m pytest
