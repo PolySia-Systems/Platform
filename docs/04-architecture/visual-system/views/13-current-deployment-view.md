@@ -86,9 +86,11 @@ It forces `DATA_ONLY`, disables live trading, clears the live allowlist, exposes
 no port, persists SQLite and reports, writes rotating logs, and runs read-only
 monitoring and reconciliation. Current GitHub CI supports Python 3.14 only. It
 runs lightweight documentation/Standards/secret checks on every pull request,
-adds Windows and Linux quality/build checks for executable changes, adds
-container checks for deployment-relevant changes, and runs supply-chain checks
-for dependency changes, weekly schedules, and manual dispatch.
+uses Linux as the canonical complete quality and applicable locked-wheel path,
+keeps full Windows workstation compatibility weekly, manually, and for
+Windows-sensitive changes, adds container checks for deployment-relevant
+changes, and runs supply-chain checks for dependency changes, weekly schedules,
+and manual dispatch.
 
 ## Target/future elements
 

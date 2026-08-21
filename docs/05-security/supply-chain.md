@@ -26,13 +26,20 @@ echoing matched values, and rejects tracked `.env`, key, and PEM files. Runtime
 ## CI
 
 CI supports Python 3.14 only and keeps DATA_ONLY safety overrides. Pull requests
-always run diff, local path/link, and tracked-file secret checks. Full Windows
-quality and Linux smoke checks run for executable Python changes, while the
-container job runs only for relevant source, Docker, deployment, dependency, or
+always run diff, local path/link, Standards, and tracked-file secret checks.
+Executable Python changes run complete quality validation on canonical Linux;
+full Windows compatibility runs weekly, manually, and for verified
+Windows-sensitive changes. The container job runs only for Docker, deployment,
+runtime-lock, entrypoint, health, backup, state-path, or related executable
 configuration changes. The supply-chain job performs a strict OSV audit and
 publishes a CycloneDX SBOM for dependency changes, on a weekly schedule, and by
 manual dispatch. GitHub Actions and pip dependencies receive weekly Dependabot
 review.
+
+A final fail-closed CI Gate checks that every job required by the risk-based
+change map succeeded. Manual comprehensive validation covers migrations and
+uncertain changes without making all future CI-only pull requests permanently
+run unrelated jobs.
 
 ## Limitations
 

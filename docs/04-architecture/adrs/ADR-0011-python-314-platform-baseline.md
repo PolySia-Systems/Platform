@@ -27,8 +27,10 @@ runtime without redundant compatibility jobs.
   package metadata. Python 3.11 and 3.13 are no longer supported.
 - Keep CPython 3.14.6 as the locked owner-workstation and container baseline;
   CI resolves the latest available Python 3.14 maintenance release.
-- Configure Ruff, Mypy, Windows quality, and Linux smoke validation for Python
-  3.14 only.
+- Configure canonical Linux quality validation for Python 3.14 only. Keep full
+  Windows compatibility validation weekly, manually dispatchable, and
+  conditional on verified Windows-sensitive changes rather than on ordinary
+  pull requests.
 - Pin the official unified Polymarket SDK to `0.6.0`.
 - Pin direct development tools and the portable transitive lock to versions
   verified by repository quality and supply-chain gates.
@@ -58,15 +60,25 @@ compatibility break for environments on those minor versions; it does not
 change strategy, risk, execution, reconciliation, credential, or live-control
 behavior.
 
-Routine pull requests run lightweight diff, local path/link, and secret checks.
-Full Windows/Linux, container, and supply-chain gates run only for the relevant
-changed paths, while supply-chain validation also runs weekly and on manual
-dispatch.
+Routine pull requests run lightweight diff, local path/link, Standards, and
+secret checks. Executable Python changes add canonical Linux compile, Ruff,
+Mypy, complete Pytest, environment-integrity, and applicable locked-wheel
+validation. Full Windows compatibility is periodic or Windows-sensitive; it is
+not an ordinary pull-request gate. Container and supply-chain gates remain
+risk-based, while Windows compatibility and supply-chain validation also run
+weekly and on manual dispatch.
+
+This Linux-first policy reflects the controlled Ubuntu/Docker runtime while
+retaining evidence for the owner Windows workstation. A Windows-only regression
+may be detected by conditional or scheduled validation after an ordinary pull
+request has merged. Shared or uncertain CI-control changes fail closed to
+comprehensive validation, and an explicit manual full-validation mode remains
+available.
 
 ## Rollback
 
-Revert the 2026-08-16 compatibility and CI optimization commit to restore the
-previous package metadata, tool targets, and Python 3.11/3.13/3.14 CI matrix.
-Recreate and revalidate the older environment from the reverted definitions if
-that compatibility is required. Never alter signer, funder, wallet, or
-credential values as part of dependency rollback.
+Revert the Linux-first CI policy commit to restore Windows quality on relevant
+ordinary pull requests and the separate Linux smoke job. Reverting the earlier
+2026-08-16 compatibility decision would additionally restore the obsolete
+Python 3.11/3.13/3.14 matrix and requires a separate compatibility review.
+Never alter signer, funder, wallet, or credential values as part of rollback.

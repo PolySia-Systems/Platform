@@ -166,19 +166,25 @@ evidence.
   vulnerabilities and generated a CycloneDX JSON SBOM.
 - A second Conda environment recreated from `environment.yml` and the portable
   pip lock, passed `pip check`, and passed the pinned SDK surface contracts.
-- CI now verifies only Python 3.14. Pull requests receive lightweight diff,
-  local path/link, and secret checks; executable Python changes add complete
-  Windows quality and Linux build/test/wheel smoke; relevant deployment changes
-  add container validation. Strict OSV/SBOM validation runs for dependency
-  changes, on a weekly schedule, and by manual dispatch. Push workflows run only
-  on `main`, and superseded pull-request runs are cancelled.
+- CI verifies only Python 3.14. Pull requests receive lightweight diff, local
+  path/link, Standards, and secret checks; executable Python changes add one
+  canonical Linux quality path with complete Pytest and applicable locked-wheel
+  validation. Full Windows compatibility runs weekly, manually, and for
+  verified Windows-sensitive changes rather than for ordinary pull requests.
+  Relevant deployment changes add container validation. Strict OSV/SBOM
+  validation runs for dependency changes, on a weekly schedule, and by manual
+  dispatch. Push workflows run only on `main`, and superseded pull-request runs
+  are cancelled.
 - The approved versions include `polymarket-client==0.6.0`, `mypy==2.3.0`,
   `hypothesis==6.165.10`, `pre-commit==4.6.2`, `ruff==0.16.4`, and
   `setuptools==84.0.0` in the completed pip environment. The Conda bootstrap
   remains on the latest available Python 3.14 build, `setuptools==83.0.0`,
   before the portable pip lock promotes it to `84.0.0`.
-- The audited `main` baseline passed GitHub CI run `32421857083`, including
-  Windows quality, Linux smoke, container, and supply-chain jobs.
+- Before the Linux-first migration, representative PR run `32479986498` ran the
+  same 686-test suite in about 340 seconds on Windows and 29 seconds on Linux;
+  the corresponding jobs took 503 and 74 seconds. This measured duplication is
+  the optimization baseline. Run-specific post-migration evidence belongs in
+  the corresponding PR and delivery report.
 
 ## Recovery status
 
