@@ -32,9 +32,11 @@ full Windows compatibility runs weekly, manually, and for verified
 Windows-sensitive changes. The container job runs only for Docker, deployment,
 runtime-lock, entrypoint, health, backup, state-path, or related executable
 configuration changes. The supply-chain job performs a strict OSV audit and
-publishes a CycloneDX SBOM for dependency changes, on a weekly schedule, and by
-manual dispatch. GitHub Actions and pip dependencies receive weekly Dependabot
-review.
+publishes a CycloneDX SBOM on canonical Linux for dependency changes, on a
+weekly schedule, and by manual dispatch. It retains a separate allowed-range
+wheel compatibility smoke without adding that resolution work to ordinary
+source pull requests. GitHub Actions and pip dependencies receive weekly
+Dependabot review.
 
 A final fail-closed CI Gate checks that every job required by the risk-based
 change map succeeded. Manual comprehensive validation covers migrations and
