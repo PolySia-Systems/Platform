@@ -41,7 +41,6 @@ BACKTICK_PATH = re.compile(r"`(?P<value>[^`]+)`")
 README_PHASE_HISTORY = re.compile(r"\bPhase\s+\d+(?:\.\d+)?\b", re.IGNORECASE)
 OBSOLETE_TRACKED_PATHS = frozenset(
     {
-        Path("PMXT_FUTURE_NOTES.md"),
         Path("README_SECRETS.md"),
         Path("plans/active/first-evidence-sprint.md"),
         Path("plans/active/tiny-live-round-trip-v1.md"),
