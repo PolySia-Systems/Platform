@@ -8,7 +8,15 @@ from polysia.cli_commands import core, live, operations, research
 
 runner = CliRunner()
 
-EXPECTED_NAMESPACES = {"control", "live", "market", "ops", "research", "system"}
+EXPECTED_NAMESPACES = {
+    "control",
+    "live",
+    "market",
+    "ops",
+    "research",
+    "system",
+    "wallet-intelligence",
+}
 EXPECTED_COMMANDS = {
     "system": {"configuration", "health", "observability", "report", "runbook", "status"},
     "market": {"discover", "stream"},
@@ -37,6 +45,7 @@ EXPECTED_COMMANDS = {
         "tiny-live-monitor",
     },
     "control": {"apply", "history", "plan", "status"},
+    "wallet-intelligence": {"backup", "health", "restore-check", "sync"},
     "live": {
         "account-status",
         "cancel-market-orders",

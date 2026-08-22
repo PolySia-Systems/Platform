@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import typer
 
-from polysia.cli_commands import core, live, operations, research
+from polysia.cli_commands import core, live, operations, research, wallet_intelligence
 from polysia.control.cli import control_app
 
 app = typer.Typer(
@@ -22,6 +22,10 @@ ops_app = typer.Typer(
     no_args_is_help=True,
 )
 live_app = typer.Typer(help="Run explicitly gated Live account workflows.", no_args_is_help=True)
+wallet_intelligence_app = typer.Typer(
+    help="Ingest and inspect protected candidate-wallet source snapshots.",
+    no_args_is_help=True,
+)
 
 app.add_typer(system_app, name="system")
 app.add_typer(market_app, name="market")
@@ -29,6 +33,7 @@ app.add_typer(research_app, name="research")
 app.add_typer(ops_app, name="ops")
 app.add_typer(control_app, name="control")
 app.add_typer(live_app, name="live")
+app.add_typer(wallet_intelligence_app, name="wallet-intelligence")
 
 
 @app.callback()
@@ -53,6 +58,11 @@ research_app.command("shadow-public")(research.shadow_run_real_data)
 research_app.command("evaluate")(research.strategy_evaluation)
 research_app.command("evaluate-extended")(research.strategy_evaluation_extended)
 research_app.command("fill-audit")(research.fill_simulation_audit)
+
+wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
+wallet_intelligence_app.command("health")(wallet_intelligence.health)
+wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
+wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)
 
 ops_app.command("deployment-readiness")(operations.deployment_readiness)
 ops_app.command("release-manifest")(operations.release_manifest)

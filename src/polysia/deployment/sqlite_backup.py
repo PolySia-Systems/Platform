@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -41,20 +42,25 @@ def backup_sqlite_database(
     *,
     keep: int = 14,
     now: datetime | None = None,
+    prefix: str = BACKUP_PREFIX,
 ) -> BackupResult:
     """Create an online, integrity-checked, checksummed SQLite backup."""
     if keep < 1:
         raise ValueError("keep must be at least 1")
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}-", prefix) is None:
+        raise ValueError("backup prefix is invalid")
     if not database_path.is_file():
         raise FileNotFoundError(f"SQLite database does not exist: {database_path}")
 
     backup_dir.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        backup_dir.chmod(0o700)
     timestamp = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    backup_path = backup_dir / f"{BACKUP_PREFIX}{timestamp}{BACKUP_SUFFIX}"
+    backup_path = backup_dir / f"{prefix}{timestamp}{BACKUP_SUFFIX}"
 
     temporary_path = _temporary_path(backup_dir)
     try:
-        source = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+        source = sqlite3.connect(_read_only_uri(database_path), uri=True)
         destination = sqlite3.connect(temporary_path)
         try:
             source.backup(destination)
@@ -71,7 +77,7 @@ def backup_sqlite_database(
     checksum_path = backup_path.with_suffix(f"{backup_path.suffix}.sha256")
     checksum_path.write_text(f"{sha256}  {backup_path.name}\n", encoding="ascii")
     _restrict_permissions(checksum_path)
-    _prune_backups(backup_dir, keep=keep)
+    _prune_backups(backup_dir, keep=keep, prefix=prefix)
     return BackupResult(backup_path=backup_path, checksum_path=checksum_path, sha256=sha256)
 
 
@@ -83,7 +89,7 @@ def verify_sqlite_backup(backup_path: Path) -> str:
     if actual != expected:
         raise ValueError("SQLite backup checksum does not match")
 
-    connection = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
+    connection = sqlite3.connect(_read_only_uri(backup_path), uri=True)
     try:
         _require_integrity(connection)
     finally:
@@ -105,7 +111,7 @@ def restore_sqlite_backup(
     database_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = _temporary_path(database_path.parent)
     try:
-        source = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
+        source = sqlite3.connect(_read_only_uri(backup_path), uri=True)
         destination = sqlite3.connect(temporary_path)
         try:
             source.backup(destination)
@@ -144,6 +150,10 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_only_uri(path: Path) -> str:
+    return f"{path.resolve().as_uri()}?mode=ro"
+
+
 def _read_checksum(checksum_path: Path, *, expected_name: str) -> str:
     line = checksum_path.read_text(encoding="ascii").strip()
     parts = line.split(maxsplit=1)
@@ -160,9 +170,9 @@ def _restrict_permissions(path: Path) -> None:
         path.chmod(0o600)
 
 
-def _prune_backups(backup_dir: Path, *, keep: int) -> None:
+def _prune_backups(backup_dir: Path, *, keep: int, prefix: str = BACKUP_PREFIX) -> None:
     backups = sorted(
-        backup_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"),
+        backup_dir.glob(f"{prefix}*{BACKUP_SUFFIX}"),
         key=lambda path: path.name,
         reverse=True,
     )
