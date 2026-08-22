@@ -78,6 +78,7 @@ class CandidateHealthReport:
             "critical_after_seconds": self.critical_after_seconds,
             "current_page_count": self.state.current_page_count,
             "current_record_count": self.state.current_record_count,
+            "current_run_id": self.state.current_run_id,
             "current_snapshot_id": self.state.current_snapshot_id,
             "last_error_code": self.state.last_error_code,
             "last_run_id": self.state.last_run_id,

@@ -118,7 +118,7 @@ services:
       TRADING_MODE: DATA_ONLY
     command:
       - wallet-intelligence
-      - sync
+      - ensure
       - --source
       - polycop
       - --database
@@ -133,6 +133,14 @@ services:
       - "${POLYSIA_WALLET_HISTORY_DAYS:-365}"
       - --quarantine-days
       - "${POLYSIA_WALLET_QUARANTINE_DAYS:-30}"
+      - --intelligence-history-days
+      - "${POLYSIA_WALLET_INTELLIGENCE_HISTORY_DAYS:-365}"
+      - --fresh-hours
+      - "${POLYSIA_WALLET_FRESH_HOURS:-24}"
+      - --stale-hours
+      - "${POLYSIA_WALLET_STALE_HOURS:-36}"
+      - --lease-minutes
+      - "${POLYSIA_WALLET_LEASE_MINUTES:-30}"
     user: "10001:10001"
     read_only: true
     tmpfs:

@@ -45,7 +45,7 @@ EXPECTED_COMMANDS = {
         "tiny-live-monitor",
     },
     "control": {"apply", "history", "plan", "status"},
-    "wallet-intelligence": {"backup", "health", "restore-check", "sync"},
+    "wallet-intelligence": {"backup", "ensure", "health", "pool", "restore-check", "sync"},
     "live": {
         "account-status",
         "cancel-market-orders",

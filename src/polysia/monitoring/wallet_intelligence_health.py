@@ -10,10 +10,18 @@ from polysia.application.services.candidate_wallet_sync import CandidateHealthRe
 
 def write_candidate_health_report(report: CandidateHealthReport, path: Path) -> None:
     """Atomically publish one sanitized health report without wallet identities."""
+    write_wallet_intelligence_health_payload(report.to_dict(), path)
+
+
+def write_wallet_intelligence_health_payload(
+    report: dict[str, object],
+    path: Path,
+) -> None:
+    """Atomically publish sanitized source and candidate-pool health."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":
         path.parent.chmod(0o700)
-    payload = json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n"
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
     temporary_path: Path | None = None
     try:
         with NamedTemporaryFile(

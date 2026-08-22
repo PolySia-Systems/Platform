@@ -39,6 +39,9 @@ class CandidateRunIdConflictError(CandidateStoreError):
 @dataclass(frozen=True, slots=True)
 class WalletIntelligenceDatabaseValidation:
     schema_version: int
+    candidate_intelligence_schema_version: int | None
+    candidate_run_count: int
+    candidate_pool_count: int
     source_count: int
     snapshot_count: int
     row_count: int
@@ -377,7 +380,8 @@ class WalletIntelligenceRepository:
         connection = self._connect()
         try:
             current = connection.execute(
-                "SELECT s.snapshot_id, s.accepted_at, s.record_count, s.source_total_pages, "
+                "SELECT s.snapshot_id, s.run_id, s.accepted_at, s.record_count, "
+                "s.source_total_pages, "
                 "r.warning_code AS current_warning_code "
                 "FROM candidate_current_snapshots c "
                 "JOIN candidate_wallet_snapshots s ON s.snapshot_id = c.snapshot_id "
@@ -395,6 +399,7 @@ class WalletIntelligenceRepository:
         return CandidateSourceState(
             source_id=source_id,
             current_snapshot_id=None if current is None else str(current["snapshot_id"]),
+            current_run_id=None if current is None else str(current["run_id"]),
             last_success_at=None
             if current is None
             else _parse_datetime(str(current["accepted_at"])),
@@ -487,10 +492,40 @@ class WalletIntelligenceRepository:
                     "SELECT COUNT(*) FROM candidate_wallet_snapshot_rows"
                 ).fetchone()[0]
             )
+            candidate_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'candidate_intelligence_metadata'"
+            ).fetchone()
+            candidate_schema_version: int | None = None
+            candidate_run_count = 0
+            candidate_pool_count = 0
+            if candidate_table is not None:
+                candidate_rows = connection.execute(
+                    "SELECT schema_version FROM candidate_intelligence_metadata"
+                ).fetchall()
+                if len(candidate_rows) != 1 or int(candidate_rows[0][0]) != 1:
+                    raise CandidateStoreError(
+                        "Candidate Intelligence schema version is unsupported."
+                    )
+                candidate_schema_version = int(candidate_rows[0][0])
+                candidate_run_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM candidate_intelligence_runs "
+                        "WHERE status = 'succeeded'"
+                    ).fetchone()[0]
+                )
+                candidate_pool_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM candidate_trading_pool_current"
+                    ).fetchone()[0]
+                )
         finally:
             connection.close()
         return WalletIntelligenceDatabaseValidation(
             schema_version=WALLET_INTELLIGENCE_SCHEMA_VERSION,
+            candidate_intelligence_schema_version=candidate_schema_version,
+            candidate_run_count=candidate_run_count,
+            candidate_pool_count=candidate_pool_count,
             source_count=source_count,
             snapshot_count=snapshot_count,
             row_count=row_count,
