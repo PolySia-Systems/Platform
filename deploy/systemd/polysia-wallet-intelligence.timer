@@ -1,5 +1,5 @@
 [Unit]
-Description=Run PolySia candidate-wallet ingestion daily
+Description=Run PolySia wallet-intelligence candidate pipeline daily
 
 [Timer]
 OnCalendar=*-*-* 03:15:00 UTC

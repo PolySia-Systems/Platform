@@ -9,6 +9,14 @@ from typing import Annotated, Never
 import typer
 
 from polysia.adapters.polycop import PolyCopCandidateWalletSource
+from polysia.application.ports.candidate_intelligence import (
+    CandidatePipelineBusyError,
+    CandidatePipelineLeaseLostError,
+)
+from polysia.application.services.candidate_intelligence import (
+    CandidateIntelligenceError,
+    WalletIntelligencePipelineService,
+)
 from polysia.application.services.candidate_wallet_sync import (
     CandidateWalletSyncError,
     CandidateWalletSyncService,
@@ -17,7 +25,11 @@ from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
 )
-from polysia.monitoring.wallet_intelligence_health import write_candidate_health_report
+from polysia.monitoring.wallet_intelligence_health import (
+    write_candidate_health_report,
+    write_wallet_intelligence_health_payload,
+)
+from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
 
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
@@ -62,17 +74,29 @@ def sync(
     source_adapter = _source(source)
     repository = WalletIntelligenceRepository(database)
     service = CandidateWalletSyncService(source_adapter, repository)
+    pipeline = WalletIntelligencePipelineService(
+        source_adapter,
+        repository,
+        CandidateIntelligenceRepository(database),
+        chain="polygon",
+    )
     schedule_date = _schedule_date(scheduled_for)
     try:
         outcome = asyncio.run(
-            service.sync(
+            pipeline.sync_source_only(
                 scheduled_for=schedule_date,
                 force_new=force_new,
                 history_days=history_days,
                 quarantine_days=quarantine_days,
             )
         )
-    except (CandidateWalletSyncError, CandidateStoreError, ValueError) as error:
+    except (
+        CandidatePipelineBusyError,
+        CandidatePipelineLeaseLostError,
+        CandidateWalletSyncError,
+        CandidateStoreError,
+        ValueError,
+    ) as error:
         _emit_failed_sync(service, health_report, error)
     except Exception:
         _emit_failed_sync(
@@ -143,6 +167,99 @@ def sync(
     typer.echo(json.dumps(payload, sort_keys=True))
 
 
+def ensure(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
+    health_report: Annotated[Path, typer.Option("--health-report")] = DEFAULT_HEALTH_REPORT,
+    scheduled_for: Annotated[str | None, typer.Option("--scheduled-for")] = None,
+    create_backup: Annotated[bool, typer.Option("--backup/--no-backup")] = True,
+    backup_keep: Annotated[int, typer.Option("--backup-keep", min=1, max=90)] = 14,
+    history_days: Annotated[int, typer.Option("--history-days", min=30)] = 365,
+    quarantine_days: Annotated[int, typer.Option("--quarantine-days", min=7)] = 30,
+    intelligence_history_days: Annotated[
+        int, typer.Option("--intelligence-history-days", min=365)
+    ] = 365,
+    fresh_hours: Annotated[int, typer.Option("--fresh-hours", min=1)] = 24,
+    stale_hours: Annotated[int, typer.Option("--stale-hours", min=2)] = 36,
+    lease_minutes: Annotated[int, typer.Option("--lease-minutes", min=1, max=1440)] = 30,
+) -> None:
+    """Reuse or refresh Stage 1, then atomically publish Candidate Intelligence."""
+    if stale_hours <= fresh_hours:
+        raise typer.BadParameter("stale-hours must be greater than fresh-hours")
+    source_adapter = _source(source)
+    source_store = WalletIntelligenceRepository(database)
+    intelligence_store = CandidateIntelligenceRepository(database)
+    pipeline = WalletIntelligencePipelineService(
+        source_adapter,
+        source_store,
+        intelligence_store,
+        chain="polygon",
+    )
+    try:
+        outcome = asyncio.run(
+            pipeline.ensure(
+                scheduled_for=_schedule_date(scheduled_for),
+                fresh_after=timedelta(hours=fresh_hours),
+                stale_after=timedelta(hours=stale_hours),
+                lease_duration=timedelta(minutes=lease_minutes),
+                history_days=history_days,
+                quarantine_days=quarantine_days,
+                intelligence_history_days=intelligence_history_days,
+            )
+        )
+        backup_payload: dict[str, object] | None = None
+        if create_backup:
+            backup_result = backup_wallet_intelligence_database(
+                database,
+                backup_dir,
+                keep=backup_keep,
+            )
+            backup_payload = {
+                "path": str(backup_result.backup_path),
+                "sha256": backup_result.sha256,
+                "verified": True,
+            }
+        health_payload, _ = _combined_health(
+            source_adapter,
+            source_store,
+            intelligence_store,
+            warning_after=timedelta(hours=stale_hours),
+            critical_after=timedelta(hours=max(72, stale_hours + 1)),
+        )
+        write_wallet_intelligence_health_payload(health_payload, health_report)
+    except (
+        CandidateIntelligenceError,
+        CandidatePipelineBusyError,
+        CandidatePipelineLeaseLostError,
+        CandidateWalletSyncError,
+        CandidateStoreError,
+        ValueError,
+    ) as error:
+        _emit_failed_pipeline(
+            source_adapter,
+            source_store,
+            intelligence_store,
+            health_report,
+            error,
+        )
+    except Exception:
+        _emit_failed_pipeline(
+            source_adapter,
+            source_store,
+            intelligence_store,
+            health_report,
+            CandidateIntelligenceError(
+                "wallet_intelligence_pipeline_failed",
+                "Wallet-intelligence pipeline failed safely.",
+            ),
+        )
+    payload = outcome.to_dict()
+    payload["backup"] = backup_payload
+    payload["health"] = health_payload
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
 def health(
     source: Annotated[str, typer.Option("--source")] = "polycop",
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
@@ -153,16 +270,20 @@ def health(
     """Inspect freshness and the most recent source-run outcome without exposing wallets."""
     if critical_hours <= warning_hours:
         raise typer.BadParameter("critical-hours must be greater than warning-hours")
-    service = CandidateWalletSyncService(
-        _source(source),
-        WalletIntelligenceRepository(database),
-    )
+    source_adapter = _source(source)
+    source_store = WalletIntelligenceRepository(database)
+    intelligence_store = CandidateIntelligenceRepository(database)
     try:
-        report = service.health(
+        source_store.initialize()
+        intelligence_store.initialize()
+        payload, exit_code = _combined_health(
+            source_adapter,
+            source_store,
+            intelligence_store,
             warning_after=timedelta(hours=warning_hours),
             critical_after=timedelta(hours=critical_hours),
         )
-        write_candidate_health_report(report, health_report)
+        write_wallet_intelligence_health_payload(payload, health_report)
     except Exception as error:
         typer.echo(
             json.dumps(
@@ -176,9 +297,68 @@ def health(
             err=True,
         )
         raise typer.Exit(code=1) from error
-    typer.echo(json.dumps(report.to_dict(), sort_keys=True))
-    if report.exit_code:
-        raise typer.Exit(code=report.exit_code)
+    typer.echo(json.dumps(payload, sort_keys=True))
+    if exit_code:
+        raise typer.Exit(code=exit_code)
+
+
+def pool(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=100_000)] = 100,
+    selected_only: Annotated[
+        bool, typer.Option("--selected-only/--all-statuses")
+    ] = True,
+) -> None:
+    """Read a deterministic protected Top-N candidate pool without exposing addresses."""
+    source_adapter = _source(source)
+    repository = CandidateIntelligenceRepository(database)
+    try:
+        repository.initialize()
+        rows = repository.current_pool(
+            source_adapter.source_id,
+            limit=limit,
+            selected_only=selected_only,
+        )
+    except (CandidateStoreError, ValueError) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "error_code": "candidate_pool_read_failed",
+                    "message": "Candidate pool could not be read safely.",
+                    "status": "failed",
+                },
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        json.dumps(
+            {
+                "count": len(rows),
+                "rows": [
+                    {
+                        "candidate_rank": row.candidate_rank,
+                        "candidate_status": row.candidate_status.value,
+                        "chain": row.chain,
+                        "data_readiness_status": row.data_readiness_status.value,
+                        "effective_at": row.effective_at.isoformat(),
+                        "presence_ratio": format(row.presence_ratio, "f"),
+                        "source_rank": row.source_rank,
+                        "source_score": None
+                        if row.source_score is None
+                        else format(row.source_score, "f"),
+                        "wallet_id": row.wallet_id,
+                    }
+                    for row in rows
+                ],
+                "source_id": source_adapter.source_id,
+                "status": "succeeded",
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def backup(
@@ -234,6 +414,11 @@ def restore_check(
             {
                 "restored_row_count": result.validation.row_count,
                 "restored_snapshot_count": result.validation.snapshot_count,
+                "candidate_intelligence_schema_version": (
+                    result.validation.candidate_intelligence_schema_version
+                ),
+                "restored_candidate_pool_count": result.validation.candidate_pool_count,
+                "restored_candidate_run_count": result.validation.candidate_run_count,
                 "schema_version": result.validation.schema_version,
                 "sha256": result.sha256,
                 "status": "succeeded",
@@ -277,6 +462,110 @@ def _emit_failed_sync(
                 "error_code": error_code,
                 "health": health_payload,
                 "message": str(error),
+                "status": "failed",
+            },
+            sort_keys=True,
+        ),
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+def _combined_health(
+    source_adapter: PolyCopCandidateWalletSource,
+    source_store: WalletIntelligenceRepository,
+    intelligence_store: CandidateIntelligenceRepository,
+    *,
+    warning_after: timedelta,
+    critical_after: timedelta,
+) -> tuple[dict[str, object], int]:
+    source_report = CandidateWalletSyncService(source_adapter, source_store).health(
+        warning_after=warning_after,
+        critical_after=critical_after,
+    )
+    intelligence_store.initialize()
+    intelligence_state = intelligence_store.state(source_adapter.source_id)
+    payload = source_report.to_dict()
+    reasons = list(source_report.reasons)
+    level = source_report.level.value
+    current = intelligence_state.current_run
+    if current is None:
+        reasons.append("candidate_pool_unavailable")
+        level = "critical"
+        candidate_pool: dict[str, object] | None = None
+    else:
+        candidate_pool = {
+            "evaluated_count": current.evaluated_count,
+            "feature_set_version": current.key.feature_set_version,
+            "ineligible_count": current.ineligible_count,
+            "invalid_count": current.invalid_count,
+            "last_error_code": intelligence_state.last_error_code,
+            "last_run_id": intelligence_state.last_run_id,
+            "last_run_status": intelligence_state.last_run_status,
+            "partial_count": current.partial_count,
+            "policy_id": current.key.policy_id,
+            "policy_version": current.key.policy_version,
+            "published_at": current.published_at.isoformat(),
+            "ranking_version": current.key.ranking_version,
+            "ready_count": current.ready_count,
+            "run_id": current.run_id,
+            "selected_count": current.selected_count,
+            "source_snapshot_id": current.key.source_snapshot_id,
+            "stale_count": current.stale_count,
+            "unknown_count": current.unknown_count,
+            "watchlist_count": current.watchlist_count,
+        }
+        if current.key.source_snapshot_id != source_report.state.current_snapshot_id:
+            reasons.append("candidate_pool_behind_source")
+            if level == "healthy":
+                level = "warning"
+        if intelligence_state.last_run_status == "failed":
+            reasons.append("latest_candidate_run_failed")
+            if level == "healthy":
+                level = "warning"
+        elif intelligence_state.last_run_status == "running":
+            reasons.append("candidate_run_in_progress")
+            if level == "healthy":
+                level = "warning"
+    payload["candidate_pool"] = candidate_pool
+    payload["level"] = level
+    payload["reasons"] = list(dict.fromkeys(reasons))
+    return payload, int(level == "critical")
+
+
+def _emit_failed_pipeline(
+    source_adapter: PolyCopCandidateWalletSource,
+    source_store: WalletIntelligenceRepository,
+    intelligence_store: CandidateIntelligenceRepository,
+    health_report: Path,
+    error: Exception,
+) -> Never:
+    try:
+        health_payload, _ = _combined_health(
+            source_adapter,
+            source_store,
+            intelligence_store,
+            warning_after=timedelta(hours=36),
+            critical_after=timedelta(hours=72),
+        )
+        write_wallet_intelligence_health_payload(health_payload, health_report)
+    except Exception:
+        health_payload = {
+            "level": "unavailable",
+            "reasons": ["health_check_failed"],
+        }
+    if isinstance(error, CandidatePipelineBusyError):
+        error_code = "pipeline_busy"
+    elif isinstance(error, CandidatePipelineLeaseLostError):
+        error_code = "pipeline_lease_lost"
+    else:
+        error_code = getattr(error, "error_code", "wallet_intelligence_pipeline_failed")
+    typer.echo(
+        json.dumps(
+            {
+                "error_code": error_code,
+                "health": health_payload,
+                "message": "Wallet-intelligence pipeline failed safely.",
                 "status": "failed",
             },
             sort_keys=True,

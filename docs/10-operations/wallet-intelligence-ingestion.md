@@ -1,10 +1,10 @@
-# Candidate-Wallet Ingestion Runbook
+# Wallet Intelligence Pipeline Runbook
 
 ## Status and boundary
 
-This runbook covers the CURRENT repository implementation of Stage 1
-candidate-wallet ingestion. Deployment and timer installation remain an
-operator action. The workflow is read-only toward external sources and cannot
+This runbook covers the CURRENT repository implementation of Stage 1 source
+ingestion and Stage 2 Candidate Intelligence. Deployment and timer installation
+remain an operator action. The workflow is read-only toward external sources and cannot
 produce a signal, `OrderIntent`, paper order, Live order, cancellation,
 transfer, or wallet mutation.
 
@@ -48,7 +48,7 @@ offset pagination remain external limitations.
 
 | Path | Content | Handling |
 |---|---|---|
-| `/var/lib/polysia/wallet-intelligence/data/wallet-intelligence.sqlite3` | Complete accepted history and protected source identities | UID/GID `10001`, private |
+| `/var/lib/polysia/wallet-intelligence/data/wallet-intelligence.sqlite3` | Accepted source history, protected identities, derived features, policy history, and current candidate pool | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/backups/` | Checksummed local SQLite backups | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/reports/latest.json` | Sanitized health only | UID/GID `10001`, private |
 
@@ -58,9 +58,10 @@ These are the host paths. Compose mounts them onto the stable in-container
 this externally driven job from writing unrelated PolySia state.
 
 The SQLite file is separate from `polysia.sqlite3`. Raw wallet addresses exist
-only in `candidate_wallet_identities.external_wallet_id` inside the protected
-database. Snapshot rows, ordinary joins, health reports, CLI output, and logs
-use an internal SHA-256 wallet key. Database, backup, and report files are
+only in `candidate_wallet_identities.external_wallet_id` and
+`canonical_wallets.normalized_address` inside the protected database. Snapshot
+rows, the candidate-pool view, health reports, CLI output, and logs use an
+internal SHA-256 wallet key or canonical `wallet_id`. Database, backup, and report files are
 excluded from Git. On Linux, the application applies mode `0700` to owned
 directories and `0600` to files.
 
@@ -83,12 +84,29 @@ Default retention is:
 
 - accepted normalized snapshots: 365 days;
 - schema-change quarantine evidence: 30 days;
+- Stage 2 feature, policy, and run history: at least 365 days;
 - local checksummed backups: newest 14 copies.
 
 The current snapshot is never pruned, even if it is older than the retention
 cutoff. After seven accepted versions, a row-count change below 50% or above
 200% of the recent median is accepted only with an explicit health warning.
 Completeness invariants still fail the attempt before promotion.
+
+Stage 2 has an independent additive schema-version record. It canonicalizes a
+wallet as `(chain, normalized_address)`, retains every source link, derives only
+snapshot-supported point-in-time features, and records readiness separately
+from policy status. Insufficient 1-, 7-, or 30-day history remains `NULL`; it is
+never replaced with zero. No healthy raw source JSON retention is claimed.
+
+The processing identity includes source snapshot, feature-set version, policy
+id/version, and ranking version. A successful identity is idempotent. The full
+feature and evaluation result is validated and the current pointer is then
+published in one transaction. Failed work cannot replace the previous pool.
+
+Startup, timer, and manual entry points use one SQLite-backed 30-minute lease
+by default. Atomic acquisition, heartbeat/renewal, expiry recovery, and a
+monotonic fencing token prevent concurrent or expired owners from publishing.
+The database transaction is never held across the PolyCop network read.
 
 ## First controlled run
 
@@ -101,16 +119,20 @@ sudo install -d -o 10001 -g 10001 -m 0700 \
   /var/lib/polysia/wallet-intelligence/reports
 ```
 
-Build and run one read-only ingestion from `/opt/polysia`:
+Build and run the full read-only pipeline from `/opt/polysia`:
 
 ```bash
 docker compose build wallet-intelligence-sync
 docker compose --profile wallet-intelligence run --rm wallet-intelligence-sync
 ```
 
-The command exits nonzero on a source, schema, consistency, persistence, or
+The default Compose command is `wallet-intelligence ensure`. On the first run it
+fetches Stage 1 immediately at any time, then publishes Stage 2. On later runs it
+reuses a healthy snapshot younger than 24 hours; otherwise it refreshes Stage 1.
+The daily timer still anchors subsequent checks at 03:15 UTC. The command exits
+nonzero on a source, schema, consistency, persistence, lease, publication, or
 backup failure. Its JSON output and health file contain counts, identifiers,
-digests, freshness, and safe error codes, but no wallet addresses.
+versions, freshness, and safe error codes, but no wallet addresses.
 
 Inspect health separately:
 
@@ -122,10 +144,33 @@ docker compose --profile wallet-intelligence run --rm \
 ```
 
 Health is `warning` after 36 hours without a new accepted snapshot and
-`critical` after 72 hours. A fresh last-known-good snapshot plus a failed or
-quarantined latest attempt is `warning`. `critical` exits with status 1.
+`critical` after 72 hours. A missing candidate pool is critical. A candidate
+pool behind the current Stage 1 snapshot, or a fresh last-known-good pool plus a
+failed latest Stage 1/Stage 2 attempt, is warning. `critical` exits with status 1.
 External alert delivery is not implemented; systemd failure monitoring or a
 separately configured alert provider must observe nonzero exits.
+
+## Candidate pool query contract
+
+The protected SQLite view `candidate_trading_pool_current` contains every
+current evaluation and no address. Candidate Policy v1 maps `READY` to
+`SELECTED`, partial/stale/unknown evidence to `WATCHLIST`, and invalid evidence
+to `INELIGIBLE`. It is a discovery ranking, not a profitability claim.
+
+Read deterministic Top 100 selected wallets:
+
+```bash
+docker compose --profile wallet-intelligence run --rm \
+  wallet-intelligence-sync wallet-intelligence pool \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --limit 100
+```
+
+Consumers use `candidate_status='SELECTED' ORDER BY candidate_rank`. Ranking is
+source score descending, source rank ascending, presence ratio descending, and
+canonical `wallet_id` ascending. The last field is the stable tie-break. The
+complete feature/time/version contract is frozen in
+`docs/03-requirements/wallet-intelligence-stage2.md`.
 
 ## Daily automation at 03:15 UTC
 
@@ -191,7 +236,10 @@ authorized and implemented.
 | HTTP, timeout, or bounded retry failure | Run `failed`; previous current snapshot retained | Inspect service status; retry after the source recovers |
 | Page count/page 1 changes mid-read | Complete read retried once, then failed | Retry later; do not promote partial data |
 | Missing, added, or invalid source field | Run `quarantined`; redacted compressed sample retained | Disable timer if persistent; review adapter contract before code change |
-| Abandoned running attempt older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
+| Unexpired pipeline lease | Second startup/timer/manual call fails safely as busy | Let the owner finish; do not run parallel copies |
+| Expired lease after crash | New owner increments fencing token and recovers | Inspect the abandoned process before retrying external operations |
+| Stage 2 calculation/publication failure | Previous candidate pool retained; failed run recorded | Inspect safe error code and repair before republishing |
+| Abandoned Stage 1 run older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
 | Row-count baseline warning | Snapshot retained with warning | Compare source behavior and recent history |
 | SQLite/backup integrity failure | Nonzero exit | Stop automation; preserve database and backups; rehearse a known-good restore |
 | Health older than 72 hours | `critical`, nonzero exit | Use the last-known-good dataset only as stale evidence; repair before downstream promotion |
@@ -209,14 +257,15 @@ explicit composition branch in the CLI. Do not add runtime module scanning or
 claim a generalized adapter registry; that remains TARGET architecture.
 
 Source-specific fields remain inside `metrics_json`, while protected external
-identities stay in the identity table. Stage 2 selection must be a separate
-application flow and must not change ingestion history or the current source
-pointer.
+identities stay in the identity tables. Add an explicit chain mapping in
+composition. The same canonical wallet may then receive another provenance
+link; source observations remain separate and cannot overwrite each other.
 
 ## Rollback
 
 Disable the timer, check out the previously approved application revision, and
-rebuild. The earlier code ignores the separate wallet-intelligence database, so
-no main trading-database rollback is required. Retain the database and backups
-for forward recovery; do not delete them merely because application code is
-rolled back.
+rebuild. Stage 2 is additive and has no Foreign Key that prevents the older
+Stage 1 retention path from pruning its own history. Earlier code ignores the
+Stage 2 tables, so no main trading-database rollback is required. Retain the
+database and backups for forward recovery; do not delete them merely because
+application code is rolled back.

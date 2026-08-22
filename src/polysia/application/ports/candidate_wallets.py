@@ -57,6 +57,7 @@ class CandidateStoredSnapshot:
 class CandidateSourceState:
     source_id: str
     current_snapshot_id: str | None
+    current_run_id: str | None
     last_success_at: datetime | None
     current_record_count: int | None
     current_page_count: int | None
