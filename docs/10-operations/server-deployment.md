@@ -86,6 +86,11 @@ read-only post-live reconciliation every 15 cycles. Docker restarts it after
 an unexpected exit. The health check verifies that the application loads
 safely and persistent storage remains writable.
 
+The optional, read-only candidate-wallet ingestion is defined separately from
+the monitor and must be deployed and scheduled as an explicit operator action.
+Follow the [candidate-wallet ingestion runbook](wallet-intelligence-ingestion.md);
+do not install its timer without current source permission.
+
 ## Backup and verification
 
 SQLite backups use the online SQLite backup API, run an integrity check, write

@@ -47,6 +47,37 @@ def test_backup_and_restore_preserve_valid_database(tmp_path: Path) -> None:
         restored_connection.close()
 
 
+def test_backup_and_restore_bind_literal_paths_with_uri_metacharacters(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "data#source" / "polysia.sqlite3"
+    initialize_sqlite_database(database)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            "INSERT INTO market_events "
+            "(source, event_type, token_id, received_at, payload_json, raw_payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("literal", "quote", "token-1", "2026-07-28T00:00:00+00:00", "{}", "{}"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = backup_sqlite_database(database, tmp_path / "backups#daily")
+    restored = tmp_path / "restored#copy" / "polysia.sqlite3"
+
+    assert verify_sqlite_backup(result.backup_path) == result.sha256
+    assert restore_sqlite_backup(result.backup_path, restored) == result.sha256
+    restored_connection = sqlite3.connect(restored)
+    try:
+        assert restored_connection.execute(
+            "SELECT source FROM market_events"
+        ).fetchone() == ("literal",)
+    finally:
+        restored_connection.close()
+
+
 def test_restore_refuses_to_replace_existing_database(tmp_path: Path) -> None:
     database = tmp_path / "polysia.sqlite3"
     initialize_sqlite_database(database)

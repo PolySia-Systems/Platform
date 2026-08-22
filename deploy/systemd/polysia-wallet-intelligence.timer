@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PolySia candidate-wallet ingestion daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+Unit=polysia-wallet-intelligence.service
+
+[Install]
+WantedBy=timers.target

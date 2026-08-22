@@ -103,6 +103,63 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  wallet-intelligence-sync:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
+    profiles:
+      - wallet-intelligence
+    environment:
+      APP_ENV: production
+      LIVE_TRADING_ENABLED: "false"
+      TRADING_MODE: DATA_ONLY
+    command:
+      - wallet-intelligence
+      - sync
+      - --source
+      - polycop
+      - --database
+      - /var/lib/polysia/data/wallet-intelligence.sqlite3
+      - --backup-dir
+      - /var/lib/polysia/backups/wallet-intelligence
+      - --health-report
+      - /var/lib/polysia/reports/wallet-intelligence/latest.json
+      - --backup-keep
+      - "${POLYSIA_WALLET_BACKUP_RETENTION:-14}"
+      - --history-days
+      - "${POLYSIA_WALLET_HISTORY_DAYS:-365}"
+      - --quarantine-days
+      - "${POLYSIA_WALLET_QUARANTINE_DAYS:-30}"
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/data
+        target: /var/lib/polysia/data
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/backups
+        target: /var/lib/polysia/backups/wallet-intelligence
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/reports
+        target: /var/lib/polysia/reports/wallet-intelligence
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
   copy-experiment:
     image: polysia:${POLYSIA_IMAGE_TAG:-local}
     build:
