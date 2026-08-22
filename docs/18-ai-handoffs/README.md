@@ -10,6 +10,12 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
+- [`wallet-intelligence-stage2.md`](wallet-intelligence-stage2.md) records the
+  canonical identity, source-derived features, readiness, versioned candidate
+  policy, deterministic ranking, fenced publication, and final read-only smoke.
+- [`polycop-candidate-wallet-ingestion.md`](polycop-candidate-wallet-ingestion.md)
+  records the protected Stage 1 PolyCop ingestion, history, health, and
+  backup/restore foundation.
 - [`architecture-truth-refresh-2026-08-18.md`](architecture-truth-refresh-2026-08-18.md)
   records the repository-wide architecture audit, refreshed visual baseline,
   and automated drift prevention.

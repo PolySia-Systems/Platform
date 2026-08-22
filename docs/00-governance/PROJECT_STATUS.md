@@ -4,13 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-21 |
+| Review date | 2026-08-23 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `88a5eb0cec0a80d2d60fb16e4f5573bbb02ae79a` |
+| Audited repository baseline | `eac6feee625127e0e17919436571b4d15066fee9` |
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Cancellation finality and SDK order/cancel contracts hardened |
+| Latest repository maintenance | Stage 2 Candidate Intelligence v1 completed; not deployed |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -79,6 +79,12 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
 - The first SHADOW-only Control Kernel vertical slice is complete for
   `stale-price@0.1.0`, with versioned desired state, optimistic concurrency,
   idempotency, synchronous observed state, audit history, and no Live authority.
+- Stage 1 protected PolyCop ingestion and Stage 2 Candidate Intelligence v1 are
+  complete in repository code. The data-only path canonicalizes wallet identity,
+  calculates source-derived time-safe features, separates readiness from policy,
+  ranks deterministically, and atomically publishes an address-free current
+  pool under a persistent fenced SQLite lease. It is not deployed and has no
+  signal, strategy, execution, Paper, Shadow, or Live authority.
 
 ## Current architecture and runtime capabilities
 
@@ -103,6 +109,11 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
   idempotency, in-process intent gating, separate observed state, and append-only
   audit evidence. It has no PAPER, LIVE, Web, API, AI, generalized parameter, or
   background-controller authority.
+- Wallet Intelligence Stage 2 is CURRENT in repository code and not yet
+  deployed. It preserves immutable feature/policy history and last-known-good
+  state while applying effective staleness at the current-pool read boundary.
+  PolyCop is discovery evidence only; official Polymarket enrichment remains
+  deferred.
 - The bounded BTC Up/Down 15-minute runner uses the smallest venue-valid
   quantity, one FAK entry, confirmed-fill reconciliation, and at most one GTC
   exit sized from actual available position. Duplicate authorization and entry
@@ -225,6 +236,10 @@ evidence.
 - This engineering change did not deploy, mutate an external account, or alter
   the retained ambiguous Tiny Live run. Any future operational use still needs
   a separately reviewed deployment and explicit authorization.
+- Wallet Intelligence Stage 2 passed complete repository, security,
+  supply-chain, backup/restore, and owner-approved read-only PolyCop smoke gates.
+  Its timer and Compose profile were not enabled on the server. The next
+  operational action is a separate data-only deployment and observation gate.
 - All four Tiny Live Copy authorizations and entry-attempt capacity are
   consumed. Any future Live run requires a new explicit owner authorization,
   new Run ID, exact green commit, zero-mutation Shadow, and all readiness gates.
@@ -256,17 +271,18 @@ evidence.
 
 ## Single recommended next task
 
-**Start a historical-data and strategy-validation slice for BTC Up/Down
-15-minute markets.** Define data-quality gates, acquire and validate a
-reproducible historical dataset, and establish fee/slippage-aware benchmark and
-backtest rules. Do not place live orders or expand platform architecture.
+**Deploy and observe Wallet Intelligence Stage 1 and Stage 2 in DATA_ONLY mode.**
+Verify startup fetch/reuse, daily scheduling, lease contention, health/staleness,
+backup/restore, and last-known-good recovery before connecting any candidate
+consumer. Do not place live orders or grant Stage 2 trading authority.
 
 ## Next three milestones
 
-1. Acquire reproducible historical data and run realistic fee/slippage-aware
-   backtests against explicit baselines.
-2. Run a large Paper/Shadow sample with promotion gates. Consider any new
-   Tiny-Live test only after the safety repair, statistical evidence, and a new
-   explicit owner authorization.
+1. Complete the separately reviewed DATA_ONLY Wallet Intelligence deployment
+   and observation gate, then enrich candidates from official Polymarket data.
+2. Acquire reproducible historical data, run realistic fee/slippage-aware
+   backtests, and run a large Paper/Shadow sample with promotion gates. Consider
+   any new Tiny-Live test only after the safety repair, statistical evidence,
+   and a new explicit owner authorization.
 3. Add branch protection and encrypted off-host backup through separate
    governance and operational tasks.

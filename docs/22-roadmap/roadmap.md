@@ -24,6 +24,10 @@
   orders, explicit outcomes, consecutive clean observations, and independent
   order-detail, linked-trade, and position evidence. SDK 0.6.0 wire fixtures
   cover order aliases, Decimal fields, and mixed cancel results.
+- Data-only Wallet Intelligence: protected PolyCop ingestion plus canonical
+  multi-source wallet identity, source-derived time-safe features, independent
+  readiness, versioned candidate policy, deterministic ranking, persistent
+  lease fencing, atomic address-free publication, and last-known-good recovery.
 
 ## Completed safety maintenance gate
 
@@ -31,6 +35,15 @@ The bounded cancellation-confirmation and terminal order-response repair is
 implemented and deterministically tested without credentials, network access,
 Live mutation, deployment, or changes to retained historical run evidence.
 Operational promotion remains a separate authorization and deployment task.
+
+## Immediate data-only operational gate
+
+Deploy the Wallet Intelligence Stage 1 and Stage 2 Compose/timer path without
+trading authority. Observe first-start fetch, fresh reuse, daily execution,
+lease contention, stale/failure health, backup/restore, and last-known-good
+recovery before allowing an address-free candidate pool consumer. Official
+Polymarket enrichment and all Strategy/Paper/Shadow/Live use remain separate
+promotion stages.
 
 ## Immediate next cycle: research and validation
 
