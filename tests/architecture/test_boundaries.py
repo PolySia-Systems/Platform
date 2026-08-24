@@ -90,3 +90,25 @@ def test_control_core_does_not_depend_on_sqlite_adapter() -> None:
     }
 
     assert {path: imports for path, imports in findings.items() if imports} == {}
+
+
+def test_dynamic_shadow_core_has_no_trading_authority_dependency() -> None:
+    core_files = (
+        PACKAGE / "domain" / "copytrading" / "dynamic_shadow.py",
+        PACKAGE / "application" / "ports" / "dynamic_shadow.py",
+        PACKAGE / "application" / "services" / "dynamic_shadow.py",
+    )
+    forbidden_prefixes = (
+        "polysia.execution",
+        "polysia.risk",
+        "polysia.strategies",
+        "polysia.wallet",
+    )
+    findings = {
+        path.relative_to(ROOT).as_posix(): sorted(
+            name for name in _imports(path) if name.startswith(forbidden_prefixes)
+        )
+        for path in core_files
+    }
+
+    assert {path: imports for path, imports in findings.items() if imports} == {}

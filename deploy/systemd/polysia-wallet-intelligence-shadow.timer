@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PolySia dynamic forward Shadow evaluation every ten minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/10:00 UTC
+Persistent=true
+Unit=polysia-wallet-intelligence-shadow.service
+
+[Install]
+WantedBy=timers.target

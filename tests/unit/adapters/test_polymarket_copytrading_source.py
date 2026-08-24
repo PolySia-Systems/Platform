@@ -13,6 +13,7 @@ from polysia.adapters.polymarket.copytrading_source import (
     DATA_API_BASE_URL,
     GAMMA_API_BASE_URL,
     PolymarketCopyTradingSource,
+    PolymarketMarketScope,
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.domain.copytrading import (
@@ -199,6 +200,62 @@ async def test_invalid_or_ambiguous_rows_fail_closed(
     assert page.events == ()
     assert page.filtered_count == 1
     assert page.rejected_count == 1
+
+
+@pytest.mark.asyncio
+async def test_accepts_verified_non_btc_market_without_title_heuristics(
+    trades: list[dict[str, Any]],
+    event: list[dict[str, Any]],
+) -> None:
+    generic_trade = deepcopy(trades[1])
+    generic_trade["eventSlug"] = "will-the-example-pass"
+    generic_trade["outcome"] = "Yes"
+    generic_event = deepcopy(event)
+    generic_event[0]["slug"] = "will-the-example-pass"
+    market = generic_event[0]["markets"][0]
+    market["outcomes"] = '["Yes", "No"]'
+    market["eventStartTime"] = "2026-07-01T00:00:00Z"
+    market["endDate"] = "2026-12-31T00:00:00Z"
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=FakeTransport([generic_trade], generic_event),
+        clock=lambda: OBSERVED_AT,
+        market_scope=PolymarketMarketScope.ALL_VERIFIED,
+    )
+
+    page = await source.read_page(
+        "leader-001",
+        start_at=START_AT,
+        end_at=END_AT,
+    )
+
+    assert len(page.events) == 1
+    assert page.events[0].outcome_reference == "111111"
+
+
+@pytest.mark.asyncio
+async def test_legacy_default_scope_does_not_accept_non_btc_markets(
+    trades: list[dict[str, Any]],
+    event: list[dict[str, Any]],
+) -> None:
+    generic_trade = deepcopy(trades[1])
+    generic_trade["eventSlug"] = "will-the-example-pass"
+    transport = FakeTransport([generic_trade], event)
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=transport,
+        clock=lambda: OBSERVED_AT,
+    )
+
+    page = await source.read_page(
+        "leader-001",
+        start_at=START_AT,
+        end_at=END_AT,
+    )
+
+    assert page.events == ()
+    assert page.filtered_count == 1
+    assert not any(call[1] == "/events" for call in transport.calls)
 
 
 @pytest.mark.asyncio

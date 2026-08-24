@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from enum import StrEnum
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -47,6 +48,13 @@ class PolymarketCopyTradingSourceError(RuntimeError):
     """Safe Stage 1 source failure with no raw wallet or response content."""
 
 
+class PolymarketMarketScope(StrEnum):
+    """Explicit market scope; legacy execution remains BTC-15m by default."""
+
+    BTC_15M = "BTC_15M"
+    ALL_VERIFIED = "ALL_VERIFIED"
+
+
 class JsonGetTransport(Protocol):
     async def get_json(
         self,
@@ -74,7 +82,7 @@ class PolymarketSourceCoverage:
 
 
 @dataclass(frozen=True, slots=True)
-class _VerifiedBtc15Market:
+class _VerifiedMarket:
     slug: str
     condition_id: str
     outcomes_by_token: Mapping[str, str]
@@ -213,12 +221,14 @@ class PolymarketCopyTradingSource:
         *,
         transport: JsonGetTransport | None = None,
         clock: Clock | None = None,
+        market_scope: PolymarketMarketScope = PolymarketMarketScope.BTC_15M,
     ) -> None:
         self._leaders = _validated_leaders(leaders)
         self._transport = transport or UrllibJsonGetTransport()
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._market_cache: dict[str, _VerifiedBtc15Market] = {}
-        self._market_by_condition: dict[str, _VerifiedBtc15Market] = {}
+        self._market_scope = market_scope
+        self._market_cache: dict[str, dict[str, _VerifiedMarket]] = {}
+        self._market_by_condition: dict[str, _VerifiedMarket] = {}
 
     async def read_page(
         self,
@@ -262,25 +272,31 @@ class PolymarketCopyTradingSource:
         normalized: list[LeaderTradeEvent] = []
         filtered_count = 0
         rejected_count = 0
-        target_rows: list[tuple[dict[str, Any], str]] = []
+        target_rows: list[tuple[dict[str, Any], str, str]] = []
 
         for row in rows:
             try:
                 slug = _required_string(row, "eventSlug")
-                if _BTC_15M_SLUG_PATTERN.fullmatch(slug) is None:
+                if (
+                    self._market_scope is PolymarketMarketScope.BTC_15M
+                    and _BTC_15M_SLUG_PATTERN.fullmatch(slug) is None
+                ):
                     filtered_count += 1
                     continue
-                target_rows.append((row, slug))
+                condition_id = _required_string(row, "conditionId")
+                if _CONDITION_PATTERN.fullmatch(condition_id) is None:
+                    raise ValueError("invalid condition ID")
+                target_rows.append((row, slug, condition_id))
             except (TypeError, ValueError):
                 rejected_count += 1
 
         verified_markets = await self._verified_markets(
-            {slug for _, slug in target_rows},
+            {(slug, condition_id) for _, slug, condition_id in target_rows},
             purpose=purpose,
         )
-        for row, slug in target_rows:
+        for row, slug, condition_id in target_rows:
             try:
-                market = verified_markets[slug]
+                market = verified_markets[(slug, condition_id)]
                 normalized.append(
                     _normalize_trade(
                         row,
@@ -509,18 +525,15 @@ class PolymarketCopyTradingSource:
             raise ValueError("clock must return timezone-aware UTC")
         return value
 
-    async def _verified_btc_15m_market(
+    async def _verified_event_markets(
         self,
         slug: str,
         *,
         purpose: LeaderReadPurpose,
-    ) -> _VerifiedBtc15Market:
+    ) -> dict[str, _VerifiedMarket]:
         cached = self._market_cache.get(slug)
         if cached is not None:
             return cached
-        match = _BTC_15M_SLUG_PATTERN.fullmatch(slug)
-        if match is None:
-            raise ValueError("trade is not a strict BTC Up/Down 15-minute market")
         payload = await self._transport.get_json(
             GAMMA_API_BASE_URL,
             "/events",
@@ -529,61 +542,76 @@ class PolymarketCopyTradingSource:
         )
         events = _require_object_list(payload, source="/events")
         if len(events) != 1 or events[0].get("slug") != slug:
-            raise PolymarketCopyTradingSourceError("BTC 15-minute market metadata was not unique.")
+            raise PolymarketCopyTradingSourceError("Market event metadata was not unique.")
         markets = _require_object_list(events[0].get("markets"), source="event markets")
-        if len(markets) != 1:
-            raise PolymarketCopyTradingSourceError(
-                "BTC 15-minute event did not contain exactly one market."
+        if not markets:
+            raise PolymarketCopyTradingSourceError("Market event contained no markets.")
+        verified_by_condition: dict[str, _VerifiedMarket] = {}
+        for raw_market in markets:
+            condition_id = _required_string(raw_market, "conditionId")
+            if _CONDITION_PATTERN.fullmatch(condition_id) is None:
+                raise ValueError("invalid condition ID")
+            outcomes = _string_list(raw_market.get("outcomes"), name="outcomes")
+            token_ids = _string_list(raw_market.get("clobTokenIds"), name="clobTokenIds")
+            if not outcomes or len(token_ids) != len(outcomes):
+                raise ValueError("market outcomes and token IDs are inconsistent")
+            starts_at = _parse_utc_datetime(
+                raw_market.get("eventStartTime") or raw_market.get("startDate"),
+                name="market start time",
             )
-        raw_market = markets[0]
-        condition_id = _required_string(raw_market, "conditionId")
-        if _CONDITION_PATTERN.fullmatch(condition_id) is None:
-            raise ValueError("invalid condition ID")
-        outcomes = _string_list(raw_market.get("outcomes"), name="outcomes")
-        token_ids = _string_list(raw_market.get("clobTokenIds"), name="clobTokenIds")
-        if outcomes != ["Up", "Down"] or len(token_ids) != len(outcomes):
-            raise ValueError("unexpected BTC 15-minute outcomes")
-        starts_at = datetime.fromtimestamp(int(match.group("start")), tz=UTC)
-        event_starts_at = _parse_utc_datetime(
-            raw_market.get("eventStartTime"),
-            name="eventStartTime",
-        )
-        ends_at = _parse_utc_datetime(raw_market.get("endDate"), name="endDate")
-        if abs((event_starts_at - starts_at).total_seconds()) > 1:
-            raise ValueError("BTC 15-minute event start time does not match its slug")
-        if abs((ends_at - (starts_at + timedelta(minutes=15))).total_seconds()) > 1:
-            raise ValueError("BTC 15-minute metadata end time does not match its slug")
-        verified = _VerifiedBtc15Market(
-            slug=slug,
-            condition_id=condition_id,
-            outcomes_by_token=dict(zip(token_ids, outcomes, strict=True)),
-            starts_at=starts_at,
-            ends_at=ends_at,
-        )
-        self._market_cache[slug] = verified
-        self._market_by_condition[condition_id] = verified
-        return verified
+            ends_at = _parse_utc_datetime(raw_market.get("endDate"), name="endDate")
+            if ends_at <= starts_at:
+                raise ValueError("market end time must follow its start time")
+            btc_match = _BTC_15M_SLUG_PATTERN.fullmatch(slug)
+            if btc_match is not None:
+                slug_start = datetime.fromtimestamp(int(btc_match.group("start")), tz=UTC)
+                if outcomes != ["Up", "Down"]:
+                    raise ValueError("unexpected BTC 15-minute outcomes")
+                if abs((starts_at - slug_start).total_seconds()) > 1:
+                    raise ValueError("BTC 15-minute event start time does not match its slug")
+                expected_end = slug_start + timedelta(minutes=15)
+                if abs((ends_at - expected_end).total_seconds()) > 1:
+                    raise ValueError("BTC 15-minute metadata end time does not match its slug")
+            if condition_id in verified_by_condition:
+                raise ValueError("duplicate condition ID in event metadata")
+            verified = _VerifiedMarket(
+                slug=slug,
+                condition_id=condition_id,
+                outcomes_by_token=dict(zip(token_ids, outcomes, strict=True)),
+                starts_at=starts_at,
+                ends_at=ends_at,
+            )
+            verified_by_condition[condition_id] = verified
+            self._market_by_condition[condition_id] = verified
+        self._market_cache[slug] = verified_by_condition
+        return verified_by_condition
 
     async def _verified_markets(
         self,
-        slugs: set[str],
+        market_keys: set[tuple[str, str]],
         *,
         purpose: LeaderReadPurpose,
-    ) -> dict[str, _VerifiedBtc15Market]:
+    ) -> dict[tuple[str, str], _VerifiedMarket]:
         semaphore = asyncio.Semaphore(5)
 
-        async def load(slug: str) -> tuple[str, _VerifiedBtc15Market | None]:
+        async def load(slug: str) -> tuple[str, dict[str, _VerifiedMarket] | None]:
             try:
                 async with semaphore:
-                    return slug, await self._verified_btc_15m_market(
+                    return slug, await self._verified_event_markets(
                         slug,
                         purpose=purpose,
                     )
             except (TypeError, ValueError, PolymarketCopyTradingSourceError):
                 return slug, None
 
+        slugs = {slug for slug, _ in market_keys}
         results = await asyncio.gather(*(load(slug) for slug in sorted(slugs)))
-        return {slug: market for slug, market in results if market is not None}
+        by_slug = {slug: markets for slug, markets in results if markets is not None}
+        return {
+            (slug, condition_id): by_slug[slug][condition_id]
+            for slug, condition_id in market_keys
+            if slug in by_slug and condition_id in by_slug[slug]
+        }
 
 
 def _normalize_trade(
@@ -592,7 +620,7 @@ def _normalize_trade(
     expected_wallet: str,
     leader_id: str,
     observed_at: datetime,
-    market: _VerifiedBtc15Market,
+    market: _VerifiedMarket,
 ) -> LeaderTradeEvent:
     wallet = _required_string(row, "proxyWallet")
     if wallet.casefold() != expected_wallet.casefold():

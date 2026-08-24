@@ -27,7 +27,9 @@
 - Data-only Wallet Intelligence: protected PolyCop ingestion plus canonical
   multi-source wallet identity, source-derived time-safe features, independent
   readiness, versioned candidate policy, deterministic ranking, persistent
-  lease fencing, atomic address-free publication, and last-known-good recovery.
+  lease fencing, atomic address-free publication, copyability Alpha/Stress
+  selection, dynamic official Polymarket trade evidence, versioned Historical
+  cost modeling, current-book Forward Shadow, and last-known-good recovery.
 
 ## Completed safety maintenance gate
 
@@ -38,12 +40,11 @@ Operational promotion remains a separate authorization and deployment task.
 
 ## Immediate data-only operational gate
 
-Deploy the Wallet Intelligence Stage 1 and Stage 2 Compose/timer path without
+Review and deploy the Wallet Intelligence Stage 1–4 Compose/timer path without
 trading authority. Observe first-start fetch, fresh reuse, daily execution,
-lease contention, stale/failure health, backup/restore, and last-known-good
-recovery before allowing an address-free candidate pool consumer. Official
-Polymarket enrichment and all Strategy/Paper/Shadow/Live use remain separate
-promotion stages.
+lease contention, stale/failure health, backup/restore, last-known-good
+recovery, Historical model assumptions, and Forward rate telemetry. Strategy,
+Paper orders, and Live use remain separate promotion stages.
 
 ## Immediate next cycle: research and validation
 

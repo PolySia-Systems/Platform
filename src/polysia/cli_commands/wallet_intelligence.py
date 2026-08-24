@@ -3,12 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated, Never
 
 import typer
 
 from polysia.adapters.polycop import PolyCopCandidateWalletSource
+from polysia.adapters.polymarket.copytrading_source import (
+    PolymarketCopyTradingSource,
+    PolymarketMarketScope,
+)
+from polysia.adapters.polymarket.public import PolymarketPublicAdapter
 from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineBusyError,
     CandidatePipelineLeaseLostError,
@@ -22,10 +28,12 @@ from polysia.application.services.candidate_wallet_sync import (
     CandidateWalletSyncService,
 )
 from polysia.application.services.copyability_selection import CopyabilitySelectionError
+from polysia.application.services.dynamic_shadow import DynamicShadowError, DynamicShadowService
 from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
 )
+from polysia.domain.copytrading.dynamic_shadow import DynamicShadowConfig, DynamicShadowMode
 from polysia.domain.wallet_intelligence.copyability_selection import (
     CopyabilityPoolRow,
     SelectionPoolId,
@@ -37,6 +45,7 @@ from polysia.monitoring.wallet_intelligence_health import (
 )
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
+from polysia.storage.dynamic_shadow import DynamicShadowRepository, DynamicShadowStoreError
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
 
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
@@ -316,9 +325,7 @@ def pool(
     source: Annotated[str, typer.Option("--source")] = "polycop",
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
     limit: Annotated[int, typer.Option("--limit", min=1, max=100_000)] = 100,
-    selected_only: Annotated[
-        bool, typer.Option("--selected-only/--all-statuses")
-    ] = True,
+    selected_only: Annotated[bool, typer.Option("--selected-only/--all-statuses")] = True,
 ) -> None:
     """Read a deterministic protected Top-N candidate pool without exposing addresses."""
     source_adapter = _source(source)
@@ -428,6 +435,135 @@ def selection(
     )
 
 
+def shadow_sync(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    mode: Annotated[str, typer.Option("--mode", help="HISTORICAL or FORWARD.")] = "HISTORICAL",
+    lookback_hours: Annotated[int, typer.Option("--lookback-hours", min=1, max=720)] = 168,
+    lookback_minutes: Annotated[
+        int | None,
+        typer.Option("--lookback-minutes", min=1, max=43_200),
+    ] = None,
+    fee_bps: Annotated[str, typer.Option("--fee-bps")] = "200",
+    slippage_bps: Annotated[str, typer.Option("--historical-slippage-bps")] = "100",
+    historical_delay_ms: Annotated[
+        int, typer.Option("--historical-delay-ms", min=0, max=3_600_000)
+    ] = 2_000,
+    maximum_forward_delay_ms: Annotated[
+        int,
+        typer.Option("--maximum-forward-delay-ms", min=1, max=3_600_000),
+    ] = 30_000,
+    maximum_notional: Annotated[str, typer.Option("--maximum-notional")] = "5",
+    modeled_liquidity_size: Annotated[
+        str,
+        typer.Option("--modeled-liquidity-size"),
+    ] = "100",
+    history_days: Annotated[int, typer.Option("--history-days", min=30, max=3650)] = 365,
+) -> None:
+    """Backfill or forward-simulate current Stage 3 pools without order authority."""
+    source_adapter = _source(source)
+    try:
+        requested_mode = DynamicShadowMode(mode.strip().upper())
+        config = DynamicShadowConfig(
+            fee_bps=_decimal_option(fee_bps, "fee-bps"),
+            historical_slippage_bps=_decimal_option(slippage_bps, "historical-slippage-bps"),
+            historical_delay_ms=historical_delay_ms,
+            maximum_forward_delay_ms=maximum_forward_delay_ms,
+            maximum_notional=_decimal_option(maximum_notional, "maximum-notional"),
+            modeled_liquidity_size=_decimal_option(
+                modeled_liquidity_size,
+                "modeled-liquidity-size",
+            ),
+        )
+        repository = DynamicShadowRepository(database)
+        service = DynamicShadowService(
+            repository,
+            CandidateIntelligenceRepository(database),
+            lambda leaders: PolymarketCopyTradingSource(
+                leaders,
+                market_scope=PolymarketMarketScope.ALL_VERIFIED,
+            ),
+            quote_port=PolymarketPublicAdapter(),
+            config=config,
+        )
+        outcome = asyncio.run(
+            service.run(
+                source_adapter.source_id,
+                mode=requested_mode,
+                lookback=(
+                    timedelta(minutes=lookback_minutes)
+                    if lookback_minutes is not None
+                    else timedelta(hours=lookback_hours)
+                ),
+            )
+        )
+        repository.prune_history(cutoff=datetime.now(UTC) - timedelta(days=history_days))
+    except (
+        DynamicShadowError,
+        DynamicShadowStoreError,
+        CandidatePipelineBusyError,
+        CandidateStoreError,
+        ValueError,
+    ) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "error_code": getattr(error, "error_code", "dynamic_shadow_failed"),
+                    "message": "Dynamic Shadow failed safely; no order was sent.",
+                    "status": "failed",
+                },
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(json.dumps(outcome.to_dict(), sort_keys=True))
+
+
+def shadow_results(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    mode: Annotated[str, typer.Option("--mode", help="HISTORICAL or FORWARD.")] = "FORWARD",
+    limit: Annotated[int, typer.Option("--limit", min=1, max=100_000)] = 100,
+) -> None:
+    """Read current address-free per-wallet Shadow evidence."""
+    source_adapter = _source(source)
+    try:
+        requested_mode = DynamicShadowMode(mode.strip().upper())
+        repository = DynamicShadowRepository(database)
+        repository.initialize()
+        rows = repository.current_wallet_results(
+            source_adapter.source_id,
+            mode=requested_mode,
+            limit=limit,
+        )
+    except (DynamicShadowStoreError, CandidateStoreError, ValueError) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "error_code": "dynamic_shadow_read_failed",
+                    "message": "Dynamic Shadow results could not be read safely.",
+                    "status": "failed",
+                },
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        json.dumps(
+            {
+                "count": len(rows),
+                "mode": requested_mode.value,
+                "rows": [row.to_dict() for row in rows],
+                "source_id": source_adapter.source_id,
+                "status": "succeeded",
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def backup(
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
     backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
@@ -493,6 +629,11 @@ def restore_check(
                     result.validation.copyability_membership_count
                 ),
                 "restored_copyability_run_count": result.validation.copyability_run_count,
+                "dynamic_shadow_schema_version": (result.validation.dynamic_shadow_schema_version),
+                "restored_dynamic_shadow_run_count": (result.validation.dynamic_shadow_run_count),
+                "restored_dynamic_shadow_evaluation_count": (
+                    result.validation.dynamic_shadow_evaluation_count
+                ),
                 "schema_version": result.validation.schema_version,
                 "sha256": result.sha256,
                 "status": "succeeded",
@@ -544,6 +685,16 @@ def _source(source_id: str) -> PolyCopCandidateWalletSource:
     if normalized == "polycop":
         return PolyCopCandidateWalletSource()
     raise typer.BadParameter(f"Unsupported candidate-wallet source: {source_id}")
+
+
+def _decimal_option(value: str, name: str) -> Decimal:
+    try:
+        result = Decimal(value)
+    except (InvalidOperation, ValueError) as error:
+        raise typer.BadParameter(f"{name} must be decimal") from error
+    if not result.is_finite():
+        raise typer.BadParameter(f"{name} must be finite")
+    return result
 
 
 def _schedule_date(value: str | None) -> date:
@@ -683,6 +834,41 @@ def _combined_health(
             if level == "healthy":
                 level = "warning"
     payload["copyability_selection"] = copyability_selection
+    shadow_store = DynamicShadowRepository(intelligence_store.path)
+    shadow_store.initialize()
+    shadow_health = shadow_store.health(source_adapter.source_id, now=datetime.now(UTC))
+    current_shadow = shadow_health.current_run
+    payload["dynamic_shadow"] = (
+        None
+        if current_shadow is None
+        else {
+            "candidate_count": current_shadow.candidate_count,
+            "completed_at": None
+            if current_shadow.completed_at is None
+            else current_shadow.completed_at.isoformat(),
+            "cost_model_version": current_shadow.cost_model_version,
+            "event_count": current_shadow.event_count,
+            "mode": current_shadow.mode.value,
+            "policy_version": current_shadow.policy_version,
+            "run_id": current_shadow.run_id,
+            "selection_run_id": current_shadow.selection_run_id,
+            "simulated_count": current_shadow.simulated_count,
+            "unknown_count": current_shadow.unknown_count,
+        }
+    )
+    if current_selection is not None:
+        if current_shadow is None:
+            reasons.append("dynamic_shadow_unavailable")
+            if level == "healthy":
+                level = "warning"
+        elif current_shadow.selection_run_id != current_selection.run_id:
+            reasons.append("dynamic_shadow_behind_selection")
+            if level == "healthy":
+                level = "warning"
+    if current_selection is not None:
+        reasons.extend(shadow_health.reasons)
+        if shadow_health.level == "warning" and level == "healthy":
+            level = "warning"
     payload["level"] = level
     payload["reasons"] = list(dict.fromkeys(reasons))
     return payload, int(level == "critical")
