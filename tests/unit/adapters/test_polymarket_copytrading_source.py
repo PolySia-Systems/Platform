@@ -13,6 +13,7 @@ from polysia.adapters.polymarket.copytrading_source import (
     DATA_API_BASE_URL,
     GAMMA_API_BASE_URL,
     PolymarketCopyTradingSource,
+    PolymarketCopyTradingSourceError,
     PolymarketMarketScope,
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
@@ -82,6 +83,43 @@ class FakeTransport:
         if path == "/closed-positions":
             return [{"totalBought": 5}]
         raise AssertionError(f"unexpected path: {path}")
+
+
+class _DeepPositionTransport(FakeTransport):
+    def __init__(
+        self,
+        trades: list[dict[str, Any]],
+        event: list[dict[str, Any]],
+        *,
+        full_pages: int,
+    ) -> None:
+        super().__init__(trades, event)
+        self.full_pages = full_pages
+
+    async def get_json(
+        self,
+        base_url: str,
+        path: str,
+        params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+    ) -> Any:
+        if base_url == DATA_API_BASE_URL and path == "/positions":
+            del purpose
+            self.calls.append((base_url, path, dict(params)))
+            page_number = int(params.get("offset", 0)) // 500
+            count = 500 if page_number < self.full_pages else 1
+            return [
+                {
+                    "asset": "111111",
+                    "conditionId": (
+                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    ),
+                    "size": 0.25,
+                }
+                for _ in range(count)
+            ]
+        return await super().get_json(base_url, path, params, purpose=purpose)
 
 
 @pytest.fixture
@@ -376,6 +414,52 @@ async def test_complete_position_baseline_and_verified_market_metadata_are_sanit
     assert metadata.external_slug == "btc-updown-15m-1785255300"
     assert metadata.outcome_label in {"Up", "Down"}
     assert WALLET not in repr(baseline)
+
+
+@pytest.mark.asyncio
+async def test_position_baseline_uses_the_official_offset_range(
+    trades: list[dict[str, Any]],
+    event: list[dict[str, Any]],
+) -> None:
+    transport = _DeepPositionTransport(trades, event, full_pages=5)
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=transport,
+        clock=lambda: OBSERVED_AT,
+    )
+
+    baseline = await source.read_inventory("leader-001")
+
+    position_calls = [call for call in transport.calls if call[1] == "/positions"]
+    assert [call[2]["offset"] for call in position_calls] == [
+        0,
+        500,
+        1000,
+        1500,
+        2000,
+        2500,
+    ]
+    assert baseline.positions
+
+
+@pytest.mark.asyncio
+async def test_position_baseline_fails_closed_at_the_official_maximum_offset(
+    trades: list[dict[str, Any]],
+    event: list[dict[str, Any]],
+) -> None:
+    transport = _DeepPositionTransport(trades, event, full_pages=21)
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET},
+        transport=transport,
+        clock=lambda: OBSERVED_AT,
+    )
+
+    with pytest.raises(PolymarketCopyTradingSourceError, match="bounded pagination limit"):
+        await source.read_inventory("leader-001")
+
+    position_calls = [call for call in transport.calls if call[1] == "/positions"]
+    assert len(position_calls) == 21
+    assert position_calls[-1][2]["offset"] == 10_000
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,8 @@ _SAFE_ALIAS_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 DATA_API_BASE_URL = "https://data-api.polymarket.com"
 GAMMA_API_BASE_URL = "https://gamma-api.polymarket.com"
+POSITION_PAGE_SIZE = 500
+POSITION_MAX_OFFSET = 10_000
 SOURCE_ID = "polymarket:data-api"
 
 Clock = Callable[[], datetime]
@@ -422,8 +424,9 @@ class PolymarketCopyTradingSource:
 
         wallet = self._leader_wallet(leader_id)
         positions: dict[tuple[str, str], Decimal] = {}
-        page_size = 500
-        for page_number in range(5):
+        page_size = POSITION_PAGE_SIZE
+        maximum_pages = POSITION_MAX_OFFSET // page_size + 1
+        for page_number in range(maximum_pages):
             payload = await self._transport.get_json(
                 DATA_API_BASE_URL,
                 "/positions",
