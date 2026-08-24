@@ -108,6 +108,7 @@ def test_ensure_builds_pool_and_pool_command_never_exposes_address(
     assert ensured.exit_code == 0, ensured.output
     ensured_payload = json.loads(ensured.stdout)
     assert ensured_payload["candidate_pool"]["selected_count"] == 1
+    assert ensured_payload["copyability_selection"]["live_review_count"] == 0
     result = runner.invoke(
         app,
         [
@@ -125,3 +126,18 @@ def test_ensure_builds_pool_and_pool_command_never_exposes_address(
     assert payload["rows"][0]["candidate_rank"] == 1
     assert address not in result.stdout
     assert "0x" not in report.read_text(encoding="utf-8")
+    selection = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "selection",
+            "--database",
+            str(database),
+            "--pool",
+            "LIVE_REVIEW_CANDIDATE",
+        ],
+    )
+    assert selection.exit_code == 0, selection.output
+    selection_payload = json.loads(selection.stdout)
+    assert selection_payload["count"] == 0
+    assert address not in selection.stdout

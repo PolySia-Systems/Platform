@@ -3,10 +3,11 @@
 ## Status and boundary
 
 This runbook covers the CURRENT repository implementation of Stage 1 source
-ingestion and Stage 2 Candidate Intelligence. Deployment and timer installation
-remain an operator action. The workflow is read-only toward external sources and cannot
-produce a signal, `OrderIntent`, paper order, Live order, cancellation,
-transfer, or wallet mutation.
+ingestion, Stage 2 Candidate Intelligence, and Stage 3 copyability selection.
+Deployment and timer installation remain an operator action. The workflow is
+read-only toward external sources and cannot produce a signal, `OrderIntent`,
+paper order, Live order, cancellation, transfer, or wallet mutation. Stage 3
+does not prove profitability or authorize trading.
 
 PolyCop access is permitted only while the owner has valid permission covering
 the endpoint, daily frequency, and retention. Disable the timer immediately if
@@ -85,6 +86,7 @@ Default retention is:
 - accepted normalized snapshots: 365 days;
 - schema-change quarantine evidence: 30 days;
 - Stage 2 feature, policy, and run history: at least 365 days;
+- Stage 3 score, membership, and run history: at least 365 days;
 - local checksummed backups: newest 14 copies.
 
 The current snapshot is never pruned, even if it is older than the retention
@@ -97,6 +99,14 @@ wallet as `(chain, normalized_address)`, retains every source link, derives only
 snapshot-supported point-in-time features, and records readiness separately
 from policy status. Insufficient 1-, 7-, or 30-day history remains `NULL`; it is
 never replaced with zero. No healthy raw source JSON retention is claimed.
+
+Stage 3 has a second additive schema-version record. After a healthy Stage 2
+publication, `wallet-intelligence ensure` scores copyability components and
+publishes independent `SHADOW_ALPHA`, `SHADOW_STRESS`, `REJECTED`, and
+`WATCHLIST` results. `LIVE_REVIEW_CANDIDATE` remains empty until official
+Polymarket verification, copyability backtest, and Shadow evidence exist. A
+Stage 3 failure keeps the previous Stage 3 pools and does not rewrite Stage 1
+or Stage 2.
 
 The processing identity includes source snapshot, feature-set version, policy
 id/version, and ranking version. A successful identity is idempotent. The full
@@ -127,8 +137,9 @@ docker compose --profile wallet-intelligence run --rm wallet-intelligence-sync
 ```
 
 The default Compose command is `wallet-intelligence ensure`. On the first run it
-fetches Stage 1 immediately at any time, then publishes Stage 2. On later runs it
-reuses a healthy snapshot younger than 24 hours; otherwise it refreshes Stage 1.
+fetches Stage 1 immediately at any time, then publishes Stage 2 and Stage 3. On
+later runs it reuses a healthy snapshot younger than 24 hours; otherwise it
+refreshes Stage 1, then replays or republishes Stage 2 and Stage 3.
 The daily timer still anchors subsequent checks at 03:15 UTC. The command exits
 nonzero on a source, schema, consistency, persistence, lease, publication, or
 backup failure. Its JSON output and health file contain counts, identifiers,
@@ -146,7 +157,10 @@ docker compose --profile wallet-intelligence run --rm \
 Health is `warning` after 36 hours without a new accepted snapshot and
 `critical` after 72 hours. A missing candidate pool is critical. A candidate
 pool behind the current Stage 1 snapshot, or a fresh last-known-good pool plus a
-failed latest Stage 1/Stage 2 attempt, is warning. `critical` exits with status 1.
+failed latest Stage 1/Stage 2 attempt, is warning. Missing Stage 3 after a
+healthy Stage 2, Stage 3 behind Stage 2, or a failed latest Stage 3 attempt is
+warning and does not invent a Stage 2 outage. A non-empty Live-review pool is
+warning. `critical` exits with status 1.
 External alert delivery is not implemented; systemd failure monitoring or a
 separately configured alert provider must observe nonzero exits.
 
@@ -171,6 +185,24 @@ source score descending, source rank ascending, presence ratio descending, and
 canonical `wallet_id` ascending. The last field is the stable tie-break. The
 complete feature/time/version contract is frozen in
 `docs/03-requirements/wallet-intelligence-stage2.md`.
+
+## Copyability selection query contract
+
+Stage 3 pools are address-free. Read a pool or watchlist:
+
+```bash
+docker compose --profile wallet-intelligence run --rm \
+  wallet-intelligence-sync wallet-intelligence selection \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --pool SHADOW_ALPHA \
+  --limit 50
+```
+
+Allowed `--pool` values are `SHADOW_ALPHA`, `SHADOW_STRESS`,
+`LIVE_REVIEW_CANDIDATE`, `REJECTED`, and `WATCHLIST`. Ordinary JSON contains
+`wallet_id` only. `LIVE_REVIEW_CANDIDATE` must return count 0 in v0.1. The
+scoring and eligibility contract is frozen in
+`docs/03-requirements/wallet-intelligence-stage3.md`.
 
 ## Daily automation at 03:15 UTC
 
@@ -239,6 +271,7 @@ authorized and implemented.
 | Unexpired pipeline lease | Second startup/timer/manual call fails safely as busy | Let the owner finish; do not run parallel copies |
 | Expired lease after crash | New owner increments fencing token and recovers | Inspect the abandoned process before retrying external operations |
 | Stage 2 calculation/publication failure | Previous candidate pool retained; failed run recorded | Inspect safe error code and repair before republishing |
+| Stage 3 calculation/publication failure | Previous copyability pools retained; Stage 1/2 unchanged | Inspect safe error code; Stage 2 may still be healthy |
 | Abandoned Stage 1 run older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
 | Row-count baseline warning | Snapshot retained with warning | Compare source behavior and recent history |
 | SQLite/backup integrity failure | Nonzero exit | Stop automation; preserve database and backups; rehearse a known-good restore |
@@ -264,8 +297,7 @@ link; source observations remain separate and cannot overwrite each other.
 ## Rollback
 
 Disable the timer, check out the previously approved application revision, and
-rebuild. Stage 2 is additive and has no Foreign Key that prevents the older
-Stage 1 retention path from pruning its own history. Earlier code ignores the
-Stage 2 tables, so no main trading-database rollback is required. Retain the
-database and backups for forward recovery; do not delete them merely because
-application code is rolled back.
+rebuild. Stage 2 and Stage 3 are additive. Earlier code ignores those tables, so
+no main trading-database rollback is required. Retain the database and backups
+for forward recovery; do not delete them merely because application code is
+rolled back.

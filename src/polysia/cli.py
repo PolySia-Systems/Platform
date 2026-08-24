@@ -63,6 +63,7 @@ wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
 wallet_intelligence_app.command("ensure")(wallet_intelligence.ensure)
 wallet_intelligence_app.command("health")(wallet_intelligence.health)
 wallet_intelligence_app.command("pool")(wallet_intelligence.pool)
+wallet_intelligence_app.command("selection")(wallet_intelligence.selection)
 wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
 wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)
 

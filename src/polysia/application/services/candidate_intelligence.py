@@ -15,9 +15,14 @@ from polysia.application.ports.candidate_wallets import (
     CandidateWalletSourcePort,
     CandidateWalletStorePort,
 )
+from polysia.application.ports.copyability_selection import CopyabilitySelectionStorePort
 from polysia.application.services.candidate_wallet_sync import (
     CandidateSyncOutcome,
     CandidateWalletSyncService,
+)
+from polysia.application.services.copyability_selection import (
+    CopyabilitySelectionError,
+    CopyabilitySelectionService,
 )
 from polysia.domain.wallet_intelligence import (
     CandidatePipelineLease,
@@ -31,6 +36,7 @@ from polysia.domain.wallet_intelligence import (
     DataReadinessStatus,
     normalize_evm_wallet,
 )
+from polysia.domain.wallet_intelligence.copyability_selection import CopyabilitySelectionRun
 
 Clock = Callable[[], datetime]
 
@@ -64,9 +70,11 @@ class WalletIntelligencePipelineOutcome:
     source_refreshed: bool
     source_idempotent_replay: bool
     intelligence_idempotent_replay: bool
+    selection: CopyabilitySelectionRun | None = None
+    selection_idempotent_replay: bool = False
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "candidate_pool": {
                 "evaluated_count": self.pool.evaluated_count,
                 "feature_set_version": self.pool.key.feature_set_version,
@@ -96,6 +104,25 @@ class WalletIntelligencePipelineOutcome:
             },
             "status": "succeeded",
         }
+        if self.selection is not None:
+            payload["copyability_selection"] = {
+                "alpha_count": self.selection.alpha_count,
+                "evaluated_count": self.selection.evaluated_count,
+                "feature_set_version": self.selection.key.feature_set_version,
+                "live_review_count": self.selection.live_review_count,
+                "overlap_count": self.selection.overlap_count,
+                "policy_id": self.selection.key.policy_id,
+                "policy_version": self.selection.key.policy_version,
+                "published_at": self.selection.published_at.isoformat(),
+                "ranking_version": self.selection.key.ranking_version,
+                "rejected_count": self.selection.rejected_count,
+                "run_id": self.selection.run_id,
+                "stage2_run_id": self.selection.key.stage2_run_id,
+                "stress_count": self.selection.stress_count,
+                "watchlist_count": self.selection.watchlist_count,
+            }
+            payload["selection_idempotent_replay"] = self.selection_idempotent_replay
+        return payload
 
 
 class CandidateIntelligenceService:
@@ -193,16 +220,23 @@ class WalletIntelligencePipelineService:
         *,
         chain: str,
         clock: Clock | None = None,
+        selection_store: CopyabilitySelectionStorePort | None = None,
     ) -> None:
         self._source = source
         self._source_store = source_store
         self._intelligence_store = intelligence_store
+        self._selection_store = selection_store
         self._clock = clock or (lambda: datetime.now(UTC))
         self._source_sync = CandidateWalletSyncService(source, source_store, clock=self._clock)
         self._intelligence = CandidateIntelligenceService(
             intelligence_store,
             chain_by_source={source.source_id: chain},
             clock=self._clock,
+        )
+        self._selection = (
+            None
+            if selection_store is None
+            else CopyabilitySelectionService(selection_store, clock=self._clock)
         )
 
     async def ensure(
@@ -259,12 +293,35 @@ class WalletIntelligencePipelineService:
             self._intelligence_store.prune_history(
                 cutoff=self._utc_now() - timedelta(days=intelligence_history_days)
             )
+            selection = None
+            selection_replay = False
+            if self._selection is not None and self._selection_store is not None:
+                lease = self._intelligence_store.renew_lease(
+                    lease,
+                    renewed_at=self._utc_now(),
+                    lease_duration=lease_duration,
+                )
+                try:
+                    selection_outcome = self._selection.process_stage2_run(
+                        self._source.source_id,
+                        intelligence_outcome.pool.run_id,
+                        lease=lease,
+                    )
+                except CopyabilitySelectionError:
+                    raise
+                self._selection_store.prune_history(
+                    cutoff=self._utc_now() - timedelta(days=intelligence_history_days)
+                )
+                selection = selection_outcome.selection
+                selection_replay = selection_outcome.idempotent_replay
             return WalletIntelligencePipelineOutcome(
                 snapshot=source_outcome.snapshot,
                 pool=intelligence_outcome.pool,
                 source_refreshed=source_refreshed,
                 source_idempotent_replay=source_outcome.idempotent_replay,
                 intelligence_idempotent_replay=intelligence_outcome.idempotent_replay,
+                selection=selection,
+                selection_idempotent_replay=selection_replay,
             )
         finally:
             self._intelligence_store.release_lease(lease)
@@ -292,6 +349,8 @@ class WalletIntelligencePipelineService:
     def _acquire(self, lease_duration: timedelta) -> CandidatePipelineLease:
         self._source_store.initialize()
         self._intelligence_store.initialize()
+        if self._selection_store is not None:
+            self._selection_store.initialize()
         return self._intelligence_store.acquire_lease(
             PIPELINE_LEASE_RESOURCE,
             owner_id=str(uuid.uuid4()),

@@ -4,13 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-23 |
+| Review date | 2026-08-24 |
 | Source-of-truth branch | `main` |
 | Audited repository baseline | `eac6feee625127e0e17919436571b4d15066fee9` |
 | Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 2 Candidate Intelligence v1 completed; not deployed |
+| Latest repository maintenance | Stage 3 copyability selection v0.1 completed; not deployed |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -79,12 +79,14 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
 - The first SHADOW-only Control Kernel vertical slice is complete for
   `stale-price@0.1.0`, with versioned desired state, optimistic concurrency,
   idempotency, synchronous observed state, audit history, and no Live authority.
-- Stage 1 protected PolyCop ingestion and Stage 2 Candidate Intelligence v1 are
-  complete in repository code. The data-only path canonicalizes wallet identity,
-  calculates source-derived time-safe features, separates readiness from policy,
-  ranks deterministically, and atomically publishes an address-free current
-  pool under a persistent fenced SQLite lease. It is not deployed and has no
-  signal, strategy, execution, Paper, Shadow, or Live authority.
+- Stage 1 protected PolyCop ingestion, Stage 2 Candidate Intelligence v1, and
+  Stage 3 copyability selection v0.1 are complete in repository code. The
+  data-only path canonicalizes wallet identity, calculates source-derived
+  time-safe features, separates readiness from policy, ranks deterministically,
+  and publishes address-free Shadow Alpha/Stress selection pools under a
+  persistent fenced SQLite lease. Live-review remains empty. The path is not
+  deployed and has no signal, strategy, execution, Paper, Shadow, or Live
+  authority. It does not prove profitability.
 
 ## Current architecture and runtime capabilities
 
@@ -109,11 +111,10 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
   idempotency, in-process intent gating, separate observed state, and append-only
   audit evidence. It has no PAPER, LIVE, Web, API, AI, generalized parameter, or
   background-controller authority.
-- Wallet Intelligence Stage 2 is CURRENT in repository code and not yet
-  deployed. It preserves immutable feature/policy history and last-known-good
-  state while applying effective staleness at the current-pool read boundary.
-  PolyCop is discovery evidence only; official Polymarket enrichment remains
-  deferred.
+- Wallet Intelligence Stage 3 is CURRENT in repository code and not yet
+  deployed. It scores copyability-oriented pools from Stage 2 evidence only.
+  PolyCop remains discovery evidence; official Polymarket enrichment, copyability
+  backtest, Shadow evidence, and Tiny-Live remain deferred.
 - The bounded BTC Up/Down 15-minute runner uses the smallest venue-valid
   quantity, one FAK entry, confirmed-fill reconciliation, and at most one GTC
   exit sized from actual available position. Duplicate authorization and entry
@@ -236,10 +237,11 @@ evidence.
 - This engineering change did not deploy, mutate an external account, or alter
   the retained ambiguous Tiny Live run. Any future operational use still needs
   a separately reviewed deployment and explicit authorization.
-- Wallet Intelligence Stage 2 passed complete repository, security,
-  supply-chain, backup/restore, and owner-approved read-only PolyCop smoke gates.
-  Its timer and Compose profile were not enabled on the server. The next
-  operational action is a separate data-only deployment and observation gate.
+- Wallet Intelligence Stage 3 passed focused repository tests plus an owner-approved
+  read-only PolyCop smoke (21 pages, 2022 wallets; Alpha 50 / Stress 100 /
+  Live review 0; idempotent replay; backup/restore counts). Its timer and
+  Compose profile were not enabled on the server. The next operational action
+  remains a separate data-only deployment and observation gate.
 - All four Tiny Live Copy authorizations and entry-attempt capacity are
   consumed. Any future Live run requires a new explicit owner authorization,
   new Run ID, exact green commit, zero-mutation Shadow, and all readiness gates.
@@ -271,10 +273,11 @@ evidence.
 
 ## Single recommended next task
 
-**Deploy and observe Wallet Intelligence Stage 1 and Stage 2 in DATA_ONLY mode.**
+**Deploy and observe Wallet Intelligence Stages 1–3 in DATA_ONLY mode.**
 Verify startup fetch/reuse, daily scheduling, lease contention, health/staleness,
-backup/restore, and last-known-good recovery before connecting any candidate
-consumer. Do not place live orders or grant Stage 2 trading authority.
+backup/restore, last-known-good recovery, and empty Live-review before connecting
+any candidate consumer. Do not place live orders or grant Stage 3 trading
+authority.
 
 ## Next three milestones
 
