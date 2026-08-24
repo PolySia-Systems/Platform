@@ -43,6 +43,10 @@ PolyCop Stage 1 snapshot
   from that wallet's component mean. Historical 7d/30d windows never block
   first-snapshot Alpha or Stress and are never rewritten as zero.
 - Copy-loss rate and recent slippage are inverted after percentile conversion.
+- Presence ratio alone cannot create a copyability score or Alpha eligibility;
+  at least one source copyability metric must be present.
+- Percentage metrics are validated on PolyCop's `0`–`100` scale and
+  `buy_price` on `0`–`1`; out-of-range evidence is rejected.
 - High PolyCop hedge proxies exclude Alpha and do not reject.
 - `LIVE_REVIEW_CANDIDATE` has a schema and CLI contract but no members until
   independent evidence exists.

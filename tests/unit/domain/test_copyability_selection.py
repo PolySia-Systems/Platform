@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from polysia.domain.wallet_intelligence.candidate_intelligence import (
     CandidateStatus,
     DataReadinessStatus,
@@ -102,6 +104,23 @@ def test_null_history_does_not_block_alpha_or_become_zero() -> None:
     assert any(item.pool_id is SelectionPoolId.SHADOW_STRESS for item in memberships)
 
 
+def test_missing_source_copyability_metrics_cannot_enter_alpha() -> None:
+    calculated_at = datetime(2026, 8, 24, 1, tzinfo=UTC)
+    scores, memberships = select_copyability_pools(
+        tuple(
+            _evidence(f"w-{index:03d}", metrics={}, rank=index + 1)
+            for index in range(60)
+        ),
+        calculated_at=calculated_at,
+    )
+
+    assert all(score.copyability_score is None for score in scores)
+    assert all("copyability_evidence_missing" in score.reasons for score in scores)
+    assert not any(
+        item.pool_id is SelectionPoolId.SHADOW_ALPHA for item in memberships
+    )
+
+
 def test_invalid_metrics_are_rejected_not_watchlisted() -> None:
     calculated_at = datetime(2026, 8, 24, 1, tzinfo=UTC)
     scores, memberships = select_copyability_pools(
@@ -126,6 +145,52 @@ def test_invalid_metrics_are_rejected_not_watchlisted() -> None:
         item.wallet_id for item in memberships if item.pool_id is SelectionPoolId.REJECTED
     }
     assert rejected == {"bad", "invalid-ready"}
+
+
+@pytest.mark.parametrize(
+    ("metrics", "reason"),
+    (
+        ({"buy_price": "1.01"}, "buy_price_out_of_range"),
+        ({"copy_loss_rate": "-1"}, "copy_loss_rate_out_of_range"),
+        ({"r20_slip": "-0.01"}, "r20_slip_out_of_range"),
+        ({"r20_wr": "999"}, "r20_wr_out_of_range"),
+        ({"win_rate": "100.01"}, "win_rate_out_of_range"),
+    ),
+)
+def test_bounded_metrics_outside_source_units_are_rejected(
+    metrics: dict[str, object],
+    reason: str,
+) -> None:
+    calculated_at = datetime(2026, 8, 24, 1, tzinfo=UTC)
+    scores, memberships = select_copyability_pools(
+        (_evidence("bad-range", metrics=metrics),),
+        calculated_at=calculated_at,
+    )
+
+    assert scores[0].status is SelectionStatus.REJECTED
+    assert reason in scores[0].reasons
+    assert memberships[0].pool_id is SelectionPoolId.REJECTED
+
+
+def test_bounded_metric_endpoints_are_accepted() -> None:
+    calculated_at = datetime(2026, 8, 24, 1, tzinfo=UTC)
+    scores, _memberships = select_copyability_pools(
+        (
+            _evidence(
+                "bounds",
+                metrics={
+                    "buy_price": "1",
+                    "copy_loss_rate": "0",
+                    "r20_slip": "100",
+                    "r20_wr": "0",
+                    "win_rate": "100",
+                },
+            ),
+        ),
+        calculated_at=calculated_at,
+    )
+
+    assert scores[0].status is not SelectionStatus.REJECTED
 
 
 def test_alpha_and_stress_are_independent_and_live_review_is_empty() -> None:

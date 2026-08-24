@@ -53,6 +53,14 @@ _INT_METRIC_FIELDS = ("markets_traded", "trading_days", "hedged")
 _NON_NEGATIVE_FIELDS = frozenset(
     {"markets_traded", "trading_days", "trading_volume", "win_rate"}
 )
+_CLOSED_RANGE_FIELDS = {
+    "buy_price": (Decimal("0"), Decimal("1")),
+    "copy_loss_rate": (Decimal("0"), Decimal("100")),
+    "hedged_pct": (Decimal("0"), Decimal("100")),
+    "r20_slip": (Decimal("0"), Decimal("100")),
+    "r20_wr": (Decimal("0"), Decimal("100")),
+    "win_rate": (Decimal("0"), Decimal("100")),
+}
 
 
 class SelectionPoolId(StrEnum):
@@ -250,8 +258,9 @@ def _decimal_metric(value: object, *, field_name: str) -> Decimal | None:
         raise MetricsParseError(f"{field_name}_invalid") from error
     if not parsed.is_finite():
         raise MetricsParseError(f"{field_name}_non_finite")
-    if field_name == "hedged_pct" and (parsed < Decimal(0) or parsed > Decimal(100)):
-        raise MetricsParseError("hedged_pct_out_of_range")
+    closed_range = _CLOSED_RANGE_FIELDS.get(field_name)
+    if closed_range is not None and not closed_range[0] <= parsed <= closed_range[1]:
+        raise MetricsParseError(f"{field_name}_out_of_range")
     if field_name in _NON_NEGATIVE_FIELDS and parsed < Decimal(0):
         raise MetricsParseError(f"{field_name}_negative")
     return parsed
@@ -309,11 +318,18 @@ def _score_wallets(
     performance = _mean_percentiles(
         [_percentiles(decimals(name)) for name in _PERFORMANCE_FIELDS]
     )
+    copyability_metric_percentiles = [
+        _percentiles(decimals(name)) for name in _COPYABILITY_POSITIVE_FIELDS
+    ] + [
+        _invert(_percentiles(decimals(name))) for name in _COPYABILITY_INVERTED_FIELDS
+    ]
     copyability = _mean_percentiles(
-        [_percentiles(decimals(name)) for name in _COPYABILITY_POSITIVE_FIELDS]
-        + [_invert(_percentiles(decimals(name))) for name in _COPYABILITY_INVERTED_FIELDS]
+        copyability_metric_percentiles
         + [_percentiles([item.presence_ratio for item in evidence])]
     )
+    for index in range(len(copyability)):
+        if not any(column[index] is not None for column in copyability_metric_percentiles):
+            copyability[index] = None
     activity = _mean_percentiles(
         [
             _percentiles(decimals("trading_volume")),

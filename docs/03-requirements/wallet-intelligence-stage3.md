@@ -52,9 +52,10 @@ proxies exclude Alpha and do not reject.
 
 Eligibility:
 
-- Alpha requires `READY` readiness, a present copyability score, a present alpha
-  score, and no hedge block (`hedged_pct >= 50`, hedge-risk percentile `>= 80`,
-  or a positive `hedged` flag without `hedged_pct`);
+- Alpha requires `READY` readiness, at least one source copyability metric, a
+  present copyability score, a present alpha score, and no hedge block
+  (`hedged_pct >= 50`, hedge-risk percentile `>= 80`, or a positive `hedged`
+  flag without `hedged_pct`);
 - Stress requires a present activity score and readiness that is not `STALE`,
   `UNKNOWN`, or `INVALID`.
 
@@ -77,10 +78,15 @@ with Decimal arithmetic:
 | stability | 5% | rank stability, score stability |
 
 Missing values stay `NULL` and are omitted from that wallet's component mean.
+Presence ratio alone cannot create a copyability score; at least one of the five
+source copyability metrics must be present. PolyCop percentage metrics
+`copy_loss_rate`, `r20_slip`, `r20_wr`, `win_rate`, and `hedged_pct` must be in
+`0`–`100`, while `buy_price` must be in `0`–`1`.
 Ties use average rank. A one-value population scores 50. Negative values remain
-in the percentile scale; they are not clipped to zero. `copy_loss_rate` and
-`r20_slip` are inverted after percentile conversion. Alpha score is a
-renormalized weighted mean of available components.
+in the percentile scale for signed metrics such as PnL and ROI; they are not
+clipped to zero. Bounded rates and prices outside their documented source units
+are rejected. `copy_loss_rate` and `r20_slip` are inverted after percentile
+conversion. Alpha score is a renormalized weighted mean of available components.
 
 `hedged` is a non-negative integer proxy, not a verified Polymarket hedge
 ratio. Treat `0` as unhedged and `>0` as a hedge flag. `hedged_pct` must be in
