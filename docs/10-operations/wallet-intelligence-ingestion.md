@@ -380,7 +380,11 @@ docker compose --profile wallet-intelligence run --rm \
 `restore-check` verifies the SHA-256 sidecar, restores into a temporary database,
 runs SQLite integrity and foreign-key checks, verifies the dedicated schema
 version, and reports restored snapshot and row counts. It never overwrites the
-active database.
+active database. The disposable restore is created beside the protected backup
+by default, so a growing database is not constrained by the container's small
+`/tmp` tmpfs; the scratch directory is removed automatically. Use
+`--working-directory` only to select another protected path with sufficient
+space.
 
 Local backups do not protect against host loss. Copy verified backups to an
 approved encrypted off-host location when that separate capability is
