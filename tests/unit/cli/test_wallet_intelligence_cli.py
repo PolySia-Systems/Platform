@@ -177,3 +177,32 @@ def test_ensure_builds_pool_and_pool_command_never_exposes_address(
     selection_payload = json.loads(selection.stdout)
     assert selection_payload["count"] == 0
     assert address not in selection.stdout
+
+
+def test_runtime_bank_refuses_non_data_only_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRADING_MODE", "LIVE")
+    monkeypatch.setenv("LIVE_TRADING_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_LIVE_TOKEN_ALLOWLIST", "token-1")
+
+    result = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "runtime-bank",
+            "--database",
+            str(tmp_path / "wallet-intelligence.sqlite3"),
+            "--candidate-file",
+            str(tmp_path / "candidates.txt"),
+            "--manifest-dir",
+            str(tmp_path / "candidate-banks"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stderr)
+    assert payload["error_code"] == "handoff_requires_data_only"
+    assert payload["values_redacted"] is True
+    assert not (tmp_path / "candidates.txt").exists()

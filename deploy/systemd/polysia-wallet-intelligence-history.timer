@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PolySia historical Dynamic Shadow evaluation daily
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+Unit=polysia-wallet-intelligence-history.service
+
+[Install]
+WantedBy=timers.target

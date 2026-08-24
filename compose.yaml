@@ -224,6 +224,63 @@ services:
         max-size: 10m
         max-file: "5"
 
+  wallet-intelligence-handoff:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
+    profiles:
+      - wallet-intelligence
+    environment:
+      APP_ENV: production
+      LIVE_TRADING_ENABLED: "false"
+      TRADING_MODE: DATA_ONLY
+      POLYMARKET_LIVE_TOKEN_ALLOWLIST: ""
+    command:
+      - wallet-intelligence
+      - runtime-bank
+      - --source
+      - polycop
+      - --database
+      - /var/lib/polysia/data/wallet-intelligence.sqlite3
+      - --candidate-file
+      - /var/lib/polysia/runtime/candidates.txt
+      - --manifest-dir
+      - /var/lib/polysia/runtime/candidate-banks
+      - --minimum-simulated-events
+      - "1"
+      - --maximum-unknown-ratio
+      - "0.50"
+      - --maximum-historical-age-days
+      - "8"
+    user: "10001:10001"
+    read_only: true
+    network_mode: none
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/data
+        target: /var/lib/polysia/data
+        read_only: true
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/runtime
+        target: /var/lib/polysia/runtime
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 256m
+    cpus: 0.25
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
   copy-experiment:
     image: polysia:${POLYSIA_IMAGE_TAG:-local}
     build:

@@ -97,6 +97,7 @@ def test_dynamic_shadow_core_has_no_trading_authority_dependency() -> None:
         PACKAGE / "domain" / "copytrading" / "dynamic_shadow.py",
         PACKAGE / "application" / "ports" / "dynamic_shadow.py",
         PACKAGE / "application" / "services" / "dynamic_shadow.py",
+        PACKAGE / "application" / "services" / "dynamic_live_handoff.py",
     )
     forbidden_prefixes = (
         "polysia.execution",
