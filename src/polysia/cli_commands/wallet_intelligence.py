@@ -677,10 +677,20 @@ def backup(
 
 def restore_check(
     backup_path: Annotated[Path, typer.Option("--backup", help="Backup to restore and inspect.")],
+    working_directory: Annotated[
+        Path | None,
+        typer.Option(
+            "--working-directory",
+            help="Protected same-volume scratch directory; defaults beside the backup.",
+        ),
+    ] = None,
 ) -> None:
     """Perform a non-destructive restore rehearsal into disposable state."""
     try:
-        result = rehearse_wallet_intelligence_restore(backup_path)
+        result = rehearse_wallet_intelligence_restore(
+            backup_path,
+            working_directory=working_directory,
+        )
     except Exception as error:
         typer.echo(
             json.dumps(

@@ -45,9 +45,18 @@ def backup_wallet_intelligence_database(
     return result
 
 
-def rehearse_wallet_intelligence_restore(backup_path: Path) -> WalletIntelligenceRestoreCheck:
+def rehearse_wallet_intelligence_restore(
+    backup_path: Path,
+    *,
+    working_directory: Path | None = None,
+) -> WalletIntelligenceRestoreCheck:
     """Restore one backup into disposable state and validate its actual contents."""
-    with TemporaryDirectory(prefix="polysia-wallet-restore-") as temporary_directory:
+    scratch_root = working_directory or backup_path.parent
+    scratch_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with TemporaryDirectory(
+        prefix="polysia-wallet-restore-",
+        dir=scratch_root,
+    ) as temporary_directory:
         restored_path = Path(temporary_directory) / "wallet-intelligence.sqlite3"
         sha256 = restore_sqlite_backup(backup_path, restored_path)
         validation = WalletIntelligenceRepository(restored_path).validate_integrity()

@@ -144,7 +144,11 @@ def test_backup_is_actually_restored_and_wallet_schema_is_validated(tmp_path: Pa
         tmp_path / "backups",
         now=now,
     )
-    restored = rehearse_wallet_intelligence_restore(backup.backup_path)
+    working_directory = tmp_path / "restore-scratch"
+    restored = rehearse_wallet_intelligence_restore(
+        backup.backup_path,
+        working_directory=working_directory,
+    )
 
     assert backup.backup_path.name.startswith("wallet-intelligence-")
     assert restored.sha256 == backup.sha256
@@ -160,3 +164,4 @@ def test_backup_is_actually_restored_and_wallet_schema_is_validated(tmp_path: Pa
     assert restored.validation.dynamic_shadow_schema_version == 1
     assert restored.validation.dynamic_shadow_run_count == 1
     assert restored.validation.dynamic_shadow_evaluation_count == 1
+    assert list(working_directory.iterdir()) == []
