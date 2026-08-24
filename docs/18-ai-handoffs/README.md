@@ -10,6 +10,13 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
+- [`wallet-intelligence-stage4-dynamic-shadow.md`](wallet-intelligence-stage4-dynamic-shadow.md)
+  records the dynamic Alpha/Stress consumer, official all-market Polymarket
+  reads, modeled Historical evaluation, current-book Forward Shadow, and
+  no-order boundary.
+- [`wallet-intelligence-stage3.md`](wallet-intelligence-stage3.md) records the
+  versioned Alpha, Stress, Watchlist, Rejected, and empty Live-review selection
+  pools.
 - [`wallet-intelligence-stage2.md`](wallet-intelligence-stage2.md) records the
   canonical identity, source-derived features, readiness, versioned candidate
   policy, deterministic ranking, fenced publication, and final read-only smoke.

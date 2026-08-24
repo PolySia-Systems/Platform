@@ -242,6 +242,15 @@ evidence.
   Live review 0; idempotent replay; backup/restore counts). Its timer and
   Compose profile were not enabled on the server. The next operational action
   remains a separate data-only deployment and observation gate.
+- Wallet Intelligence Stage 4 is implemented on the review branch as an
+  address-free, dynamic Alpha/Stress consumer. It uses official all-market
+  Polymarket GET evidence, a versioned Historical cost model, and current-book
+  Forward Shadow; the legacy Live source remains BTC-15m by default. It has not
+  been deployed and cannot send orders.
+  A disposable owner-authorized read-only smoke processed 149 unique Stage 3
+  candidates: Historical 139 events / 112 simulated and Forward 51 events / 45
+  simulated, with zero 429 responses. Backup/restore recovered both Stage 4
+  runs and 190 evaluations; all temporary protected data was then deleted.
 - All four Tiny Live Copy authorizations and entry-attempt capacity are
   consumed. Any future Live run requires a new explicit owner authorization,
   new Run ID, exact green commit, zero-mutation Shadow, and all readiness gates.
@@ -273,11 +282,12 @@ evidence.
 
 ## Single recommended next task
 
-**Deploy and observe Wallet Intelligence Stages 1–3 in DATA_ONLY mode.**
+**Review, merge, then deploy and observe Wallet Intelligence Stages 1–4 in
+DATA_ONLY mode.**
 Verify startup fetch/reuse, daily scheduling, lease contention, health/staleness,
-backup/restore, last-known-good recovery, and empty Live-review before connecting
-any candidate consumer. Do not place live orders or grant Stage 3 trading
-authority.
+backup/restore, last-known-good recovery, Historical model assumptions, Forward
+rate telemetry, and empty Live-review. Do not place live orders or grant the
+Shadow pipeline trading authority.
 
 ## Next three milestones
 

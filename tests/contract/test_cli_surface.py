@@ -52,6 +52,8 @@ EXPECTED_COMMANDS = {
         "pool",
         "restore-check",
         "selection",
+        "shadow-results",
+        "shadow-sync",
         "sync",
     },
     "live": {

@@ -3,11 +3,13 @@
 ## Status and boundary
 
 This runbook covers the CURRENT repository implementation of Stage 1 source
-ingestion, Stage 2 Candidate Intelligence, and Stage 3 copyability selection.
+ingestion, Stage 2 Candidate Intelligence, Stage 3 copyability selection, and
+Stage 4 dynamic copyability Shadow evidence.
 Deployment and timer installation remain an operator action. The workflow is
 read-only toward external sources and cannot produce a signal, `OrderIntent`,
 paper order, Live order, cancellation, transfer, or wallet mutation. Stage 3
-does not prove profitability or authorize trading.
+does not prove profitability or authorize trading. Stage 4 reads public
+Polymarket data and writes local simulation evidence; it has no order authority.
 
 PolyCop access is permitted only while the owner has valid permission covering
 the endpoint, daily frequency, and retention. Disable the timer immediately if
@@ -87,6 +89,7 @@ Default retention is:
 - schema-change quarantine evidence: 30 days;
 - Stage 2 feature, policy, and run history: at least 365 days;
 - Stage 3 score, membership, and run history: at least 365 days;
+- Stage 4 event, wallet-summary, cost-model, and run history: 365 days by default;
 - local checksummed backups: newest 14 copies.
 
 The current snapshot is never pruned, even if it is older than the retention
@@ -112,6 +115,15 @@ The processing identity includes source snapshot, feature-set version, policy
 id/version, and ranking version. A successful identity is idempotent. The full
 feature and evaluation result is validated and the current pointer is then
 published in one transaction. Failed work cannot replace the previous pool.
+
+Stage 4 consumes the deduplicated union of current `SHADOW_ALPHA` and
+`SHADOW_STRESS`; it does not read the old fixed 102-wallet file. The legacy
+execution source remains BTC 15-minute by default, while Stage 4 explicitly
+requests all event markets whose event, condition, token, outcome, and UTC
+interval can be verified from official Polymarket metadata. Historical mode is
+a versioned fee/slippage/delay/liquidity model, not historical-book proof.
+Forward mode walks current official order-book depth. Results and current
+pointers are atomic, versioned, address-free, and last-known-good preserving.
 
 Startup, timer, and manual entry points use one SQLite-backed 30-minute lease
 by default. Atomic acquisition, heartbeat/renewal, expiry recovery, and a
@@ -204,6 +216,62 @@ Allowed `--pool` values are `SHADOW_ALPHA`, `SHADOW_STRESS`,
 scoring and eligibility contract is frozen in
 `docs/03-requirements/wallet-intelligence-stage3.md`.
 
+## Dynamic Historical and Forward Shadow
+
+Run one bounded 30-day Historical cost-model backfill after Stages 1–3 exist:
+
+```bash
+docker compose --profile wallet-intelligence run --rm \
+  wallet-intelligence-shadow wallet-intelligence shadow-sync \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --mode HISTORICAL --lookback-hours 720
+```
+
+Run one Forward observation with the reviewed ten-minute polling assumptions:
+
+```bash
+docker compose --profile wallet-intelligence run --rm wallet-intelligence-shadow
+```
+
+The default Forward command uses a 15-minute observation window, a 15-minute
+maximum measured delay, a 2% configured fee, and a maximum simulated notional
+of 5 per event. These are explicit conservative research assumptions, not venue
+fee discovery or a profitability claim. Any change creates a distinct
+cost-input fingerprint. The full evidence contract is in
+`docs/03-requirements/wallet-intelligence-stage4-dynamic-shadow.md`.
+
+Read the current per-wallet result without exposing addresses:
+
+```bash
+docker compose --profile wallet-intelligence run --rm \
+  wallet-intelligence-shadow wallet-intelligence shadow-results \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --mode FORWARD --limit 100
+```
+
+Stage 4 uses the same persistent `wallet-intelligence-pipeline` lease as Stages
+1–3. A collision fails safely and the next timer invocation may retry. A
+successful refresh never calls Risk, Execution, or a venue order endpoint.
+
+Install the separate Forward Shadow one-shot and timer only after review:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-shadow.service \
+  /etc/systemd/system/polysia-wallet-intelligence-shadow.service
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-shadow.timer \
+  /etc/systemd/system/polysia-wallet-intelligence-shadow.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now polysia-wallet-intelligence-shadow.timer
+```
+
+Stop it without affecting the daily source pipeline:
+
+```bash
+sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
+```
+
 ## Daily automation at 03:15 UTC
 
 Install the reviewed one-shot unit and timer:
@@ -272,6 +340,7 @@ authorized and implemented.
 | Expired lease after crash | New owner increments fencing token and recovers | Inspect the abandoned process before retrying external operations |
 | Stage 2 calculation/publication failure | Previous candidate pool retained; failed run recorded | Inspect safe error code and repair before republishing |
 | Stage 3 calculation/publication failure | Previous copyability pools retained; Stage 1/2 unchanged | Inspect safe error code; Stage 2 may still be healthy |
+| Stage 4 source/book/evaluation failure | Previous current Shadow evidence retained; no order sent | Inspect rate circuit and safe error; retry after recovery |
 | Abandoned Stage 1 run older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
 | Row-count baseline warning | Snapshot retained with warning | Compare source behavior and recent history |
 | SQLite/backup integrity failure | Nonzero exit | Stop automation; preserve database and backups; rehearse a known-good restore |
@@ -297,7 +366,7 @@ link; source observations remain separate and cannot overwrite each other.
 ## Rollback
 
 Disable the timer, check out the previously approved application revision, and
-rebuild. Stage 2 and Stage 3 are additive. Earlier code ignores those tables, so
+rebuild. Stage 2, Stage 3, and Stage 4 are additive. Earlier code ignores those tables, so
 no main trading-database rollback is required. Retain the database and backups
 for forward recovery; do not delete them merely because application code is
 rolled back.

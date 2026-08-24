@@ -48,6 +48,9 @@ class WalletIntelligenceDatabaseValidation:
     copyability_selection_schema_version: int | None = None
     copyability_run_count: int = 0
     copyability_membership_count: int = 0
+    dynamic_shadow_schema_version: int | None = None
+    dynamic_shadow_run_count: int = 0
+    dynamic_shadow_evaluation_count: int = 0
 
 
 class WalletIntelligenceRepository:
@@ -505,6 +508,9 @@ class WalletIntelligenceRepository:
             copyability_schema_version: int | None = None
             copyability_run_count = 0
             copyability_membership_count = 0
+            dynamic_shadow_schema_version: int | None = None
+            dynamic_shadow_run_count = 0
+            dynamic_shadow_evaluation_count = 0
             if candidate_table is not None:
                 candidate_rows = connection.execute(
                     "SELECT schema_version FROM candidate_intelligence_metadata"
@@ -549,6 +555,27 @@ class WalletIntelligenceRepository:
                         "SELECT COUNT(*) FROM copyability_pools_current"
                     ).fetchone()[0]
                 )
+            dynamic_shadow_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'dynamic_shadow_metadata'"
+            ).fetchone()
+            if dynamic_shadow_table is not None:
+                dynamic_shadow_rows = connection.execute(
+                    "SELECT schema_version FROM dynamic_shadow_metadata"
+                ).fetchall()
+                if len(dynamic_shadow_rows) != 1 or int(dynamic_shadow_rows[0][0]) != 1:
+                    raise CandidateStoreError("Dynamic Shadow schema version is unsupported.")
+                dynamic_shadow_schema_version = int(dynamic_shadow_rows[0][0])
+                dynamic_shadow_run_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM dynamic_shadow_runs WHERE status = 'succeeded'"
+                    ).fetchone()[0]
+                )
+                dynamic_shadow_evaluation_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM dynamic_shadow_evaluations"
+                    ).fetchone()[0]
+                )
         finally:
             connection.close()
         return WalletIntelligenceDatabaseValidation(
@@ -559,6 +586,9 @@ class WalletIntelligenceRepository:
             copyability_membership_count=copyability_membership_count,
             copyability_run_count=copyability_run_count,
             copyability_selection_schema_version=copyability_schema_version,
+            dynamic_shadow_schema_version=dynamic_shadow_schema_version,
+            dynamic_shadow_run_count=dynamic_shadow_run_count,
+            dynamic_shadow_evaluation_count=dynamic_shadow_evaluation_count,
             source_count=source_count,
             snapshot_count=snapshot_count,
             row_count=row_count,

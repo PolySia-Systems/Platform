@@ -58,6 +58,42 @@ def test_unknown_source_is_rejected_before_any_network_read(tmp_path: Path) -> N
     assert "Unsupported candidate-wallet source" in result.output
 
 
+def test_shadow_commands_fail_safe_before_stage3_and_results_stay_address_free(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    sync = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "shadow-sync",
+            "--database",
+            str(database),
+            "--mode",
+            "HISTORICAL",
+            "--lookback-hours",
+            "1",
+        ],
+    )
+    results = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "shadow-results",
+            "--database",
+            str(database),
+            "--mode",
+            "HISTORICAL",
+        ],
+    )
+
+    assert sync.exit_code == 1
+    assert "no order was sent" in sync.output.lower()
+    assert results.exit_code == 0
+    assert json.loads(results.stdout)["rows"] == []
+    assert "0x" not in results.stdout
+
+
 def test_ensure_builds_pool_and_pool_command_never_exposes_address(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
