@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare a protected dynamic Tiny Live Copy dry-run bank
+Documentation=/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
+After=docker.service polysia-wallet-intelligence-history.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/polysia
+ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm --no-deps wallet-intelligence-handoff
+TimeoutStartSec=5min
+NoNewPrivileges=true

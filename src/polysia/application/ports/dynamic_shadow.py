@@ -113,6 +113,21 @@ class DynamicShadowStorePort(Protocol):
         source_id: str,
     ) -> tuple[str, tuple[ProtectedShadowCandidate, ...]]: ...
 
+    def current_run(
+        self,
+        source_id: str,
+        *,
+        mode: DynamicShadowMode,
+    ) -> DynamicShadowRunRecord | None: ...
+
+    def current_wallet_results(
+        self,
+        source_id: str,
+        *,
+        mode: DynamicShadowMode,
+        limit: int = 100,
+    ) -> tuple[DynamicShadowWalletResult, ...]: ...
+
     def successful_run(
         self,
         *,

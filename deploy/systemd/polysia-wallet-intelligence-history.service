@@ -1,0 +1,13 @@
+[Unit]
+Description=PolySia seven-day historical Dynamic Shadow evaluation
+Documentation=/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
+After=docker.service network-online.target polysia-wallet-intelligence.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/polysia
+ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm --no-deps wallet-intelligence-shadow wallet-intelligence shadow-sync --source polycop --database /var/lib/polysia/data/wallet-intelligence.sqlite3 --mode HISTORICAL --lookback-hours 168 --fee-bps 200 --historical-slippage-bps 100 --historical-delay-ms 2000 --maximum-notional 5 --modeled-liquidity-size 100 --history-days 365
+TimeoutStartSec=30min
+NoNewPrivileges=true

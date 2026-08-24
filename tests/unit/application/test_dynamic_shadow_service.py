@@ -243,6 +243,12 @@ async def test_dynamic_stage3_candidates_are_deduplicated_versioned_and_idempote
     assert replay.idempotent_replay is True
     assert replay.run.run_id == first.run.run_id
     assert replay.realized_pnl == first.realized_pnl
+    current_run = repository.current_run(
+        "polycop",
+        mode=DynamicShadowMode.HISTORICAL,
+    )
+    assert current_run is not None
+    assert current_run.run_id == first.run.run_id
     assert len(created) == 1
     assert set(created[0].leaders.values()) == set(ADDRESSES)
     assert all("0x" not in item for item in first.to_dict().values() if isinstance(item, str))
@@ -318,13 +324,29 @@ async def test_failed_refresh_preserves_last_known_good_shadow_run(tmp_path: Pat
 def test_shadow_compose_service_is_data_only_and_has_no_live_profile() -> None:
     compose = Path("compose.yaml").read_text(encoding="utf-8")
     section = compose.split("  wallet-intelligence-shadow:", maxsplit=1)[1].split(
-        "  copy-experiment:", maxsplit=1
+        "  wallet-intelligence-handoff:", maxsplit=1
     )[0]
 
     assert 'LIVE_TRADING_ENABLED: "false"' in section
     assert "TRADING_MODE: DATA_ONLY" in section
     assert "live-experiment" not in section
     assert "tiny-copy" not in section
+    assert "--submit" not in section
+
+
+def test_dynamic_handoff_service_is_offline_data_only_and_cannot_submit() -> None:
+    compose = Path("compose.yaml").read_text(encoding="utf-8")
+    section = compose.split("  wallet-intelligence-handoff:", maxsplit=1)[1].split(
+        "  copy-experiment:", maxsplit=1
+    )[0]
+
+    assert 'LIVE_TRADING_ENABLED: "false"' in section
+    assert "TRADING_MODE: DATA_ONLY" in section
+    assert 'POLYMARKET_LIVE_TOKEN_ALLOWLIST: ""' in section
+    assert "network_mode: none" in section
+    assert "runtime-bank" in section
+    assert "read_only: true" in section
+    assert "live-experiment" not in section
     assert "--submit" not in section
 
 

@@ -24,7 +24,8 @@ safety gate.
 
 | Path | Purpose | Required owner/mode |
 |---|---|---|
-| `/opt/polysia` | Git checkout and Compose definition | `polysia:polysia`, no secrets |
+| `/opt/polysia` | Current approved checkout or atomic link to an immutable release | no secrets; readable by `polysia` |
+| `/opt/polysia-releases/<commit>` | Verified operator-uploaded Git archive when repository Deploy Keys are disabled | `root:polysia`, read-only release tree |
 | `/etc/polysia/polysia.env` | Runtime configuration and credentials | `root:root`, `0600` |
 | `/var/lib/polysia/data` | SQLite runtime state | UID/GID `10001`, private |
 | `/var/lib/polysia/reports` | Sanitized monitoring snapshots | UID/GID `10001`, private |
@@ -39,7 +40,13 @@ uses bounded CPU, memory, processes, and rotating local Docker logs.
 1. Create the dedicated non-root `polysia` account with UID/GID `10001` if
    those identifiers are available.
 2. Create the host paths above without changing unrelated services.
-3. Clone the approved `main` branch into `/opt/polysia`.
+3. Install the exact green-CI `main` commit into `/opt/polysia`. Prefer a
+   repository-approved read-only Deploy Key. When repository Deploy Keys are
+   disabled, create `git archive` on the trusted operator workstation, compare
+   SHA-256 before and after transfer, extract it into the immutable
+   `/opt/polysia-releases/<commit>` directory, and atomically point
+   `/opt/polysia` at that release. Never place a write-capable GitHub credential
+   on the server.
 4. Copy the operator's private configuration to
    `/etc/polysia/polysia.env` without displaying it, then set mode `0600`.
 5. Confirm the file contains the canonical funder setting and does not contain
@@ -131,7 +138,8 @@ and reconcile before any higher runtime mode is considered.
 
 ## Update and rollback
 
-Update only from an approved synchronized `main`:
+Update only from an approved synchronized `main`. With an approved read-only
+checkout:
 
 ```bash
 git fetch origin
@@ -140,6 +148,12 @@ git pull --ff-only origin main
 docker compose build --pull monitor
 docker compose up --detach monitor
 ```
+
+With a verified release archive, transfer and verify the new exact-commit
+artifact, extract it into a new immutable release directory, build the tagged
+image, and atomically switch `/opt/polysia`. Keep the previous release archive,
+image, and symlink target until post-deployment health and restore rehearsal
+pass.
 
 Rollback the application by checking out the previously recorded Git commit,
 rebuilding, and starting the monitor. Do not run `docker compose down --volumes`
@@ -158,7 +172,16 @@ Stop the affected action and preserve evidence when:
 - an unexpected open order, position, container, port, or host change appears;
 - the requested action would enable live mutation without fresh authorization.
 
-## Owner-bounded Tiny Live Copy experiment
+## Dynamic pre-Live input and legacy Tiny Live Copy experiment
+
+The CURRENT DATA_ONLY wallet-intelligence path can generate the protected
+`/var/lib/polysia/runtime/candidates.txt` input from matching Stage 3 and
+seven-day Stage 4 evidence. Follow the wallet-intelligence ingestion runbook.
+Generation is offline, address-redacted, atomic, and cannot authorize or submit
+an order. The current file still contains exactly 102 addresses because the
+legacy bounded runner below intentionally retains that reviewed invariant.
+
+### Historical bounded runner contract
 
 This section applies only to an exact, separately owner-authorized Tiny Live
 Copy run. It is not a general live-trading procedure. Authorizations 001, 002,

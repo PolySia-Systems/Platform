@@ -146,6 +146,24 @@ class DynamicShadowRepository:
             connection.close()
         return None if row is None else _run(row)
 
+    def current_run(
+        self,
+        source_id: str,
+        *,
+        mode: DynamicShadowMode,
+    ) -> DynamicShadowRunRecord | None:
+        connection = self._connect(read_only=True)
+        try:
+            row = connection.execute(
+                "SELECT r.* FROM dynamic_shadow_current c "
+                "JOIN dynamic_shadow_runs r ON r.run_id = c.run_id "
+                "WHERE c.source_id = ? AND c.mode = ? AND r.status = 'succeeded'",
+                (source_id, mode.value),
+            ).fetchone()
+        finally:
+            connection.close()
+        return None if row is None else _run(row)
+
     def start_run(
         self,
         *,

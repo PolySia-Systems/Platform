@@ -54,6 +54,8 @@ offset pagination remain external limitations.
 | `/var/lib/polysia/wallet-intelligence/data/wallet-intelligence.sqlite3` | Accepted source history, protected identities, derived features, policy history, and current candidate pool | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/backups/` | Checksummed local SQLite backups | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/reports/latest.json` | Sanitized health only | UID/GID `10001`, private |
+| `/var/lib/polysia/runtime/candidate-banks/` | Versioned protected pre-Live handoff bank and address-free manifest | UID/GID `10001`, mode `0700`; files `0600` |
+| `/var/lib/polysia/runtime/candidates.txt` | Atomic current link consumed only by the separately gated legacy Tiny Live Copy runner | UID/GID `10001`, mode `0600`; may be deleted by a terminal dry-run |
 
 These are the host paths. Compose mounts them onto the stable in-container
 `/var/lib/polysia/data`, `/var/lib/polysia/backups/wallet-intelligence`, and
@@ -253,6 +255,18 @@ Stage 4 uses the same persistent `wallet-intelligence-pipeline` lease as Stages
 1–3. A collision fails safely and the next timer invocation may retry. A
 successful refresh never calls Risk, Execution, or a venue order endpoint.
 
+Install the seven-day Historical Shadow job at 04:00 UTC after the daily source
+pipeline. Its cost assumptions are explicit and versioned; it is not a claim of
+historical order-book reconstruction:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-history.{service,timer} \
+  /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polysia-wallet-intelligence-history.timer
+```
+
 Install the separate Forward Shadow one-shot and timer only after review:
 
 ```bash
@@ -271,6 +285,49 @@ Stop it without affecting the daily source pipeline:
 ```bash
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
+
+## Dynamic pre-Live runtime bank
+
+The `runtime-bank` command replaces the manually maintained 102-wallet artifact
+as an operational dependency. It selects exactly 102 identities dynamically
+because the existing bounded Tiny Live Copy safety contract still requires that
+count. It does **not** populate `LIVE_REVIEW_CANDIDATE`, authorize trading, call
+Strategy/Risk/Execution, or relax the legacy BTC 15-minute Live runner.
+
+Publication requires a successful current seven-day Historical Shadow run for
+the same Stage 3 selection, no rejected event, at least one simulated event per
+selected wallet, an unknown ratio no greater than 0.50, and evidence no older
+than eight days. Alpha membership is prioritized, then simulated-event count,
+unknown ratio, modeled PnL, Stage 3 ranks, and canonical wallet id. Fewer than
+102 qualifying wallets fails without replacing the last-known-good bank.
+
+Generate the protected bank offline from SQLite:
+
+```bash
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-handoff
+```
+
+The handoff service has no network, forces `TRADING_MODE=DATA_ONLY`, forces
+`LIVE_TRADING_ENABLED=false`, clears the Live allowlist, mounts the intelligence
+database read-only, and emits only a redacted summary. Versioned bank files and
+manifests are immutable. The current `candidates.txt` hard link is replaced
+atomically only after the complete bank validates.
+
+Install the reviewed operator-only one-shot, with no timer:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-handoff.service \
+  /etc/systemd/system/polysia-wallet-intelligence-handoff.service
+sudo systemctl daemon-reload
+sudo systemctl start polysia-wallet-intelligence-handoff.service
+```
+
+A later `live tiny-copy --dry-run --maximum-poll-cycles 1` may consume this bank
+for authenticated read-only preflight. `--submit` remains prohibited without a
+new run-specific owner authorization, matching acknowledgement, exact green-CI
+commit, and every existing Live safety gate.
 
 ## Daily automation at 03:15 UTC
 

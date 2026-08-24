@@ -28,7 +28,13 @@ from polysia.application.services.candidate_wallet_sync import (
     CandidateWalletSyncService,
 )
 from polysia.application.services.copyability_selection import CopyabilitySelectionError
+from polysia.application.services.dynamic_live_handoff import (
+    DynamicLiveHandoffConfig,
+    DynamicLiveHandoffError,
+    DynamicLiveHandoffService,
+)
 from polysia.application.services.dynamic_shadow import DynamicShadowError, DynamicShadowService
+from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
@@ -562,6 +568,82 @@ def shadow_results(
             sort_keys=True,
         )
     )
+
+
+def runtime_bank(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    candidate_file: Annotated[
+        Path,
+        typer.Option("--candidate-file", help="Protected Tiny Live Copy runtime input."),
+    ] = Path("data/runtime/candidates.txt"),
+    manifest_dir: Annotated[
+        Path,
+        typer.Option("--manifest-dir", help="Protected versioned handoff evidence directory."),
+    ] = Path("data/runtime/candidate-banks"),
+    minimum_simulated_events: Annotated[
+        int,
+        typer.Option("--minimum-simulated-events", min=1),
+    ] = 1,
+    maximum_unknown_ratio: Annotated[
+        str,
+        typer.Option("--maximum-unknown-ratio"),
+    ] = "0.50",
+    maximum_historical_age_days: Annotated[
+        int,
+        typer.Option("--maximum-historical-age-days", min=1, max=30),
+    ] = 8,
+) -> None:
+    """Publish a protected dynamic bank for a later separately authorized dry-run."""
+
+    try:
+        settings = AppSettings()
+        if (
+            settings.trading_mode is not TradingMode.DATA_ONLY
+            or settings.live_trading_enabled
+            or settings.polymarket_live_token_allowlist
+        ):
+            raise DynamicLiveHandoffError(
+                "handoff_requires_data_only",
+                "Dynamic runtime-bank publication requires fail-closed DATA_ONLY settings.",
+            )
+        repository = DynamicShadowRepository(database)
+        service = DynamicLiveHandoffService(
+            repository,
+            config=DynamicLiveHandoffConfig(
+                minimum_simulated_events=minimum_simulated_events,
+                maximum_unknown_ratio=_decimal_option(
+                    maximum_unknown_ratio,
+                    "maximum-unknown-ratio",
+                ),
+                maximum_historical_age=timedelta(days=maximum_historical_age_days),
+            ),
+        )
+        outcome = service.prepare(
+            _source(source).source_id,
+            candidate_file=candidate_file,
+            manifest_dir=manifest_dir,
+        )
+    except (
+        DynamicLiveHandoffError,
+        DynamicShadowStoreError,
+        CandidateStoreError,
+        ValueError,
+    ) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "error_code": getattr(error, "error_code", "dynamic_runtime_bank_failed"),
+                    "message": "Dynamic runtime bank was not published; Live remains disabled.",
+                    "status": "failed",
+                    "values_redacted": True,
+                },
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(json.dumps(outcome.to_dict(), sort_keys=True))
 
 
 def backup(

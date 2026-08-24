@@ -51,6 +51,7 @@ EXPECTED_COMMANDS = {
         "health",
         "pool",
         "restore-check",
+        "runtime-bank",
         "selection",
         "shadow-results",
         "shadow-sync",

@@ -66,6 +66,7 @@ wallet_intelligence_app.command("pool")(wallet_intelligence.pool)
 wallet_intelligence_app.command("selection")(wallet_intelligence.selection)
 wallet_intelligence_app.command("shadow-sync")(wallet_intelligence.shadow_sync)
 wallet_intelligence_app.command("shadow-results")(wallet_intelligence.shadow_results)
+wallet_intelligence_app.command("runtime-bank")(wallet_intelligence.runtime_bank)
 wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
 wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)
 
