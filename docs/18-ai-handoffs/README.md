@@ -33,6 +33,10 @@ because that exact path is an immutable compliance artifact.
 
 ## Current safety and operational evidence
 
+- [`polysia-finland-wallet-intelligence-deployment.md`](polysia-finland-wallet-intelligence-deployment.md)
+  records the current Helsinki DATA_ONLY Stages 1–4 deployment, dynamic
+  pre-Live handoff, authenticated no-mutation dry-run, backup/restore, rollback,
+  and `3x-ui` preservation evidence.
 - [`polysia-tiny-live-copy-004-cancellation-diagnostic.md`](polysia-tiny-live-copy-004-cancellation-diagnostic.md)
   records the accepted unfilled Post-only order, fail-safe cancellation
   ambiguity, and later proof of a flat account with zero experiment cost.

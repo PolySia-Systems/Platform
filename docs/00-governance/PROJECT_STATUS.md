@@ -4,13 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-24 |
+| Review date | 2026-08-25 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `eac6feee625127e0e17919436571b4d15066fee9` |
-| Last verified deployed baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
+| Audited repository baseline | `c0a3747c2112437ebe232da4ff274b8025ad6ad0` |
+| Last verified deployed baseline | `c0a3747c2112437ebe232da4ff274b8025ad6ad0` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 3 copyability selection v0.1 completed; not deployed |
+| Latest repository maintenance | Wallet Intelligence Stages 1–4 and dynamic pre-Live handoff deployed DATA_ONLY |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -30,6 +30,36 @@ consumed by run `tiny-live-copy-20260801T003600Z`, which created one accepted
 unfilled Post-only order and stopped `FAILED_SAFE` when immediate cancellation
 confirmation remained ambiguous. Later authenticated reads proved zero open
 orders, fills, exposure, and experiment cost. No new Live authorization exists.
+
+## Current Helsinki DATA_ONLY deployment
+
+PRs `#80` through `#84` completed the all-market Dynamic Shadow consumer,
+protected dynamic pre-Live handoff, read-only publication repair, official
+position-pagination bound, and persistent restore scratch. Exact merge commit
+`c0a3747c2112437ebe232da4ff274b8025ad6ad0` is deployed from a verified immutable
+Git archive because repository Deploy Keys are disabled.
+
+The monitor is healthy with no published port. `TRADING_MODE=DATA_ONLY`,
+`LIVE_TRADING_ENABLED=false`, and the Live allowlist is empty. Credentials were
+checked only as present/redacted; no new Copy authorization or acknowledgement
+exists. Daily Stages 1–3, daily seven-day Historical Stage 4, and ten-minute
+Forward Shadow timers are enabled. The dynamic handoff is an operator-only
+one-shot with no timer and no network.
+
+The verified real read-only sample contains 21 PolyCop pages and 2,022 wallets;
+Stage 3 publishes Alpha 50 and Stress 100 with one overlap, five rejected, and
+zero Live-review candidates. The seven-day Stage 4 run evaluated 22,368 events,
+simulated 21,115, classified 1,253 unknown, rejected zero, and observed zero
+rate-limit responses with the circuit closed. These are modeled research facts,
+not proof of profit.
+
+The handoff found 119 evidence-qualified wallets and atomically published the
+existing runner's exact 102-wallet protected input. A one-cycle authenticated
+dry-run then completed `DRY_RUN_BOUNDED_COMPLETE`: no venue attempt, order,
+fill, cancellation, position, fee, or external mutation occurred. The protected
+input was regenerated after the terminal dry-run. Generic all-market Live
+execution remains out of scope; the legacy bounded Live runner still retains
+its exact-102 and BTC 15-minute safety invariants.
 
 ## Completed stages
 
@@ -79,14 +109,15 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
 - The first SHADOW-only Control Kernel vertical slice is complete for
   `stale-price@0.1.0`, with versioned desired state, optimistic concurrency,
   idempotency, synchronous observed state, audit history, and no Live authority.
-- Stage 1 protected PolyCop ingestion, Stage 2 Candidate Intelligence v1, and
-  Stage 3 copyability selection v0.1 are complete in repository code. The
+- Stage 1 protected PolyCop ingestion, Stage 2 Candidate Intelligence v1,
+  Stage 3 copyability selection v0.1, and Stage 4 Dynamic Shadow are complete
+  and deployed DATA_ONLY. The
   data-only path canonicalizes wallet identity, calculates source-derived
   time-safe features, separates readiness from policy, ranks deterministically,
   and publishes address-free Shadow Alpha/Stress selection pools under a
-  persistent fenced SQLite lease. Live-review remains empty. The path is not
-  deployed and has no signal, strategy, execution, Paper, Shadow, or Live
-  authority. It does not prove profitability.
+  persistent fenced SQLite lease. Live-review remains empty. Stage 4 uses
+  official read-only all-market evidence for modeled Historical and Forward
+  Shadow. It has no Live authority and does not prove profitability.
 
 ## Current architecture and runtime capabilities
 
@@ -111,10 +142,11 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
   idempotency, in-process intent gating, separate observed state, and append-only
   audit evidence. It has no PAPER, LIVE, Web, API, AI, generalized parameter, or
   background-controller authority.
-- Wallet Intelligence Stage 3 is CURRENT in repository code and not yet
-  deployed. It scores copyability-oriented pools from Stage 2 evidence only.
-  PolyCop remains discovery evidence; official Polymarket enrichment, copyability
-  backtest, Shadow evidence, and Tiny-Live remain deferred.
+- Wallet Intelligence Stages 1–4 are CURRENT and deployed DATA_ONLY. PolyCop
+  remains discovery evidence; official Polymarket GET data supplies Stage 4
+  trade and current-book evidence. Historical order-book reconstruction,
+  statistically sufficient Shadow evidence, and any new Tiny-Live authorization
+  remain deferred.
 - The bounded BTC Up/Down 15-minute runner uses the smallest venue-valid
   quantity, one FAK entry, confirmed-fill reconciliation, and at most one GTC
   exit sized from actual available position. Duplicate authorization and entry
@@ -237,20 +269,10 @@ evidence.
 - This engineering change did not deploy, mutate an external account, or alter
   the retained ambiguous Tiny Live run. Any future operational use still needs
   a separately reviewed deployment and explicit authorization.
-- Wallet Intelligence Stage 3 passed focused repository tests plus an owner-approved
-  read-only PolyCop smoke (21 pages, 2022 wallets; Alpha 50 / Stress 100 /
-  Live review 0; idempotent replay; backup/restore counts). Its timer and
-  Compose profile were not enabled on the server. The next operational action
-  remains a separate data-only deployment and observation gate.
-- Wallet Intelligence Stage 4 is implemented on the review branch as an
-  address-free, dynamic Alpha/Stress consumer. It uses official all-market
-  Polymarket GET evidence, a versioned Historical cost model, and current-book
-  Forward Shadow; the legacy Live source remains BTC-15m by default. It has not
-  been deployed and cannot send orders.
-  A disposable owner-authorized read-only smoke processed 149 unique Stage 3
-  candidates: Historical 139 events / 112 simulated and Forward 51 events / 45
-  simulated, with zero 429 responses. Backup/restore recovered both Stage 4
-  runs and 190 evaluations; all temporary protected data was then deleted.
+- Wallet Intelligence Stages 1–4 and their timers are deployed. Startup reuse,
+  idempotent Stage 2/3 replay, natural Forward scheduling, Historical evaluation,
+  rate telemetry, protected handoff, and large-database restore were exercised.
+  Local backups are verified but still lack an encrypted off-host destination.
 - All four Tiny Live Copy authorizations and entry-attempt capacity are
   consumed. Any future Live run requires a new explicit owner authorization,
   new Run ID, exact green commit, zero-mutation Shadow, and all readiness gates.
@@ -282,17 +304,16 @@ evidence.
 
 ## Single recommended next task
 
-**Review, merge, then deploy and observe Wallet Intelligence Stages 1–4 in
-DATA_ONLY mode.**
-Verify startup fetch/reuse, daily scheduling, lease contention, health/staleness,
-backup/restore, last-known-good recovery, Historical model assumptions, Forward
-rate telemetry, and empty Live-review. Do not place live orders or grant the
-Shadow pipeline trading authority.
+**Observe the deployed DATA_ONLY/Shadow pipeline long enough to evaluate data
+quality, stability, and copyability evidence.**
+Do not promote modeled PnL or one successful dry-run into Live authority. Any
+Tiny-Live must be a new run-specific review and authorization after the evidence
+gate.
 
 ## Next three milestones
 
-1. Complete the separately reviewed DATA_ONLY Wallet Intelligence deployment
-   and observation gate, then enrich candidates from official Polymarket data.
+1. Observe scheduled Stages 1–4, alert on stale/failure conditions, and establish
+   an encrypted off-host backup plus external alert delivery.
 2. Acquire reproducible historical data, run realistic fee/slippage-aware
    backtests, and run a large Paper/Shadow sample with promotion gates. Consider
    any new Tiny-Live test only after the safety repair, statistical evidence,
