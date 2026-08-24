@@ -38,29 +38,32 @@ implemented and deterministically tested without credentials, network access,
 Live mutation, deployment, or changes to retained historical run evidence.
 Operational promotion remains a separate authorization and deployment task.
 
-## Immediate data-only operational gate
+## Completed data-only operational gate
 
-Review and deploy the Wallet Intelligence Stage 1–4 Compose/timer path without
-trading authority. Observe first-start fetch, fresh reuse, daily execution,
-lease contention, stale/failure health, backup/restore, last-known-good
-recovery, Historical model assumptions, and Forward rate telemetry. Strategy,
-Paper orders, and Live use remain separate promotion stages.
+Wallet Intelligence Stages 1–4 are deployed on the controlled Helsinki host
+without trading authority. First-start reuse, daily scheduling, natural
+ten-minute Forward execution, Historical modeling, rate telemetry, dynamic
+handoff, authenticated one-cycle dry-run, backup/restore, and rollback assets
+were verified. `LIVE_TRADING_ENABLED=false`; Live review and authorization
+remain separate promotion stages.
 
 ## Immediate next cycle: research and validation
 
-1. Acquire and validate reproducible BTC Up/Down 15-minute historical data,
+1. Observe multiple scheduled DATA_ONLY/Shadow cycles, establish external alert
+   delivery and encrypted off-host backup, and quantify source/data stability.
+2. Acquire and validate reproducible BTC Up/Down 15-minute historical data,
    including market metadata, outcomes, book/liquidity snapshots, fee schedules,
    and timestamps.
    Any external research-data provider must remain read-only, pass a bounded
    preflight, use outcome-token identifiers for books, and classify
    incomplete order-book data as non-promotable research evidence.
-2. Define naive and market-aware benchmarks plus data-quality, leakage,
+3. Define naive and market-aware benchmarks plus data-quality, leakage,
    slippage, liquidity, and fee assumptions before strategy evaluation.
-3. Run realistic out-of-sample backtests and report net P&L, drawdown,
+4. Run realistic out-of-sample backtests and report net P&L, drawdown,
    calibration, turnover, execution feasibility, and regime sensitivity.
-4. Run a large Paper/Shadow sample using the same accounting and promotion
+5. Run a large Paper/Shadow sample using the same accounting and promotion
    metrics.
-5. Consider a separately authorized Tiny-Live sample only after the safety
+6. Consider a separately authorized Tiny-Live sample only after the safety
    maintenance gate and evidence-based promotion gates pass. Do not scale
    capital from the single profitable LIVE-004 result.
 
