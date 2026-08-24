@@ -115,7 +115,6 @@ class DynamicLiveHandoffService:
     ) -> DynamicLiveHandoffOutcome:
         observed_at = now or datetime.now(UTC)
         _require_utc(observed_at)
-        self._store.initialize()
         selection_run_id, candidates = self._store.current_candidates(source_id)
         historical_run = self._store.current_run(
             source_id,
