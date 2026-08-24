@@ -1,6 +1,6 @@
 [Unit]
 Description=PolySia daily wallet-intelligence candidate pipeline
-Documentation=/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
+Documentation=file:/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service

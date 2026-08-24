@@ -1,6 +1,6 @@
 [Unit]
 Description=Prepare a protected dynamic Tiny Live Copy dry-run bank
-Documentation=/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
+Documentation=file:/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
 After=docker.service polysia-wallet-intelligence-history.service
 Requires=docker.service
 

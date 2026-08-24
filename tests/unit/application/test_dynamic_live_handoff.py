@@ -25,14 +25,13 @@ NOW = datetime(2026, 8, 25, 0, 0, tzinfo=UTC)
 
 class _Store:
     def __init__(self, count: int = 110) -> None:
-        self.initialized = False
         self.selection_run_id = "selection-run"
         self.candidates = tuple(_candidate(index) for index in range(1, count + 1))
         self.results = tuple(_result(index) for index in range(1, count + 1))
         self.run = _run()
 
     def initialize(self) -> None:
-        self.initialized = True
+        raise AssertionError("the read-only handoff must not initialize storage")
 
     def current_candidates(
         self,
@@ -79,7 +78,6 @@ def test_publishes_exact_versioned_protected_bank_without_address_output(
 
     bank = load_candidate_bank(candidate_file.read_text(encoding="utf-8"))
     manifest = json.loads(outcome.manifest_file.read_text(encoding="utf-8"))
-    assert store.initialized is True
     assert outcome.candidate_count == 102
     assert outcome.qualified_count == 110
     assert outcome.source_digest == bank.source_digest
