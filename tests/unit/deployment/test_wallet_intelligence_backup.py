@@ -8,12 +8,14 @@ from polysia.application.services.candidate_intelligence import (
     PIPELINE_LEASE_RESOURCE,
     CandidateIntelligenceService,
 )
+from polysia.application.services.copyability_selection import CopyabilitySelectionService
 from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
 )
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
+from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.wallet_intelligence import WalletIntelligenceRepository
 
 
@@ -51,11 +53,17 @@ def test_backup_is_actually_restored_and_wallet_schema_is_validated(tmp_path: Pa
         acquired_at=calculated_at,
         lease_duration=timedelta(minutes=30),
     )
-    CandidateIntelligenceService(
+    outcome = CandidateIntelligenceService(
         intelligence,
         chain_by_source={"polycop": "polygon"},
         clock=lambda: calculated_at,
     ).process_snapshot("polycop", stored.snapshot_id, lease=lease)
+    selection = CopyabilitySelectionRepository(database)
+    selection.initialize()
+    CopyabilitySelectionService(
+        selection,
+        clock=lambda: calculated_at + timedelta(minutes=1),
+    ).process_stage2_run("polycop", outcome.pool.run_id, lease=lease)
     intelligence.release_lease(lease)
 
     backup = backup_wallet_intelligence_database(
@@ -73,3 +81,6 @@ def test_backup_is_actually_restored_and_wallet_schema_is_validated(tmp_path: Pa
     assert restored.validation.candidate_intelligence_schema_version == 1
     assert restored.validation.candidate_run_count == 1
     assert restored.validation.candidate_pool_count == 1
+    assert restored.validation.copyability_selection_schema_version == 1
+    assert restored.validation.copyability_run_count == 1
+    assert restored.validation.copyability_membership_count >= 1

@@ -21,15 +21,22 @@ from polysia.application.services.candidate_wallet_sync import (
     CandidateWalletSyncError,
     CandidateWalletSyncService,
 )
+from polysia.application.services.copyability_selection import CopyabilitySelectionError
 from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
+)
+from polysia.domain.wallet_intelligence.copyability_selection import (
+    CopyabilityPoolRow,
+    SelectionPoolId,
+    SelectionStatus,
 )
 from polysia.monitoring.wallet_intelligence_health import (
     write_candidate_health_report,
     write_wallet_intelligence_health_payload,
 )
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
+from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
 
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
@@ -190,11 +197,13 @@ def ensure(
     source_adapter = _source(source)
     source_store = WalletIntelligenceRepository(database)
     intelligence_store = CandidateIntelligenceRepository(database)
+    selection_store = CopyabilitySelectionRepository(database)
     pipeline = WalletIntelligencePipelineService(
         source_adapter,
         source_store,
         intelligence_store,
         chain="polygon",
+        selection_store=selection_store,
     )
     try:
         outcome = asyncio.run(
@@ -230,6 +239,7 @@ def ensure(
         write_wallet_intelligence_health_payload(health_payload, health_report)
     except (
         CandidateIntelligenceError,
+        CopyabilitySelectionError,
         CandidatePipelineBusyError,
         CandidatePipelineLeaseLostError,
         CandidateWalletSyncError,
@@ -361,6 +371,63 @@ def pool(
     )
 
 
+def selection(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    pool: Annotated[
+        str,
+        typer.Option(
+            "--pool",
+            help="SHADOW_ALPHA, SHADOW_STRESS, LIVE_REVIEW_CANDIDATE, REJECTED, or WATCHLIST.",
+        ),
+    ] = "SHADOW_ALPHA",
+    limit: Annotated[int, typer.Option("--limit", min=1, max=100_000)] = 50,
+) -> None:
+    """Read Stage 3 copyability pools or watchlist rows without exposing addresses."""
+    source_adapter = _source(source)
+    repository = CopyabilitySelectionRepository(database)
+    requested = pool.strip().upper()
+    try:
+        repository.initialize()
+        if requested == SelectionStatus.WATCHLIST.value:
+            rows = repository.current_status_rows(
+                source_adapter.source_id,
+                SelectionStatus.WATCHLIST,
+                limit=limit,
+            )
+        else:
+            rows = repository.current_pool(
+                source_adapter.source_id,
+                SelectionPoolId(requested),
+                limit=limit,
+            )
+    except (CandidateStoreError, ValueError) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "error_code": "copyability_selection_read_failed",
+                    "message": "Copyability selection could not be read safely.",
+                    "status": "failed",
+                },
+                sort_keys=True,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        json.dumps(
+            {
+                "count": len(rows),
+                "pool": requested,
+                "rows": [_selection_row_payload(row) for row in rows],
+                "source_id": source_adapter.source_id,
+                "status": "succeeded",
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def backup(
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
     backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
@@ -417,8 +484,15 @@ def restore_check(
                 "candidate_intelligence_schema_version": (
                     result.validation.candidate_intelligence_schema_version
                 ),
+                "copyability_selection_schema_version": (
+                    result.validation.copyability_selection_schema_version
+                ),
                 "restored_candidate_pool_count": result.validation.candidate_pool_count,
                 "restored_candidate_run_count": result.validation.candidate_run_count,
+                "restored_copyability_membership_count": (
+                    result.validation.copyability_membership_count
+                ),
+                "restored_copyability_run_count": result.validation.copyability_run_count,
                 "schema_version": result.validation.schema_version,
                 "sha256": result.sha256,
                 "status": "succeeded",
@@ -426,6 +500,43 @@ def restore_check(
             sort_keys=True,
         )
     )
+
+
+def _selection_row_payload(row: CopyabilityPoolRow) -> dict[str, object]:
+    return {
+        "activity_score": None if row.activity_score is None else format(row.activity_score, "f"),
+        "alpha_score": None if row.alpha_score is None else format(row.alpha_score, "f"),
+        "calculated_at": row.calculated_at.isoformat(),
+        "confidence_score": None
+        if row.confidence_score is None
+        else format(row.confidence_score, "f"),
+        "copyability_score": None
+        if row.copyability_score is None
+        else format(row.copyability_score, "f"),
+        "effective_at": row.effective_at.isoformat(),
+        "feature_set_version": row.feature_set_version,
+        "hedging_risk_score": None
+        if row.hedging_risk_score is None
+        else format(row.hedging_risk_score, "f"),
+        "performance_score": None
+        if row.performance_score is None
+        else format(row.performance_score, "f"),
+        "policy_id": row.policy_id,
+        "policy_version": row.policy_version,
+        "pool_id": row.pool_id or None,
+        "pool_rank": row.pool_rank,
+        "ranking_version": row.ranking_version,
+        "reasons": list(row.reasons),
+        "recent_edge_score": None
+        if row.recent_edge_score is None
+        else format(row.recent_edge_score, "f"),
+        "run_id": row.run_id,
+        "stability_score": None
+        if row.stability_score is None
+        else format(row.stability_score, "f"),
+        "status": row.status.value,
+        "wallet_id": row.wallet_id,
+    }
 
 
 def _source(source_id: str) -> PolyCopCandidateWalletSource:
@@ -528,6 +639,50 @@ def _combined_health(
             if level == "healthy":
                 level = "warning"
     payload["candidate_pool"] = candidate_pool
+    selection_store = CopyabilitySelectionRepository(intelligence_store.path)
+    selection_store.initialize()
+    selection_state = selection_store.state(source_adapter.source_id)
+    current_selection = selection_state.current_run
+    if current is None:
+        copyability_selection: dict[str, object] | None = None
+    elif current_selection is None:
+        reasons.append("copyability_selection_unavailable")
+        if level == "healthy":
+            level = "warning"
+        copyability_selection = None
+    else:
+        copyability_selection = {
+            "alpha_count": current_selection.alpha_count,
+            "evaluated_count": current_selection.evaluated_count,
+            "feature_set_version": current_selection.key.feature_set_version,
+            "last_error_code": selection_state.last_error_code,
+            "last_run_id": selection_state.last_run_id,
+            "last_run_status": selection_state.last_run_status,
+            "live_review_count": current_selection.live_review_count,
+            "overlap_count": current_selection.overlap_count,
+            "policy_id": current_selection.key.policy_id,
+            "policy_version": current_selection.key.policy_version,
+            "published_at": current_selection.published_at.isoformat(),
+            "ranking_version": current_selection.key.ranking_version,
+            "rejected_count": current_selection.rejected_count,
+            "run_id": current_selection.run_id,
+            "stage2_run_id": current_selection.key.stage2_run_id,
+            "stress_count": current_selection.stress_count,
+            "watchlist_count": current_selection.watchlist_count,
+        }
+        if current_selection.key.stage2_run_id != current.run_id:
+            reasons.append("copyability_selection_behind_stage2")
+            if level == "healthy":
+                level = "warning"
+        if selection_state.last_run_status == "failed":
+            reasons.append("latest_copyability_selection_failed")
+            if level == "healthy":
+                level = "warning"
+        if current_selection.live_review_count != 0:
+            reasons.append("live_review_candidate_not_empty")
+            if level == "healthy":
+                level = "warning"
+    payload["copyability_selection"] = copyability_selection
     payload["level"] = level
     payload["reasons"] = list(dict.fromkeys(reasons))
     return payload, int(level == "critical")

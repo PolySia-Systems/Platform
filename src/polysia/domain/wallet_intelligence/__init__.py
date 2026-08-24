@@ -15,6 +15,18 @@ from polysia.domain.wallet_intelligence.candidate_intelligence import (
     DataReadinessStatus,
     normalize_evm_wallet,
 )
+from polysia.domain.wallet_intelligence.copyability_selection import (
+    CopyabilityEvidence,
+    CopyabilityMembership,
+    CopyabilityPoolRow,
+    CopyabilityProcessingKey,
+    CopyabilityScore,
+    CopyabilitySelectionRun,
+    CopyabilitySelectionState,
+    SelectionPoolId,
+    SelectionStatus,
+    select_copyability_pools,
+)
 from polysia.domain.wallet_intelligence.models import (
     CandidateWalletDataset,
     CandidateWalletRecord,
@@ -35,7 +47,17 @@ __all__ = [
     "CandidateWalletDataset",
     "CandidateWalletFeature",
     "CandidateWalletRecord",
+    "CopyabilityEvidence",
+    "CopyabilityMembership",
+    "CopyabilityPoolRow",
+    "CopyabilityProcessingKey",
+    "CopyabilityScore",
+    "CopyabilitySelectionRun",
+    "CopyabilitySelectionState",
     "DataReadinessStatus",
     "JsonValue",
+    "SelectionPoolId",
+    "SelectionStatus",
     "normalize_evm_wallet",
+    "select_copyability_pools",
 ]

@@ -45,6 +45,9 @@ class WalletIntelligenceDatabaseValidation:
     source_count: int
     snapshot_count: int
     row_count: int
+    copyability_selection_schema_version: int | None = None
+    copyability_run_count: int = 0
+    copyability_membership_count: int = 0
 
 
 class WalletIntelligenceRepository:
@@ -499,6 +502,9 @@ class WalletIntelligenceRepository:
             candidate_schema_version: int | None = None
             candidate_run_count = 0
             candidate_pool_count = 0
+            copyability_schema_version: int | None = None
+            copyability_run_count = 0
+            copyability_membership_count = 0
             if candidate_table is not None:
                 candidate_rows = connection.execute(
                     "SELECT schema_version FROM candidate_intelligence_metadata"
@@ -519,6 +525,30 @@ class WalletIntelligenceRepository:
                         "SELECT COUNT(*) FROM candidate_trading_pool_current"
                     ).fetchone()[0]
                 )
+            copyability_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'copyability_selection_metadata'"
+            ).fetchone()
+            if copyability_table is not None:
+                copyability_rows = connection.execute(
+                    "SELECT schema_version FROM copyability_selection_metadata"
+                ).fetchall()
+                if len(copyability_rows) != 1 or int(copyability_rows[0][0]) != 1:
+                    raise CandidateStoreError(
+                        "Copyability selection schema version is unsupported."
+                    )
+                copyability_schema_version = int(copyability_rows[0][0])
+                copyability_run_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM copyability_selection_runs "
+                        "WHERE status = 'succeeded'"
+                    ).fetchone()[0]
+                )
+                copyability_membership_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM copyability_pools_current"
+                    ).fetchone()[0]
+                )
         finally:
             connection.close()
         return WalletIntelligenceDatabaseValidation(
@@ -526,6 +556,9 @@ class WalletIntelligenceRepository:
             candidate_intelligence_schema_version=candidate_schema_version,
             candidate_run_count=candidate_run_count,
             candidate_pool_count=candidate_pool_count,
+            copyability_membership_count=copyability_membership_count,
+            copyability_run_count=copyability_run_count,
+            copyability_selection_schema_version=copyability_schema_version,
             source_count=source_count,
             snapshot_count=snapshot_count,
             row_count=row_count,
