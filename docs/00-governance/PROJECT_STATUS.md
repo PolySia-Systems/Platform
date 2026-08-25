@@ -6,15 +6,15 @@
 |---|---|
 | Review date | 2026-08-25 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `c0a3747c2112437ebe232da4ff274b8025ad6ad0` |
-| Last verified deployed baseline | `c0a3747c2112437ebe232da4ff274b8025ad6ad0` |
+| Audited repository baseline | `596e8207666de3880037386e512cf0d189d6f31f` |
+| Last verified deployed baseline | `d39f5b355b1d83ed2019a93c6647b8ceb1572e5f` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Wallet Intelligence Stages 1–4 and dynamic pre-Live handoff deployed DATA_ONLY |
+| Latest repository maintenance | Stage 4B deployed DATA_ONLY; Standards v0.4.0 adopted on `main` |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
-| Conformance status | `STANDARDS_V0_1_1_FULLY_ENFORCED` |
+| Conformance status | `STANDARDS_V0_4_0_FULLY_ENFORCED` |
 
 PR `#38` added the bounded Tiny Live Copy runtime. PR `#39` corrected its
 preflight so the USD 10 cap applies to experiment exposure and only strictly
@@ -33,11 +33,14 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
 
 ## Current Helsinki DATA_ONLY deployment
 
-PRs `#80` through `#84` completed the all-market Dynamic Shadow consumer,
+PRs `#80` through `#88` completed the all-market Dynamic Shadow consumer,
 protected dynamic pre-Live handoff, read-only publication repair, official
-position-pagination bound, and persistent restore scratch. Exact merge commit
-`c0a3747c2112437ebe232da4ff274b8025ad6ad0` is deployed from a verified immutable
-Git archive because repository Deploy Keys are disabled.
+position-pagination bound, persistent restore scratch, and the Continuous
+Shadow Portfolio. Exact runtime commit
+`d39f5b355b1d83ed2019a93c6647b8ceb1572e5f` is deployed from a verified immutable
+Git archive because repository Deploy Keys are disabled. The later `main`
+baseline `596e820` changes only Standards adoption, governance documentation,
+and its validator; it does not change runtime behavior.
 
 The monitor is healthy with no published port. `TRADING_MODE=DATA_ONLY`,
 `LIVE_TRADING_ENABLED=false`, and the Live allowlist is empty. Credentials were
@@ -61,19 +64,29 @@ input was regenerated after the terminal dry-run. Generic all-market Live
 execution remains out of scope; the legacy bounded Live runner still retains
 its exact-102 and BTC 15-minute safety invariants.
 
-## Stage 4B implementation candidate
+## Stage 4B Continuous Shadow deployment
 
-Branch `codex/continuous-shadow-portfolio` adds Continuous Shadow Portfolio v0.2
-without changing the deployed Stage 4A schema or timer. The candidate provides
-a first-seen journal, durable watermark, persistent per-Wallet and combined
-follower portfolios, shared capital/liquidity controls, per-market official fee
-provenance, cross-run exits, verified 0/1 settlement, Decimal ledger/NAV/P&L,
-interval-aware health, backup validation, and lifecycle draining/finalization.
+Continuous Shadow Portfolio v0.2 is CURRENT in `DATA_ONLY`. It preserves Stage
+4A, adds a separately versioned durable journal and synthetic portfolio ledger,
+and has no order authority. Migration v2 to v3, disposable restore, actual
+rollback to the prior v2 image and database, rollforward, monitor restart,
+checkpoint recovery, and natural timer runs all passed. The Stage 4B timer and
+the prior Stage 4A and daily timers are active. `3x-ui` was not restarted.
 
-This section records repository scope only. Until exact-SHA merge, server backup,
-migration, restart, smoke, and observation evidence are added, the Helsinki
-deployed baseline above remains authoritative. Stage 4B is `DATA_ONLY`, has no
-order authority, and cannot support a profitability or Live-readiness claim.
+The initial uninterrupted run exceeded 90 minutes with zero duplicate
+processing and a balanced ledger. A later operator-workflow interruption left
+the intentionally stopped timer inactive for about 14 hours. Recovery resumed
+from the durable watermark without state loss, but correctly classified 1,270
+backlog events as `UNKNOWN` because their fresh executable-book evidence no
+longer existed. Subsequent natural polls recorded zero UNKNOWN and zero rate
+limits. Cumulative evidence at closeout contained 1,336 unique events, 34
+overlap duplicates, zero duplicate processing, 10 settlements, and six follower
+closes.
+
+The current follower P&L is a negative, partial synthetic estimate and some
+marks are not fully current. Confidence is `LOW`; this evidence cannot support
+a profitability, Live-readiness, or promotion claim. See the Stage 4B handoff
+for exact backup, rollback, financial, and limitation evidence.
 
 ## Completed stages
 
@@ -161,10 +174,10 @@ order authority, and cannot support a profitability or Live-readiness claim.
   trade and current-book evidence. Historical order-book reconstruction,
   statistically sufficient Shadow evidence, and any new Tiny-Live authorization
   remain deferred.
-- Stage 4B Continuous Shadow is CURRENT only as a repository implementation
-  candidate until its exact merged SHA and Helsinki runtime evidence are
-  recorded. It is a bounded experimental portfolio/ledger, not the generalized
-  TARGET portfolio, capital allocator, OMS, or execution router.
+- Stage 4B Continuous Shadow is CURRENT as a deployed DATA_ONLY bounded
+  experimental portfolio and ledger. It is not the generalized TARGET
+  portfolio, capital allocator, OMS, or execution router, and its current LOW
+  confidence evidence is not a Live promotion decision.
 - The bounded BTC Up/Down 15-minute runner uses the smallest venue-valid
   quantity, one FAK entry, confirmed-fill reconciliation, and at most one GTC
   exit sized from actual available position. Duplicate authorization and entry

@@ -513,6 +513,19 @@ link; source observations remain separate and cannot overwrite each other.
 ## Rollback
 
 Disable the Stage 4B timer first, then the other affected timer if required.
+Wait until the Stage 4B one-shot service is inactive before collecting stable
+manual results, replacing the database, or exercising backup and restore. A
+concurrent poll can legitimately hold SQLite's write lock; do not bypass the
+lock or treat a partial read as evidence. Retry only after the worker is
+quiescent.
+
+After any maintenance pause, explicitly start the timer and verify both
+`is-enabled` and `is-active`; enabled alone does not prove that the timer is
+scheduled. Confirm one subsequent service run has `Result=success` and
+`ExecMainStatus=0`. Operational command sequences must restart the timer in an
+EXIT trap or equivalent `finally` path so an intermediate failure cannot leave
+the enabled timer inactive.
+
 For a code-only rollback within the same Stage 4B schema version, restore the
 previously approved application revision and rebuild. A rollback from Stage 4B
 schema v3 to code that requires schema v2 is different: verify the exact
