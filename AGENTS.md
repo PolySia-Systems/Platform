@@ -47,12 +47,12 @@ truth.
 ### Adopted PolySia Standards
 
 This repository adopts the exact immutable
-`PolySia-Systems/Standards@v0.1.1` release at commit
-`921db357c07bf1d940f72cfbb662d940288132ca`, selecting only `PRF-BASE` and
+`PolySia-Systems/Standards@v0.4.0` release at commit
+`4ee4e6aca8f0a38379f18029f8db71828cd00759`, selecting only `PRF-BASE` and
 `PRF-PYS`. The authoritative consumer record and resolved applicability set are
 [`standards/adoption.toml`](standards/adoption.toml) and
 [`standards/conformance.toml`](standards/conformance.toml), with the human review
-at [`docs/00-governance/standards-conformance-v0.1.1.md`](docs/00-governance/standards-conformance-v0.1.1.md).
+at [`docs/00-governance/standards-conformance-v0.4.0.md`](docs/00-governance/standards-conformance-v0.4.0.md).
 
 Within that selected set, the pinned Standards release owns requirement meaning,
 levels, Profile conditions, and exception semantics. This repository owns its

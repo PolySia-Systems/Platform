@@ -13,8 +13,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-EXPECTED_RELEASE = "v0.1.1"
-EXPECTED_COMMIT = "921db357c07bf1d940f72cfbb662d940288132ca"
+EXPECTED_RELEASE = "v0.4.0"
+EXPECTED_COMMIT = "4ee4e6aca8f0a38379f18029f8db71828cd00759"
 EXPECTED_PROFILES = {"PRF-BASE", "PRF-PYS"}
 EXPECTED_REQUIREMENTS = {
     *(f"PRF-FRM-{number:03d}" for number in range(1, 17)),
@@ -161,7 +161,7 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
     )
     require(
         manifest.get("conformance_claim")
-        == "conformant_with_v0.1.1_for_selected_profiles",
+        == "conformant_with_v0.4.0_for_selected_profiles",
         "PRF-FRM-014",
         "Adoption conformance claim is not final",
     )
@@ -210,7 +210,7 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
     require(
         observed == EXPECTED_REQUIREMENTS,
         "PRF-PYS-005",
-        "Resolved requirement IDs differ from the v0.1.1 PRF-BASE + PRF-PYS set: "
+        "Resolved requirement IDs differ from the v0.4.0 PRF-BASE + PRF-PYS set: "
         f"missing={sorted(EXPECTED_REQUIREMENTS - observed)}, "
         f"unexpected={sorted(observed - EXPECTED_REQUIREMENTS)}",
     )
@@ -341,7 +341,7 @@ def _conformance_findings(repository: Path) -> list[Finding]:
     require(
         observed == EXPECTED_REQUIREMENTS,
         "PRF-PYS-005",
-        "Conformance IDs differ from the resolved v0.1.1 requirement universe: "
+        "Conformance IDs differ from the resolved v0.4.0 requirement universe: "
         f"missing={sorted(EXPECTED_REQUIREMENTS - observed)}, "
         f"unexpected={sorted(observed - EXPECTED_REQUIREMENTS)}",
     )

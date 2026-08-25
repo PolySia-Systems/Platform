@@ -6,9 +6,9 @@ accountable_owner = "PolySia Platform Owner"
 adoption_date = "2026-08-17"
 review_trigger = "2026-11-17 or earlier on a Standards, profile, Python-support, public-interface, environment-vocabulary, or consumer-boundary change"
 standards_repository = "PolySia-Systems/Standards"
-standards_release = "v0.1.1"
-standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
-standards_release_id = 368473737
+standards_release = "v0.4.0"
+standards_commit = "4ee4e6aca8f0a38379f18029f8db71828cd00759"
+standards_release_id = 376509086
 standards_release_immutable = true
 profiles = ["PRF-BASE", "PRF-PYS"]
 component_roots = [".", "src/polysia", "tests", "scripts"]
@@ -20,7 +20,7 @@ excluded_boundaries = [
   "third-party and generated identifiers",
   "historical records under docs/13-ai-handoffs, docs/18-ai-handoffs, and docs/99-archive",
 ]
-conformance_claim = "conformant_with_v0.1.1_for_selected_profiles"
+conformance_claim = "conformant_with_v0.4.0_for_selected_profiles"
 
 [enforcement]
 mode = "full"
@@ -83,7 +83,7 @@ name = "profile-framework-consumer"
 outcome = "applicable"
 condition = "The consumer adopts released profiles and produces an assessment."
 ids = ["PRF-FRM-005", "PRF-FRM-006", "PRF-FRM-007", "PRF-FRM-010", "PRF-FRM-013", "PRF-FRM-014"]
-evidence = "standards/adoption.toml; docs/00-governance/standards-adoption-v0.1.1.md"
+evidence = "standards/adoption.toml; docs/00-governance/standards-adoption-v0.4.0.md"
 
 [[requirement_groups]]
 name = "profile-framework-absent-events"
@@ -97,7 +97,7 @@ name = "profile-framework-source-authority"
 outcome = "source_authority"
 condition = "These requirements govern the profile artifacts and Profile Owner in the immutable Standards release, not the consumer implementation."
 ids = ["PRF-FRM-001", "PRF-FRM-002", "PRF-FRM-003", "PRF-FRM-004", "PRF-FRM-009", "PRF-FRM-012", "PRF-FRM-016"]
-evidence = "PolySia-Systems/Standards v0.1.1 profiles"
+evidence = "PolySia-Systems/Standards v0.4.0 profiles"
 
 [[requirement_groups]]
 name = "base-profile-consumer"
@@ -111,7 +111,7 @@ name = "base-profile-owner-review"
 outcome = "source_authority"
 condition = "The quarterly Profile review belongs to the external Profile Owner."
 ids = ["PRF-BASE-009"]
-evidence = "PolySia-Systems/Standards v0.1.1 PRF-BASE"
+evidence = "PolySia-Systems/Standards v0.4.0 PRF-BASE"
 
 [[requirement_groups]]
 name = "python-profile-consumer"
@@ -125,7 +125,7 @@ name = "python-profile-owner-review"
 outcome = "source_authority"
 condition = "The quarterly Profile review belongs to the external Profile Owner."
 ids = ["PRF-PYS-007"]
-evidence = "PolySia-Systems/Standards v0.1.1 PRF-PYS"
+evidence = "PolySia-Systems/Standards v0.4.0 PRF-PYS"
 
 [[requirement_groups]]
 name = "core-interpretation-and-assessment"
@@ -195,4 +195,4 @@ name = "python-standard-owner-review"
 outcome = "source_authority"
 condition = "The quarterly Python Standard review belongs to the external Engineering Domain Owner."
 ids = ["ENG-PY-021"]
-evidence = "PolySia-Systems/Standards v0.1.1 ENG-PY"
+evidence = "PolySia-Systems/Standards v0.4.0 ENG-PY"

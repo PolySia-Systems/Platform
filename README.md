@@ -184,7 +184,7 @@ locks/              Reproducible dependency inputs
   work.
 - [Standards adoption](standards/adoption.toml) and
   [conformance](standards/conformance.toml) — selected immutable
-  `PolySia-Systems/Standards@v0.1.1` profiles.
+  `PolySia-Systems/Standards@v0.4.0` profiles.
 
 Historical documents remain evidence of earlier decisions and runs. They are
 not automatically current instructions. Code, tests, schemas, configuration,
