@@ -133,6 +133,7 @@ class ContinuousPollCompletion:
     raw_event_count: int
     duplicate_count: int
     settlement_count: int
+    settlement_backlog_count: int
     request_telemetry: dict[str, object]
 
 
@@ -151,6 +152,7 @@ class ContinuousPollOutcome:
     unknown_count: int
     rejected_count: int
     settlement_count: int
+    settlement_backlog_count: int
     realized_pnl_delta: Decimal
     fee_delta: Decimal
     follower_nav: Decimal
@@ -175,6 +177,7 @@ class ContinuousPollOutcome:
             "rejected_count": self.rejected_count,
             "request_telemetry": self.request_telemetry,
             "settlement_count": self.settlement_count,
+            "settlement_backlog_count": self.settlement_backlog_count,
             "simulated_count": self.simulated_count,
             "status": "succeeded",
             "unknown_count": self.unknown_count,
@@ -194,23 +197,28 @@ class ContinuousShadowHealth:
     cumulative_events: int
     cumulative_evaluations: int
     duplicate_count: int
+    duplicate_processing_count: int
     unknown_ratio: Decimal | None
     ledger_balanced: bool
     unmarked_position_count: int
     unknown_fee_count: int
     open_position_count: int
+    settlement_backlog_count: int
 
     def to_dict(self) -> dict[str, object]:
         return {
             "cumulative_evaluations": self.cumulative_evaluations,
             "cumulative_events": self.cumulative_events,
             "duplicate_count": self.duplicate_count,
+            "duplicate_events_detected": self.duplicate_count,
+            "duplicate_processing_count": self.duplicate_processing_count,
             "experiment": None if self.experiment is None else self.experiment.to_dict(),
             "last_poll_at": None if self.last_poll_at is None else self.last_poll_at.isoformat(),
             "last_poll_status": self.last_poll_status,
             "ledger_balanced": self.ledger_balanced,
             "level": self.level,
             "open_position_count": self.open_position_count,
+            "settlement_backlog_count": self.settlement_backlog_count,
             "poll_interval_seconds": self.poll_interval_seconds,
             "reasons": list(self.reasons),
             "unknown_fee_count": self.unknown_fee_count,

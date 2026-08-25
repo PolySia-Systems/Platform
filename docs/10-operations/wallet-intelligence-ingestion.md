@@ -326,6 +326,15 @@ events increment duplicate evidence but cannot repeat a fill or ledger entry.
 All config values in Compose must remain equal to the versioned experiment; a
 drift fails before publication instead of mixing assumptions.
 
+In `portfolio-results`, `duplicate_events_detected` is expected to increase when
+the configured poll windows overlap. `duplicate_processing_count` must remain
+zero; any nonzero value is critical. Use `pool_results.SHADOW_ALPHA` and
+`pool_results.SHADOW_STRESS` for independent pool activity, portfolio P&L,
+costs, delays, closes, and data quality. `confidence.limitations` states why a
+short Shadow run must not be treated as Live evidence. Backup freshness and
+disposable restore remain operational checks from the backup/restore commands;
+they are verified during deployment and are not inferred from trading results.
+
 Install the additive fast timer:
 
 ```bash
@@ -503,9 +512,14 @@ link; source observations remain separate and cannot overwrite each other.
 
 ## Rollback
 
-Disable the Stage 4B timer first, then the other affected timer if required;
-check out the previously approved application revision and rebuild. Stage 2,
-Stage 3, Stage 4A, and Stage 4B are additive. Earlier code ignores those tables,
-so no main trading-database rollback is required. Retain the database and
-backups for forward recovery; do not delete them merely because application
-code is rolled back.
+Disable the Stage 4B timer first, then the other affected timer if required.
+For a code-only rollback within the same Stage 4B schema version, restore the
+previously approved application revision and rebuild. A rollback from Stage 4B
+schema v3 to code that requires schema v2 is different: verify the exact
+pre-migration backup, restore that database while the timer remains stopped,
+then start the prior release and run `portfolio-health`. Merely switching the
+release symlink leaves the older Stage 4B worker fail-closed on the unsupported
+schema. Stage 1 through Stage 4A remain additive and do not require the main
+trading database to be rolled back. Preserve the v3 database and all backups for
+forward recovery; never delete them merely because application code is rolled
+back.

@@ -594,7 +594,7 @@ class WalletIntelligenceRepository:
                 continuous_rows = connection.execute(
                     "SELECT schema_version FROM continuous_shadow_metadata"
                 ).fetchall()
-                if len(continuous_rows) != 1 or int(continuous_rows[0][0]) != 2:
+                if len(continuous_rows) != 1 or int(continuous_rows[0][0]) != 3:
                     raise CandidateStoreError(
                         "Continuous Shadow schema version is unsupported."
                     )

@@ -239,7 +239,7 @@ class ContinuousShadowService:
                 self._books(token_ids),
             )
             evaluated_at = self._now()
-            ledger, marks, settlement_count = _apply_settlements(
+            ledger, marks, settlement_count, settlement_backlog_count = _apply_settlements(
                 portfolios,
                 attributions,
                 markets,
@@ -307,6 +307,7 @@ class ContinuousShadowService:
                 raw_event_count=len(raw_events),
                 duplicate_count=duplicate_count,
                 settlement_count=settlement_count,
+                settlement_backlog_count=settlement_backlog_count,
                 request_telemetry=_safe_mapping(source, "request_telemetry"),
             )
             return self._store.complete_poll(
@@ -814,14 +815,18 @@ def _apply_settlements(
     markets: Mapping[str, MarketDetails | None],
     *,
     evaluated_at: datetime,
-) -> tuple[list[ContinuousLedgerRecord], list[ContinuousPositionMark], int]:
+) -> tuple[list[ContinuousLedgerRecord], list[ContinuousPositionMark], int, int]:
     ledger: list[ContinuousLedgerRecord] = []
     marks: list[ContinuousPositionMark] = []
     count = 0
+    backlog_count = 0
     for portfolio in portfolios.values():
         for key, position in tuple(portfolio.positions.items()):
-            settlement = verified_settlement_prices(markets.get(position.market_reference))
+            market = markets.get(position.market_reference)
+            settlement = verified_settlement_prices(market)
             if settlement is None or position.outcome_reference not in settlement:
+                if market is not None and market.closed:
+                    backlog_count += 1
                 continue
             price = settlement[position.outcome_reference]
             proceeds = position.quantity * price
@@ -868,7 +873,7 @@ def _apply_settlements(
                 for attribution_key in tuple(attributions):
                     if attribution_key[1:] == key:
                         del attributions[attribution_key]
-    return ledger, marks, count
+    return ledger, marks, count, backlog_count
 
 
 def _mark_positions(

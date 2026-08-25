@@ -63,6 +63,7 @@ class _EventSpec:
     executed_at: datetime
     price: Decimal
     size: Decimal = Decimal("5")
+    outcome_reference: str = "token-yes"
 
 
 class _Scenario:
@@ -94,7 +95,7 @@ class _Source:
                 source_id="polymarket:data-api",
                 leader_id=leader_id,
                 market_reference="condition-1",
-                outcome_reference="token-yes",
+                outcome_reference=spec.outcome_reference,
                 trade_action=spec.action,
                 position_effect=LeaderPositionEffect.UNKNOWN,
                 executed_price=spec.price,
@@ -123,8 +124,10 @@ class _MarketPort:
     def __init__(self, clock: _Clock, *, book_size: Decimal = Decimal("20")) -> None:
         self.clock = clock
         self.closed = False
+        self.ambiguous_settlement = False
         self.book_size = book_size
         self.fail_book = False
+        self.no_bids = False
 
     async def get_market_by_condition_id(self, market_id: str) -> MarketDetails:
         assert market_id == "condition-1"
@@ -143,25 +146,37 @@ class _MarketPort:
                 MarketOutcomeSummary(
                     label="Yes",
                     token_id="token-yes",
-                    price=Decimal("1") if self.closed else Decimal("0.50"),
+                    price=(
+                        Decimal("0.50")
+                        if self.closed and self.ambiguous_settlement
+                        else Decimal("1") if self.closed else Decimal("0.50")
+                    ),
                 ),
                 MarketOutcomeSummary(
                     label="No",
                     token_id="token-no",
-                    price=Decimal("0") if self.closed else Decimal("0.50"),
+                    price=(
+                        Decimal("0.50")
+                        if self.closed and self.ambiguous_settlement
+                        else Decimal("0") if self.closed else Decimal("0.50")
+                    ),
                 ),
             ),
         )
 
     async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
-        assert token_id == "token-yes"
+        assert token_id in {"token-yes", "token-no"}
         if self.fail_book:
             raise RuntimeError("order book unavailable")
         return MarketOrderBookSnapshot(
             token_id=token_id,
             market_id="condition-1",
             timestamp=self.clock.value,
-            bids=(OrderBookLevel(price=Decimal("0.59"), size=self.book_size),),
+            bids=(
+                ()
+                if self.no_bids
+                else (OrderBookLevel(price=Decimal("0.59"), size=self.book_size),)
+            ),
             asks=(OrderBookLevel(price=Decimal("0.41"), size=self.book_size),),
             minimum_order_size=Decimal("1"),
             tick_size=Decimal("0.01"),
@@ -222,11 +237,49 @@ def _seed_stage3(database: Path) -> None:
     stage2.release_lease(lease)
 
 
+def _add_alpha_membership_for_first_wallet(database: Path) -> None:
+    with sqlite3.connect(database) as connection:
+        run_id = connection.execute(
+            "SELECT run_id FROM copyability_selection_current WHERE source_id = 'polycop'"
+        ).fetchone()[0]
+        wallet_id = connection.execute(
+            "SELECT wallet_id FROM copyability_wallet_scores WHERE run_id = ? "
+            "ORDER BY wallet_id LIMIT 1",
+            (run_id,),
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO copyability_pool_memberships "
+            "(run_id, pool_id, wallet_id, pool_rank, reasons_json) "
+            "VALUES (?, 'SHADOW_ALPHA', ?, 1, '[]')",
+            (run_id, wallet_id),
+        )
+
+
+def _split_first_wallet_from_stress_into_alpha(database: Path) -> None:
+    _add_alpha_membership_for_first_wallet(database)
+    with sqlite3.connect(database) as connection:
+        run_id = connection.execute(
+            "SELECT run_id FROM copyability_selection_current WHERE source_id = 'polycop'"
+        ).fetchone()[0]
+        wallet_id = connection.execute(
+            "SELECT wallet_id FROM copyability_pool_memberships "
+            "WHERE run_id = ? AND pool_id = 'SHADOW_ALPHA'",
+            (run_id,),
+        ).fetchone()[0]
+        connection.execute(
+            "DELETE FROM copyability_pool_memberships "
+            "WHERE run_id = ? AND pool_id = 'SHADOW_STRESS' AND wallet_id = ?",
+            (run_id, wallet_id),
+        )
+
+
 def _service(
     database: Path,
     scenario: _Scenario,
     market: _MarketPort,
     clock: _Clock,
+    *,
+    config: ContinuousShadowConfig | None = None,
 ) -> ContinuousShadowService:
     return ContinuousShadowService(
         ContinuousShadowRepository(database),
@@ -234,7 +287,7 @@ def _service(
         CandidateIntelligenceRepository(database),
         lambda leaders: _Source(dict(leaders), scenario),
         market,
-        config=ContinuousShadowConfig(maximum_quote_age_ms=60_000),
+        config=config or ContinuousShadowConfig(maximum_quote_age_ms=60_000),
         clock=clock,
     )
 
@@ -245,11 +298,13 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
 ) -> None:
     database = tmp_path / "wallet-intelligence.sqlite3"
     _seed_stage3(database)
+    _add_alpha_membership_for_first_wallet(database)
     clock = _Clock(NOW)
     scenario = _Scenario()
     market = _MarketPort(clock)
     service = _service(database, scenario, market, clock)
     experiment = service.start("polycop")
+    assert experiment.lifecycle.value == "RUNNING"
     _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
     leader_id = candidates[0].wallet_id
     buy = _EventSpec(
@@ -296,9 +351,30 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
     assert third.new_event_count == 0
     assert third.duplicate_count == 1
     assert Decimal(results["accounting"]["identity_delta"]) == 0
+    assert results["accounting"]["identity_status"] == "VERIFIED"
+    assert Decimal(results["accounting"]["unmarked_adjusted_identity_delta"]) == 0
     assert results["accounting"]["ledger_balanced"] is True
     assert results["polls"]["new_event_count"] == 2
     assert results["polls"]["duplicate_count"] == 2
+    assert results["event_journal"]["duplicate_processing_count"] == 0
+    assert results["event_journal"]["processing_status"] == {"PROCESSED": 2}
+    assert results["event_journal"]["first_source_event_at"] == buy.executed_at.isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert results["event_outcomes"]["simulated"] == 2
+    assert results["follower_activity"]["delay_distribution_ms"][
+        "source_api_observation_lag"
+    ]["p50"] == 2_000
+    assert results["follower_activity"]["delay_distribution_ms"]["signal_delay"][
+        "p50"
+    ] > 2_000
+    assert results["follower_closes"]["winning"] == 1
+    assert results["pool_results"]["SHADOW_ALPHA"]["activity"]["event_outcomes"][
+        "simulated"
+    ] == 2
+    assert results["pool_results"]["SHADOW_STRESS"]["activity"]["event_outcomes"][
+        "simulated"
+    ] == 2
 
     backup = backup_wallet_intelligence_database(
         database,
@@ -309,7 +385,7 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         backup.backup_path,
         working_directory=tmp_path / "restore",
     )
-    assert restored.validation.continuous_shadow_schema_version == 2
+    assert restored.validation.continuous_shadow_schema_version == 3
     assert restored.validation.continuous_shadow_experiment_count == 1
     assert restored.validation.continuous_shadow_poll_count == 3
     assert restored.validation.continuous_shadow_event_count == 2
@@ -338,7 +414,8 @@ async def test_verified_settlement_closes_cross_run_positions_and_allows_finaliz
     ]
     clock.value = NOW + timedelta(minutes=2)
     await service.poll("polycop")
-    service.drain("polycop")
+    draining = service.drain("polycop")
+    assert draining.lifecycle.value == "DRAINING"
     market.closed = True
 
     clock.value = NOW + timedelta(minutes=3)
@@ -350,6 +427,295 @@ async def test_verified_settlement_closes_cross_run_positions_and_allows_finaliz
     assert finalized.lifecycle.value == "FINALIZED"
     assert results["open_position_count"] == 0
     assert results["accounting"]["ledger_balanced"] is True
+
+
+@pytest.mark.asyncio
+async def test_reporting_records_partial_fill_without_reusing_follower_depth(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock, book_size=Decimal("7"))
+    service = _service(database, scenario, market, clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    for index, candidate in enumerate(candidates):
+        scenario.events[candidate.wallet_id] = [
+            _EventSpec(
+                f"partial-{index}",
+                LeaderTradeAction.BUY,
+                NOW + timedelta(seconds=100),
+                Decimal("0.40"),
+            )
+        ]
+
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    assert results["follower_activity"]["partial_fill_evaluations"] == 1
+    assert results["follower_activity"]["event_outcomes"]["partial"] == 1
+    assert Decimal(results["follower_activity"]["filled_size"]) == Decimal("7")
+
+
+@pytest.mark.asyncio
+async def test_follower_cash_and_exposure_limits_reject_without_partial_state(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    config = ContinuousShadowConfig(
+        follower_bankroll=Decimal("2"),
+        maximum_event_notional=Decimal("1"),
+        follower_maximum_exposure=Decimal("1"),
+        follower_maximum_wallet_exposure=Decimal("1"),
+        follower_maximum_market_exposure=Decimal("1"),
+        maximum_quote_age_ms=60_000,
+    )
+    service = _service(database, scenario, market, clock, config=config)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    leader_id = candidates[0].wallet_id
+    scenario.events[leader_id] = [
+        _EventSpec("limit-1", LeaderTradeAction.BUY, NOW + timedelta(seconds=100), Decimal("0.4")),
+        _EventSpec("limit-2", LeaderTradeAction.BUY, NOW + timedelta(seconds=101), Decimal("0.4")),
+    ]
+
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    follower_reasons = results["follower_activity"]["reasons"]
+    assert follower_reasons["synthetic_capital_limit_reached"] == 1
+    assert Decimal(results["follower"]["exposure"]) <= Decimal("1")
+    assert Decimal(results["follower"]["cash"]) >= 0
+
+
+@pytest.mark.asyncio
+async def test_verified_fee_cannot_push_synthetic_cash_negative(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    config = ContinuousShadowConfig(
+        follower_bankroll=Decimal("1"),
+        maximum_event_notional=Decimal("1"),
+        follower_maximum_exposure=Decimal("1"),
+        follower_maximum_wallet_exposure=Decimal("1"),
+        follower_maximum_market_exposure=Decimal("1"),
+        maximum_quote_age_ms=60_000,
+    )
+    service = _service(database, scenario, market, clock, config=config)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "cash-fee",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.4"),
+        )
+    ]
+
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    assert results["follower_activity"]["reasons"][
+        "synthetic_cash_limit_reached_after_verified_fee"
+    ] == 1
+    assert Decimal(results["follower"]["cash"]) == Decimal("1")
+    assert Decimal(results["follower"]["exposure"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_alpha_and_stress_reporting_remains_distinct(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    _split_first_wallet_from_stress_into_alpha(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    service = _service(database, scenario, market, clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    assert len(candidates) == 2
+    for index, candidate in enumerate(candidates):
+        scenario.events[candidate.wallet_id] = [
+            _EventSpec(
+                f"pool-{index}",
+                LeaderTradeAction.BUY,
+                NOW + timedelta(seconds=100 + index),
+                Decimal("0.4"),
+            )
+        ]
+
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    alpha = results["pool_results"]["SHADOW_ALPHA"]
+    stress = results["pool_results"]["SHADOW_STRESS"]
+    assert alpha["membership_count"] == 1
+    assert stress["membership_count"] == 1
+    assert results["pool_results"]["overlap_wallet_count"] == 0
+    assert alpha["activity"]["event_outcomes"]["unique_evaluated"] == 1
+    assert stress["activity"]["event_outcomes"]["unique_evaluated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_opposing_outcome_is_rejected_as_a_conflicting_signal(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    service = _service(database, scenario, market, clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    leader_id = candidates[0].wallet_id
+    scenario.events[leader_id] = [
+        _EventSpec(
+            "conflict-yes",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.4"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    scenario.events[leader_id].append(
+        _EventSpec(
+            "conflict-no",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=150),
+            Decimal("0.4"),
+            outcome_reference="token-no",
+        )
+    )
+    clock.value = NOW + timedelta(minutes=3)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    assert results["follower_activity"]["reasons"][
+        "conflicting_market_outcome_exposure"
+    ] == 1
+
+
+@pytest.mark.asyncio
+async def test_mid_publication_failure_rolls_back_journal_and_checkpoint(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    service = _service(database, scenario, market, clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "atomic-failure",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.4"),
+        )
+    ]
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TRIGGER force_evaluation_failure BEFORE INSERT ON "
+            "continuous_shadow_evaluations BEGIN "
+            "SELECT RAISE(ABORT, 'forced evaluation failure'); END"
+        )
+
+    clock.value = NOW + timedelta(minutes=2)
+    with pytest.raises(ContinuousShadowError, match="durable prior state was kept"):
+        await service.poll("polycop")
+    with sqlite3.connect(database) as connection:
+        journal_count = connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_event_journal"
+        ).fetchone()[0]
+        checkpoint_count = connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_checkpoint WHERE experiment_id = ?",
+            (experiment.experiment_id,),
+        ).fetchone()[0]
+        failed_count = connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_poll_runs WHERE status = 'failed'"
+        ).fetchone()[0]
+
+    assert journal_count == 0
+    assert checkpoint_count == 0
+    assert failed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_closed_market_is_reported_as_settlement_backlog(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    service = _service(database, scenario, market, clock)
+    service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "backlog-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.4"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    market.closed = True
+    market.ambiguous_settlement = True
+    clock.value = NOW + timedelta(minutes=3)
+    outcome = await service.poll("polycop")
+    health = ContinuousShadowRepository(database).health(
+        "polycop", now=clock.value, poll_interval_seconds=60
+    )
+
+    assert outcome.settlement_backlog_count == 2
+    assert health.settlement_backlog_count == 2
+    assert "continuous_shadow_settlement_backlog" in health.reasons
+
+
+@pytest.mark.asyncio
+async def test_missing_exit_bid_labels_nav_partial_without_breaking_ledger(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    market.no_bids = True
+    service = _service(database, scenario, market, clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "no-exit-bid",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.4"),
+        )
+    ]
+
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    assert results["accounting"]["ledger_balanced"] is True
+    assert results["accounting"]["identity_status"] == "INCOMPLETE_MARKS"
+    assert Decimal(results["accounting"]["unmarked_cost_basis"]) > 0
+    assert Decimal(results["accounting"]["unmarked_adjusted_identity_delta"]) == 0
+    assert results["follower"]["total_pnl_status"] == "PARTIAL_OR_LAST_KNOWN_GOOD"
+    assert results["confidence"]["level"] == "LOW"
 
 
 @pytest.mark.asyncio
@@ -494,3 +860,9 @@ async def test_last_known_good_mark_is_retained_and_visible_in_health(tmp_path: 
 
     assert health.unmarked_position_count == 2
     assert "continuous_shadow_positions_unmarked" in health.reasons
+    results = ContinuousShadowRepository(database).results(
+        health.experiment.experiment_id,
+        limit=10,
+    )
+    assert results["confidence"]["level"] == "LOW"
+    assert "portfolio_valuation_not_fully_current" in results["confidence"]["limitations"]
