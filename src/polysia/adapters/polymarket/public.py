@@ -118,6 +118,41 @@ class PolymarketPublicAdapter:
                 error,
             ) from error
 
+    async def get_market_by_condition_id(self, condition_id: str) -> MarketDetails:
+        """Fetch exactly one open or closed market by canonical condition ID."""
+
+        async def read() -> MarketDetails:
+            async with self._client_factory() as client:
+                rows: list[Any] = []
+                for closed in (False, True):
+                    paginator = client.list_markets(
+                        condition_ids=(condition_id,),
+                        closed=closed,
+                        include_tag=True,
+                        page_size=2,
+                    )
+                    page = await paginator.first_page()
+                    rows.extend(page.items)
+                    if rows:
+                        break
+                matching = [
+                    market
+                    for market in rows
+                    if str(getattr(market, "condition_id", "")) == condition_id
+                ]
+                if len(matching) != 1:
+                    raise ValueError("condition ID did not resolve to one exact market")
+                return self._mapper.to_details(matching[0])
+
+        try:
+            return await self._read_retry_policy.run("get_market_by_condition_id", read)
+        except (PolymarketError, ValueError) as error:
+            raise self._adapter_error(
+                "get_market_by_condition_id",
+                "Could not resolve one Polymarket market by condition ID.",
+                error,
+            ) from error
+
     async def search_markets(self, query: str, page_size: int = 20) -> list[MarketSummary]:
         """Search active events and return their normalized markets."""
 

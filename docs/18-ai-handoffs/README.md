@@ -10,6 +10,10 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
+- [`wallet-intelligence-stage4b-continuous-shadow.md`](wallet-intelligence-stage4b-continuous-shadow.md)
+  records the persistent first-seen journal, independent wallet portfolios,
+  shared follower capital/liquidity, market-specific fees, Decimal ledger, and
+  no-order boundary.
 - [`wallet-intelligence-stage4-dynamic-shadow.md`](wallet-intelligence-stage4-dynamic-shadow.md)
   records the dynamic Alpha/Stress consumer, official all-market Polymarket
   reads, modeled Historical evaluation, current-book Forward Shadow, and

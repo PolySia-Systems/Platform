@@ -224,6 +224,78 @@ services:
         max-size: 10m
         max-file: "5"
 
+  wallet-intelligence-shadow-portfolio:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
+    profiles:
+      - wallet-intelligence
+    environment:
+      APP_ENV: production
+      LIVE_TRADING_ENABLED: "false"
+      TRADING_MODE: DATA_ONLY
+    command:
+      - wallet-intelligence
+      - portfolio-sync
+      - --source
+      - polycop
+      - --database
+      - /var/lib/polysia/data/wallet-intelligence.sqlite3
+      - --health-report
+      - /var/lib/polysia/reports/wallet-intelligence/continuous-shadow.json
+      - --poll-interval-seconds
+      - "${POLYSIA_CONTINUOUS_SHADOW_POLL_SECONDS:-60}"
+      - --wallet-bankroll
+      - "${POLYSIA_CONTINUOUS_SHADOW_WALLET_BANKROLL:-100}"
+      - --follower-bankroll
+      - "${POLYSIA_CONTINUOUS_SHADOW_FOLLOWER_BANKROLL:-1000}"
+      - --maximum-event-notional
+      - "${POLYSIA_CONTINUOUS_SHADOW_MAX_EVENT_NOTIONAL:-5}"
+      - --wallet-maximum-exposure
+      - "${POLYSIA_CONTINUOUS_SHADOW_WALLET_MAX_EXPOSURE:-100}"
+      - --follower-maximum-exposure
+      - "${POLYSIA_CONTINUOUS_SHADOW_FOLLOWER_MAX_EXPOSURE:-500}"
+      - --follower-maximum-wallet-exposure
+      - "${POLYSIA_CONTINUOUS_SHADOW_FOLLOWER_WALLET_MAX_EXPOSURE:-25}"
+      - --follower-maximum-market-exposure
+      - "${POLYSIA_CONTINUOUS_SHADOW_FOLLOWER_MARKET_MAX_EXPOSURE:-100}"
+      - --follower-maximum-positions
+      - "${POLYSIA_CONTINUOUS_SHADOW_FOLLOWER_MAX_POSITIONS:-100}"
+      - --maximum-forward-delay-ms
+      - "${POLYSIA_CONTINUOUS_SHADOW_MAX_DELAY_MS:-300000}"
+      - --maximum-quote-age-ms
+      - "${POLYSIA_CONTINUOUS_SHADOW_MAX_QUOTE_AGE_MS:-30000}"
+      - --initial-lookback-minutes
+      - "${POLYSIA_CONTINUOUS_SHADOW_INITIAL_LOOKBACK_MINUTES:-15}"
+      - --overlap-seconds
+      - "${POLYSIA_CONTINUOUS_SHADOW_OVERLAP_SECONDS:-30}"
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/data
+        target: /var/lib/polysia/data
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/reports
+        target: /var/lib/polysia/reports/wallet-intelligence
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 96
+    mem_limit: 768m
+    cpus: 0.75
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
   wallet-intelligence-handoff:
     image: polysia:${POLYSIA_IMAGE_TAG:-local}
     build:

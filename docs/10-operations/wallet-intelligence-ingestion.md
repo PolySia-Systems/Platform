@@ -54,6 +54,7 @@ offset pagination remain external limitations.
 | `/var/lib/polysia/wallet-intelligence/data/wallet-intelligence.sqlite3` | Accepted source history, protected identities, derived features, policy history, and current candidate pool | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/backups/` | Checksummed local SQLite backups | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/reports/latest.json` | Sanitized health only | UID/GID `10001`, private |
+| `/var/lib/polysia/wallet-intelligence/reports/continuous-shadow.json` | Sanitized interval, accounting, lifecycle, and freshness health for Stage 4B | UID/GID `10001`, private |
 | `/var/lib/polysia/runtime/candidate-banks/` | Versioned protected pre-Live handoff bank and address-free manifest | UID/GID `10001`, mode `0700`; files `0600` |
 | `/var/lib/polysia/runtime/candidates.txt` | Atomic current link consumed only by the separately gated legacy Tiny Live Copy runner | UID/GID `10001`, mode `0600`; may be deleted by a terminal dry-run |
 
@@ -92,6 +93,9 @@ Default retention is:
 - Stage 2 feature, policy, and run history: at least 365 days;
 - Stage 3 score, membership, and run history: at least 365 days;
 - Stage 4 event, wallet-summary, cost-model, and run history: 365 days by default;
+- Stage 4B experiment journal, portfolio, fill, fee, ledger, mark, and settlement
+  evidence: retained for the experiment lifetime; pruning requires a later explicit
+  retention decision after real growth is measured;
 - local checksummed backups: newest 14 copies.
 
 The current snapshot is never pruned, even if it is older than the retention
@@ -286,6 +290,77 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
+## Continuous Shadow Portfolio v0.2
+
+Stage 4B is additive to the immutable Stage 4A windows above. It persists a
+first-seen journal, cross-run inventory, independent Wallet portfolios, one
+shared-capital follower, market-specific official fees, marks, settlement, and
+Decimal ledger evidence. Its complete contract is
+`docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.
+
+Create or idempotently reuse one versioned experiment before enabling its timer:
+
+```bash
+docker compose --profile wallet-intelligence run --rm \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-start \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3
+```
+
+Run one poll and inspect sanitized cumulative state:
+
+```bash
+docker compose --profile wallet-intelligence run --rm \
+  wallet-intelligence-shadow-portfolio
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-health \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --poll-interval-seconds 60
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-results \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 --limit 100
+```
+
+The first command after `portfolio-start` begins at the experiment timestamp.
+Later polls start from the durable watermark with a 30-second overlap. Repeated
+events increment duplicate evidence but cannot repeat a fill or ledger entry.
+All config values in Compose must remain equal to the versioned experiment; a
+drift fails before publication instead of mixing assumptions.
+
+Install the additive fast timer:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-shadow-portfolio.service \
+  /etc/systemd/system/
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-shadow-portfolio.timer \
+  /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polysia-wallet-intelligence-shadow-portfolio.timer
+```
+
+The default interval is one minute. If a poll takes longer, systemd does not
+start a second copy; the fenced `continuous-shadow-portfolio-pipeline` lease is
+the database-level guard. A missed interval catches up from the last committed
+watermark. The separate ten-minute Stage 4A job remains enabled as windowed
+comparison and recovery evidence.
+
+Stop new entries without losing exits or marks, then finalize only after all
+synthetic positions close or settle:
+
+```bash
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-drain \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-finalize \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3
+```
+
+Do not finalize by deleting positions or changing lifecycle rows. Missing fee,
+book, mark, or settlement evidence remains `UNKNOWN` or last-known-good and must
+be investigated from the address-free health and journal evidence.
+
 ## Dynamic pre-Live runtime bank
 
 The `runtime-bank` command replaces the manually maintained 102-wallet artifact
@@ -402,6 +477,8 @@ authorized and implemented.
 | Stage 2 calculation/publication failure | Previous candidate pool retained; failed run recorded | Inspect safe error code and repair before republishing |
 | Stage 3 calculation/publication failure | Previous copyability pools retained; Stage 1/2 unchanged | Inspect safe error code; Stage 2 may still be healthy |
 | Stage 4 source/book/evaluation failure | Previous current Shadow evidence retained; no order sent | Inspect rate circuit and safe error; retry after recovery |
+| Stage 4B source/book/fee/transaction failure | Watermark and persistent portfolio remain last-known-good; failed poll recorded | Inspect `portfolio-health`; retry after evidence recovers |
+| Stage 4B ledger mismatch or finalized experiment with positions | Health `critical`; no new trusted result | Disable only the Stage 4B timer, preserve DB/backup, investigate before restart |
 | Abandoned Stage 1 run older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
 | Row-count baseline warning | Snapshot retained with warning | Compare source behavior and recent history |
 | SQLite/backup integrity failure | Nonzero exit | Stop automation; preserve database and backups; rehearse a known-good restore |
@@ -426,8 +503,9 @@ link; source observations remain separate and cannot overwrite each other.
 
 ## Rollback
 
-Disable the timer, check out the previously approved application revision, and
-rebuild. Stage 2, Stage 3, and Stage 4 are additive. Earlier code ignores those tables, so
-no main trading-database rollback is required. Retain the database and backups
-for forward recovery; do not delete them merely because application code is
-rolled back.
+Disable the Stage 4B timer first, then the other affected timer if required;
+check out the previously approved application revision and rebuild. Stage 2,
+Stage 3, Stage 4A, and Stage 4B are additive. Earlier code ignores those tables,
+so no main trading-database rollback is required. Retain the database and
+backups for forward recovery; do not delete them merely because application
+code is rolled back.

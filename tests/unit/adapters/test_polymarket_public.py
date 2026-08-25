@@ -50,9 +50,11 @@ class FakeClient:
         self.get_market_kwargs: dict[str, Any] | None = None
         self.search_kwargs: dict[str, Any] | None = None
         self.order_book_token_id: str | None = None
+        self.list_markets_calls: list[dict[str, Any]] = []
 
     def list_markets(self, **kwargs: Any) -> FakePaginator:
         self.list_markets_kwargs = kwargs
+        self.list_markets_calls.append(kwargs)
         return FakePaginator(self.markets)
 
     async def get_market(self, **kwargs: Any) -> Any:
@@ -136,6 +138,63 @@ async def test_get_market_by_slug_returns_details() -> None:
     assert details.condition_id == "0xcondition"
     assert details.minimum_tick_size == Decimal("0.01")
     assert details.tags == ("Politics",)
+
+
+@pytest.mark.asyncio
+async def test_get_market_by_condition_id_uses_exact_open_filter() -> None:
+    market = make_market()
+    client = FakeClient(markets=(market,))
+    adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
+
+    details = await adapter.get_market_by_condition_id("0xcondition")
+
+    assert details.condition_id == "0xcondition"
+    assert client.list_markets_calls == [
+        {
+            "condition_ids": ("0xcondition",),
+            "closed": False,
+            "include_tag": True,
+            "page_size": 2,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_market_by_condition_id_falls_back_to_closed_market() -> None:
+    market = make_market(closed=True)
+
+    class OpenThenClosedClient(FakeClient):
+        def list_markets(self, **kwargs: Any) -> FakePaginator:
+            self.list_markets_calls.append(kwargs)
+            return FakePaginator((market,) if kwargs["closed"] else ())
+
+    client = OpenThenClosedClient()
+    adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
+
+    details = await adapter.get_market_by_condition_id("0xcondition")
+
+    assert details.closed is True
+    assert [call["closed"] for call in client.list_markets_calls] == [False, True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "markets",
+    [
+        (make_market(market_id="wrong"),),
+        (make_market(), make_market(market_id="duplicate")),
+    ],
+)
+async def test_get_market_by_condition_id_rejects_non_exact_result(
+    markets: tuple[Any, ...],
+) -> None:
+    if len(markets) == 1:
+        markets[0].condition_id = "0xother"
+    client = FakeClient(markets=markets)
+    adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
+
+    with pytest.raises(PolymarketPublicAdapterError):
+        await adapter.get_market_by_condition_id("0xcondition")
 
 
 @pytest.mark.asyncio
