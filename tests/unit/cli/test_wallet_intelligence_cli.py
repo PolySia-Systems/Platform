@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -12,6 +13,56 @@ from polysia.cli import app
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 
 runner = CliRunner()
+
+
+def test_restore_check_reports_continuous_shadow_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validation = SimpleNamespace(
+        candidate_intelligence_schema_version=1,
+        candidate_pool_count=2,
+        candidate_run_count=1,
+        continuous_shadow_event_count=3,
+        continuous_shadow_experiment_count=1,
+        continuous_shadow_ledger_count=4,
+        continuous_shadow_poll_count=2,
+        continuous_shadow_schema_version=2,
+        copyability_membership_count=2,
+        copyability_run_count=1,
+        copyability_selection_schema_version=1,
+        dynamic_shadow_evaluation_count=5,
+        dynamic_shadow_run_count=1,
+        dynamic_shadow_schema_version=1,
+        row_count=2,
+        schema_version=1,
+        snapshot_count=1,
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence.rehearse_wallet_intelligence_restore",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            sha256="a" * 64,
+            validation=validation,
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "restore-check",
+            "--backup",
+            str(tmp_path / "backup.sqlite3"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["continuous_shadow_schema_version"] == 2
+    assert payload["restored_continuous_shadow_experiment_count"] == 1
+    assert payload["restored_continuous_shadow_poll_count"] == 2
+    assert payload["restored_continuous_shadow_event_count"] == 3
+    assert payload["restored_continuous_shadow_ledger_count"] == 4
 
 
 def test_health_initializes_separate_database_and_reports_never_succeeded(
