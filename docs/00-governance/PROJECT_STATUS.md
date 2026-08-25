@@ -61,6 +61,20 @@ input was regenerated after the terminal dry-run. Generic all-market Live
 execution remains out of scope; the legacy bounded Live runner still retains
 its exact-102 and BTC 15-minute safety invariants.
 
+## Stage 4B implementation candidate
+
+Branch `codex/continuous-shadow-portfolio` adds Continuous Shadow Portfolio v0.2
+without changing the deployed Stage 4A schema or timer. The candidate provides
+a first-seen journal, durable watermark, persistent per-Wallet and combined
+follower portfolios, shared capital/liquidity controls, per-market official fee
+provenance, cross-run exits, verified 0/1 settlement, Decimal ledger/NAV/P&L,
+interval-aware health, backup validation, and lifecycle draining/finalization.
+
+This section records repository scope only. Until exact-SHA merge, server backup,
+migration, restart, smoke, and observation evidence are added, the Helsinki
+deployed baseline above remains authoritative. Stage 4B is `DATA_ONLY`, has no
+order authority, and cannot support a profitability or Live-readiness claim.
+
 ## Completed stages
 
 - Repository modernization milestones completed baseline recovery, governance, canonical `polysia`
@@ -147,6 +161,10 @@ its exact-102 and BTC 15-minute safety invariants.
   trade and current-book evidence. Historical order-book reconstruction,
   statistically sufficient Shadow evidence, and any new Tiny-Live authorization
   remain deferred.
+- Stage 4B Continuous Shadow is CURRENT only as a repository implementation
+  candidate until its exact merged SHA and Helsinki runtime evidence are
+  recorded. It is a bounded experimental portfolio/ledger, not the generalized
+  TARGET portfolio, capital allocator, OMS, or execution router.
 - The bounded BTC Up/Down 15-minute runner uses the smallest venue-valid
   quantity, one FAK entry, confirmed-fill reconciliation, and at most one GTC
   exit sized from actual available position. Duplicate authorization and entry

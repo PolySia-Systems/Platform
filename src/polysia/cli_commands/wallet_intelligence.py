@@ -27,6 +27,10 @@ from polysia.application.services.candidate_wallet_sync import (
     CandidateWalletSyncError,
     CandidateWalletSyncService,
 )
+from polysia.application.services.continuous_shadow import (
+    ContinuousShadowError,
+    ContinuousShadowService,
+)
 from polysia.application.services.copyability_selection import CopyabilitySelectionError
 from polysia.application.services.dynamic_live_handoff import (
     DynamicLiveHandoffConfig,
@@ -39,6 +43,7 @@ from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
 )
+from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
 from polysia.domain.copytrading.dynamic_shadow import DynamicShadowConfig, DynamicShadowMode
 from polysia.domain.wallet_intelligence.copyability_selection import (
     CopyabilityPoolRow,
@@ -50,6 +55,10 @@ from polysia.monitoring.wallet_intelligence_health import (
     write_wallet_intelligence_health_payload,
 )
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
+from polysia.storage.continuous_shadow import (
+    ContinuousShadowRepository,
+    ContinuousShadowStoreError,
+)
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.dynamic_shadow import DynamicShadowRepository, DynamicShadowStoreError
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
@@ -570,6 +579,240 @@ def shadow_results(
     )
 
 
+def portfolio_start(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    wallet_bankroll: Annotated[str, typer.Option("--wallet-bankroll")] = "100",
+    follower_bankroll: Annotated[str, typer.Option("--follower-bankroll")] = "1000",
+    maximum_event_notional: Annotated[
+        str, typer.Option("--maximum-event-notional")
+    ] = "5",
+    wallet_maximum_exposure: Annotated[
+        str, typer.Option("--wallet-maximum-exposure")
+    ] = "100",
+    follower_maximum_exposure: Annotated[
+        str, typer.Option("--follower-maximum-exposure")
+    ] = "500",
+    follower_maximum_wallet_exposure: Annotated[
+        str, typer.Option("--follower-maximum-wallet-exposure")
+    ] = "25",
+    follower_maximum_market_exposure: Annotated[
+        str, typer.Option("--follower-maximum-market-exposure")
+    ] = "100",
+    follower_maximum_positions: Annotated[
+        int, typer.Option("--follower-maximum-positions", min=1, max=10_000)
+    ] = 100,
+    maximum_forward_delay_ms: Annotated[
+        int, typer.Option("--maximum-forward-delay-ms", min=1, max=3_600_000)
+    ] = 300_000,
+    maximum_quote_age_ms: Annotated[
+        int, typer.Option("--maximum-quote-age-ms", min=1, max=300_000)
+    ] = 30_000,
+    initial_lookback_minutes: Annotated[
+        int, typer.Option("--initial-lookback-minutes", min=1, max=1_440)
+    ] = 15,
+    overlap_seconds: Annotated[
+        int, typer.Option("--overlap-seconds", min=0, max=300)
+    ] = 30,
+) -> None:
+    """Start or idempotently reuse one versioned continuous Shadow experiment."""
+    try:
+        _require_continuous_shadow_safety()
+        service = _continuous_shadow_service(
+            source,
+            database,
+            config=_continuous_shadow_config(
+                wallet_bankroll=wallet_bankroll,
+                follower_bankroll=follower_bankroll,
+                maximum_event_notional=maximum_event_notional,
+                wallet_maximum_exposure=wallet_maximum_exposure,
+                follower_maximum_exposure=follower_maximum_exposure,
+                follower_maximum_wallet_exposure=follower_maximum_wallet_exposure,
+                follower_maximum_market_exposure=follower_maximum_market_exposure,
+                follower_maximum_positions=follower_maximum_positions,
+                maximum_forward_delay_ms=maximum_forward_delay_ms,
+                maximum_quote_age_ms=maximum_quote_age_ms,
+                initial_lookback_minutes=initial_lookback_minutes,
+                overlap_seconds=overlap_seconds,
+            ),
+        )
+        experiment = service.start(_source(source).source_id)
+    except (
+        ContinuousShadowError,
+        ContinuousShadowStoreError,
+        CandidateStoreError,
+        ValueError,
+    ) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(
+        json.dumps(
+            {"experiment": experiment.to_dict(), "status": "succeeded"},
+            sort_keys=True,
+        )
+    )
+
+
+def portfolio_sync(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    health_report: Annotated[
+        Path,
+        typer.Option("--health-report", help="Sanitized atomic Stage 4B health path."),
+    ] = Path("reports/wallet-intelligence/continuous-shadow.json"),
+    poll_interval_seconds: Annotated[
+        int, typer.Option("--poll-interval-seconds", min=30, max=3_600)
+    ] = 60,
+    wallet_bankroll: Annotated[str, typer.Option("--wallet-bankroll")] = "100",
+    follower_bankroll: Annotated[str, typer.Option("--follower-bankroll")] = "1000",
+    maximum_event_notional: Annotated[
+        str, typer.Option("--maximum-event-notional")
+    ] = "5",
+    wallet_maximum_exposure: Annotated[
+        str, typer.Option("--wallet-maximum-exposure")
+    ] = "100",
+    follower_maximum_exposure: Annotated[
+        str, typer.Option("--follower-maximum-exposure")
+    ] = "500",
+    follower_maximum_wallet_exposure: Annotated[
+        str, typer.Option("--follower-maximum-wallet-exposure")
+    ] = "25",
+    follower_maximum_market_exposure: Annotated[
+        str, typer.Option("--follower-maximum-market-exposure")
+    ] = "100",
+    follower_maximum_positions: Annotated[
+        int, typer.Option("--follower-maximum-positions", min=1, max=10_000)
+    ] = 100,
+    maximum_forward_delay_ms: Annotated[
+        int, typer.Option("--maximum-forward-delay-ms", min=1, max=3_600_000)
+    ] = 300_000,
+    maximum_quote_age_ms: Annotated[
+        int, typer.Option("--maximum-quote-age-ms", min=1, max=300_000)
+    ] = 30_000,
+    initial_lookback_minutes: Annotated[
+        int, typer.Option("--initial-lookback-minutes", min=1, max=1_440)
+    ] = 15,
+    overlap_seconds: Annotated[
+        int, typer.Option("--overlap-seconds", min=0, max=300)
+    ] = 30,
+) -> None:
+    """Poll new leader trades and atomically advance persistent Shadow portfolios."""
+    try:
+        _require_continuous_shadow_safety()
+        service = _continuous_shadow_service(
+            source,
+            database,
+            config=_continuous_shadow_config(
+                wallet_bankroll=wallet_bankroll,
+                follower_bankroll=follower_bankroll,
+                maximum_event_notional=maximum_event_notional,
+                wallet_maximum_exposure=wallet_maximum_exposure,
+                follower_maximum_exposure=follower_maximum_exposure,
+                follower_maximum_wallet_exposure=follower_maximum_wallet_exposure,
+                follower_maximum_market_exposure=follower_maximum_market_exposure,
+                follower_maximum_positions=follower_maximum_positions,
+                maximum_forward_delay_ms=maximum_forward_delay_ms,
+                maximum_quote_age_ms=maximum_quote_age_ms,
+                initial_lookback_minutes=initial_lookback_minutes,
+                overlap_seconds=overlap_seconds,
+            ),
+        )
+        outcome = asyncio.run(service.poll(_source(source).source_id))
+        report = ContinuousShadowRepository(database).health(
+            _source(source).source_id,
+            now=datetime.now(UTC),
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        write_wallet_intelligence_health_payload(report.to_dict(), health_report)
+    except (
+        ContinuousShadowError,
+        ContinuousShadowStoreError,
+        CandidatePipelineBusyError,
+        CandidatePipelineLeaseLostError,
+        CandidateStoreError,
+        ValueError,
+    ) as error:
+        _emit_continuous_shadow_failure(error)
+    payload = outcome.to_dict()
+    payload["health"] = report.to_dict()
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def portfolio_health(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    poll_interval_seconds: Annotated[
+        int, typer.Option("--poll-interval-seconds", min=30, max=3_600)
+    ] = 60,
+) -> None:
+    """Report interval-aware health and accounting invariants without addresses."""
+    try:
+        repository = ContinuousShadowRepository(database)
+        repository.initialize()
+        report = repository.health(
+            _source(source).source_id,
+            now=datetime.now(UTC),
+            poll_interval_seconds=poll_interval_seconds,
+        )
+    except (ContinuousShadowStoreError, CandidateStoreError, ValueError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps(report.to_dict(), sort_keys=True))
+    if report.level == "critical":
+        raise typer.Exit(code=2)
+
+
+def portfolio_results(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    experiment_id: Annotated[str | None, typer.Option("--experiment-id")] = None,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=10_000)] = 100,
+) -> None:
+    """Read cumulative deduplicated portfolio and accounting evidence."""
+    try:
+        repository = ContinuousShadowRepository(database)
+        repository.initialize()
+        if experiment_id is None:
+            experiment = repository.active_experiment(_source(source).source_id)
+            if experiment is None:
+                raise ContinuousShadowStoreError(
+                    "Continuous Shadow experiment is unavailable."
+                )
+            experiment_id = experiment.experiment_id
+        payload = repository.results(experiment_id, limit=limit)
+    except (ContinuousShadowStoreError, CandidateStoreError, ValueError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def portfolio_drain(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+) -> None:
+    """Block new entries while retaining exits, marks, and verified settlement."""
+    try:
+        _require_continuous_shadow_safety()
+        experiment = _continuous_shadow_service(
+            source, database, config=ContinuousShadowConfig()
+        ).drain(_source(source).source_id)
+    except (ContinuousShadowError, ContinuousShadowStoreError, CandidateStoreError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps({"experiment": experiment.to_dict(), "status": "succeeded"}))
+
+
+def portfolio_finalize(
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+) -> None:
+    """Finalize a drained experiment only after every synthetic position is closed."""
+    try:
+        _require_continuous_shadow_safety()
+        experiment = _continuous_shadow_service(
+            source, database, config=ContinuousShadowConfig()
+        ).finalize(_source(source).source_id)
+    except (ContinuousShadowError, ContinuousShadowStoreError, CandidateStoreError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps({"experiment": experiment.to_dict(), "status": "succeeded"}))
+
+
 def runtime_bank(
     source: Annotated[str, typer.Option("--source")] = "polycop",
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
@@ -770,6 +1013,92 @@ def _selection_row_payload(row: CopyabilityPoolRow) -> dict[str, object]:
         "status": row.status.value,
         "wallet_id": row.wallet_id,
     }
+
+
+def _continuous_shadow_service(
+    source: str,
+    database: Path,
+    *,
+    config: ContinuousShadowConfig,
+) -> ContinuousShadowService:
+    _source(source)
+    return ContinuousShadowService(
+        ContinuousShadowRepository(database),
+        DynamicShadowRepository(database),
+        CandidateIntelligenceRepository(database),
+        lambda leaders: PolymarketCopyTradingSource(
+            leaders,
+            market_scope=PolymarketMarketScope.ALL_VERIFIED,
+        ),
+        PolymarketPublicAdapter(),
+        config=config,
+    )
+
+
+def _continuous_shadow_config(
+    *,
+    wallet_bankroll: str,
+    follower_bankroll: str,
+    maximum_event_notional: str,
+    wallet_maximum_exposure: str,
+    follower_maximum_exposure: str,
+    follower_maximum_wallet_exposure: str,
+    follower_maximum_market_exposure: str,
+    follower_maximum_positions: int,
+    maximum_forward_delay_ms: int,
+    maximum_quote_age_ms: int,
+    initial_lookback_minutes: int,
+    overlap_seconds: int,
+) -> ContinuousShadowConfig:
+    return ContinuousShadowConfig(
+        wallet_bankroll=_decimal_option(wallet_bankroll, "wallet-bankroll"),
+        follower_bankroll=_decimal_option(follower_bankroll, "follower-bankroll"),
+        maximum_event_notional=_decimal_option(
+            maximum_event_notional, "maximum-event-notional"
+        ),
+        wallet_maximum_exposure=_decimal_option(
+            wallet_maximum_exposure, "wallet-maximum-exposure"
+        ),
+        follower_maximum_exposure=_decimal_option(
+            follower_maximum_exposure, "follower-maximum-exposure"
+        ),
+        follower_maximum_wallet_exposure=_decimal_option(
+            follower_maximum_wallet_exposure,
+            "follower-maximum-wallet-exposure",
+        ),
+        follower_maximum_market_exposure=_decimal_option(
+            follower_maximum_market_exposure,
+            "follower-maximum-market-exposure",
+        ),
+        follower_maximum_positions=follower_maximum_positions,
+        maximum_forward_delay_ms=maximum_forward_delay_ms,
+        maximum_quote_age_ms=maximum_quote_age_ms,
+        initial_lookback_minutes=initial_lookback_minutes,
+        overlap_seconds=overlap_seconds,
+    )
+
+
+def _require_continuous_shadow_safety() -> None:
+    settings = AppSettings()
+    if settings.trading_mode is not TradingMode.DATA_ONLY or settings.live_trading_enabled:
+        raise ContinuousShadowError(
+            "Continuous Shadow requires TRADING_MODE=DATA_ONLY and LIVE_TRADING_ENABLED=false."
+        )
+
+
+def _emit_continuous_shadow_failure(error: Exception) -> Never:
+    typer.echo(
+        json.dumps(
+            {
+                "error_code": getattr(error, "error_code", "continuous_shadow_failed"),
+                "message": "Continuous Shadow failed safely; no order was sent.",
+                "status": "failed",
+            },
+            sort_keys=True,
+        ),
+        err=True,
+    )
+    raise typer.Exit(code=1)
 
 
 def _source(source_id: str) -> PolyCopCandidateWalletSource:

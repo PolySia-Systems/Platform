@@ -1,0 +1,13 @@
+[Unit]
+Description=PolySia continuous all-market Shadow portfolio poll
+Documentation=file:/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/polysia
+ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm wallet-intelligence-shadow-portfolio
+TimeoutStartSec=9min
+NoNewPrivileges=true
