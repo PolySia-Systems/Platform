@@ -5,7 +5,7 @@
 - **Scope:** Architectural dependency zones rather than every import edge.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, maintainers, architects, and code reviewers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 
@@ -19,6 +19,7 @@ flowchart TB
   Control["Control core and Shadow intent boundary\n[CURRENT bounded; venue-neutral]"]:::application
   Adapters["Adapters: adapters/polymarket\n[CURRENT]"]:::adapter
   Ports["Application ports\n[CURRENT protocols]"]:::application
+  Services["Application services\nWallet Intelligence, selection, Shadow, handoff\n[CURRENT]"]:::application
   Domain["Domain models and clocks\n[CURRENT inner layer]"]:::domain
   SDK["Official polymarket SDK\n[EXTERNAL]"]:::external
 
@@ -26,12 +27,15 @@ flowchart TB
   Interface --> Storage
   Interface --> Control
   Interface --> Adapters
+  Interface --> Services
   Runtime --> Domain
   Storage --> Domain
   Storage --> Control
   Control --> Runtime
   Adapters --> Domain
   Ports --> Domain
+  Services --> Ports
+  Services --> Domain
   Adapters --> SDK
 
   Forbidden1["FORBIDDEN: domain/application -> adapters or SDK"]:::danger
@@ -47,10 +51,8 @@ flowchart TB
 
   Debt1["Technical debt: operations/live command modules\nretain broad orchestration"]:::risk
   Debt2["Technical debt: oversized monitoring/live modules"]:::risk
-  Debt3["Application services are not yet populated"]:::risk
   Interface -.-> Debt1
   Runtime -.-> Debt2
-  Ports -.-> Debt3
 
   subgraph LEGEND["Legend"]
     L1["Allowed dependency"]:::current
@@ -88,7 +90,10 @@ on adapters where operationally required.
 
 ## Target/future elements
 
-Application services are not yet populated; future dependency inversion should use current ports more broadly without claiming that wiring today.
+Wallet Intelligence, copyability selection, dynamic and continuous Shadow, and
+protected-handoff application services are CURRENT. Broader dependency
+inversion should continue incrementally through existing ports where it has
+concrete value.
 
 ## Related repository files
 

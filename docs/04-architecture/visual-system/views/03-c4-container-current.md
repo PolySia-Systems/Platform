@@ -5,7 +5,7 @@
 - **Scope:** Logical containers inside one deployable Python package/process; these are not independently deployed services.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, owner, maintainers, and architecture reviewers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 
@@ -29,6 +29,7 @@ flowchart TB
 
     subgraph DECISION["Decision and control"]
       DomainPorts["Container: Domain Models and Application Ports\nvenue-neutral contracts"]:::domain
+      Services["Container: Application Services\nWallet Intelligence, selection, Shadow, protected handoff"]:::application
       Registry["Container: Minimal Strategy Registry\nversion, lifecycle, evidence"]:::strategy
       Strategies["Container: Strategy Framework\nresearch and bounded Copy strategies"]:::strategy
       Control["Container: SHADOW-only Control Kernel\nplan/apply, revisions, audit, intent gate"]:::application
@@ -50,6 +51,9 @@ flowchart TB
   CLI --> Ops
   CLI --> Adapter
   CLI --> Control
+  CLI --> Services
+  Services --> DomainPorts
+  Services ==>|pipeline and portfolio state| Storage
   Control ==>|desired/observed state and audit| Storage
   Control -.->|gates new stale-price Shadow intents only| Strategies
   Registry -.->|definition and lifecycle evidence| Strategies
@@ -105,7 +109,7 @@ Follow operator commands into data ingestion, decisions and risk, execution/stat
 ## Current implementation mapping
 
 Every container maps to current packages: CLI composition/commands/support, config, adapter, bus,
-orderbook/features, domain/ports, the bounded Strategy Registry, strategies,
+orderbook/features, domain/ports and services, the bounded Strategy Registry, strategies,
 the SHADOW-only Control Kernel, risk, execution, portfolio, storage,
 reconciliation, and monitoring/backtesting/deployment. The Control Kernel gates
 only new `stale-price@0.1.0` Shadow intents and cannot reach Live trading.
@@ -147,7 +151,8 @@ A C4 container may be a logical runtime boundary within the single deployment.
 
 ## Known limitations
 
-Application ports exist, but application services are empty and not universal runtime wiring.
+Application services cover Wallet Intelligence and Shadow orchestration. They
+are not universal runtime wiring for every older CLI path.
 
 ## Review trigger
 

@@ -5,6 +5,7 @@ flowchart TB
   Control["Control core and Shadow intent boundary\n[CURRENT bounded; venue-neutral]"]:::application
   Adapters["Adapters: adapters/polymarket\n[CURRENT]"]:::adapter
   Ports["Application ports\n[CURRENT protocols]"]:::application
+  Services["Application services\nWallet Intelligence, selection, Shadow, handoff\n[CURRENT]"]:::application
   Domain["Domain models and clocks\n[CURRENT inner layer]"]:::domain
   SDK["Official polymarket SDK\n[EXTERNAL]"]:::external
 
@@ -12,12 +13,15 @@ flowchart TB
   Interface --> Storage
   Interface --> Control
   Interface --> Adapters
+  Interface --> Services
   Runtime --> Domain
   Storage --> Domain
   Storage --> Control
   Control --> Runtime
   Adapters --> Domain
   Ports --> Domain
+  Services --> Ports
+  Services --> Domain
   Adapters --> SDK
 
   Forbidden1["FORBIDDEN: domain/application -> adapters or SDK"]:::danger
@@ -33,10 +37,8 @@ flowchart TB
 
   Debt1["Technical debt: operations/live command modules\nretain broad orchestration"]:::risk
   Debt2["Technical debt: oversized monitoring/live modules"]:::risk
-  Debt3["Application services are not yet populated"]:::risk
   Interface -.-> Debt1
   Runtime -.-> Debt2
-  Ports -.-> Debt3
 
   subgraph LEGEND["Legend"]
     L1["Allowed dependency"]:::current

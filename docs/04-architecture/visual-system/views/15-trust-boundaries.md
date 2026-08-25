@@ -5,7 +5,7 @@
 - **Scope:** Security-relevant data and command crossings without any real identifiers or account data.
 - **Architecture status:** MIXED
 - **Audience:** Security reviewers, owner, operators, architects, and execution developers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 

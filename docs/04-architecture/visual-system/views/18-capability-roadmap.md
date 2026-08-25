@@ -5,7 +5,7 @@
 - **Scope:** Foundation/MVP/limited-live capabilities, target orchestration and platform boundaries, and future multi-market/Web3/institutional categories.
 - **Architecture status:** MIXED
 - **Audience:** Owner, roadmap reviewers, architects, developers, and risk reviewers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 
@@ -19,9 +19,11 @@ flowchart LR
     N3["SQLite, minimal Strategy Registry, reconciliation, monitoring, backtesting"]:::current
     N4["SHADOW-only Control Kernel: versioned desired / observed state and audit"]:::current
     N5["Authenticated reads and bounded guarded tiny-live Copy tools"]:::risk
+    N6["Wallet Intelligence Stages 1-4B\nDATA_ONLY selection and continuous Shadow portfolio"]:::current
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
+    T0["Evidence-backed strategy validation\noff-host backup and external alerts"]:::target
     T1["Strategy orchestration and conflict resolution"]:::target
     T2["Portfolio and capital allocation"]:::target
     T3["OMS / Transaction Manager and generalized ledger"]:::target
@@ -30,7 +32,7 @@ flowchart LR
 
   subgraph LATER["Later optional capabilities [FUTURE]"]
     F1["Additional prediction markets, exchanges, and brokers"]:::future
-    F2["Generalized wallet intelligence and Copy Trading"]:::future
+    F2["Generalized automated Live Copy Trading"]:::future
     F3["Web3 / DeFi data and controlled execution"]:::future
     F4["Institutional hardening and justified high availability"]:::future
   end
@@ -41,6 +43,8 @@ flowchart LR
   N3 --> T3
   N4 --> T1
   N5 --> T4
+  N6 --> T0
+  T0 -.-> F2
   T1 -.-> F1
   T2 -.-> F2
   T3 -.-> F3
@@ -81,18 +85,18 @@ Current capabilities include the verified Phase I foundation, a minimal
 Strategy Registry, the bounded FAK/actual-fill execution slice, delayed-fill
 reconciliation, lifecycle monitoring, fee-aware targets, runtime preflight, and
 the verified recovery package. They also include the SHADOW-only Control Kernel
-and the owner-bounded Tiny Live Copy experiment. The registry and bounded Copy
-path are not evidence of strategy quality or general automation readiness.
+the owner-bounded Tiny Live Copy experiment, and the deployed DATA_ONLY Wallet
+Intelligence Stages 1–4B. The registry, modeled P&L, and bounded Copy paths are
+not evidence of strategy quality or general automation readiness.
 
 ## Target/future elements
 
-Immediate work is historical data, realistic backtesting, and large
-Paper/Shadow validation. Strategy orchestration, allocator, OMS/generalized
-ledger, adapter registry, operator console, and portable hardening remain
-TARGET. Multi-venue, wallet intelligence/copy trading, Web3/DeFi, and
-institutional HA remain FUTURE. Here, FUTURE Copy Trading means generalized or
-permanent capability; the bounded experimental path is already CURRENT and
-remains fail-closed.
+Immediate work is historical data, realistic backtesting, a large Paper/Shadow
+sample, encrypted off-host backup, and external alert delivery. Strategy
+orchestration, allocator, OMS/generalized ledger, adapter registry, operator
+console, and portable hardening remain TARGET. Multi-venue, generalized
+automated Live Copy Trading, Web3/DeFi, and institutional HA remain FUTURE. The
+current Wallet Intelligence path is DATA_ONLY and remains fail-closed.
 
 ## Related repository files
 

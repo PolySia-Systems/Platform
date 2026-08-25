@@ -5,7 +5,7 @@
 - **Scope:** Expected/actual snapshots, detectors, event severity, status classification, safety pause, operator review, recovery, and audit output.
 - **Architecture status:** CURRENT
 - **Audience:** Operators, reconciliation developers, risk reviewers, and incident reviewers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 
@@ -106,10 +106,11 @@ Unreadable or uncertain live state is treated conservatively and may block.
 
 ## Known limitations
 
-Recovery and monitoring are local and bounded; no continuous scheduler,
-external alert provider, or automated disaster recovery is a current
-capability. A missing terminal order detail remains a warning unless confirmed
-fills and position evidence cannot safely prove the state.
+Recovery and monitoring remain local to the controlled host. A continuous
+Docker monitor and Wallet Intelligence systemd timers are CURRENT, but external
+alert delivery and automated disaster recovery are not. A missing terminal
+order detail remains a warning unless confirmed fills and position evidence
+cannot safely prove the state.
 
 ## Review trigger
 

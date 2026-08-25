@@ -6,8 +6,9 @@ Mermaid for canonical diagrams-as-code.
 
 ## Authority and state
 
-- Baseline Git commit: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
-- Review date: 2026-08-18
+- Baseline Git commit: `ac104c708100bf9fff7e632acefd89bf90b8e509`
+- Original full-corpus generation baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- Review date: 2026-08-25
 - Architecture model: modular monolith with ports and adapters
 - First venue adapter: Polymarket
 
@@ -27,6 +28,8 @@ Target and future elements are not implementation claims.
 
 Update the Mermaid source and its paired view in the same change. Rendered SVGs
 are presentation derivatives and never supersede repository sources.
+Each view records its own evidence commit. The baseline identifies the repository
+state used for the corpus review; unchanged sources retain their prior semantics.
 
 `python scripts/check_changed_docs.py --architecture-only` checks structural
 consistency, coverage, metadata, local paths, and traceability. It does not

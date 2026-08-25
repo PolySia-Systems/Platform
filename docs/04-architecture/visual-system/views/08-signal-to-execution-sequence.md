@@ -5,7 +5,7 @@
 - **Scope:** Current data, strategy, risk, adapter, state, reconciliation, and monitoring participants plus target allocator, OMS, and execution-port boundaries.
 - **Architecture status:** MIXED
 - **Audience:** Architects, execution developers, strategy developers, risk reviewers, and operators.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 

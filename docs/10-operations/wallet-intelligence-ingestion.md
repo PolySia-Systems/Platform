@@ -448,10 +448,12 @@ sudo systemctl disable --now polysia-wallet-intelligence.timer
 
 ## Backup and real restore rehearsal
 
-Every successful CLI invocation creates and verifies an online backup unless
-`--no-backup` is explicitly used. A repeated idempotent invocation does not
-duplicate the database snapshot, but it refreshes the recoverable backup so a
-retry can repair a prior backup failure.
+Every successful Stage 1–3 `wallet-intelligence ensure` invocation creates and
+verifies an online backup unless `--no-backup` is explicitly used. A repeated
+idempotent invocation does not duplicate the database snapshot, but it refreshes
+the recoverable backup so a retry can repair a prior backup failure. Stage 4 and
+4B polling reuse that database and do not create a backup on every poll; their
+recovery point is the latest verified pipeline or operator-requested backup.
 
 At least weekly, select one exact backup name and run a disposable restore:
 

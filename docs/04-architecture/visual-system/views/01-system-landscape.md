@@ -5,7 +5,7 @@
 - **Scope:** PolySia as one system and the external actors/systems around it; internal components are intentionally hidden.
 - **Architecture status:** MIXED
 - **Audience:** Project owner, developers, reviewers, and future auditors.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 

@@ -6,7 +6,7 @@
 |---|---|
 | Review date | 2026-08-25 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `596e8207666de3880037386e512cf0d189d6f31f` |
+| Audited repository baseline | `ac104c708100bf9fff7e632acefd89bf90b8e509` |
 | Last verified deployed baseline | `d39f5b355b1d83ed2019a93c6647b8ceb1572e5f` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
