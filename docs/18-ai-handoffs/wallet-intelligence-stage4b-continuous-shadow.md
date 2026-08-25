@@ -34,14 +34,18 @@ read adapter.
 
 ## Safety and compatibility
 
-- Stage 4A schema remains v1; Stage 4B schema is separately v2.
+- Stage 4A schema remains v1; Stage 4B schema is separately v3. The additive,
+  transactional v2-to-v3 migration makes processing status and settlement
+  backlog explicit without changing prior financial records.
 - The fast service forces `TRADING_MODE=DATA_ONLY` and
   `LIVE_TRADING_ENABLED=false`.
 - Stage 4B imports no execution, Risk, strategy, wallet, signing, cancellation,
   transfer, or order-authority module.
 - The one-minute poll is additive; the prior ten-minute Stage 4A timer remains.
 - A failed poll does not advance the watermark or replace portfolio state.
-- Rollback disables only the Stage 4B timer and restores the prior release.
+- Rollback disables only the Stage 4B timer. Returning from schema v3 to the
+  prior schema-v2 release also restores a verified pre-migration database
+  backup; switching code alone intentionally fails closed.
 
 ## Operational evidence
 

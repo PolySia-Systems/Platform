@@ -27,7 +27,7 @@ def test_restore_check_reports_continuous_shadow_evidence(
         continuous_shadow_experiment_count=1,
         continuous_shadow_ledger_count=4,
         continuous_shadow_poll_count=2,
-        continuous_shadow_schema_version=2,
+        continuous_shadow_schema_version=3,
         copyability_membership_count=2,
         copyability_run_count=1,
         copyability_selection_schema_version=1,
@@ -58,7 +58,7 @@ def test_restore_check_reports_continuous_shadow_evidence(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["continuous_shadow_schema_version"] == 2
+    assert payload["continuous_shadow_schema_version"] == 3
     assert payload["restored_continuous_shadow_experiment_count"] == 1
     assert payload["restored_continuous_shadow_poll_count"] == 2
     assert payload["restored_continuous_shadow_event_count"] == 3

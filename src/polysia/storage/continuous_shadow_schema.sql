@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 2),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 3),
     initialized_at TEXT NOT NULL
 );
 
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_poll_runs (
     unknown_count INTEGER NOT NULL DEFAULT 0 CHECK(unknown_count >= 0),
     rejected_count INTEGER NOT NULL DEFAULT 0 CHECK(rejected_count >= 0),
     settlement_count INTEGER NOT NULL DEFAULT 0 CHECK(settlement_count >= 0),
+    settlement_backlog_count INTEGER NOT NULL DEFAULT 0 CHECK(settlement_backlog_count >= 0),
     realized_pnl_delta TEXT NOT NULL DEFAULT '0',
     fee_delta TEXT NOT NULL DEFAULT '0',
     source_api_lag_max_ms INTEGER NOT NULL DEFAULT 0 CHECK(source_api_lag_max_ms >= 0),
@@ -97,6 +98,8 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_event_journal (
     first_poll_run_id TEXT NOT NULL,
     external_evidence_reference TEXT,
     pools_json TEXT NOT NULL CHECK(json_valid(pools_json)),
+    processing_status TEXT NOT NULL DEFAULT 'PROCESSED'
+        CHECK(processing_status = 'PROCESSED'),
     FOREIGN KEY(wallet_id) REFERENCES canonical_wallets(wallet_id),
     FOREIGN KEY(first_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id)
 );

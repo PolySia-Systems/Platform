@@ -119,16 +119,33 @@ other outcomes `$0`. Ambiguous prices never close a position.
 ## Health, recovery, and retention
 
 Health is tied to the configured poll interval and reports cumulative events,
-evaluations, duplicates, unknown ratio, unknown fee provenance, marks, open
-positions, lifecycle, and Decimal ledger consistency. Critical staleness,
-unbalanced accounting, or a finalized experiment with positions fails closed.
+evaluations, overlap/replay duplicates, zero-or-nonzero duplicate processing,
+unknown ratio, unknown fee provenance, marks, open positions, verified-closed
+settlement backlog, lifecycle, and Decimal ledger consistency. Critical
+staleness, duplicate processing, unbalanced accounting, or a finalized
+experiment with positions fails closed.
 
-The schema is additive version 2 in the protected wallet-intelligence database.
-Backup and disposable restore validation verify both Stage 4A v1 and Stage 4B v2
+The schema is additive version 3 in the protected wallet-intelligence database.
+Version 3 records the atomically committed event processing state and the latest
+known settlement backlog. Its v2-to-v3 migration is transactional and idempotent.
+Backup and disposable restore validation verify both Stage 4A v1 and Stage 4B v3
 counts. A failed source, market, quote, calculation, or transaction records a safe
 poll failure without advancing the watermark or replacing the last known good
-portfolio. Code rollback disables the Stage 4B timer and returns to the prior
-release; additive tables remain inert and preserve evidence.
+portfolio. Code rollback disables the Stage 4B timer. A rollback from schema v3
+to prior schema-v2 code additionally restores the verified pre-migration
+database backup; a code-only switch intentionally fails closed rather than
+running against an unsupported schema. The v3 database is preserved separately
+for forward recovery.
+
+`portfolio-results` reports first/latest event evidence, event-level outcome
+counts, explicit duplicate-processing evidence, follower and per-wallet state,
+separate Alpha and Stress counterfactuals, close outcomes, settlement counts,
+latency and execution-cost distributions, interval-aware health, and explicit
+confidence limitations. Pool overlap is visible and deliberately included in
+both selected pool views; it is never hidden inside a combined-only number.
+If an open position has no executable bid, its cost basis remains explicit but
+NAV and total P&L are labelled partial instead of inventing a mark or presenting
+an incomplete valuation as reconciled.
 
 ## Acceptance criteria
 
