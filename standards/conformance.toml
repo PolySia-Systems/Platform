@@ -5,8 +5,8 @@ consumer = "PolySia-Systems/Platform"
 evaluated_at = "2026-08-17"
 evaluated_revision = "codex/standards-full-enforcement from 20bdafc176c1955be360a6ad5bac82364c106296"
 standards_repository = "PolySia-Systems/Standards"
-standards_release = "v0.1.1"
-standards_commit = "921db357c07bf1d940f72cfbb662d940288132ca"
+standards_release = "v0.4.0"
+standards_commit = "4ee4e6aca8f0a38379f18029f8db71828cd00759"
 profiles = ["PRF-BASE", "PRF-PYS"]
 enforcement = "full"
 unresolved_findings = 0
@@ -27,7 +27,7 @@ name = "profile-framework-consumer"
 classification = "applicable"
 verdict = "pass"
 ids = ["PRF-FRM-005", "PRF-FRM-006", "PRF-FRM-007", "PRF-FRM-010", "PRF-FRM-013", "PRF-FRM-014"]
-evidence = "standards/adoption.toml; docs/00-governance/standards-adoption-v0.1.1.md; scripts/validate_standards.py"
+evidence = "standards/adoption.toml; docs/00-governance/standards-adoption-v0.4.0.md; scripts/validate_standards.py"
 
 [[results]]
 name = "profile-framework-absent-events"
@@ -41,7 +41,7 @@ name = "profile-framework-source-authority"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["PRF-FRM-001", "PRF-FRM-002", "PRF-FRM-003", "PRF-FRM-004", "PRF-FRM-009", "PRF-FRM-012", "PRF-FRM-016"]
-evidence = "Immutable PolySia-Systems/Standards v0.1.1 profile artifacts."
+evidence = "Immutable PolySia-Systems/Standards v0.4.0 profile artifacts."
 
 [[results]]
 name = "base-profile-consumer"
@@ -55,7 +55,7 @@ name = "base-profile-owner-review"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["PRF-BASE-009"]
-evidence = "Immutable PolySia-Systems/Standards v0.1.1 PRF-BASE."
+evidence = "Immutable PolySia-Systems/Standards v0.4.0 PRF-BASE."
 
 [[results]]
 name = "python-profile-consumer"
@@ -69,7 +69,7 @@ name = "python-profile-owner-review"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["PRF-PYS-007"]
-evidence = "Immutable PolySia-Systems/Standards v0.1.1 PRF-PYS."
+evidence = "Immutable PolySia-Systems/Standards v0.4.0 PRF-PYS."
 
 [[results]]
 name = "core-interpretation-and-assessment"
@@ -111,7 +111,7 @@ name = "released-authority"
 classification = "applicable"
 verdict = "pass"
 ids = ["CORE-LCY-001", "CORE-VER-012"]
-evidence = "Exact immutable v0.1.1 release and commit pin in adoption and conformance records."
+evidence = "Exact immutable v0.4.0 release and commit pin in adoption and conformance records."
 
 [[results]]
 name = "python-core-naming"
@@ -139,4 +139,4 @@ name = "python-standard-owner-review"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["ENG-PY-021"]
-evidence = "Immutable PolySia-Systems/Standards v0.1.1 Python Standard."
+evidence = "Immutable PolySia-Systems/Standards v0.4.0 Python Standard."

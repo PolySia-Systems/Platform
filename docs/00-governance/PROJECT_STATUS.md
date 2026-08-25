@@ -116,7 +116,7 @@ order authority, and cannot support a profitability or Live-readiness claim.
   reservation, and scoped market-time gate were implemented and exercised by
   Tiny Live Copy runs 003 and 004. Run 004 proved venue acceptance without a
   fill, while preserving fail-safe behavior on uncertain cancellation state.
-- The exact Standards v0.1.1 `PRF-BASE` and `PRF-PYS` profiles are fully
+- The exact Standards v0.4.0 `PRF-BASE` and `PRF-PYS` profiles are fully
   enforced. CI is optimized for Python 3.14 with dependency security fixes,
   path-conditional quality/container/supply-chain jobs, and lightweight
   documentation checks.

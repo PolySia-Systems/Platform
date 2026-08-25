@@ -27,7 +27,7 @@ reality takes precedence over historical delivery evidence.
 - [Master Operating Charter](00-governance/master-operating-charter.md)
 - [Document control](00-governance/document-control.md)
 - [Adopted Standards record](../standards/adoption.toml)
-- [Standards conformance review](00-governance/standards-conformance-v0.1.1.md)
+- [Standards conformance review](00-governance/standards-conformance-v0.4.0.md)
 
 ## Current evidence and handoffs
 
