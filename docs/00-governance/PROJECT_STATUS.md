@@ -7,10 +7,10 @@
 | Review date | 2026-08-26 |
 | Source-of-truth branch | `main` |
 | Audited repository baseline | `ac104c708100bf9fff7e632acefd89bf90b8e509` |
-| Last verified deployed baseline | `b867408b5176541f3168767380d4a1e25b80f740` |
+| Last verified deployed baseline | `abb96570ba0e27deb163688e1fe25f8d0fefe9b8` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 4B operational hardening (PR `#94`) deployed on Finland at `b867408` |
+| Latest repository maintenance | Stage 4B worker `compose up` (PR `#96`) deployed on Finland at `abb9657` |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -68,8 +68,9 @@ its exact-102 and BTC 15-minute safety invariants.
 
 Continuous Shadow Portfolio v0.2 / schema v4 is CURRENT in `DATA_ONLY` on
 `Hetzner-Finland-Helsinki-01` at exact merge commit
-`b867408b5176541f3168767380d4a1e25b80f740` (PR `#94`, which includes PR `#92`
-schema v4). The mixed FOLLOWER portfolio remains the labeled baseline.
+`abb96570ba0e27deb163688e1fe25f8d0fefe9b8` (PR `#96`, including PR `#94`
+reporting isolation and PR `#92` schema v4). The mixed FOLLOWER portfolio
+remains the labeled baseline.
 Independent Alpha and Stress followers started empty after migration.
 CLOSE/SETTLEMENT attribution, rolling 1h/6h/24h health, mark freshness, and a
 persistent fenced worker are active. Encrypted off-host backup is still
@@ -107,8 +108,16 @@ than a generic `continuous_shadow_failed` code. After recovery, health was
 `warning` with `last_poll_status=succeeded`, `ledger_balanced=true`,
 `duplicate_processing_count=0`, fresh/stale/missing marks 168/82/0, and no
 real order. `3x-ui` remained restart count 0 since `2026-08-21T10:33:56Z`.
-The runbook now forbids `docker compose run` for reporting while this worker
-uses `compose run` on the same project.
+
+PR `#96` changed the worker unit to `docker compose up` so it stays in the
+Compose project. Helsinki is on `abb96570ba0e27deb163688e1fe25f8d0fefe9b8`
+(`sha256:761ba8f1fbe19908744a8a39cb80cd019821c59e24b56b5457ad330cee58cb29`).
+A `docker compose run --rm` health one-shot of `wallet-intelligence-sync`
+completed in 11.095 s while the worker stayed `active` with `NRestarts=0`.
+Thirty host artifact reads were 0.0000–0.0003 s. After that smoke: ledger
+balanced, duplicate processing 0, last poll succeeded, marks fresh/stale/missing
+159/93/0, `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`. `3x-ui`
+restart count remained 0.
 
 ## Completed stages
 

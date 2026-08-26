@@ -2,10 +2,11 @@
 
 ## Status
 
-PR `#94` merged as `b867408b5176541f3168767380d4a1e25b80f740` and is deployed on
+PR `#96` merged as `abb96570ba0e27deb163688e1fe25f8d0fefe9b8` and is deployed on
 `Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Schema v4 remains in place
-from PR `#92`. The persistent worker is running. No real order was sent.
-`3x-ui` was not restarted.
+from PR `#92`. Reporting isolation from PR `#94` remains in place. The
+persistent worker is running as a Compose project member. No real order was
+sent. `3x-ui` was not restarted.
 
 This change does not enable Live trading.
 
@@ -151,12 +152,24 @@ Local workstation gates on the implementation commit `857c8e4` (2026-08-26):
 
 ### Remaining work
 
-- Do not use `docker compose run` for reporting while the worker is itself a
-  `compose run` on project network `polysia_default`; host artifact reads and
-  `docker run --network none` snapshot analytics are the verified paths.
 - Eager CLI imports still add about 6 s before snapshot results. A lazy-import
-  CLI split is not in this SHA.
-- Historical pre-deploy poll failures remain `continuous_shadow_failed` until
-  replaced by a later classified failure. The 12:59 UTC event proved
-  `source_unavailable` on the deployed SHA.
+  CLI split is not in this SHA. Host artifact health and `results()` on a
+  verified snapshot remain the measured sub-second / sub-five-second paths.
 - Encrypted off-host backup remains absent. Confidence remains `LOW`.
+
+### Finland deploy evidence (PR `#96`)
+
+- Merged SHA deployed: `abb96570ba0e27deb163688e1fe25f8d0fefe9b8`
+- Release path: `/opt/polysia-releases/abb96570ba0e27deb163688e1fe25f8d0fefe9b8`
+- Image: `polysia:abb96570ba0e27deb163688e1fe25f8d0fefe9b8`
+  (`sha256:761ba8f1fbe19908744a8a39cb80cd019821c59e24b56b5457ad330cee58cb29`)
+- Pre-switch backup:
+  `wallet-intelligence-20260826T133450Z.sqlite3`, SHA-256
+  `cb1903d098b98050881976e6648be441aac99a3fe3e88b65229bcf6e230b3e9e`
+- Worker unit now `docker compose up --abort-on-container-exit`. `NRestarts=0`
+  after start. A concurrent `compose run --rm` health of
+  `wallet-intelligence-sync` did not increase `NRestarts`.
+- Artifact reads 0.0000–0.0003 s. `ledger_balanced=true`,
+  `duplicate_processing_count=0`, `TRADING_MODE=DATA_ONLY`,
+  `LIVE_TRADING_ENABLED=false`.
+- `3x-ui` restart count 0 and start time `2026-08-21T10:33:56Z` unchanged.
