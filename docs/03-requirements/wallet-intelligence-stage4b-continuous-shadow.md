@@ -131,6 +131,11 @@ invalidate a successful poll or terminate the persistent worker. The existing
 atomic artifact remains last-known-good, while the interval output records a
 sanitized `health_refresh` category and stage. Settlement backlog age measures
 the current uninterrupted nonzero-backlog episode, not the most recent poll.
+The persistent service initializes each storage boundary once per process. A
+transient SQLite lock during initialization, lease acquisition, poll
+persistence, lease release, or health publication is classified at that exact
+boundary; the current attempt is skipped safely and the normal interval retries
+without terminating the worker.
 
 The schema is additive version 4 in the protected wallet-intelligence database.
 Version 4 preserves CLOSE/SETTLEMENT Wallet, Pool, market, and event attribution,

@@ -7,6 +7,10 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from polysia.application.ports.candidate_intelligence import (
+    CandidatePipelineBusyError,
+    CandidatePipelineLeaseLostError,
+)
 from polysia.application.ports.continuous_shadow import (
     ContinuousCandidatePort,
     ContinuousEvaluationRecord,
@@ -33,11 +37,14 @@ from polysia.application.services.continuous_shadow_failures import (
     FAILURE_CATEGORY_MARKET_READ_FAILED,
     FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
     FAILURE_CATEGORY_UNEXPECTED,
+    FAILURE_STAGE_ACQUIRE_LEASE,
     FAILURE_STAGE_APPLY_EVENTS,
     FAILURE_STAGE_COLLECT_EVENTS,
     FAILURE_STAGE_FAIL_POLL,
+    FAILURE_STAGE_INITIALIZE,
     FAILURE_STAGE_MARKET_READ,
     FAILURE_STAGE_PERSIST,
+    FAILURE_STAGE_RELEASE_LEASE,
     FAILURE_STAGE_RENEW_LEASE,
     FAILURE_STAGE_UNEXPECTED,
     classify_continuous_shadow_failure,
@@ -85,6 +92,19 @@ class ContinuousShadowError(RuntimeError):
             self.error_code = error_code
         if processing_stage is not None:
             self.processing_stage = processing_stage
+
+
+def _classified_poll_boundary_error(
+    error: BaseException,
+    *,
+    stage: str,
+) -> ContinuousShadowError:
+    classified = classify_continuous_shadow_failure(error, stage=stage)
+    return ContinuousShadowError(
+        "Continuous Shadow poll boundary failed safely; durable state was preserved.",
+        error_code=classified.category,
+        processing_stage=classified.stage,
+    )
 
 
 @dataclass(slots=True)
@@ -153,9 +173,11 @@ class ContinuousShadowService:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._concurrency = concurrency
         self._maximum_pages = maximum_pages_per_wallet
+        self._store_initialized = False
+        self._lease_port_initialized = False
 
     def start(self, source_id: str) -> ContinuousShadowExperiment:
-        self._store.initialize()
+        self._initialize_store()
         selection_run_id, candidates = self._candidate_port.current_candidates(source_id)
         return self._store.start_experiment(
             source_id=source_id,
@@ -166,7 +188,7 @@ class ContinuousShadowService:
         )
 
     def drain(self, source_id: str) -> ContinuousShadowExperiment:
-        self._store.initialize()
+        self._initialize_store()
         experiment = self._required_experiment(source_id)
         return self._store.transition(
             experiment.experiment_id,
@@ -175,7 +197,7 @@ class ContinuousShadowService:
         )
 
     def finalize(self, source_id: str) -> ContinuousShadowExperiment:
-        self._store.initialize()
+        self._initialize_store()
         experiment = self._required_experiment(source_id)
         return self._store.transition(
             experiment.experiment_id,
@@ -184,18 +206,54 @@ class ContinuousShadowService:
         )
 
     async def poll(self, source_id: str) -> ContinuousPollOutcome:
-        self._store.initialize()
-        self._lease_port.initialize()
-        lease = self._lease_port.acquire_lease(
-            CONTINUOUS_SHADOW_LEASE_RESOURCE,
-            owner_id=f"continuous-shadow-{uuid.uuid4().hex}",
-            acquired_at=self._now(),
-            lease_duration=timedelta(minutes=30),
-        )
+        try:
+            self._initialize_store()
+            self._initialize_lease_port()
+        except (CandidatePipelineBusyError, CandidatePipelineLeaseLostError):
+            raise
+        except Exception as error:
+            raise _classified_poll_boundary_error(
+                error,
+                stage=FAILURE_STAGE_INITIALIZE,
+            ) from error
+        try:
+            lease = self._lease_port.acquire_lease(
+                CONTINUOUS_SHADOW_LEASE_RESOURCE,
+                owner_id=f"continuous-shadow-{uuid.uuid4().hex}",
+                acquired_at=self._now(),
+                lease_duration=timedelta(minutes=30),
+            )
+        except (CandidatePipelineBusyError, CandidatePipelineLeaseLostError):
+            raise
+        except Exception as error:
+            raise _classified_poll_boundary_error(
+                error,
+                stage=FAILURE_STAGE_ACQUIRE_LEASE,
+            ) from error
         try:
             return await self._poll_locked(source_id, lease=lease)
         finally:
-            self._lease_port.release_lease(lease)
+            try:
+                self._lease_port.release_lease(lease)
+            except (CandidatePipelineBusyError, CandidatePipelineLeaseLostError):
+                raise
+            except Exception as error:
+                raise _classified_poll_boundary_error(
+                    error,
+                    stage=FAILURE_STAGE_RELEASE_LEASE,
+                ) from error
+
+    def _initialize_store(self) -> None:
+        if self._store_initialized:
+            return
+        self._store.initialize()
+        self._store_initialized = True
+
+    def _initialize_lease_port(self) -> None:
+        if self._lease_port_initialized:
+            return
+        self._lease_port.initialize()
+        self._lease_port_initialized = True
 
     async def _poll_locked(
         self,
