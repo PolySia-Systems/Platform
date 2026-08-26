@@ -7,10 +7,10 @@
 | Review date | 2026-08-26 |
 | Source-of-truth branch | `main` |
 | Audited repository baseline | `ac104c708100bf9fff7e632acefd89bf90b8e509` |
-| Last verified deployed baseline | `c49652565cd7ddab6432e3488ca73fa1c9c352b5` |
+| Last verified deployed baseline | `b867408b5176541f3168767380d4a1e25b80f740` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 4B operational-hardening branch prepared; Finland still on `c496525` until merge/deploy |
+| Latest repository maintenance | Stage 4B operational hardening (PR `#94`) deployed on Finland at `b867408` |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -68,11 +68,12 @@ its exact-102 and BTC 15-minute safety invariants.
 
 Continuous Shadow Portfolio v0.2 / schema v4 is CURRENT in `DATA_ONLY` on
 `Hetzner-Finland-Helsinki-01` at exact merge commit
-`c49652565cd7ddab6432e3488ca73fa1c9c352b5` (PR `#92`). The mixed FOLLOWER
-portfolio remains the labeled baseline. Independent Alpha and Stress followers
-started empty after migration. CLOSE/SETTLEMENT attribution, rolling 1h/6h/24h
-health, mark freshness, and a persistent fenced worker are active. Encrypted
-off-host backup is still absent. `3x-ui` was not restarted.
+`b867408b5176541f3168767380d4a1e25b80f740` (PR `#94`, which includes PR `#92`
+schema v4). The mixed FOLLOWER portfolio remains the labeled baseline.
+Independent Alpha and Stress followers started empty after migration.
+CLOSE/SETTLEMENT attribution, rolling 1h/6h/24h health, mark freshness, and a
+persistent fenced worker are active. Encrypted off-host backup is still
+absent. `3x-ui` was not restarted.
 
 The initial uninterrupted run exceeded 90 minutes with zero duplicate
 processing and a balanced ledger. A later operator-workflow interruption left
@@ -89,13 +90,25 @@ marks are not fully current. Confidence is `LOW`; this evidence cannot support
 a profitability, Live-readiness, or promotion claim. See the Stage 4B handoff
 for exact backup, rollback, financial, and limitation evidence.
 
-Operational health currently still queries the live SQLite file on the deployed
-`c496525` revision. The unreleased `codex/stage4b-operational-hardening`
-change makes `portfolio-health` read the atomic `continuous-shadow.json`
-artifact, keeps `portfolio-results` snapshot/backup-based without
-`initialize()`, classifies poll failures, and splits fresh/stale/missing
-marks. That revision is not deployed until it is merged and the exact SHA is
-verified on Helsinki.
+Operational health on Helsinki now reads the atomic `continuous-shadow.json`
+artifact instead of the live SQLite file. Thirty host artifact reads completed
+in 0.0001–0.0002 s while the worker held the database. Fifteen `portfolio-health`
+CLI invocations inside the running worker did not increase `NRestarts` and
+produced no `database is locked` log lines. Snapshot `portfolio-results` against
+the verified 268 943 360-byte backup completed in 1.811 s inside a detached
+container; SQL latest-mark and aggregation queries on that file were all under
+90 ms. Indexes, WAL, and schema version were not changed.
+
+A later `docker compose run` one-shot used for snapshot timing tore down the
+Compose project veth and stopped the `compose run` worker at 12:59:06 UTC.
+systemd `Restart=on-failure` restarted it (`NRestarts` 0→1, `OOMKilled=false`).
+The failed poll recorded sanitized `source_unavailable` at 12:59:05 UTC rather
+than a generic `continuous_shadow_failed` code. After recovery, health was
+`warning` with `last_poll_status=succeeded`, `ledger_balanced=true`,
+`duplicate_processing_count=0`, fresh/stale/missing marks 168/82/0, and no
+real order. `3x-ui` remained restart count 0 since `2026-08-21T10:33:56Z`.
+The runbook now forbids `docker compose run` for reporting while this worker
+uses `compose run` on the same project.
 
 ## Completed stages
 
