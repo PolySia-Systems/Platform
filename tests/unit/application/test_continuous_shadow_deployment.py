@@ -16,6 +16,8 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert "portfolio-sync" in section
     assert "--loop" in section
     assert "continuous-shadow.json" in section
+    assert "container_name: polysia-shadow-portfolio-worker" in section
+    assert 'restart: "no"' in section
     assert "tiny-execute" not in section
     assert "tiny-copy" not in section
     assert "cancel-order" not in section
@@ -29,6 +31,8 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     ).read_text(encoding="utf-8")
     assert "Type=simple" in service
     assert "Restart=on-failure" in service
+    assert "compose --profile wallet-intelligence up --abort-on-container-exit" in service
+    assert "compose run" not in service
     assert "tiny-execute" not in service
 
 

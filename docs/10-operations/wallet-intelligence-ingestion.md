@@ -311,10 +311,9 @@ docker compose --profile wallet-intelligence run --rm \
 ```
 
 Inspect sanitized current health from the atomic artifact on the host. Do not
-query the active worker database, and do not use `docker compose run` for
-health while the persistent worker is itself started with `docker compose run`
-on the same Compose project: removing that one-shot can drop
-`polysia_default` and restart the worker.
+query the active worker database. Do not `docker compose run` the
+`wallet-intelligence-shadow-portfolio` service while the worker is up: that
+service owns `container_name: polysia-shadow-portfolio-worker`.
 
 ```bash
 python3 - <<'PY'
@@ -375,6 +374,11 @@ sudo systemctl disable --now polysia-wallet-intelligence-shadow-portfolio.timer
 sudo systemctl enable --now polysia-wallet-intelligence-shadow-portfolio.service
 ```
 
+The unit uses `docker compose up` so the worker stays a Compose project member.
+Oneshot `docker compose run` jobs on the same project then cannot drop its
+network when they exit. Health still reads the host artifact; detailed
+analytics still use a verified snapshot, not the live SQLite file.
+
 The worker stays fenced by `continuous-shadow-portfolio-pipeline` and sleeps
 between polls. The separate ten-minute Stage 4A job remains enabled as windowed
 comparison and recovery evidence. A schema-v3 rollback restores the prior image
@@ -382,8 +386,7 @@ and the oneshot timer; switching v4 code onto a v3 database migrates forward,
 while switching v3 code onto a v4 database fails closed.
 
 Stop the persistent worker before drain or finalize. Those commands still use
-`docker compose run` against the live database; a concurrent one-shot on the
-same Compose project can drop the worker network.
+`docker compose run` against the live database and must not race the writer.
 
 ```bash
 docker compose --profile wallet-intelligence run --rm --no-deps \
