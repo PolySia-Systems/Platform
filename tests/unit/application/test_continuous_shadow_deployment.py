@@ -32,6 +32,11 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert "Type=simple" in service
     assert "Restart=on-failure" in service
     assert "compose --profile wallet-intelligence up --abort-on-container-exit" in service
+    assert (
+        "compose --profile wallet-intelligence rm -fs "
+        "wallet-intelligence-shadow-portfolio"
+    ) in service
+    assert "rm -fs --timeout" not in service
     assert "compose run" not in service
     assert "tiny-execute" not in service
 

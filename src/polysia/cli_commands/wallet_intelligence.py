@@ -35,6 +35,8 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowService,
 )
 from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_SQLITE_BUSY,
+    FAILURE_STAGE_REPORT_HEALTH,
     classify_continuous_shadow_failure,
 )
 from polysia.application.services.copyability_selection import CopyabilitySelectionError
@@ -776,6 +778,27 @@ def portfolio_sync(
                         sort_keys=True,
                     )
                 )
+            except ContinuousShadowError as error:
+                classified = classify_continuous_shadow_failure(
+                    error,
+                    stage=getattr(error, "processing_stage", "unexpected"),
+                )
+                if classified.category != FAILURE_CATEGORY_SQLITE_BUSY:
+                    raise
+                typer.echo(
+                    json.dumps(
+                        {
+                            "error_code": classified.category,
+                            "message": (
+                                "Persistent Shadow worker skipped a transient SQLite-busy "
+                                "poll; durable prior state was kept and no order was sent."
+                            ),
+                            "processing_stage": classified.stage,
+                            "status": "skipped",
+                        },
+                        sort_keys=True,
+                    )
+                )
             remaining = poll_interval_seconds - (time.monotonic() - started)
             if running and remaining > 0:
                 time.sleep(remaining)
@@ -798,14 +821,48 @@ def _emit_portfolio_poll(
     poll_interval_seconds: int,
 ) -> None:
     outcome = asyncio.run(service.poll(source_id))
-    report = ContinuousShadowRepository(database).health(
-        source_id,
-        now=datetime.now(UTC),
-        poll_interval_seconds=poll_interval_seconds,
-    )
-    write_wallet_intelligence_health_payload(report.to_dict(), health_report)
     payload = outcome.to_dict()
-    payload["health"] = report.to_dict()
+    observed_at = datetime.now(UTC)
+    try:
+        report = ContinuousShadowRepository(database).health(
+            source_id,
+            now=observed_at,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        health_payload = report.to_dict()
+        health_payload["report_refresh"] = {
+            "observed_at": observed_at.isoformat(),
+            "status": "succeeded",
+        }
+        write_wallet_intelligence_health_payload(health_payload, health_report)
+        payload["health"] = health_payload
+        payload["health_refresh"] = health_payload["report_refresh"]
+    except (
+        sqlite3.DatabaseError,
+        ContinuousShadowStoreError,
+        WalletIntelligenceHealthReportError,
+        OSError,
+    ) as error:
+        classified = classify_continuous_shadow_failure(
+            error,
+            stage=FAILURE_STAGE_REPORT_HEALTH,
+        )
+        refresh_failure: dict[str, object] = {
+            "error_code": classified.category,
+            "observed_at": observed_at.isoformat(),
+            "processing_stage": classified.stage,
+            "status": "failed",
+        }
+        payload["health_refresh"] = refresh_failure
+        try:
+            last_known_good = read_wallet_intelligence_health_payload(health_report)
+        except WalletIntelligenceHealthReportError:
+            last_known_good = None
+        if last_known_good is not None:
+            refresh_failure["artifact_status"] = "preserved_last_known_good"
+            payload["health"] = last_known_good
+        else:
+            refresh_failure["artifact_status"] = "unavailable"
     typer.echo(json.dumps(payload, sort_keys=True))
 
 

@@ -24,6 +24,7 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowService,
 )
 from polysia.application.services.copyability_selection import CopyabilitySelectionService
+from polysia.cli_commands.wallet_intelligence import _emit_portfolio_poll
 from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
     rehearse_wallet_intelligence_restore,
@@ -699,13 +700,77 @@ async def test_ambiguous_closed_market_is_reported_as_settlement_backlog(tmp_pat
     market.ambiguous_settlement = True
     clock.value = NOW + timedelta(minutes=3)
     outcome = await service.poll("polycop")
+    assert outcome.settlement_backlog_count == 3
+    clock.value = NOW + timedelta(minutes=4)
+    repeated = await service.poll("polycop")
+    assert repeated.settlement_backlog_count == 3
+    clock.value = NOW + timedelta(minutes=5)
     health = ContinuousShadowRepository(database).health(
         "polycop", now=clock.value, poll_interval_seconds=60
     )
 
-    assert outcome.settlement_backlog_count == 3
     assert health.settlement_backlog_count == 3
+    assert health.settlement_backlog_age_seconds == 120
     assert "continuous_shadow_settlement_backlog" in health.reasons
+
+
+def test_post_poll_health_lock_preserves_worker_and_last_good_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    artifact = tmp_path / "continuous-shadow.json"
+    _seed_stage3(database)
+    clock = _Clock(NOW + timedelta(minutes=2))
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    service.start("polycop")
+    last_good = {
+        "ledger_balanced": True,
+        "level": "healthy",
+        "marker": "last-known-good",
+        "reasons": [],
+    }
+    artifact.write_text(json.dumps(last_good) + "\n", encoding="utf-8")
+
+    class LockAfterPoll:
+        def __init__(self) -> None:
+            self.holder: sqlite3.Connection | None = None
+
+        async def poll(self, source_id: str) -> object:
+            outcome = await service.poll(source_id)
+            self.holder = sqlite3.connect(database, timeout=0)
+            self.holder.execute("BEGIN EXCLUSIVE")
+            return outcome
+
+    competing_stage4a = LockAfterPoll()
+    try:
+        _emit_portfolio_poll(
+            competing_stage4a,  # type: ignore[arg-type]
+            "polycop",
+            database,
+            artifact,
+            60,
+        )
+    finally:
+        assert competing_stage4a.holder is not None
+        competing_stage4a.holder.rollback()
+        competing_stage4a.holder.close()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "succeeded"
+    assert payload["health_refresh"]["error_code"] == "sqlite_busy"
+    assert payload["health_refresh"]["processing_stage"] == "report_health"
+    assert payload["health_refresh"]["status"] == "failed"
+    assert payload["health_refresh"]["artifact_status"] == "preserved_last_known_good"
+    assert json.loads(artifact.read_text(encoding="utf-8")) == last_good
+    recovered = ContinuousShadowRepository(database).health(
+        "polycop",
+        now=clock.value,
+        poll_interval_seconds=60,
+    )
+    assert recovered.ledger_balanced is True
+    assert recovered.duplicate_processing_count == 0
 
 
 @pytest.mark.asyncio

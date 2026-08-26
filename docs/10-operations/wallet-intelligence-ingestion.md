@@ -332,7 +332,12 @@ artifact reads on Helsinki completed in 0.0001–0.0002 s.
 The artifact is rewritten atomically after each successful poll and includes a
 concise `operator_summary` for MIXED_BASELINE, SHADOW_ALPHA, and SHADOW_STRESS
 (NAV, modeled P&L, fees, exposure, drawdown, and open position counts), plus
-fresh/stale/missing mark counts and the latest sanitized failure code.
+fresh/stale/missing mark counts and the latest sanitized failure code. If the
+post-poll health query meets a transient SQLite lock, the successful poll stays
+committed, the worker continues, and the prior artifact remains last-known-good.
+The interval log reports `health_refresh.status=failed` with a sanitized category
+and `report_health` stage; the next normal interval retries. Backlog age is the
+age of the current uninterrupted nonzero-backlog episode.
 
 Run detailed historical analytics only against a verified snapshot or backup
 file, never against the active SQLite file. Use `docker run --network none`
@@ -519,7 +524,8 @@ authorized and implemented.
 | Stage 2 calculation/publication failure | Previous candidate pool retained; failed run recorded | Inspect safe error code and repair before republishing |
 | Stage 3 calculation/publication failure | Previous copyability pools retained; Stage 1/2 unchanged | Inspect safe error code; Stage 2 may still be healthy |
 | Stage 4 source/book/evaluation failure | Previous current Shadow evidence retained; no order sent | Inspect rate circuit and safe error; retry after recovery |
-| Stage 4B source/book/fee/transaction failure | Watermark and persistent portfolio remain last-known-good; failed poll recorded with a sanitized category and stage | Inspect the atomic `continuous-shadow.json` artifact; do not query the live database; systemd `Restart=on-failure` remains; do not add a new retry policy until observed categories justify it |
+| Stage 4B source/book/fee/transaction failure | Watermark and persistent portfolio remain last-known-good; failed poll recorded with a sanitized category and stage | Inspect the atomic `continuous-shadow.json` artifact; do not query the live database; systemd `Restart=on-failure` remains |
+| Stage 4A overlap causes Stage 4B `sqlite_busy` | Current transaction rolls back or post-poll health refresh keeps the prior atomic artifact; persistent worker continues | Confirm the sanitized `persist` or `report_health` stage, unchanged `NRestarts`, balanced ledger, and zero duplicate processing; the next normal interval retries |
 | Stage 4B ledger mismatch or finalized experiment with positions | Health `critical`; no new trusted result | Disable only the Stage 4B timer, preserve DB/backup, investigate before restart |
 | Abandoned Stage 1 run older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
 | Row-count baseline warning | Snapshot retained with warning | Compare source behavior and recent history |
