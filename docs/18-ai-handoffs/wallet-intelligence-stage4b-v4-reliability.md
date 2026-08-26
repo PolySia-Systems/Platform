@@ -2,10 +2,10 @@
 
 ## Status
 
-PR `#92` merged as `c49652565cd7ddab6432e3488ca73fa1c9c352b5` and is deployed on
-`Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Schema v4 migrated forward.
-The persistent worker is running. No real order was sent. `3x-ui` was not
-restarted.
+PR `#94` merged as `b867408b5176541f3168767380d4a1e25b80f740` and is deployed on
+`Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Schema v4 remains in place
+from PR `#92`. The persistent worker is running. No real order was sent.
+`3x-ui` was not restarted.
 
 This change does not enable Live trading.
 
@@ -75,7 +75,7 @@ Exact commands and results from this workstation:
 - Stages 1–4A commands, timers, and schema v1 are preserved.
 - `3x-ui` is not in the diff.
 
-## Finland deploy evidence
+## Finland deploy evidence (PR `#92` schema v4)
 
 - Merged SHA deployed: `c49652565cd7ddab6432e3488ca73fa1c9c352b5`
 - Release archive SHA-256:
@@ -98,14 +98,16 @@ Exact commands and results from this workstation:
 - `3x-ui` restart count 0 and start time `2026-08-21T10:33:56Z` unchanged.
 - Encrypted off-host backup remains absent. Shadow stays running.
 
-## Follow-on: operational hardening (local evidence only)
+## Follow-on: operational hardening (PR `#94`, deployed)
 
-Branch `codex/stage4b-operational-hardening` implements read/report isolation,
-checkpoint-based latest-mark queries, sanitized failure categories/stages, and
-split fresh/stale/missing mark counts. It does not change Strategy, Risk,
-Execution, Live flags, schema version, journal mode, or indexes.
+PR `#94` merged as `b867408b5176541f3168767380d4a1e25b80f740` and is installed
+on Helsinki. The change isolates read/report from live SQLite, uses
+checkpoint-based latest-mark queries, persists sanitized failure
+categories/stages, and splits fresh/stale/missing mark counts. It does not
+change Strategy, Risk, Execution, Live flags, schema version, journal mode, or
+indexes.
 
-Local workstation gates on this branch (2026-08-26):
+Local workstation gates on the implementation commit `857c8e4` (2026-08-26):
 
 - `python scripts/validate_standards.py --mode full` — PASS, blocking=0
 - `python -m compileall -q src tests` — PASS
@@ -117,7 +119,44 @@ Local workstation gates on this branch (2026-08-26):
 - `python -m build` — PASS, `polysia-0.1.0` sdist and wheel
 - `git diff --check` — PASS
 
-This follow-on is **not** deployed. Helsinki remains on
-`c49652565cd7ddab6432e3488ca73fa1c9c352b5` until the merged SHA is installed
-with a verified pre-deploy backup. Server reporting-time and NRestarts evidence
-will be recorded only after that deploy.
+### Finland deploy evidence (PR `#94`)
+
+- Merged SHA deployed: `b867408b5176541f3168767380d4a1e25b80f740`
+- Release path: `/opt/polysia-releases/b867408b5176541f3168767380d4a1e25b80f740`
+- Image: `polysia:b867408b5176541f3168767380d4a1e25b80f740`
+  (`sha256:2c2eb304011f7b17b2f31ac19656aaf890b81d5b73bd6266f48cb625d6ec502b`)
+- Pre-deploy backup:
+  `wallet-intelligence-20260826T124243669316Z.sqlite3`, SHA-256
+  `7c12c5659eadfe8b01fc4d81cc2375a85f1bae533cc18f52e13851f92db89ed8`
+- Post-switch backup (worker stopped during switch, same digest):
+  `wallet-intelligence-20260826T124405389067Z.sqlite3`, 268 943 360 bytes
+- Runtime: `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`. Persistent
+  worker active; oneshot timer disabled.
+- Artifact health (30 host reads while worker ran): 0.0001–0.0002 s. No
+  `database is locked` lines. `NRestarts` stayed 0 through 15 in-worker CLI
+  health calls and 180 s observation.
+- Snapshot `ContinuousShadowRepository.results(limit=100)`: 1.811 s. Host
+  SQL on the backup: evaluations 0.086 s / 7849 rows; latest-mark join
+  0.000 s / 47 rows; remaining profiled queries under 0.05 s.
+- CLI `python -m polysia.cli` import in the image: 5.916 s. Full
+  `portfolio-results` CLI wall including import: 10.695 s. Indexes were not
+  added because SQLite was not the 5 s bottleneck.
+- At 12:59:06 UTC a validation `docker compose run` one-shot removal dropped
+  the Compose veth and the `compose run` worker exited status 1. systemd
+  restarted it (`NRestarts` 1, `OOMKilled=false`). The in-flight poll recorded
+  `source_unavailable` at 12:59:05 UTC. After recovery: `ledger_balanced=true`,
+  `duplicate_processing_count=0`, `last_poll_status=succeeded`, marks
+  fresh/stale/missing 168/82/0, no real order.
+- `3x-ui` restart count 0 and start time `2026-08-21T10:33:56Z` unchanged.
+
+### Remaining work
+
+- Do not use `docker compose run` for reporting while the worker is itself a
+  `compose run` on project network `polysia_default`; host artifact reads and
+  `docker run --network none` snapshot analytics are the verified paths.
+- Eager CLI imports still add about 6 s before snapshot results. A lazy-import
+  CLI split is not in this SHA.
+- Historical pre-deploy poll failures remain `continuous_shadow_failed` until
+  replaced by a later classified failure. The 12:59 UTC event proved
+  `source_unavailable` on the deployed SHA.
+- Encrypted off-host backup remains absent. Confidence remains `LOW`.

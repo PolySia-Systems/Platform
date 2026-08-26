@@ -310,14 +310,25 @@ docker compose --profile wallet-intelligence run --rm \
   --database /var/lib/polysia/data/wallet-intelligence.sqlite3
 ```
 
-Inspect sanitized current health from the atomic artifact. Do not query the
-active worker database:
+Inspect sanitized current health from the atomic artifact on the host. Do not
+query the active worker database, and do not use `docker compose run` for
+health while the persistent worker is itself started with `docker compose run`
+on the same Compose project: removing that one-shot can drop
+`polysia_default` and restart the worker.
 
 ```bash
-docker compose --profile wallet-intelligence run --rm --no-deps \
-  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-health \
-  --health-report /var/lib/polysia/reports/wallet-intelligence/continuous-shadow.json
+python3 - <<'PY'
+import json
+from pathlib import Path
+print(json.dumps(json.loads(Path(
+    "/var/lib/polysia/wallet-intelligence/reports/continuous-shadow.json"
+).read_text()), sort_keys=True))
+PY
 ```
+
+Inside the image the same file is
+`/var/lib/polysia/reports/wallet-intelligence/continuous-shadow.json`. Host
+artifact reads on Helsinki completed in 0.0001–0.0002 s.
 
 The artifact is rewritten atomically after each successful poll and includes a
 concise `operator_summary` for MIXED_BASELINE, SHADOW_ALPHA, and SHADOW_STRESS
@@ -325,15 +336,23 @@ concise `operator_summary` for MIXED_BASELINE, SHADOW_ALPHA, and SHADOW_STRESS
 fresh/stale/missing mark counts and the latest sanitized failure code.
 
 Run detailed historical analytics only against a verified snapshot or backup
-file, never against the active SQLite file. The sync service mounts backups;
-the persistent worker does not:
+file, never against the active SQLite file. Use `docker run --network none`
+with a read-only backup mount so the one-shot does not join or tear down the
+worker Compose network:
 
 ```bash
-docker compose --profile wallet-intelligence run --rm --no-deps \
-  wallet-intelligence-sync wallet-intelligence portfolio-results \
+docker run --rm --network none \
+  --user 10001:10001 \
+  -v /var/lib/polysia/wallet-intelligence/backups:/var/lib/polysia/backups/wallet-intelligence:ro \
+  "polysia:${POLYSIA_IMAGE_TAG}" \
+  wallet-intelligence portfolio-results \
   --database /var/lib/polysia/backups/wallet-intelligence/<verified-backup>.sqlite3 \
   --limit 100
 ```
+
+On the 268 943 360-byte Helsinki backup, `results(limit=100)` completed in
+1.811 s. The CLI import inside the image added about 6 s; that is process
+startup, not SQLite lock.
 
 `portfolio-results.operator_summary` remains the detailed snapshot operator
 view. `follower_portfolios` separates MIXED_BASELINE, SHADOW_ALPHA, and
@@ -362,8 +381,9 @@ comparison and recovery evidence. A schema-v3 rollback restores the prior image
 and the oneshot timer; switching v4 code onto a v3 database migrates forward,
 while switching v3 code onto a v4 database fails closed.
 
-Stop new entries without losing exits or marks, then finalize only after all
-synthetic positions close or settle:
+Stop the persistent worker before drain or finalize. Those commands still use
+`docker compose run` against the live database; a concurrent one-shot on the
+same Compose project can drop the worker network.
 
 ```bash
 docker compose --profile wallet-intelligence run --rm --no-deps \
