@@ -233,6 +233,8 @@ services:
         POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
     profiles:
       - wallet-intelligence
+    container_name: polysia-shadow-portfolio-worker
+    restart: "no"
     environment:
       APP_ENV: production
       LIVE_TRADING_ENABLED: "false"
