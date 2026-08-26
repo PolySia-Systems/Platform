@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,6 +11,9 @@ from typing import Any
 
 import pytest
 
+from polysia.application.ports.candidate_intelligence import (
+    CandidatePipelineLeaseLostError,
+)
 from polysia.application.ports.copytrading import LeaderTradeReadPage
 from polysia.application.services.candidate_intelligence import (
     PIPELINE_LEASE_RESOURCE,
@@ -39,7 +43,10 @@ from polysia.domain.market import (
 )
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
-from polysia.storage.continuous_shadow import ContinuousShadowRepository
+from polysia.storage.continuous_shadow import (
+    ContinuousShadowRepository,
+    ContinuousShadowStoreError,
+)
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
 from polysia.storage.wallet_intelligence import WalletIntelligenceRepository
@@ -87,7 +94,7 @@ class _Source:
         **_: Any,
     ) -> LeaderTradeReadPage:
         if self.scenario.fail:
-            raise RuntimeError("safe source failure")
+            raise RuntimeError(f"safe source failure for {next(iter(self.leaders.values()))}")
         self.request_count += 1
         events = tuple(
             LeaderTradeEvent(
@@ -829,15 +836,25 @@ async def test_failed_poll_keeps_last_known_good_portfolio_and_recovers(tmp_path
 
     scenario.fail = True
     clock.value = NOW + timedelta(minutes=3)
-    with pytest.raises(ContinuousShadowError, match="durable prior state was kept"):
+    with pytest.raises(ContinuousShadowError, match="durable prior state was kept") as failed:
         await service.poll("polycop")
     after_failure = ContinuousShadowRepository(database).results(
         experiment.experiment_id,
         limit=10,
     )
 
+    assert failed.value.error_code == "source_unavailable"
+    assert failed.value.processing_stage == "collect_events"
     assert after_failure["follower"] == before["follower"]
     assert after_failure["polls"]["succeeded"] == 1
+    health = ContinuousShadowRepository(database).health(
+        "polycop",
+        now=clock.value,
+        poll_interval_seconds=60,
+    )
+    assert health.last_failure_code == "source_unavailable"
+    assert health.last_failure_stage == "collect_events"
+    assert ADDRESSES[0] not in json.dumps(health.to_dict())
 
     scenario.fail = False
     clock.value = NOW + timedelta(minutes=4)
@@ -876,11 +893,18 @@ async def test_last_known_good_mark_is_retained_and_visible_in_health(tmp_path: 
     )
 
     assert health.unmarked_position_count == 3
+    assert health.stale_last_known_good_mark_count == 3
+    assert health.missing_mark_count == 0
+    assert health.fresh_verified_mark_count == 0
     assert "continuous_shadow_positions_unmarked" in health.reasons
+    payload = health.to_dict()
+    assert payload["operator_summary"]["MIXED_BASELINE"]["open_position_count"] >= 1
+    assert "nav" in payload["operator_summary"]["MIXED_BASELINE"]
     results = ContinuousShadowRepository(database).results(
         health.experiment.experiment_id,
         limit=10,
     )
+    assert results["mark_freshness"]["stale_last_known_good_count"] >= 1
     assert results["confidence"]["level"] == "LOW"
     assert "portfolio_valuation_not_fully_current" in results["confidence"]["limitations"]
 
@@ -947,3 +971,88 @@ async def test_terminal_order_book_404_is_negatively_cached(tmp_path: Path) -> N
     assert first.unknown_count > 0
     assert second.new_event_count == 0
     assert market.book_requests == first_requests
+
+
+def _started_service(
+    tmp_path: Path,
+    *,
+    name: str = "wallet-intelligence",
+) -> tuple[Path, ContinuousShadowService, _Clock, _Scenario]:
+    database = tmp_path / f"{name}.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    service.start("polycop")
+    return database, service, clock, scenario
+
+
+@pytest.mark.asyncio
+async def test_fail_poll_recording_error_preserves_original_failure_category(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database, service, clock, scenario = _started_service(tmp_path)
+    scenario.fail = True
+    clock.value = NOW + timedelta(minutes=2)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ContinuousShadowRepository, "fail_poll", boom)
+    with pytest.raises(ContinuousShadowError) as failed:
+        await service.poll("polycop")
+
+    assert failed.value.error_code == "source_unavailable"
+    assert "0x" not in str(failed.value)
+    assert ADDRESSES[0] not in str(failed.value)
+
+
+@pytest.mark.asyncio
+async def test_injected_failures_record_distinct_sanitized_categories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def market_boom(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise ContinuousShadowError(
+            "Market metadata was unavailable.",
+            error_code="market_read_failed",
+            processing_stage="market_read",
+        )
+
+    def persist_boom(*_args: object, **_kwargs: object) -> object:
+        raise ContinuousShadowStoreError("Continuous Shadow persistence failed.")
+
+    def busy_boom(*_args: object, **_kwargs: object) -> object:
+        raise sqlite3.OperationalError("database is locked")
+
+    def lease_boom(*_args: object, **_kwargs: object) -> object:
+        raise CandidatePipelineLeaseLostError("lease lost")
+
+    cases = (
+        ("_markets", market_boom, "market_read_failed", "market_read"),
+        ("complete_poll", persist_boom, "persistence_failed", "persist"),
+        ("complete_poll", busy_boom, "sqlite_busy", "persist"),
+        ("renew_lease", lease_boom, "lease_failed", "renew_lease"),
+    )
+    for target, boom, category, stage in cases:
+        database, service, clock, _scenario = _started_service(tmp_path, name=category)
+        clock.value = NOW + timedelta(minutes=2)
+        if target == "_markets":
+            monkeypatch.setattr(service, "_markets", boom)
+        elif target == "complete_poll":
+            monkeypatch.setattr(ContinuousShadowRepository, "complete_poll", boom)
+        else:
+            monkeypatch.setattr(CandidateIntelligenceRepository, "renew_lease", boom)
+        with pytest.raises(ContinuousShadowError) as failed:
+            await service.poll("polycop")
+        assert failed.value.error_code == category
+        assert failed.value.processing_stage == stage
+        health = ContinuousShadowRepository(database).health(
+            "polycop",
+            now=clock.value,
+            poll_interval_seconds=60,
+        )
+        assert health.last_failure_code == category
+        assert health.last_failure_stage == stage
+        monkeypatch.undo()

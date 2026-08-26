@@ -214,6 +214,14 @@ class ContinuousShadowHealth:
     settlement_backlog_count: int
     rolling_windows: dict[str, object] | None = None
     initialization_unknown_count: int = 0
+    fresh_verified_mark_count: int = 0
+    stale_last_known_good_mark_count: int = 0
+    missing_mark_count: int = 0
+    settlement_backlog_age_seconds: int | None = None
+    last_failure_code: str | None = None
+    last_failure_stage: str | None = None
+    last_failure_at: datetime | None = None
+    operator_summary: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -223,16 +231,26 @@ class ContinuousShadowHealth:
             "duplicate_events_detected": self.duplicate_count,
             "duplicate_processing_count": self.duplicate_processing_count,
             "experiment": None if self.experiment is None else self.experiment.to_dict(),
+            "fresh_verified_mark_count": self.fresh_verified_mark_count,
             "initialization_unknown_count": self.initialization_unknown_count,
+            "last_failure_at": (
+                None if self.last_failure_at is None else self.last_failure_at.isoformat()
+            ),
+            "last_failure_code": self.last_failure_code,
+            "last_failure_stage": self.last_failure_stage,
             "last_poll_at": None if self.last_poll_at is None else self.last_poll_at.isoformat(),
             "last_poll_status": self.last_poll_status,
             "ledger_balanced": self.ledger_balanced,
             "level": self.level,
+            "missing_mark_count": self.missing_mark_count,
             "open_position_count": self.open_position_count,
+            "operator_summary": self.operator_summary or {},
             "poll_interval_seconds": self.poll_interval_seconds,
             "reasons": list(self.reasons),
             "rolling_windows": self.rolling_windows or {},
+            "settlement_backlog_age_seconds": self.settlement_backlog_age_seconds,
             "settlement_backlog_count": self.settlement_backlog_count,
+            "stale_last_known_good_mark_count": self.stale_last_known_good_mark_count,
             "unknown_fee_count": self.unknown_fee_count,
             "unknown_ratio": (
                 None if self.unknown_ratio is None else format(self.unknown_ratio, "f")

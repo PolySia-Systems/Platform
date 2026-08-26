@@ -42,6 +42,28 @@ CONTINUOUS_SHADOW_SCHEMA_VERSION = 4
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
+_CHECKPOINT_MARK_JOIN = (
+    "LEFT JOIN continuous_shadow_checkpoint c ON c.experiment_id = p.experiment_id "
+    "LEFT JOIN continuous_shadow_position_marks m "
+    "ON m.experiment_id = p.experiment_id AND m.portfolio_id = p.portfolio_id "
+    "AND m.market_reference = p.market_reference "
+    "AND m.outcome_reference = p.outcome_reference "
+    "AND m.poll_run_id = c.last_poll_run_id"
+)
+_PORTFOLIO_POSITION_STATS = (
+    "SELECT x.experiment_id, x.portfolio_id, COUNT(*) AS open_position_count, "
+    "SUM(CASE WHEN COALESCE(m.mark_status, 'MISSING') <> 'VERIFIED_EXECUTABLE_BID' "
+    "THEN 1 ELSE 0 END) AS unmarked_position_count "
+    "FROM continuous_shadow_positions x "
+    "LEFT JOIN continuous_shadow_checkpoint c ON c.experiment_id = x.experiment_id "
+    "LEFT JOIN continuous_shadow_position_marks m "
+    "ON m.experiment_id = x.experiment_id AND m.portfolio_id = x.portfolio_id "
+    "AND m.market_reference = x.market_reference "
+    "AND m.outcome_reference = x.outcome_reference "
+    "AND m.poll_run_id = c.last_poll_run_id "
+    "WHERE x.experiment_id = ? "
+    "GROUP BY x.experiment_id, x.portfolio_id"
+)
 
 
 class ContinuousShadowStoreError(CandidateStoreError):
@@ -815,6 +837,7 @@ class ContinuousShadowRepository:
                     unknown_fee_count=0,
                     open_position_count=0,
                     settlement_backlog_count=0,
+                    operator_summary={},
                 )
             experiment = _experiment(experiment_row)
             poll = connection.execute(
@@ -880,16 +903,71 @@ class ContinuousShadowRepository:
             unmarked = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_positions p "
-                    "WHERE p.experiment_id = ? AND COALESCE(("
-                    "SELECT m.mark_status FROM continuous_shadow_position_marks m "
-                    "WHERE m.experiment_id = p.experiment_id "
-                    "AND m.portfolio_id = p.portfolio_id "
-                    "AND m.market_reference = p.market_reference "
-                    "AND m.outcome_reference = p.outcome_reference "
-                    "ORDER BY m.marked_at DESC, m.poll_run_id DESC LIMIT 1"
-                    "), 'MISSING') <> 'VERIFIED_EXECUTABLE_BID'",
+                    + _CHECKPOINT_MARK_JOIN
+                    + " WHERE p.experiment_id = ? AND COALESCE(m.mark_status, 'MISSING') "
+                    "<> 'VERIFIED_EXECUTABLE_BID'",
                     (experiment.experiment_id,),
                 ).fetchone()[0]
+            )
+            mark_counts = connection.execute(
+                "SELECT "
+                "SUM(CASE WHEN m.mark_status = 'VERIFIED_SETTLEMENT' "
+                "OR (m.mark_status = 'VERIFIED_EXECUTABLE_BID' "
+                "AND m.freshness IN ('FRESH', 'VERIFIED_SETTLEMENT')) THEN 1 ELSE 0 END) "
+                "AS fresh_verified, "
+                "SUM(CASE WHEN m.mark_status = 'LAST_KNOWN_GOOD' "
+                "OR (m.mark_status = 'VERIFIED_EXECUTABLE_BID' "
+                "AND m.freshness IN ('STALE', 'STALE_LAST_KNOWN_GOOD')) THEN 1 ELSE 0 END) "
+                "AS stale, "
+                "SUM(CASE WHEN m.mark_status IS NULL OR m.mark_status = 'MISSING' "
+                "THEN 1 ELSE 0 END) AS missing "
+                "FROM continuous_shadow_positions p "
+                + _CHECKPOINT_MARK_JOIN
+                + " WHERE p.experiment_id = ?",
+                (experiment.experiment_id,),
+            ).fetchone()
+            fresh_verified_mark_count = int(mark_counts["fresh_verified"] or 0)
+            stale_last_known_good_mark_count = int(mark_counts["stale"] or 0)
+            missing_mark_count = int(mark_counts["missing"] or 0)
+            latest_failure = connection.execute(
+                "SELECT last_error_code, failed_at FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? AND status = 'failed' AND failed_at IS NOT NULL "
+                "ORDER BY failed_at DESC LIMIT 1",
+                (experiment.experiment_id,),
+            ).fetchone()
+            last_failure_code, last_failure_stage = _decode_failure_code(
+                None if latest_failure is None else latest_failure["last_error_code"]
+            )
+            last_failure_at = (
+                None
+                if latest_failure is None or latest_failure["failed_at"] is None
+                else _datetime(str(latest_failure["failed_at"]))
+            )
+            latest_succeeded = connection.execute(
+                "SELECT completed_at, settlement_backlog_count "
+                "FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? AND status = 'succeeded' AND completed_at IS NOT NULL "
+                "ORDER BY completed_at DESC LIMIT 1",
+                (experiment.experiment_id,),
+            ).fetchone()
+            settlement_backlog_age_seconds = None
+            if (
+                settlement_backlog_count
+                and latest_succeeded is not None
+                and latest_succeeded["completed_at"] is not None
+            ):
+                settlement_backlog_age_seconds = max(
+                    0,
+                    int(
+                        (
+                            now - _datetime(str(latest_succeeded["completed_at"]))
+                        ).total_seconds()
+                    ),
+                )
+            elif not settlement_backlog_count:
+                settlement_backlog_age_seconds = 0
+            operator_summary = _operator_summary_from_connection(
+                connection, experiment.experiment_id
             )
             ledger_balanced = _ledger_balanced(connection, experiment.experiment_id)
             initialization_unknown_count = int(
@@ -985,6 +1063,14 @@ class ContinuousShadowRepository:
             settlement_backlog_count=settlement_backlog_count,
             rolling_windows=rolling_windows,
             initialization_unknown_count=initialization_unknown_count,
+            fresh_verified_mark_count=fresh_verified_mark_count,
+            stale_last_known_good_mark_count=stale_last_known_good_mark_count,
+            missing_mark_count=missing_mark_count,
+            settlement_backlog_age_seconds=settlement_backlog_age_seconds,
+            last_failure_code=last_failure_code,
+            last_failure_stage=last_failure_stage,
+            last_failure_at=last_failure_at,
+            operator_summary=operator_summary,
         )
 
     def results(self, experiment_id: str, *, limit: int) -> dict[str, object]:
@@ -999,24 +1085,16 @@ class ContinuousShadowRepository:
             if experiment_row is None:
                 raise ContinuousShadowStoreError("Continuous Shadow experiment is unavailable.")
             followers = connection.execute(
-                "SELECT p.*, (SELECT COUNT(*) FROM continuous_shadow_positions x "
-                "WHERE x.experiment_id = p.experiment_id "
-                "AND x.portfolio_id = p.portfolio_id) AS open_position_count, "
-                "(SELECT COUNT(*) FROM continuous_shadow_positions x "
-                "WHERE x.experiment_id = p.experiment_id "
-                "AND x.portfolio_id = p.portfolio_id AND COALESCE(("
-                "SELECT m.mark_status FROM continuous_shadow_position_marks m "
-                "WHERE m.experiment_id = x.experiment_id "
-                "AND m.portfolio_id = x.portfolio_id "
-                "AND m.market_reference = x.market_reference "
-                "AND m.outcome_reference = x.outcome_reference "
-                "ORDER BY m.marked_at DESC, m.poll_run_id DESC LIMIT 1"
-                "), 'MISSING') <> 'VERIFIED_EXECUTABLE_BID') "
-                "AS unmarked_position_count "
-                "FROM continuous_shadow_portfolios p WHERE p.experiment_id = ? "
+                "SELECT p.*, COALESCE(stats.open_position_count, 0) AS open_position_count, "
+                "COALESCE(stats.unmarked_position_count, 0) AS unmarked_position_count "
+                "FROM continuous_shadow_portfolios p "
+                "LEFT JOIN (" + _PORTFOLIO_POSITION_STATS + ") stats "
+                "ON stats.experiment_id = p.experiment_id "
+                "AND stats.portfolio_id = p.portfolio_id "
+                "WHERE p.experiment_id = ? "
                 "AND p.kind IN ('FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS') "
                 "ORDER BY p.kind",
-                (experiment_id,),
+                (experiment_id, experiment_id),
             ).fetchall()
             follower = next(
                 (row for row in followers if str(row["kind"]) == "FOLLOWER"),
@@ -1031,24 +1109,15 @@ class ContinuousShadowRepository:
             wallets = connection.execute(
                 "SELECT p.portfolio_id, p.wallet_id, p.initial_cash, p.cash, "
                 "p.realized_pnl, p.unrealized_pnl, p.fees, p.nav, p.drawdown, p.exposure, "
-                "(SELECT COUNT(*) FROM continuous_shadow_positions x "
-                "WHERE x.experiment_id = p.experiment_id "
-                "AND x.portfolio_id = p.portfolio_id) AS open_position_count, "
-                "(SELECT COUNT(*) FROM continuous_shadow_positions x "
-                "WHERE x.experiment_id = p.experiment_id "
-                "AND x.portfolio_id = p.portfolio_id AND COALESCE(("
-                "SELECT m.mark_status FROM continuous_shadow_position_marks m "
-                "WHERE m.experiment_id = x.experiment_id "
-                "AND m.portfolio_id = x.portfolio_id "
-                "AND m.market_reference = x.market_reference "
-                "AND m.outcome_reference = x.outcome_reference "
-                "ORDER BY m.marked_at DESC, m.poll_run_id DESC LIMIT 1"
-                "), 'MISSING') <> 'VERIFIED_EXECUTABLE_BID') "
-                "AS unmarked_position_count "
+                "COALESCE(stats.open_position_count, 0) AS open_position_count, "
+                "COALESCE(stats.unmarked_position_count, 0) AS unmarked_position_count "
                 "FROM continuous_shadow_portfolios p "
+                "LEFT JOIN (" + _PORTFOLIO_POSITION_STATS + ") stats "
+                "ON stats.experiment_id = p.experiment_id "
+                "AND stats.portfolio_id = p.portfolio_id "
                 "WHERE p.experiment_id = ? AND p.kind = 'WALLET' "
                 "ORDER BY p.wallet_id",
-                (experiment_id,),
+                (experiment_id, experiment_id),
             ).fetchall()
             poll_totals = connection.execute(
                 "SELECT COUNT(*) AS succeeded, "
@@ -1143,14 +1212,9 @@ class ContinuousShadowRepository:
             untrusted_mark_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_positions p "
-                    "WHERE p.experiment_id = ? AND COALESCE(("
-                    "SELECT m.mark_status FROM continuous_shadow_position_marks m "
-                    "WHERE m.experiment_id = p.experiment_id "
-                    "AND m.portfolio_id = p.portfolio_id "
-                    "AND m.market_reference = p.market_reference "
-                    "AND m.outcome_reference = p.outcome_reference "
-                    "ORDER BY m.marked_at DESC, m.poll_run_id DESC LIMIT 1"
-                    "), 'MISSING') <> 'VERIFIED_EXECUTABLE_BID'",
+                    + _CHECKPOINT_MARK_JOIN
+                    + " WHERE p.experiment_id = ? AND COALESCE(m.mark_status, 'MISSING') "
+                    "<> 'VERIFIED_EXECUTABLE_BID'",
                     (experiment_id,),
                 ).fetchone()[0]
             )
@@ -1674,13 +1738,17 @@ class ContinuousShadowRepository:
     def _connect(self, *, read_only: bool = False) -> sqlite3.Connection:
         if read_only:
             connection = sqlite3.connect(
-                f"{self._path.resolve().as_uri()}?mode=ro", uri=True, timeout=10
+                f"{self._path.resolve().as_uri()}?mode=ro", uri=True, timeout=0
             )
         else:
             connection = sqlite3.connect(self._path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
+        if read_only:
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA busy_timeout = 0")
+        else:
+            connection.execute("PRAGMA busy_timeout = 10000")
         return connection
 
     @staticmethod
@@ -1799,7 +1867,27 @@ def _mark_freshness_report(rows: list[sqlite3.Row]) -> dict[str, object]:
         )
     return {
         "count": len(marks),
+        "fresh_verified_count": sum(
+            1
+            for item in marks
+            if item["mark_status"] == "VERIFIED_SETTLEMENT"
+            or (
+                item["mark_status"] == "VERIFIED_EXECUTABLE_BID"
+                and item["freshness"] in {"FRESH", "VERIFIED_SETTLEMENT"}
+            )
+        ),
+        "missing_count": sum(
+            1
+            for item in marks
+            if item["mark_status"] in {None, "MISSING"} or item["freshness"] == "MISSING"
+        ),
         "positions": marks,
+        "stale_last_known_good_count": sum(
+            1
+            for item in marks
+            if item["mark_status"] == "LAST_KNOWN_GOOD"
+            or item["freshness"] in {"STALE", "STALE_LAST_KNOWN_GOOD"}
+        ),
         "stale_or_missing_count": sum(
             1
             for item in marks
@@ -2851,6 +2939,54 @@ def _event_outcome(
         if event.event_id == event_id:
             return str(event.outcome_reference)
     raise ContinuousShadowStoreError("Continuous Shadow event evidence is unavailable.")
+
+
+def _decode_failure_code(value: object) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    raw = str(value).strip()
+    if not raw:
+        return None, None
+    if "__at__" in raw:
+        category, stage = raw.rsplit("__at__", 1)
+        return (category or None, stage or None)
+    return raw, None
+
+
+def _operator_summary_from_connection(
+    connection: sqlite3.Connection,
+    experiment_id: str,
+) -> dict[str, object]:
+    rows = connection.execute(
+        "SELECT p.kind, p.nav, p.realized_pnl, p.unrealized_pnl, p.fees, "
+        "p.exposure, p.drawdown, "
+        "COALESCE(stats.open_position_count, 0) AS open_position_count "
+        "FROM continuous_shadow_portfolios p "
+        "LEFT JOIN (" + _PORTFOLIO_POSITION_STATS + ") stats "
+        "ON stats.experiment_id = p.experiment_id AND stats.portfolio_id = p.portfolio_id "
+        "WHERE p.experiment_id = ? AND p.kind IN "
+        "('FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS')",
+        (experiment_id, experiment_id),
+    ).fetchall()
+    labels = {
+        "FOLLOWER": "MIXED_BASELINE",
+        "FOLLOWER_ALPHA": "SHADOW_ALPHA",
+        "FOLLOWER_STRESS": "SHADOW_STRESS",
+    }
+    summary: dict[str, object] = {}
+    for row in rows:
+        realized = Decimal(str(row["realized_pnl"]))
+        unrealized = Decimal(str(row["unrealized_pnl"]))
+        fees = Decimal(str(row["fees"]))
+        summary[labels[str(row["kind"])]] = {
+            "drawdown": str(row["drawdown"]),
+            "exposure": str(row["exposure"]),
+            "fees": str(row["fees"]),
+            "modeled_pnl": _decimal(realized + unrealized - fees),
+            "nav": str(row["nav"]),
+            "open_position_count": int(row["open_position_count"]),
+        }
+    return summary
 
 
 def _safe_error_code(value: str) -> str:
