@@ -29,6 +29,20 @@ from polysia.application.ports.dynamic_shadow import (
     LeaderSourceFactory,
     ProtectedShadowCandidate,
 )
+from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_MARKET_READ_FAILED,
+    FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
+    FAILURE_CATEGORY_UNEXPECTED,
+    FAILURE_STAGE_APPLY_EVENTS,
+    FAILURE_STAGE_COLLECT_EVENTS,
+    FAILURE_STAGE_FAIL_POLL,
+    FAILURE_STAGE_MARKET_READ,
+    FAILURE_STAGE_PERSIST,
+    FAILURE_STAGE_RENEW_LEASE,
+    FAILURE_STAGE_UNEXPECTED,
+    classify_continuous_shadow_failure,
+)
+from polysia.config.structured_logging import get_logger
 from polysia.domain.copytrading import LeaderTradeAction, LeaderTradeEvent
 from polysia.domain.copytrading.continuous_shadow import (
     FOLLOWER_KIND_SPECS,
@@ -56,7 +70,21 @@ ZERO = Decimal("0")
 
 
 class ContinuousShadowError(RuntimeError):
-    error_code = "continuous_shadow_failed"
+    error_code = FAILURE_CATEGORY_UNEXPECTED
+    processing_stage = FAILURE_STAGE_UNEXPECTED
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str | None = None,
+        processing_stage: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        if error_code is not None:
+            self.error_code = error_code
+        if processing_stage is not None:
+            self.processing_stage = processing_stage
 
 
 @dataclass(slots=True)
@@ -207,6 +235,7 @@ class ContinuousShadowService:
             candidate_count=len(candidates),
         )
         source: LeaderTradeSourcePort | None = None
+        stage = FAILURE_STAGE_COLLECT_EVENTS
         try:
             source = self._source_factory(
                 {candidate.wallet_id: candidate.address for candidate in candidates}
@@ -242,9 +271,11 @@ class ContinuousShadowService:
                 for portfolio in portfolios.values()
                 for position in portfolio.positions.values()
             } | {event.outcome_reference for event in new_events}
+            stage = FAILURE_STAGE_MARKET_READ
             markets = await self._markets(market_ids)
             books = await self._books(token_ids, markets_by_id=markets)
             evaluated_at = self._now()
+            stage = FAILURE_STAGE_APPLY_EVENTS
             ledger, marks, settlement_count, settlement_backlog_count = _apply_settlements(
                 portfolios,
                 attributions,
@@ -297,6 +328,7 @@ class ContinuousShadowService:
                 maximum_age_ms=self._config.maximum_quote_age_ms,
             )
             marks.extend(new_marks)
+            stage = FAILURE_STAGE_RENEW_LEASE
             self._lease_port.renew_lease(
                 lease,
                 renewed_at=self._now(),
@@ -334,6 +366,7 @@ class ContinuousShadowService:
                 settlement_backlog_count=settlement_backlog_count,
                 request_telemetry=_safe_mapping(source, "request_telemetry"),
             )
+            stage = FAILURE_STAGE_PERSIST
             return self._store.complete_poll(
                 poll_run_id,
                 experiment=experiment,
@@ -343,13 +376,29 @@ class ContinuousShadowService:
                 completed_at=self._now(),
             )
         except Exception as error:
-            self._store.fail_poll(
-                poll_run_id,
-                failed_at=self._now(),
-                error_code=getattr(error, "error_code", "continuous_shadow_failed"),
-            )
+            classified = classify_continuous_shadow_failure(error, stage=stage)
+            try:
+                self._store.fail_poll(
+                    poll_run_id,
+                    failed_at=self._now(),
+                    error_code=classified.persistence_code,
+                )
+            except Exception as persist_error:
+                persist_classified = classify_continuous_shadow_failure(
+                    persist_error,
+                    stage=FAILURE_STAGE_FAIL_POLL,
+                )
+                get_logger(__name__).warning(
+                    "continuous_shadow_fail_poll_recording_failed",
+                    original_failure_category=classified.category,
+                    original_failure_stage=classified.stage,
+                    persist_failure_category=persist_classified.category,
+                    persist_failure_stage=persist_classified.stage,
+                )
             raise ContinuousShadowError(
-                "Continuous Shadow poll failed safely; durable prior state was kept."
+                "Continuous Shadow poll failed safely; durable prior state was kept.",
+                error_code=classified.category,
+                processing_stage=classified.stage,
             ) from error
 
     async def _collect_events(
@@ -370,14 +419,23 @@ class ContinuousShadowService:
             duplicate_count = 0
             async with semaphore:
                 for _ in range(self._maximum_pages):
-                    page = await source.read_page(
-                        candidate.wallet_id,
-                        start_at=window_start,
-                        end_at=window_end,
-                        page_size=500,
-                        checkpoint=checkpoint,
-                        purpose=LeaderReadPurpose.DISCOVERY,
-                    )
+                    try:
+                        page = await source.read_page(
+                            candidate.wallet_id,
+                            start_at=window_start,
+                            end_at=window_end,
+                            page_size=500,
+                            checkpoint=checkpoint,
+                            purpose=LeaderReadPurpose.DISCOVERY,
+                        )
+                    except ContinuousShadowError:
+                        raise
+                    except Exception as error:
+                        raise ContinuousShadowError(
+                            "Leader source was unavailable.",
+                            error_code=FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
+                            processing_stage=FAILURE_STAGE_COLLECT_EVENTS,
+                        ) from error
                     if any(
                         event.leader_id != candidate.wallet_id
                         or event.executed_at < window_start
@@ -426,7 +484,16 @@ class ContinuousShadowService:
             except Exception:
                 return market_id, None
 
-        return dict(await asyncio.gather(*(read(value) for value in sorted(market_ids))))
+        try:
+            return dict(await asyncio.gather(*(read(value) for value in sorted(market_ids))))
+        except ContinuousShadowError:
+            raise
+        except Exception as error:
+            raise ContinuousShadowError(
+                "Market metadata was unavailable.",
+                error_code=FAILURE_CATEGORY_MARKET_READ_FAILED,
+                processing_stage=FAILURE_STAGE_MARKET_READ,
+            ) from error
 
     async def _books(
         self,
@@ -471,7 +538,16 @@ class ContinuousShadowService:
                     discovered.append((token_id, "TERMINAL_404"))
                 return token_id, None
 
-        fetched = dict(await asyncio.gather(*(read(value) for value in sorted(pending))))
+        try:
+            fetched = dict(await asyncio.gather(*(read(value) for value in sorted(pending))))
+        except ContinuousShadowError:
+            raise
+        except Exception as error:
+            raise ContinuousShadowError(
+                "Market order books were unavailable.",
+                error_code=FAILURE_CATEGORY_MARKET_READ_FAILED,
+                processing_stage=FAILURE_STAGE_MARKET_READ,
+            ) from error
         if discovered:
             self._store.remember_terminal_books(
                 tuple(discovered),

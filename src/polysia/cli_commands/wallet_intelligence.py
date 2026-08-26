@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import sqlite3
 import time
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -33,6 +34,9 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowError,
     ContinuousShadowService,
 )
+from polysia.application.services.continuous_shadow_failures import (
+    classify_continuous_shadow_failure,
+)
 from polysia.application.services.copyability_selection import CopyabilitySelectionError
 from polysia.application.services.dynamic_live_handoff import (
     DynamicLiveHandoffConfig,
@@ -53,6 +57,8 @@ from polysia.domain.wallet_intelligence.copyability_selection import (
     SelectionStatus,
 )
 from polysia.monitoring.wallet_intelligence_health import (
+    WalletIntelligenceHealthReportError,
+    read_wallet_intelligence_health_payload,
     write_candidate_health_report,
     write_wallet_intelligence_health_payload,
 )
@@ -68,6 +74,9 @@ from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntel
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
 DEFAULT_BACKUP_DIR = Path("backups/wallet-intelligence")
 DEFAULT_HEALTH_REPORT = Path("reports/wallet-intelligence/latest.json")
+DEFAULT_CONTINUOUS_SHADOW_HEALTH = Path(
+    "reports/wallet-intelligence/continuous-shadow.json"
+)
 
 
 def sync(
@@ -801,38 +810,39 @@ def _emit_portfolio_poll(
 
 
 def portfolio_health(
-    source: Annotated[str, typer.Option("--source")] = "polycop",
-    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
-    poll_interval_seconds: Annotated[
-        int, typer.Option("--poll-interval-seconds", min=30, max=3_600)
-    ] = 60,
+    health_report: Annotated[
+        Path,
+        typer.Option(
+            "--health-report",
+            help="Sanitized atomic Stage 4B health artifact; does not open SQLite.",
+        ),
+    ] = DEFAULT_CONTINUOUS_SHADOW_HEALTH,
 ) -> None:
-    """Report interval-aware health and accounting invariants without addresses."""
+    """Report current operator health from the atomic artifact, not the live database."""
     try:
-        repository = ContinuousShadowRepository(database)
-        repository.initialize()
-        report = repository.health(
-            _source(source).source_id,
-            now=datetime.now(UTC),
-            poll_interval_seconds=poll_interval_seconds,
-        )
-    except (ContinuousShadowStoreError, CandidateStoreError, ValueError) as error:
+        payload = read_wallet_intelligence_health_payload(health_report)
+    except WalletIntelligenceHealthReportError as error:
         _emit_continuous_shadow_failure(error)
-    typer.echo(json.dumps(report.to_dict(), sort_keys=True))
-    if report.level == "critical":
+    typer.echo(json.dumps(payload, sort_keys=True))
+    if payload.get("level") == "critical":
         raise typer.Exit(code=2)
 
 
 def portfolio_results(
     source: Annotated[str, typer.Option("--source")] = "polycop",
-    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path,
+        typer.Option(
+            "--database",
+            help="Verified snapshot or backup SQLite path; do not use the active worker file.",
+        ),
+    ] = DEFAULT_DATABASE,
     experiment_id: Annotated[str | None, typer.Option("--experiment-id")] = None,
     limit: Annotated[int, typer.Option("--limit", min=1, max=10_000)] = 100,
 ) -> None:
-    """Read cumulative deduplicated portfolio and accounting evidence."""
+    """Read cumulative evidence from a snapshot without initializing or writing storage."""
     try:
         repository = ContinuousShadowRepository(database)
-        repository.initialize()
         if experiment_id is None:
             experiment = repository.active_experiment(_source(source).source_id)
             if experiment is None:
@@ -841,7 +851,13 @@ def portfolio_results(
                 )
             experiment_id = experiment.experiment_id
         payload = repository.results(experiment_id, limit=limit)
-    except (ContinuousShadowStoreError, CandidateStoreError, ValueError) as error:
+    except (
+        ContinuousShadowStoreError,
+        CandidateStoreError,
+        ValueError,
+        OSError,
+        sqlite3.DatabaseError,
+    ) as error:
         _emit_continuous_shadow_failure(error)
     typer.echo(json.dumps(payload, sort_keys=True))
 
@@ -1165,11 +1181,19 @@ def _require_continuous_shadow_safety() -> None:
 
 
 def _emit_continuous_shadow_failure(error: Exception) -> Never:
+    classified = classify_continuous_shadow_failure(error, stage="unexpected")
+    error_code = getattr(error, "error_code", None)
+    if not isinstance(error_code, str) or not error_code:
+        error_code = classified.category
+    processing_stage = getattr(error, "processing_stage", None)
+    if not isinstance(processing_stage, str) or not processing_stage:
+        processing_stage = classified.stage
     typer.echo(
         json.dumps(
             {
-                "error_code": getattr(error, "error_code", "continuous_shadow_failed"),
+                "error_code": error_code,
                 "message": "Continuous Shadow failed safely; no order was sent.",
+                "processing_stage": processing_stage,
                 "status": "failed",
             },
             sort_keys=True,

@@ -310,23 +310,37 @@ docker compose --profile wallet-intelligence run --rm \
   --database /var/lib/polysia/data/wallet-intelligence.sqlite3
 ```
 
-Inspect sanitized cumulative state without starting the persistent worker:
+Inspect sanitized current health from the atomic artifact. Do not query the
+active worker database:
 
 ```bash
 docker compose --profile wallet-intelligence run --rm --no-deps \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-health \
-  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
-  --poll-interval-seconds 60
-docker compose --profile wallet-intelligence run --rm --no-deps \
-  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-results \
-  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 --limit 100
+  --health-report /var/lib/polysia/reports/wallet-intelligence/continuous-shadow.json
 ```
 
-`portfolio-results.operator_summary` is the concise operator view.
-`follower_portfolios` separates MIXED_BASELINE, SHADOW_ALPHA, and SHADOW_STRESS.
-`policy_experiments` are walk-forward fill filters on recorded evidence, not a
-profitability claim. Encrypted off-host backup is not configured; local backup
-and disposable restore remain the current recovery path.
+The artifact is rewritten atomically after each successful poll and includes a
+concise `operator_summary` for MIXED_BASELINE, SHADOW_ALPHA, and SHADOW_STRESS
+(NAV, modeled P&L, fees, exposure, drawdown, and open position counts), plus
+fresh/stale/missing mark counts and the latest sanitized failure code.
+
+Run detailed historical analytics only against a verified snapshot or backup
+file, never against the active SQLite file. The sync service mounts backups;
+the persistent worker does not:
+
+```bash
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-sync wallet-intelligence portfolio-results \
+  --database /var/lib/polysia/backups/wallet-intelligence/<verified-backup>.sqlite3 \
+  --limit 100
+```
+
+`portfolio-results.operator_summary` remains the detailed snapshot operator
+view. `follower_portfolios` separates MIXED_BASELINE, SHADOW_ALPHA, and
+SHADOW_STRESS. `policy_experiments` are walk-forward fill filters on recorded
+evidence, not a profitability claim. Encrypted off-host backup is not
+configured; local backup and disposable restore remain the current recovery
+path.
 
 Install the persistent worker and disable the previous one-minute oneshot timer:
 
@@ -482,7 +496,7 @@ authorized and implemented.
 | Stage 2 calculation/publication failure | Previous candidate pool retained; failed run recorded | Inspect safe error code and repair before republishing |
 | Stage 3 calculation/publication failure | Previous copyability pools retained; Stage 1/2 unchanged | Inspect safe error code; Stage 2 may still be healthy |
 | Stage 4 source/book/evaluation failure | Previous current Shadow evidence retained; no order sent | Inspect rate circuit and safe error; retry after recovery |
-| Stage 4B source/book/fee/transaction failure | Watermark and persistent portfolio remain last-known-good; failed poll recorded | Inspect `portfolio-health`; retry after evidence recovers |
+| Stage 4B source/book/fee/transaction failure | Watermark and persistent portfolio remain last-known-good; failed poll recorded with a sanitized category and stage | Inspect the atomic `continuous-shadow.json` artifact; do not query the live database; systemd `Restart=on-failure` remains; do not add a new retry policy until observed categories justify it |
 | Stage 4B ledger mismatch or finalized experiment with positions | Health `critical`; no new trusted result | Disable only the Stage 4B timer, preserve DB/backup, investigate before restart |
 | Abandoned Stage 1 run older than two hours | Marked `failed`; a new run may acquire the source | Inspect host/process history |
 | Row-count baseline warning | Snapshot retained with warning | Compare source behavior and recent history |
@@ -526,7 +540,7 @@ For a code-only rollback within the same Stage 4B schema version, restore the
 previously approved application revision and rebuild. A rollback from Stage 4B
 schema v3 to code that requires schema v2 is different: verify the exact
 pre-migration backup, restore that database while the timer remains stopped,
-then start the prior release and run `portfolio-health`. Merely switching the
+then start the prior release and read the atomic health artifact. Merely switching the
 release symlink leaves the older Stage 4B worker fail-closed on the unsupported
 schema. Stage 1 through Stage 4A remain additive and do not require the main
 trading database to be rolled back. Preserve the v3 database and all backups for

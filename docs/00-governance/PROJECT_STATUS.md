@@ -10,7 +10,7 @@
 | Last verified deployed baseline | `c49652565cd7ddab6432e3488ca73fa1c9c352b5` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 4B deployed DATA_ONLY; Standards v0.4.0 adopted on `main` |
+| Latest repository maintenance | Stage 4B operational-hardening branch prepared; Finland still on `c496525` until merge/deploy |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -88,6 +88,14 @@ The current follower P&L is a negative, partial synthetic estimate and some
 marks are not fully current. Confidence is `LOW`; this evidence cannot support
 a profitability, Live-readiness, or promotion claim. See the Stage 4B handoff
 for exact backup, rollback, financial, and limitation evidence.
+
+Operational health currently still queries the live SQLite file on the deployed
+`c496525` revision. The unreleased `codex/stage4b-operational-hardening`
+change makes `portfolio-health` read the atomic `continuous-shadow.json`
+artifact, keeps `portfolio-results` snapshot/backup-based without
+`initialize()`, classifies poll failures, and splits fresh/stale/missing
+marks. That revision is not deployed until it is merged and the exact SHA is
+verified on Helsinki.
 
 ## Completed stages
 

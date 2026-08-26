@@ -97,3 +97,27 @@ Exact commands and results from this workstation:
   `32.3s`, median `33.5s`, P95 `38.7s`. Confidence remains `LOW`.
 - `3x-ui` restart count 0 and start time `2026-08-21T10:33:56Z` unchanged.
 - Encrypted off-host backup remains absent. Shadow stays running.
+
+## Follow-on: operational hardening (local evidence only)
+
+Branch `codex/stage4b-operational-hardening` implements read/report isolation,
+checkpoint-based latest-mark queries, sanitized failure categories/stages, and
+split fresh/stale/missing mark counts. It does not change Strategy, Risk,
+Execution, Live flags, schema version, journal mode, or indexes.
+
+Local workstation gates on this branch (2026-08-26):
+
+- `python scripts/validate_standards.py --mode full` — PASS, blocking=0
+- `python -m compileall -q src tests` — PASS
+- `python -m ruff check .` — PASS
+- `python -m mypy src` — PASS, 173 source files
+- `python -m pytest -q --basetemp=.pytest-review-tmp/stage4b-full` — PASS, 829 tests
+- `python -m pip check` — PASS
+- `python -m polysia.security.secret_scan` — PASS
+- `python -m build` — PASS, `polysia-0.1.0` sdist and wheel
+- `git diff --check` — PASS
+
+This follow-on is **not** deployed. Helsinki remains on
+`c49652565cd7ddab6432e3488ca73fa1c9c352b5` until the merged SHA is installed
+with a verified pre-deploy backup. Server reporting-time and NRestarts evidence
+will be recorded only after that deploy.

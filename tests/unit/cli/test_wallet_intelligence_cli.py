@@ -257,3 +257,75 @@ def test_runtime_bank_refuses_non_data_only_settings(
     assert payload["error_code"] == "handoff_requires_data_only"
     assert payload["values_redacted"] is True
     assert not (tmp_path / "candidates.txt").exists()
+
+
+def test_portfolio_health_reads_artifact_without_initializing_storage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("initialize must not run for operational health")
+
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence.ContinuousShadowRepository.initialize",
+        boom,
+    )
+    artifact = tmp_path / "continuous-shadow.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "level": "healthy",
+                "ledger_balanced": True,
+                "operator_summary": {"MIXED_BASELINE": {"nav": "1000"}},
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "portfolio-health",
+            "--health-report",
+            str(artifact),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["level"] == "healthy"
+    assert payload["operator_summary"]["MIXED_BASELINE"]["nav"] == "1000"
+
+
+def test_portfolio_results_does_not_initialize_or_write_storage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.storage.continuous_shadow import ContinuousShadowRepository
+
+    database = tmp_path / "snapshot.sqlite3"
+    ContinuousShadowRepository(database).initialize()
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("initialize must not run for portfolio-results")
+
+    monkeypatch.setattr(ContinuousShadowRepository, "initialize", boom)
+    result = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "portfolio-results",
+            "--database",
+            str(database),
+            "--limit",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stderr)
+    assert payload["status"] == "failed"
+    assert "0x" not in result.output
