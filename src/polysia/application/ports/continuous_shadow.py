@@ -61,6 +61,9 @@ class FollowerAttribution:
     outcome_reference: str
     quantity: Decimal
     cost_basis: Decimal
+    portfolio_id: str = "follower"
+    pool_class: str = "UNKNOWN"
+    last_event_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +110,8 @@ class ContinuousLedgerRecord:
     realized_pnl_delta: Decimal
     fee_delta: Decimal
     created_at: datetime
+    wallet_id: str | None = None
+    pool_class: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +125,9 @@ class ContinuousPositionMark:
     unrealized_pnl: Decimal | None
     mark_status: str
     marked_at: datetime
+    source_timestamp: datetime | None = None
+    source_age_ms: int | None = None
+    freshness: str = "MISSING"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +212,8 @@ class ContinuousShadowHealth:
     unknown_fee_count: int
     open_position_count: int
     settlement_backlog_count: int
+    rolling_windows: dict[str, object] | None = None
+    initialization_unknown_count: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -213,14 +223,16 @@ class ContinuousShadowHealth:
             "duplicate_events_detected": self.duplicate_count,
             "duplicate_processing_count": self.duplicate_processing_count,
             "experiment": None if self.experiment is None else self.experiment.to_dict(),
+            "initialization_unknown_count": self.initialization_unknown_count,
             "last_poll_at": None if self.last_poll_at is None else self.last_poll_at.isoformat(),
             "last_poll_status": self.last_poll_status,
             "ledger_balanced": self.ledger_balanced,
             "level": self.level,
             "open_position_count": self.open_position_count,
-            "settlement_backlog_count": self.settlement_backlog_count,
             "poll_interval_seconds": self.poll_interval_seconds,
             "reasons": list(self.reasons),
+            "rolling_windows": self.rolling_windows or {},
+            "settlement_backlog_count": self.settlement_backlog_count,
             "unknown_fee_count": self.unknown_fee_count,
             "unknown_ratio": (
                 None if self.unknown_ratio is None else format(self.unknown_ratio, "f")
@@ -264,6 +276,21 @@ class ContinuousShadowStorePort(Protocol):
     def portfolios(self, experiment_id: str) -> tuple[ContinuousPortfolio, ...]: ...
 
     def attributions(self, experiment_id: str) -> tuple[FollowerAttribution, ...]: ...
+
+    def terminal_book_cache(
+        self,
+        token_ids: tuple[str, ...],
+        *,
+        now: datetime,
+    ) -> dict[str, str]: ...
+
+    def remember_terminal_books(
+        self,
+        entries: tuple[tuple[str, str], ...],
+        *,
+        now: datetime,
+        ttl_seconds: int,
+    ) -> None: ...
 
     def start_poll(
         self,

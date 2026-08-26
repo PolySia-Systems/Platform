@@ -31,13 +31,18 @@ from polysia.application.ports.dynamic_shadow import (
 )
 from polysia.domain.copytrading import LeaderTradeAction, LeaderTradeEvent
 from polysia.domain.copytrading.continuous_shadow import (
+    FOLLOWER_KIND_SPECS,
+    FOLLOWER_KINDS,
     ContinuousEvaluationStatus,
     ContinuousPortfolio,
     ContinuousPortfolioKind,
     ContinuousPosition,
     ContinuousShadowConfig,
     ContinuousShadowLifecycle,
+    adverse_price_drift_exceeded,
     calculate_verified_taker_fee,
+    follower_accepts_pool,
+    mark_freshness,
     quote_is_fresh,
     verified_settlement_prices,
     walk_order_book,
@@ -87,6 +92,8 @@ class _MutablePortfolio:
 class _MutableAttribution:
     quantity: Decimal
     cost_basis: Decimal
+    pool_class: str
+    last_event_id: str | None
 
 
 class ContinuousShadowService:
@@ -220,6 +227,7 @@ class ContinuousShadowService:
                 self._store.portfolios(experiment.experiment_id),
                 current_candidates=current_candidates,
                 wallet_bankroll=self._config.wallet_bankroll,
+                follower_bankroll=self._config.follower_bankroll,
             )
             attributions = _mutable_attributions(
                 self._store.attributions(experiment.experiment_id)
@@ -234,10 +242,8 @@ class ContinuousShadowService:
                 for portfolio in portfolios.values()
                 for position in portfolio.positions.values()
             } | {event.outcome_reference for event in new_events}
-            markets, books = await asyncio.gather(
-                self._markets(market_ids),
-                self._books(token_ids),
-            )
+            markets = await self._markets(market_ids)
+            books = await self._books(token_ids, markets_by_id=markets)
             evaluated_at = self._now()
             ledger, marks, settlement_count, settlement_backlog_count = _apply_settlements(
                 portfolios,
@@ -254,7 +260,22 @@ class ContinuousShadowService:
                 candidate = all_by_wallet[event.leader_id]
                 pool_class = _pool_class(candidate.pools)
                 wallet_portfolio = portfolios[f"wallet:{event.leader_id}"]
-                for portfolio in (wallet_portfolio, portfolios["follower"]):
+                targets = [wallet_portfolio]
+                for portfolio in portfolios.values():
+                    if portfolio.kind not in FOLLOWER_KINDS or portfolio in targets:
+                        continue
+                    if event.trade_action is LeaderTradeAction.BUY:
+                        if follower_accepts_pool(portfolio.kind, pool_class):
+                            targets.append(portfolio)
+                    elif any(
+                        key[0] == portfolio.portfolio_id
+                        and key[1] == event.leader_id
+                        and key[2] == event.market_reference
+                        and key[3] == event.outcome_reference
+                        for key in attributions
+                    ) or follower_accepts_pool(portfolio.kind, pool_class):
+                        targets.append(portfolio)
+                for portfolio in targets:
                     evaluation, entry = self._apply_event(
                         portfolio,
                         event,
@@ -293,11 +314,14 @@ class ContinuousShadowService:
                 portfolios=tuple(_freeze_portfolio(item) for item in portfolios.values()),
                 attributions=tuple(
                     FollowerAttribution(
-                        wallet_id=key[0],
-                        market_reference=key[1],
-                        outcome_reference=key[2],
+                        wallet_id=key[1],
+                        market_reference=key[2],
+                        outcome_reference=key[3],
                         quantity=value.quantity,
                         cost_basis=value.cost_basis,
+                        portfolio_id=key[0],
+                        pool_class=value.pool_class,
+                        last_event_id=value.last_event_id,
                     )
                     for key, value in sorted(attributions.items())
                     if value.quantity > ZERO
@@ -404,18 +428,57 @@ class ContinuousShadowService:
 
         return dict(await asyncio.gather(*(read(value) for value in sorted(market_ids))))
 
-    async def _books(self, token_ids: set[str]) -> dict[str, MarketOrderBookSnapshot | None]:
+    async def _books(
+        self,
+        token_ids: set[str],
+        *,
+        markets_by_id: Mapping[str, MarketDetails | None],
+    ) -> dict[str, MarketOrderBookSnapshot | None]:
+        closed_tokens: set[str] = set()
+        closed_entries: list[tuple[str, str]] = []
+        for market in markets_by_id.values():
+            if market is None or market.closed is not True:
+                continue
+            for outcome in market.outcomes:
+                if outcome.token_id is None:
+                    continue
+                closed_tokens.add(outcome.token_id)
+                closed_entries.append((outcome.token_id, "MARKET_CLOSED"))
+        if closed_entries:
+            self._store.remember_terminal_books(
+                tuple(closed_entries),
+                now=self._now(),
+                ttl_seconds=self._config.negative_cache_ttl_seconds,
+            )
+        cached = self._store.terminal_book_cache(
+            tuple(sorted(token_ids)),
+            now=self._now(),
+        )
+        skip = closed_tokens | set(cached)
+        pending = {token_id for token_id in token_ids if token_id not in skip}
         semaphore = asyncio.Semaphore(self._concurrency)
+        discovered: list[tuple[str, str]] = []
 
         async def read(token_id: str) -> tuple[str, MarketOrderBookSnapshot | None]:
             try:
                 async with semaphore:
                     book = await self._market_port.get_order_book(token_id)
                 return (token_id, book) if book.token_id == token_id else (token_id, None)
-            except Exception:
+            except Exception as error:
+                diagnostic = getattr(error, "diagnostic", None)
+                status = getattr(diagnostic, "status_code", None)
+                if status == 404:
+                    discovered.append((token_id, "TERMINAL_404"))
                 return token_id, None
 
-        return dict(await asyncio.gather(*(read(value) for value in sorted(token_ids))))
+        fetched = dict(await asyncio.gather(*(read(value) for value in sorted(pending))))
+        if discovered:
+            self._store.remember_terminal_books(
+                tuple(discovered),
+                now=self._now(),
+                ttl_seconds=self._config.negative_cache_ttl_seconds,
+            )
+        return {token_id: fetched.get(token_id) for token_id in token_ids}
 
     def _apply_event(
         self,
@@ -426,7 +489,7 @@ class ContinuousShadowService:
         lifecycle: ContinuousShadowLifecycle,
         market: MarketDetails | None,
         book: MarketOrderBookSnapshot | None,
-        attributions: dict[tuple[str, str, str], _MutableAttribution],
+        attributions: dict[tuple[str, str, str, str], _MutableAttribution],
         consumed_by_scope: dict[tuple[str, str], dict[Decimal, Decimal]],
         evaluated_at: datetime,
     ) -> tuple[ContinuousEvaluationRecord, ContinuousLedgerRecord | None]:
@@ -496,11 +559,16 @@ class ContinuousShadowService:
             )
         key = (event.market_reference, event.outcome_reference)
         position = portfolio.positions.get(key)
-        attribution_key = (event.leader_id, *key)
+        attribution_key = (
+            portfolio.portfolio_id,
+            event.leader_id,
+            event.market_reference,
+            event.outcome_reference,
+        )
         attribution = attributions.get(attribution_key)
         if event.trade_action is LeaderTradeAction.SELL:
             available_position = ZERO if position is None else position.quantity
-            if portfolio.kind is ContinuousPortfolioKind.FOLLOWER:
+            if portfolio.kind in FOLLOWER_KINDS:
                 available_position = min(
                     available_position,
                     ZERO if attribution is None else attribution.quantity,
@@ -532,11 +600,12 @@ class ContinuousShadowService:
                 if portfolio.kind is ContinuousPortfolioKind.WALLET
                 else self._config.follower_maximum_exposure - portfolio.exposure
             )
-            if portfolio.kind is ContinuousPortfolioKind.FOLLOWER:
+            if portfolio.kind in FOLLOWER_KINDS:
                 wallet_exposure = sum(
                     value.cost_basis
                     for attr_key, value in attributions.items()
-                    if attr_key[0] == event.leader_id
+                    if attr_key[0] == portfolio.portfolio_id
+                    and attr_key[1] == event.leader_id
                 )
                 market_exposure = sum(
                     item.cost_basis
@@ -606,6 +675,24 @@ class ContinuousShadowService:
                 ),
                 None,
             )
+        movement = (
+            (walk.follower_price - event.executed_price) * walk.filled_size
+            if event.trade_action is LeaderTradeAction.BUY
+            else (event.executed_price - walk.follower_price) * walk.filled_size
+        )
+        if adverse_price_drift_exceeded(
+            action=event.trade_action,
+            price_movement=movement,
+            gross_notional=walk.gross_notional,
+            maximum_ratio=self._config.price_drift_max_ratio,
+        ):
+            return evidence(
+                ContinuousEvaluationStatus.REJECTED,
+                "price_drift_exceeded",
+                requested_size=requested_size,
+                fee_status=fee.status,
+                fee_source=fee.source,
+            )
         total_buy_cost = walk.gross_notional + fee.amount
         if event.trade_action is LeaderTradeAction.BUY and total_buy_cost > portfolio.cash:
             return evidence(
@@ -643,12 +730,14 @@ class ContinuousShadowService:
             quantity_delta = walk.filled_size
             cash_delta = -total_buy_cost
             cost_delta = walk.gross_notional
-            if portfolio.kind is ContinuousPortfolioKind.FOLLOWER:
+            if portfolio.kind in FOLLOWER_KINDS:
                 if attribution is None:
-                    attribution = _MutableAttribution(ZERO, ZERO)
+                    attribution = _MutableAttribution(ZERO, ZERO, pool_class, event.event_id)
                     attributions[attribution_key] = attribution
                 attribution.quantity += walk.filled_size
                 attribution.cost_basis += walk.gross_notional
+                attribution.pool_class = pool_class
+                attribution.last_event_id = event.event_id
         else:
             assert position is not None
             entry_type = "CLOSE" if walk.filled_size == position.quantity else "REDUCE"
@@ -667,18 +756,14 @@ class ContinuousShadowService:
             cost_delta = -allocated_cost
             if position.quantity <= ZERO:
                 del portfolio.positions[key]
-            if portfolio.kind is ContinuousPortfolioKind.FOLLOWER:
+            if portfolio.kind in FOLLOWER_KINDS:
                 assert attribution is not None
                 attr_ratio = walk.filled_size / attribution.quantity
                 attribution.quantity -= walk.filled_size
                 attribution.cost_basis -= attribution.cost_basis * attr_ratio
+                attribution.last_event_id = event.event_id
                 if attribution.quantity <= ZERO:
                     del attributions[attribution_key]
-        movement = (
-            (walk.follower_price - event.executed_price) * walk.filled_size
-            if event.trade_action is LeaderTradeAction.BUY
-            else (event.executed_price - walk.follower_price) * walk.filled_size
-        )
         evaluation = ContinuousEvaluationRecord(
             event_id=event.event_id,
             portfolio_id=portfolio.portfolio_id,
@@ -727,6 +812,8 @@ class ContinuousShadowService:
             realized_pnl_delta=realized or ZERO,
             fee_delta=fee.amount,
             created_at=evaluated_at,
+            wallet_id=event.leader_id,
+            pool_class=pool_class,
         )
         return evaluation, ledger
 
@@ -748,6 +835,7 @@ def _mutable_portfolios(
     *,
     current_candidates: tuple[ProtectedShadowCandidate, ...],
     wallet_bankroll: Decimal,
+    follower_bankroll: Decimal,
 ) -> dict[str, _MutablePortfolio]:
     portfolios = {
         item.portfolio_id: _MutablePortfolio(
@@ -792,6 +880,22 @@ def _mutable_portfolios(
                 positions={},
             ),
         )
+    for portfolio_id, kind, _accepted in FOLLOWER_KIND_SPECS:
+        portfolios.setdefault(
+            portfolio_id,
+            _MutablePortfolio(
+                portfolio_id=portfolio_id,
+                kind=kind,
+                wallet_id=None,
+                initial_cash=follower_bankroll,
+                cash=follower_bankroll,
+                realized_pnl=ZERO,
+                fees=ZERO,
+                high_water_nav=follower_bankroll,
+                drawdown=ZERO,
+                positions={},
+            ),
+        )
     if "follower" not in portfolios:
         raise ContinuousShadowError("Continuous Shadow follower portfolio is unavailable.")
     return portfolios
@@ -799,11 +903,18 @@ def _mutable_portfolios(
 
 def _mutable_attributions(
     stored: tuple[FollowerAttribution, ...],
-) -> dict[tuple[str, str, str], _MutableAttribution]:
+) -> dict[tuple[str, str, str, str], _MutableAttribution]:
     return {
-        (item.wallet_id, item.market_reference, item.outcome_reference): _MutableAttribution(
+        (
+            item.portfolio_id,
+            item.wallet_id,
+            item.market_reference,
+            item.outcome_reference,
+        ): _MutableAttribution(
             item.quantity,
             item.cost_basis,
+            item.pool_class,
+            item.last_event_id,
         )
         for item in stored
     }
@@ -811,7 +922,7 @@ def _mutable_attributions(
 
 def _apply_settlements(
     portfolios: dict[str, _MutablePortfolio],
-    attributions: dict[tuple[str, str, str], _MutableAttribution],
+    attributions: dict[tuple[str, str, str, str], _MutableAttribution],
     markets: Mapping[str, MarketDetails | None],
     *,
     evaluated_at: datetime,
@@ -833,26 +944,61 @@ def _apply_settlements(
             realized = proceeds - position.cost_basis
             portfolio.cash += proceeds
             portfolio.realized_pnl += realized
-            ledger.append(
-                ContinuousLedgerRecord(
-                    entry_id=uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        "polysia:continuous-shadow:settlement:"
-                        f"{portfolio.portfolio_id}:{position.market_reference}:"
-                        f"{position.outcome_reference}:{evaluated_at.isoformat()}",
-                    ).hex,
-                    portfolio_id=portfolio.portfolio_id,
-                    event_id=None,
-                    entry_type="SETTLEMENT",
-                    market_reference=position.market_reference,
-                    outcome_reference=position.outcome_reference,
-                    quantity_delta=-position.quantity,
-                    cash_delta=proceeds,
-                    cost_basis_delta=-position.cost_basis,
-                    realized_pnl_delta=realized,
-                    fee_delta=ZERO,
-                    created_at=evaluated_at,
+            matching = [
+                (attr_key, attr)
+                for attr_key, attr in tuple(attributions.items())
+                if attr_key[0] == portfolio.portfolio_id and attr_key[2:] == key
+            ]
+            if matching and portfolio.kind in FOLLOWER_KINDS:
+                remaining_qty = position.quantity
+                remaining_cost = position.cost_basis
+                remaining_proceeds = proceeds
+                remaining_realized = realized
+                for index, (attr_key, attr) in enumerate(matching):
+                    last = index == len(matching) - 1
+                    share_qty = remaining_qty if last else attr.quantity
+                    share_cost = remaining_cost if last else attr.cost_basis
+                    share_proceeds = remaining_proceeds if last else share_qty * price
+                    share_realized = remaining_realized if last else share_proceeds - share_cost
+                    remaining_qty -= share_qty
+                    remaining_cost -= share_cost
+                    remaining_proceeds -= share_proceeds
+                    remaining_realized -= share_realized
+                    ledger.append(
+                        _settlement_entry(
+                            portfolio_id=portfolio.portfolio_id,
+                            position=position,
+                            evaluated_at=evaluated_at,
+                            quantity=share_qty,
+                            proceeds=share_proceeds,
+                            cost=share_cost,
+                            realized=share_realized,
+                            wallet_id=attr_key[1],
+                            pool_class=attr.pool_class,
+                            suffix=attr_key[1],
+                        )
+                    )
+                    del attributions[attr_key]
+            else:
+                ledger.append(
+                    _settlement_entry(
+                        portfolio_id=portfolio.portfolio_id,
+                        position=position,
+                        evaluated_at=evaluated_at,
+                        quantity=position.quantity,
+                        proceeds=proceeds,
+                        cost=position.cost_basis,
+                        realized=realized,
+                        wallet_id=portfolio.wallet_id,
+                        pool_class=None,
+                        suffix="portfolio",
+                    )
                 )
+            age_ms, freshness = mark_freshness(
+                mark_status="VERIFIED_SETTLEMENT",
+                source_timestamp=evaluated_at,
+                evaluated_at=evaluated_at,
+                maximum_age_ms=0,
             )
             marks.append(
                 ContinuousPositionMark(
@@ -865,15 +1011,50 @@ def _apply_settlements(
                     unrealized_pnl=realized,
                     mark_status="VERIFIED_SETTLEMENT",
                     marked_at=evaluated_at,
+                    source_timestamp=evaluated_at,
+                    source_age_ms=age_ms,
+                    freshness=freshness,
                 )
             )
             del portfolio.positions[key]
             count += 1
-            if portfolio.kind is ContinuousPortfolioKind.FOLLOWER:
-                for attribution_key in tuple(attributions):
-                    if attribution_key[1:] == key:
-                        del attributions[attribution_key]
     return ledger, marks, count, backlog_count
+
+
+def _settlement_entry(
+    *,
+    portfolio_id: str,
+    position: _MutablePosition,
+    evaluated_at: datetime,
+    quantity: Decimal,
+    proceeds: Decimal,
+    cost: Decimal,
+    realized: Decimal,
+    wallet_id: str | None,
+    pool_class: str | None,
+    suffix: str,
+) -> ContinuousLedgerRecord:
+    return ContinuousLedgerRecord(
+        entry_id=uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            "polysia:continuous-shadow:settlement:"
+            f"{portfolio_id}:{position.market_reference}:"
+            f"{position.outcome_reference}:{suffix}:{evaluated_at.isoformat()}",
+        ).hex,
+        portfolio_id=portfolio_id,
+        event_id=None,
+        entry_type="SETTLEMENT",
+        market_reference=position.market_reference,
+        outcome_reference=position.outcome_reference,
+        quantity_delta=-quantity,
+        cash_delta=proceeds,
+        cost_basis_delta=-cost,
+        realized_pnl_delta=realized,
+        fee_delta=ZERO,
+        created_at=evaluated_at,
+        wallet_id=wallet_id,
+        pool_class=pool_class,
+    )
 
 
 def _mark_positions(
@@ -888,6 +1069,7 @@ def _mark_positions(
         for position in portfolio.positions.values():
             book = books.get(position.outcome_reference)
             mark_status = "MISSING"
+            source_timestamp = position.marked_at
             if (
                 book is not None
                 and quote_is_fresh(book, evaluated_at=evaluated_at, maximum_age_ms=maximum_age_ms)
@@ -895,9 +1077,16 @@ def _mark_positions(
             ):
                 position.mark_price = book.best_bid.price
                 position.marked_at = book.timestamp
+                source_timestamp = book.timestamp
                 mark_status = "VERIFIED_EXECUTABLE_BID"
             elif position.mark_price is not None:
                 mark_status = "LAST_KNOWN_GOOD"
+            age_ms, freshness = mark_freshness(
+                mark_status=mark_status,
+                source_timestamp=source_timestamp,
+                evaluated_at=evaluated_at,
+                maximum_age_ms=maximum_age_ms,
+            )
             market_value = (
                 None
                 if position.mark_price is None
@@ -916,6 +1105,9 @@ def _mark_positions(
                     ),
                     mark_status=mark_status,
                     marked_at=evaluated_at,
+                    source_timestamp=source_timestamp,
+                    source_age_ms=age_ms,
+                    freshness=freshness,
                 )
             )
     return marks

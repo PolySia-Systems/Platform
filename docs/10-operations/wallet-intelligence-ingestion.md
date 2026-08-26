@@ -290,15 +290,19 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
-## Continuous Shadow Portfolio v0.2
+## Continuous Shadow Portfolio v0.2 / schema v4
 
 Stage 4B is additive to the immutable Stage 4A windows above. It persists a
-first-seen journal, cross-run inventory, independent Wallet portfolios, one
-shared-capital follower, market-specific official fees, marks, settlement, and
-Decimal ledger evidence. Its complete contract is
+first-seen journal, cross-run inventory, independent Wallet portfolios, a labeled
+mixed baseline follower, independent Alpha and Stress followers, market-specific
+official fees, marks, settlement, and Decimal ledger evidence. Schema v4 keeps
+Wallet, Pool, market, and event attribution on CLOSE and SETTLEMENT. Its complete
+contract is
 `docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.
 
-Create or idempotently reuse one versioned experiment before enabling its timer:
+Create or idempotently reuse one versioned experiment before enabling the worker.
+Existing v0.2 experiments continue after the v4 migration; Alpha and Stress
+followers start empty and are not backfilled.
 
 ```bash
 docker compose --profile wallet-intelligence run --rm \
@@ -306,11 +310,9 @@ docker compose --profile wallet-intelligence run --rm \
   --database /var/lib/polysia/data/wallet-intelligence.sqlite3
 ```
 
-Run one poll and inspect sanitized cumulative state:
+Inspect sanitized cumulative state without starting the persistent worker:
 
 ```bash
-docker compose --profile wallet-intelligence run --rm \
-  wallet-intelligence-shadow-portfolio
 docker compose --profile wallet-intelligence run --rm --no-deps \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-health \
   --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
@@ -320,22 +322,13 @@ docker compose --profile wallet-intelligence run --rm --no-deps \
   --database /var/lib/polysia/data/wallet-intelligence.sqlite3 --limit 100
 ```
 
-The first command after `portfolio-start` begins at the experiment timestamp.
-Later polls start from the durable watermark with a 30-second overlap. Repeated
-events increment duplicate evidence but cannot repeat a fill or ledger entry.
-All config values in Compose must remain equal to the versioned experiment; a
-drift fails before publication instead of mixing assumptions.
+`portfolio-results.operator_summary` is the concise operator view.
+`follower_portfolios` separates MIXED_BASELINE, SHADOW_ALPHA, and SHADOW_STRESS.
+`policy_experiments` are walk-forward fill filters on recorded evidence, not a
+profitability claim. Encrypted off-host backup is not configured; local backup
+and disposable restore remain the current recovery path.
 
-In `portfolio-results`, `duplicate_events_detected` is expected to increase when
-the configured poll windows overlap. `duplicate_processing_count` must remain
-zero; any nonzero value is critical. Use `pool_results.SHADOW_ALPHA` and
-`pool_results.SHADOW_STRESS` for independent pool activity, portfolio P&L,
-costs, delays, closes, and data quality. `confidence.limitations` states why a
-short Shadow run must not be treated as Live evidence. Backup freshness and
-disposable restore remain operational checks from the backup/restore commands;
-they are verified during deployment and are not inferred from trading results.
-
-Install the additive fast timer:
+Install the persistent worker and disable the previous one-minute oneshot timer:
 
 ```bash
 sudo install -o root -g root -m 0644 \
@@ -345,14 +338,15 @@ sudo install -o root -g root -m 0644 \
   deploy/systemd/polysia-wallet-intelligence-shadow-portfolio.timer \
   /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now polysia-wallet-intelligence-shadow-portfolio.timer
+sudo systemctl disable --now polysia-wallet-intelligence-shadow-portfolio.timer
+sudo systemctl enable --now polysia-wallet-intelligence-shadow-portfolio.service
 ```
 
-The default interval is one minute. If a poll takes longer, systemd does not
-start a second copy; the fenced `continuous-shadow-portfolio-pipeline` lease is
-the database-level guard. A missed interval catches up from the last committed
-watermark. The separate ten-minute Stage 4A job remains enabled as windowed
-comparison and recovery evidence.
+The worker stays fenced by `continuous-shadow-portfolio-pipeline` and sleeps
+between polls. The separate ten-minute Stage 4A job remains enabled as windowed
+comparison and recovery evidence. A schema-v3 rollback restores the prior image
+and the oneshot timer; switching v4 code onto a v3 database migrates forward,
+while switching v3 code onto a v4 database fails closed.
 
 Stop new entries without losing exits or marks, then finalize only after all
 synthetic positions close or settle:

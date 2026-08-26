@@ -35,6 +35,12 @@ The application depends only on public read, candidate, lease, and local storage
 ports. It has no Strategy, Risk, Execution, signing, order, cancellation, account,
 or wallet-mutation port. Compose additionally forces `DATA_ONLY` and Live false.
 
+Schema v4, dated 2026-08-26, keeps the mixed FOLLOWER portfolio as the labeled
+baseline, adds independent Alpha and Stress followers that start empty on
+migration, persists CLOSE/SETTLEMENT attribution, records mark source age, and
+runs a persistent fenced worker. Report-time walk-forward filters do not replace
+the baseline fill policy.
+
 ## Consequences
 
 Continuous cumulative P&L becomes auditable across polls and restarts. Alpha and
@@ -46,9 +52,8 @@ synthetic capital differ from real execution. A successful experiment is evidenc
 for later research, not profitability, production readiness, or Live authorization.
 
 The additional normalized tables increase the protected database and backup size.
-The one-minute timer increases public reads but remains below the documented public
-limits under the bounded 150-wallet configuration; telemetry and the existing rate
-scheduler remain authoritative.
+The persistent worker removes one-shot container start cost; public reads remain
+bounded by the existing rate scheduler and telemetry.
 
 ## Alternatives rejected
 
@@ -65,6 +70,7 @@ first-seen dedupe, persistent cross-run exits, settlement, failure recovery,
 schema idempotency, Stage 4A compatibility, address-free output, CLI safety,
 backup/restore, container configuration, and restart behavior.
 
-Rollback disables `polysia-wallet-intelligence-shadow-portfolio.timer`, restores
-the prior immutable application release, and retains the additive schema for
-forensics. Stage 4A and Stages 1–3 continue independently.
+Rollback disables `polysia-wallet-intelligence-shadow-portfolio.service`,
+restores the prior immutable application release and pre-migration backup, and
+re-enables the optional oneshot timer only when rolling back to a schema-v3
+image. Stage 4A and Stages 1–3 continue independently.

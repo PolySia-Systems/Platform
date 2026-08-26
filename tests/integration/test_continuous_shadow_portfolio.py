@@ -128,6 +128,8 @@ class _MarketPort:
         self.book_size = book_size
         self.fail_book = False
         self.no_bids = False
+        self.book_requests = 0
+        self.missing_tokens: set[str] = set()
 
     async def get_market_by_condition_id(self, market_id: str) -> MarketDetails:
         assert market_id == "condition-1"
@@ -166,8 +168,13 @@ class _MarketPort:
 
     async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
         assert token_id in {"token-yes", "token-no"}
+        self.book_requests += 1
         if self.fail_book:
             raise RuntimeError("order book unavailable")
+        if token_id in self.missing_tokens:
+            error = RuntimeError("order book not found")
+            error.diagnostic = type("D", (), {"status_code": 404})()
+            raise error
         return MarketOrderBookSnapshot(
             token_id=token_id,
             market_id="condition-1",
@@ -319,7 +326,7 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
     first = await service.poll("polycop")
 
     assert first.new_event_count == 1
-    assert first.simulated_count == 2
+    assert first.simulated_count == 4
     assert first.unknown_count == 0
     assert first.follower_exposure > 0
 
@@ -336,7 +343,7 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
 
     assert second.new_event_count == 1
     assert second.duplicate_count == 1
-    assert second.simulated_count == 2
+    assert second.simulated_count == 4
     assert second.realized_pnl_delta > 0
     assert second.follower_exposure == 0
 
@@ -369,6 +376,14 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         "p50"
     ] > 2_000
     assert results["follower_closes"]["winning"] == 1
+    assert results["operator_summary"]["real_orders"] is False
+    assert results["decision_readiness"]["live_promotion"] is False
+    assert results["policy_experiments"]["look_ahead"] is False
+    assert results["latency"]["median"] is not None
+    assert results["follower_portfolios"]["SHADOW_ALPHA"]["activity"]["event_outcomes"][
+        "simulated"
+    ] == 2
+    assert results["wallet_market_attribution"]["unattributed_net"] == "0"
     assert results["pool_results"]["SHADOW_ALPHA"]["activity"]["event_outcomes"][
         "simulated"
     ] == 2
@@ -385,11 +400,11 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         backup.backup_path,
         working_directory=tmp_path / "restore",
     )
-    assert restored.validation.continuous_shadow_schema_version == 3
+    assert restored.validation.continuous_shadow_schema_version == 4
     assert restored.validation.continuous_shadow_experiment_count == 1
     assert restored.validation.continuous_shadow_poll_count == 3
     assert restored.validation.continuous_shadow_event_count == 2
-    assert restored.validation.continuous_shadow_ledger_count == 4
+    assert restored.validation.continuous_shadow_ledger_count == 8
 
 
 @pytest.mark.asyncio
@@ -423,7 +438,7 @@ async def test_verified_settlement_closes_cross_run_positions_and_allows_finaliz
     finalized = service.finalize("polycop")
     results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
 
-    assert settled.settlement_count == 2
+    assert settled.settlement_count == 3
     assert finalized.lifecycle.value == "FINALIZED"
     assert results["open_position_count"] == 0
     assert results["accounting"]["ledger_balanced"] is True
@@ -681,8 +696,8 @@ async def test_ambiguous_closed_market_is_reported_as_settlement_backlog(tmp_pat
         "polycop", now=clock.value, poll_interval_seconds=60
     )
 
-    assert outcome.settlement_backlog_count == 2
-    assert health.settlement_backlog_count == 2
+    assert outcome.settlement_backlog_count == 3
+    assert health.settlement_backlog_count == 3
     assert "continuous_shadow_settlement_backlog" in health.reasons
 
 
@@ -745,8 +760,10 @@ async def test_combined_follower_does_not_reuse_liquidity_across_wallets(
     results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
 
     assert outcome.new_event_count == 2
-    assert outcome.simulated_count == 3
-    assert outcome.rejected_count == 1
+    assert outcome.simulated_count == 4
+    assert outcome.rejected_count == 2
+    assert Decimal(results["follower_activity"]["filled_size"]) <= Decimal("5")
+    assert Decimal(results["follower_activity"]["filled_size"]) > 0
     assert results["accounting"]["ledger_balanced"] is True
 
 
@@ -858,7 +875,7 @@ async def test_last_known_good_mark_is_retained_and_visible_in_health(tmp_path: 
         poll_interval_seconds=60,
     )
 
-    assert health.unmarked_position_count == 2
+    assert health.unmarked_position_count == 3
     assert "continuous_shadow_positions_unmarked" in health.reasons
     results = ContinuousShadowRepository(database).results(
         health.experiment.experiment_id,
@@ -866,3 +883,67 @@ async def test_last_known_good_mark_is_retained_and_visible_in_health(tmp_path: 
     )
     assert results["confidence"]["level"] == "LOW"
     assert "portfolio_valuation_not_fully_current" in results["confidence"]["limitations"]
+
+
+@pytest.mark.asyncio
+async def test_settlement_keeps_wallet_and_pool_attribution(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    _split_first_wallet_from_stress_into_alpha(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    service = _service(database, scenario, market, clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    alpha = next(item for item in candidates if item.alpha_rank is not None)
+    scenario.events[alpha.wallet_id] = [
+        _EventSpec(
+            "attr-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    market.closed = True
+    clock.value = NOW + timedelta(minutes=3)
+    await service.poll("polycop")
+    results = ContinuousShadowRepository(database).results(experiment.experiment_id, limit=10)
+
+    assert results["wallet_market_attribution"]["unattributed_net"] == "0"
+    assert results["pnl_decomposition"]["settlement_realized_pnl"] != "0"
+    assert alpha.wallet_id in results["wallet_market_attribution"]["wallets"]
+    assert results["follower_portfolios"]["SHADOW_ALPHA"]["closes"]["settlements"] == 1
+    assert results["follower_portfolios"]["SHADOW_STRESS"]["closes"]["settlements"] == 0
+
+
+@pytest.mark.asyncio
+async def test_terminal_order_book_404_is_negatively_cached(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    market.missing_tokens.add("token-yes")
+    service = _service(database, scenario, market, clock)
+    service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "missing-book",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    first = await service.poll("polycop")
+    first_requests = market.book_requests
+    clock.value = NOW + timedelta(minutes=3)
+    second = await service.poll("polycop")
+
+    assert first.unknown_count > 0
+    assert second.new_event_count == 0
+    assert market.book_requests == first_requests

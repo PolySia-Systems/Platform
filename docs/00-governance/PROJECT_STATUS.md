@@ -66,12 +66,15 @@ its exact-102 and BTC 15-minute safety invariants.
 
 ## Stage 4B Continuous Shadow deployment
 
-Continuous Shadow Portfolio v0.2 is CURRENT in `DATA_ONLY`. It preserves Stage
-4A, adds a separately versioned durable journal and synthetic portfolio ledger,
-and has no order authority. Migration v2 to v3, disposable restore, actual
-rollback to the prior v2 image and database, rollforward, monitor restart,
-checkpoint recovery, and natural timer runs all passed. The Stage 4B timer and
-the prior Stage 4A and daily timers are active. `3x-ui` was not restarted.
+Continuous Shadow Portfolio v0.2 / schema v3 remains the last verified Helsinki
+runtime at `d39f5b355b1d83ed2019a93c6647b8ceb1572e5f`. Schema v4 and the
+persistent DATA_ONLY worker exist in this repository and are not yet the
+verified deployed baseline.
+
+Schema v4 keeps the mixed FOLLOWER portfolio as a labeled baseline, adds empty
+Alpha and Stress followers, persists CLOSE/SETTLEMENT attribution, records mark
+source age, and negatively caches terminal order-book 404s. It has no order
+authority. Encrypted off-host backup is still absent. `3x-ui` is out of scope.
 
 The initial uninterrupted run exceeded 90 minutes with zero duplicate
 processing and a balanced ledger. A later operator-workflow interruption left
