@@ -5,9 +5,11 @@ flowchart LR
     N3["SQLite, minimal Strategy Registry, reconciliation, monitoring, backtesting"]:::current
     N4["SHADOW-only Control Kernel: versioned desired / observed state and audit"]:::current
     N5["Authenticated reads and bounded guarded tiny-live Copy tools"]:::risk
+    N6["Wallet Intelligence Stages 1-4B\nDATA_ONLY selection and continuous Shadow portfolio"]:::current
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
+    T0["Evidence-backed strategy validation\noff-host backup and external alerts"]:::target
     T1["Strategy orchestration and conflict resolution"]:::target
     T2["Portfolio and capital allocation"]:::target
     T3["OMS / Transaction Manager and generalized ledger"]:::target
@@ -16,7 +18,7 @@ flowchart LR
 
   subgraph LATER["Later optional capabilities [FUTURE]"]
     F1["Additional prediction markets, exchanges, and brokers"]:::future
-    F2["Generalized wallet intelligence and Copy Trading"]:::future
+    F2["Generalized automated Live Copy Trading"]:::future
     F3["Web3 / DeFi data and controlled execution"]:::future
     F4["Institutional hardening and justified high availability"]:::future
   end
@@ -27,6 +29,8 @@ flowchart LR
   N3 --> T3
   N4 --> T1
   N5 --> T4
+  N6 --> T0
+  T0 -.-> F2
   T1 -.-> F1
   T2 -.-> F2
   T3 -.-> F3

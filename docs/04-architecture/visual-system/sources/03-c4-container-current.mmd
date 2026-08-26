@@ -15,6 +15,7 @@ flowchart TB
 
     subgraph DECISION["Decision and control"]
       DomainPorts["Container: Domain Models and Application Ports\nvenue-neutral contracts"]:::domain
+      Services["Container: Application Services\nWallet Intelligence, selection, Shadow, protected handoff"]:::application
       Registry["Container: Minimal Strategy Registry\nversion, lifecycle, evidence"]:::strategy
       Strategies["Container: Strategy Framework\nresearch and bounded Copy strategies"]:::strategy
       Control["Container: SHADOW-only Control Kernel\nplan/apply, revisions, audit, intent gate"]:::application
@@ -36,6 +37,9 @@ flowchart TB
   CLI --> Ops
   CLI --> Adapter
   CLI --> Control
+  CLI --> Services
+  Services --> DomainPorts
+  Services ==>|pipeline and portfolio state| Storage
   Control ==>|desired/observed state and audit| Storage
   Control -.->|gates new stale-price Shadow intents only| Strategies
   Registry -.->|definition and lifecycle evidence| Strategies

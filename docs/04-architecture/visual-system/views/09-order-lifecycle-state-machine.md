@@ -5,7 +5,7 @@
 - **Scope:** Intent/risk pre-states, the current `OrderStatus` enum, observed paper transitions, and target submission/recovery states.
 - **Architecture status:** MIXED
 - **Audience:** Execution developers, risk reviewers, reconciliation developers, and testers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 

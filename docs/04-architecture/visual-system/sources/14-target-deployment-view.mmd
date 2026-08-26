@@ -1,36 +1,43 @@
 flowchart LR
-  Developer["Developer Workstation\n[TARGET]"]:::target
-  Operator["Operator Access\nstrong authentication and explicit live state\n[TARGET]"]:::target
-  CI["CI Pipeline\nquality, security, package, signed evidence\n[TARGET]"]:::target
+  Developer["Owner Workstation\nverified source and release archive\n[CURRENT]"]:::current
+  Operator["Operator Access\ncontrolled SSH and explicit runtime state\n[CURRENT]"]:::current
+  CI["GitHub CI\nquality, security, package evidence\n[CURRENT]"]:::current
 
-  subgraph HOST["Controlled single host or VPS [TARGET]"]
-    Runtime["PolySia modular-monolith runtime\nseparate paper / shadow / limited-live profiles"]:::target
-    SecretStore["Secrets boundary\nleast privilege, no research access"]:::risk
-    Database[("Persistent database\ntransactional state and audit")]:::target
-    Monitor["Monitoring and alerting\nhealth, risk, reconciliation"]:::target
-    Backup["Encrypted backup and restore evidence"]:::target
+  subgraph HOST["Controlled Helsinki host [CURRENT]"]
+    Runtime["PolySia modular-monolith runtime\nDATA_ONLY monitor and Shadow jobs; Live disabled"]:::current
+    SecretStore["Root-only runtime secrets boundary"]:::risk
+    Database[("Persistent SQLite state and audit")]:::current
+    Monitor["Local health, logs, reports, and timers"]:::current
+    Backup["Verified same-host backup and restore evidence"]:::current
   end
 
   Venue["Venue APIs\n[EXTERNAL]"]:::external
+  OffHost["Encrypted off-host backup\n[TARGET]"]:::target
+  Alerts["External alert delivery\n[TARGET]"]:::target
   HA["High-availability / failover boundary\n[FUTURE only after measured need]"]:::future
 
   Developer -->|versioned change| CI
-  CI -->|approved package| Runtime
+  CI -->|verified commit evidence| Developer
+  Developer -->|verified Git archive| Runtime
   Operator -->|controlled commands and approvals| Runtime
   SecretStore -->|runtime-only credentials| Runtime
-  Runtime ==>|orders, fills, ledger, audit| Database
+  Runtime ==>|events, evaluations, simulated fills, ledger, audit| Database
   Runtime -.->|metrics and alerts| Monitor
   Database ==>|backup| Backup
+  Backup -.->|approved encrypted copy| OffHost
+  Monitor -.->|health and failure events| Alerts
   Runtime --> Venue
   Runtime -.->|later replication / failover| HA
 
   subgraph LEGEND["Legend"]
-    L1["TARGET dashed"]:::target
-    L2["FUTURE dotted"]:::future
-    L3["EXTERNAL"]:::external
-    L4["SECRET / SAFETY"]:::risk
+    L1["CURRENT solid"]:::current
+    L2["TARGET dashed"]:::target
+    L3["FUTURE dotted"]:::future
+    L4["EXTERNAL"]:::external
+    L5["SECRET / SAFETY"]:::risk
   end
 
+  classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
   classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
   classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
   classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;

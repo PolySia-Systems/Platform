@@ -7,9 +7,10 @@ flowchart TB
   end
 
   subgraph CORE["Inner contracts [CURRENT]"]
-    Domain["domain/\nevents, market, orders, portfolio, risk, ledger, reconciliation"]:::domain
+    Domain["domain/\nevents, market, orders, portfolio, risk, ledger, reconciliation, copy trading, wallet intelligence"]:::domain
     Registry["domain/strategy/\nminimal registry models"]:::domain
     Ports["application/ports/\nprotocol contracts"]:::application
+    Services["application/services/\nWallet Intelligence, selection, Shadow, protected handoff"]:::application
   end
 
   subgraph CONTROL["Bounded operational control [CURRENT]"]
@@ -42,7 +43,10 @@ flowchart TB
   CLI --> Execution
   CLI --> ControlKernel
   CLI --> Storage
+  CLI --> Services
   Ports --> Domain
+  Services --> Ports
+  Services --> Domain
   Adapter --> Domain
   Adapter --> Bus
   Adapter --> SDK

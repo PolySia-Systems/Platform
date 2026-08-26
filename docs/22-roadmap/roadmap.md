@@ -12,7 +12,7 @@
   adapter diagnostics, server-clock preflight, runtime configuration reporting,
   bounded read retry, and verified recovery backup.
 - Platform maintenance: Python 3.14-only CI optimization, dependency security
-  fixes, exact Standards v0.1.1 enforcement, and repository identity cleanup.
+  fixes, exact Standards v0.4.0 enforcement, and repository identity cleanup.
 - Bounded control: a SHADOW-only Control Kernel for `stale-price@0.1.0` with
   immutable desired-state revisions, optimistic concurrency, idempotency,
   observed state, and audit history.

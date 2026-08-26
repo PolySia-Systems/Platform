@@ -5,7 +5,7 @@
 - **Scope:** Top-level `src/polysia` packages; individual classes are shown in focused diagrams instead.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, maintainers, reviewers, and onboarding engineers.
-- **Source commit:** `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
+- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
 
 ## Mermaid diagram
 
@@ -21,9 +21,10 @@ flowchart TB
   end
 
   subgraph CORE["Inner contracts [CURRENT]"]
-    Domain["domain/\nevents, market, orders, portfolio, risk, ledger, reconciliation"]:::domain
+    Domain["domain/\nevents, market, orders, portfolio, risk, ledger, reconciliation, copy trading, wallet intelligence"]:::domain
     Registry["domain/strategy/\nminimal registry models"]:::domain
     Ports["application/ports/\nprotocol contracts"]:::application
+    Services["application/services/\nWallet Intelligence, selection, Shadow, protected handoff"]:::application
   end
 
   subgraph CONTROL["Bounded operational control [CURRENT]"]
@@ -56,7 +57,10 @@ flowchart TB
   CLI --> Execution
   CLI --> ControlKernel
   CLI --> Storage
+  CLI --> Services
   Ports --> Domain
+  Services --> Ports
+  Services --> Domain
   Adapter --> Domain
   Adapter --> Bus
   Adapter --> SDK
@@ -121,10 +125,12 @@ Read from interface/operations packages through data/decision and execution/stat
 All boxes are real packages. The interface grouping includes the composition-only
 `cli.py` facade, responsibility-owned `cli_commands/`, and command-neutral
 `cli_support/`. The map also includes `control/`, the bounded registry models
-under `domain/strategy/`, and the current SDK version. The strategy-to-execution
-edge is an `OrderIntent` type dependency only; it does not represent a direct
-execution call or bypass of Risk. The traceability register provides path and
-test evidence.
+under `domain/strategy/`, and the current SDK version. Application services now
+coordinate Wallet Intelligence, copyability selection, dynamic and continuous
+Shadow evaluation, and the protected Live handoff; they depend inward through
+ports and domain contracts. The strategy-to-execution edge is an `OrderIntent`
+type dependency only; it does not represent a direct execution call or bypass
+of Risk. The traceability register provides path and test evidence.
 
 ## Target/future elements
 
