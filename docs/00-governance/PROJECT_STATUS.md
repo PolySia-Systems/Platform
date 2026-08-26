@@ -4,10 +4,10 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-25 |
+| Review date | 2026-08-26 |
 | Source-of-truth branch | `main` |
 | Audited repository baseline | `ac104c708100bf9fff7e632acefd89bf90b8e509` |
-| Last verified deployed baseline | `d39f5b355b1d83ed2019a93c6647b8ceb1572e5f` |
+| Last verified deployed baseline | `c49652565cd7ddab6432e3488ca73fa1c9c352b5` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Latest repository maintenance | Stage 4B deployed DATA_ONLY; Standards v0.4.0 adopted on `main` |
@@ -66,15 +66,13 @@ its exact-102 and BTC 15-minute safety invariants.
 
 ## Stage 4B Continuous Shadow deployment
 
-Continuous Shadow Portfolio v0.2 / schema v3 remains the last verified Helsinki
-runtime at `d39f5b355b1d83ed2019a93c6647b8ceb1572e5f`. Schema v4 and the
-persistent DATA_ONLY worker exist in this repository and are not yet the
-verified deployed baseline.
-
-Schema v4 keeps the mixed FOLLOWER portfolio as a labeled baseline, adds empty
-Alpha and Stress followers, persists CLOSE/SETTLEMENT attribution, records mark
-source age, and negatively caches terminal order-book 404s. It has no order
-authority. Encrypted off-host backup is still absent. `3x-ui` is out of scope.
+Continuous Shadow Portfolio v0.2 / schema v4 is CURRENT in `DATA_ONLY` on
+`Hetzner-Finland-Helsinki-01` at exact merge commit
+`c49652565cd7ddab6432e3488ca73fa1c9c352b5` (PR `#92`). The mixed FOLLOWER
+portfolio remains the labeled baseline. Independent Alpha and Stress followers
+started empty after migration. CLOSE/SETTLEMENT attribution, rolling 1h/6h/24h
+health, mark freshness, and a persistent fenced worker are active. Encrypted
+off-host backup is still absent. `3x-ui` was not restarted.
 
 The initial uninterrupted run exceeded 90 minutes with zero duplicate
 processing and a balanced ledger. A later operator-workflow interruption left
