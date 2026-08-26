@@ -125,6 +125,13 @@ settlement backlog, lifecycle, and Decimal ledger consistency. Critical
 staleness, duplicate processing, unbalanced accounting, or a finalized
 experiment with positions fails closed.
 
+Operational health publication is downstream of the atomic poll transaction. A
+temporary SQLite lock or artifact-write failure during that publication cannot
+invalidate a successful poll or terminate the persistent worker. The existing
+atomic artifact remains last-known-good, while the interval output records a
+sanitized `health_refresh` category and stage. Settlement backlog age measures
+the current uninterrupted nonzero-backlog episode, not the most recent poll.
+
 The schema is additive version 4 in the protected wallet-intelligence database.
 Version 4 preserves CLOSE/SETTLEMENT Wallet, Pool, market, and event attribution,
 adds independent Alpha and Stress follower portfolios, records mark source age,
@@ -158,6 +165,9 @@ an incomplete valuation as reconciled.
 
 - Stage 4A schema and behavior remain unchanged.
 - Restart and overlapping polls cannot duplicate events, fills, fees, or ledger entries.
+- Stage 4A overlap or operational-report contention cannot terminate the Stage
+  4B worker; transient SQLite-busy failures retain durable prior state and are
+  retried only on the next normal poll interval.
 - Cross-run sells use persistent inventory and verified settlements close positions.
 - Independent wallets, the labeled mixed baseline follower, and separate Alpha
   and Stress followers produce distinguishable evidence.
@@ -171,6 +181,5 @@ an incomplete valuation as reconciled.
 - Fee provenance is market-specific or `UNKNOWN`; no flat 2% assumption is used.
 - Accounting identity and signed ledger reconstruction are Decimal-consistent.
 - Failure keeps last known good state; backup, real restore, and restart pass.
-- Compose and systemd force `DATA_ONLY` and `LIVE_TRADING_ENABLED=false`.
 - No Stage 4B domain or application module imports Risk, Execution, strategy,
   wallet, signing, cancellation, or trading-authority code.

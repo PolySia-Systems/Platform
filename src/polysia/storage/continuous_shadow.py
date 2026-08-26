@@ -943,27 +943,24 @@ class ContinuousShadowRepository:
                 if latest_failure is None or latest_failure["failed_at"] is None
                 else _datetime(str(latest_failure["failed_at"]))
             )
-            latest_succeeded = connection.execute(
-                "SELECT completed_at, settlement_backlog_count "
-                "FROM continuous_shadow_poll_runs "
-                "WHERE experiment_id = ? AND status = 'succeeded' AND completed_at IS NOT NULL "
-                "ORDER BY completed_at DESC LIMIT 1",
-                (experiment.experiment_id,),
-            ).fetchone()
             settlement_backlog_age_seconds = None
-            if (
-                settlement_backlog_count
-                and latest_succeeded is not None
-                and latest_succeeded["completed_at"] is not None
-            ):
-                settlement_backlog_age_seconds = max(
-                    0,
-                    int(
-                        (
-                            now - _datetime(str(latest_succeeded["completed_at"]))
-                        ).total_seconds()
-                    ),
-                )
+            if settlement_backlog_count:
+                backlog_started = connection.execute(
+                    "SELECT MIN(completed_at) FROM continuous_shadow_poll_runs "
+                    "WHERE experiment_id = ? AND status = 'succeeded' "
+                    "AND completed_at IS NOT NULL AND settlement_backlog_count > 0 "
+                    "AND completed_at > COALESCE(("
+                    "SELECT MAX(completed_at) FROM continuous_shadow_poll_runs "
+                    "WHERE experiment_id = ? AND status = 'succeeded' "
+                    "AND completed_at IS NOT NULL AND settlement_backlog_count = 0"
+                    "), '')",
+                    (experiment.experiment_id, experiment.experiment_id),
+                ).fetchone()[0]
+                if backlog_started is not None:
+                    settlement_backlog_age_seconds = max(
+                        0,
+                        int((now - _datetime(str(backlog_started))).total_seconds()),
+                    )
             elif not settlement_backlog_count:
                 settlement_backlog_age_seconds = 0
             operator_summary = _operator_summary_from_connection(

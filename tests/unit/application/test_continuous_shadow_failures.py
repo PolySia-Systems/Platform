@@ -14,6 +14,7 @@ from polysia.application.services.continuous_shadow_failures import (
     FAILURE_STAGE_COLLECT_EVENTS,
     FAILURE_STAGE_MARKET_READ,
     FAILURE_STAGE_PERSIST,
+    FAILURE_STAGE_REPORT_HEALTH,
     classify_continuous_shadow_failure,
     decode_failure_code,
     encode_failure_code,
@@ -68,6 +69,16 @@ def test_sqlite_busy_in_cause_chain_is_not_masked_by_wrapper() -> None:
     classified = classify_continuous_shadow_failure(wrapped, stage=FAILURE_STAGE_PERSIST)
     assert classified.category == FAILURE_CATEGORY_SQLITE_BUSY
     assert classified.stage == FAILURE_STAGE_PERSIST
+
+
+def test_health_refresh_sqlite_busy_uses_sanitized_reporting_stage() -> None:
+    classified = classify_continuous_shadow_failure(
+        sqlite3.OperationalError("database is locked"),
+        stage=FAILURE_STAGE_REPORT_HEALTH,
+    )
+
+    assert classified.category == FAILURE_CATEGORY_SQLITE_BUSY
+    assert classified.stage == FAILURE_STAGE_REPORT_HEALTH
 
 
 def test_encode_decode_round_trip_and_address_redaction() -> None:
