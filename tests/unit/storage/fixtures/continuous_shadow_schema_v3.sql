@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 4),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 3),
     initialized_at TEXT NOT NULL
 );
 
@@ -110,9 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_continuous_shadow_journal_wallet
 CREATE TABLE IF NOT EXISTS continuous_shadow_portfolios (
     experiment_id TEXT NOT NULL,
     portfolio_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(
-        kind IN ('WALLET', 'FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS')
-    ),
+    kind TEXT NOT NULL CHECK(kind IN ('WALLET', 'FOLLOWER')),
     wallet_id TEXT,
     initial_cash TEXT NOT NULL,
     cash TEXT NOT NULL,
@@ -130,9 +128,8 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_portfolios (
     FOREIGN KEY(wallet_id) REFERENCES canonical_wallets(wallet_id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_follower_kind
-    ON continuous_shadow_portfolios(experiment_id, kind)
-    WHERE kind IN ('FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_follower
+    ON continuous_shadow_portfolios(experiment_id) WHERE kind = 'FOLLOWER';
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_positions (
     experiment_id TEXT NOT NULL,
@@ -153,22 +150,14 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_positions (
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_follower_attribution (
     experiment_id TEXT NOT NULL,
-    portfolio_id TEXT NOT NULL,
     wallet_id TEXT NOT NULL,
     market_reference TEXT NOT NULL,
     outcome_reference TEXT NOT NULL,
     quantity TEXT NOT NULL,
     cost_basis TEXT NOT NULL,
-    pool_class TEXT NOT NULL,
-    last_event_id TEXT,
-    PRIMARY KEY(
-        experiment_id, portfolio_id, wallet_id, market_reference, outcome_reference
-    ),
+    PRIMARY KEY(experiment_id, wallet_id, market_reference, outcome_reference),
     FOREIGN KEY(experiment_id, wallet_id)
         REFERENCES continuous_shadow_candidates(experiment_id, wallet_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY(experiment_id, portfolio_id)
-        REFERENCES continuous_shadow_portfolios(experiment_id, portfolio_id)
         ON DELETE CASCADE
 );
 
@@ -228,7 +217,7 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_liquidity_consumption (
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_ledger (
     experiment_id TEXT NOT NULL,
-    entry_id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
     poll_run_id TEXT NOT NULL,
     portfolio_id TEXT NOT NULL,
     event_id TEXT,
@@ -243,8 +232,7 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_ledger (
     realized_pnl_delta TEXT NOT NULL,
     fee_delta TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    wallet_id TEXT,
-    pool_class TEXT,
+    PRIMARY KEY(experiment_id, entry_id),
     FOREIGN KEY(poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id),
     FOREIGN KEY(experiment_id, portfolio_id)
         REFERENCES continuous_shadow_portfolios(experiment_id, portfolio_id)
@@ -262,22 +250,10 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_position_marks (
     unrealized_pnl TEXT,
     mark_status TEXT NOT NULL,
     marked_at TEXT NOT NULL,
-    source_timestamp TEXT,
-    source_age_ms INTEGER,
-    freshness TEXT NOT NULL DEFAULT 'MISSING',
     PRIMARY KEY(experiment_id, poll_run_id, portfolio_id, market_reference, outcome_reference),
     FOREIGN KEY(poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id),
     FOREIGN KEY(experiment_id, portfolio_id)
         REFERENCES continuous_shadow_portfolios(experiment_id, portfolio_id)
-);
-
-CREATE TABLE IF NOT EXISTS continuous_shadow_terminal_book_cache (
-    token_id TEXT PRIMARY KEY,
-    reason TEXT NOT NULL CHECK(reason IN ('TERMINAL_404', 'MARKET_CLOSED')),
-    first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    hit_count INTEGER NOT NULL DEFAULT 1 CHECK(hit_count >= 1)
 );
 
 CREATE VIEW IF NOT EXISTS continuous_shadow_portfolio_current AS

@@ -1,5 +1,6 @@
 [Unit]
-Description=Poll PolySia continuous Shadow portfolios every minute
+Description=Optional oneshot fallback for schema-v3 Continuous Shadow images
+Documentation=file:/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
 
 [Timer]
 OnCalendar=*-*-* *:*:00 UTC

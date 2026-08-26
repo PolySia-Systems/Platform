@@ -125,13 +125,20 @@ settlement backlog, lifecycle, and Decimal ledger consistency. Critical
 staleness, duplicate processing, unbalanced accounting, or a finalized
 experiment with positions fails closed.
 
-The schema is additive version 3 in the protected wallet-intelligence database.
-Version 3 records the atomically committed event processing state and the latest
-known settlement backlog. Its v2-to-v3 migration is transactional and idempotent.
-Backup and disposable restore validation verify both Stage 4A v1 and Stage 4B v3
-counts. A failed source, market, quote, calculation, or transaction records a safe
+The schema is additive version 4 in the protected wallet-intelligence database.
+Version 4 preserves CLOSE/SETTLEMENT Wallet, Pool, market, and event attribution,
+adds independent Alpha and Stress follower portfolios, records mark source age,
+and stores a bounded terminal order-book negative cache. The mixed FOLLOWER
+portfolio remains the labeled baseline and is not replaced by price-drift or
+other counterfactual policies. Walk-forward policy experiments are report-time
+filters on recorded fills. Schema v3-to-v4 migration is transactional and
+idempotent. Backup and disposable restore validation verify Stage 4A v1 and
+Stage 4B v4 counts. Encrypted off-host backup is not part of this schema; if no
+approved destination exists, that operational gap remains. A failed source, market, quote, calculation, or transaction records a safe
 poll failure without advancing the watermark or replacing the last known good
-portfolio. Code rollback disables the Stage 4B timer. A rollback from schema v3
+portfolio. Code rollback disables the Stage 4B persistent worker, restores the
+pre-migration backup, and re-enables the optional oneshot timer only when the
+prior schema-v3 image is restored. A rollback from schema v3
 to prior schema-v2 code additionally restores the verified pre-migration
 database backup; a code-only switch intentionally fails closed rather than
 running against an unsupported schema. The v3 database is preserved separately
@@ -152,7 +159,14 @@ an incomplete valuation as reconciled.
 - Stage 4A schema and behavior remain unchanged.
 - Restart and overlapping polls cannot duplicate events, fills, fees, or ledger entries.
 - Cross-run sells use persistent inventory and verified settlements close positions.
-- Independent wallets and the combined follower produce separate evidence.
+- Independent wallets, the labeled mixed baseline follower, and separate Alpha
+  and Stress followers produce distinguishable evidence.
+- CLOSE and SETTLEMENT ledger rows retain Wallet, Pool, market, and event
+  attribution.
+- Rolling 1h/6h/24h unknown ratios are reported separately from initialization
+  backlog.
+- Compose and systemd force `DATA_ONLY` and `LIVE_TRADING_ENABLED=false`.
+- The persistent worker has no order authority.
 - Shared follower liquidity is consumed once and supports deterministic partial fills.
 - Fee provenance is market-specific or `UNKNOWN`; no flat 2% assumption is used.
 - Accounting identity and signed ledger reconstruction are Decimal-consistent.

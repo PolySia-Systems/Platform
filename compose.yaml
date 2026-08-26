@@ -272,6 +272,7 @@ services:
       - "${POLYSIA_CONTINUOUS_SHADOW_INITIAL_LOOKBACK_MINUTES:-15}"
       - --overlap-seconds
       - "${POLYSIA_CONTINUOUS_SHADOW_OVERLAP_SECONDS:-30}"
+      - --loop
     user: "10001:10001"
     read_only: true
     tmpfs:

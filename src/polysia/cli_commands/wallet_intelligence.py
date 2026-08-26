@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
+import time
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -694,6 +696,13 @@ def portfolio_sync(
     overlap_seconds: Annotated[
         int, typer.Option("--overlap-seconds", min=0, max=300)
     ] = 30,
+    loop: Annotated[
+        bool,
+        typer.Option(
+            "--loop",
+            help="Keep a fenced persistent worker alive between polls.",
+        ),
+    ] = False,
 ) -> None:
     """Poll new leader trades and atomically advance persistent Shadow portfolios."""
     try:
@@ -716,13 +725,51 @@ def portfolio_sync(
                 overlap_seconds=overlap_seconds,
             ),
         )
-        outcome = asyncio.run(service.poll(_source(source).source_id))
-        report = ContinuousShadowRepository(database).health(
-            _source(source).source_id,
-            now=datetime.now(UTC),
-            poll_interval_seconds=poll_interval_seconds,
-        )
-        write_wallet_intelligence_health_payload(report.to_dict(), health_report)
+        source_id = _source(source).source_id
+        if not loop:
+            _emit_portfolio_poll(
+                service,
+                source_id,
+                database,
+                health_report,
+                poll_interval_seconds,
+            )
+            return
+        running = True
+
+        def _stop(*_unused_signals: object) -> None:
+            nonlocal running
+            running = False
+
+        signal.signal(signal.SIGTERM, _stop)
+        signal.signal(signal.SIGINT, _stop)
+        while running:
+            started = time.monotonic()
+            try:
+                _emit_portfolio_poll(
+                    service,
+                    source_id,
+                    database,
+                    health_report,
+                    poll_interval_seconds,
+                )
+            except (CandidatePipelineBusyError, CandidatePipelineLeaseLostError) as error:
+                typer.echo(
+                    json.dumps(
+                        {
+                            "error_code": getattr(error, "error_code", "lease_busy"),
+                            "message": (
+                                "Persistent Shadow worker skipped a busy poll; "
+                                "no order was sent."
+                            ),
+                            "status": "skipped",
+                        },
+                        sort_keys=True,
+                    )
+                )
+            remaining = poll_interval_seconds - (time.monotonic() - started)
+            if running and remaining > 0:
+                time.sleep(remaining)
     except (
         ContinuousShadowError,
         ContinuousShadowStoreError,
@@ -732,6 +779,22 @@ def portfolio_sync(
         ValueError,
     ) as error:
         _emit_continuous_shadow_failure(error)
+
+
+def _emit_portfolio_poll(
+    service: ContinuousShadowService,
+    source_id: str,
+    database: Path,
+    health_report: Path,
+    poll_interval_seconds: int,
+) -> None:
+    outcome = asyncio.run(service.poll(source_id))
+    report = ContinuousShadowRepository(database).health(
+        source_id,
+        now=datetime.now(UTC),
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    write_wallet_intelligence_health_payload(report.to_dict(), health_report)
     payload = outcome.to_dict()
     payload["health"] = report.to_dict()
     typer.echo(json.dumps(payload, sort_keys=True))

@@ -22,6 +22,24 @@ class ContinuousShadowLifecycle(StrEnum):
 class ContinuousPortfolioKind(StrEnum):
     WALLET = "WALLET"
     FOLLOWER = "FOLLOWER"
+    FOLLOWER_ALPHA = "FOLLOWER_ALPHA"
+    FOLLOWER_STRESS = "FOLLOWER_STRESS"
+
+
+FOLLOWER_KIND_SPECS: tuple[tuple[str, ContinuousPortfolioKind, frozenset[str] | None], ...] = (
+    ("follower", ContinuousPortfolioKind.FOLLOWER, None),
+    (
+        "follower-alpha",
+        ContinuousPortfolioKind.FOLLOWER_ALPHA,
+        frozenset({"ALPHA", "ALPHA_STRESS"}),
+    ),
+    (
+        "follower-stress",
+        ContinuousPortfolioKind.FOLLOWER_STRESS,
+        frozenset({"STRESS", "ALPHA_STRESS"}),
+    ),
+)
+FOLLOWER_KINDS = frozenset(kind for _, kind, _ in FOLLOWER_KIND_SPECS)
 
 
 class ContinuousEvaluationStatus(StrEnum):
@@ -49,6 +67,8 @@ class ContinuousShadowConfig:
     policy_version: str = "continuous-shadow-policy-v0.2"
     cost_model_version: str = "polymarket-fee-depth-delay-v0.2"
     bankroll_version: str = "synthetic-bankroll-v0.2"
+    price_drift_max_ratio: Decimal | None = None
+    negative_cache_ttl_seconds: int = 21_600
 
     def __post_init__(self) -> None:
         decimal_values = (
@@ -78,6 +98,14 @@ class ContinuousShadowConfig:
             raise ValueError("initial_lookback_minutes must be within [1, 1440]")
         if not 0 <= self.overlap_seconds <= 300:
             raise ValueError("overlap_seconds must be within [0, 300]")
+        if self.price_drift_max_ratio is not None and (
+            not self.price_drift_max_ratio.is_finite()
+            or self.price_drift_max_ratio < ZERO
+            or self.price_drift_max_ratio > ONE
+        ):
+            raise ValueError("price_drift_max_ratio must be None or within [0, 1]")
+        if not 60 <= self.negative_cache_ttl_seconds <= 86_400:
+            raise ValueError("negative_cache_ttl_seconds must be within [60, 86400]")
         for value in (self.policy_version, self.cost_model_version, self.bankroll_version):
             if not value.strip():
                 raise ValueError("continuous Shadow versions must not be empty")
@@ -101,8 +129,14 @@ class ContinuousShadowConfig:
             "maximum_event_notional": format(self.maximum_event_notional, "f"),
             "maximum_forward_delay_ms": self.maximum_forward_delay_ms,
             "maximum_quote_age_ms": self.maximum_quote_age_ms,
+            "negative_cache_ttl_seconds": self.negative_cache_ttl_seconds,
             "overlap_seconds": self.overlap_seconds,
             "policy_version": self.policy_version,
+            "price_drift_max_ratio": (
+                None
+                if self.price_drift_max_ratio is None
+                else format(self.price_drift_max_ratio, "f")
+            ),
             "wallet_bankroll": format(self.wallet_bankroll, "f"),
             "wallet_maximum_exposure": format(self.wallet_maximum_exposure, "f"),
         }
@@ -315,6 +349,54 @@ def verified_settlement_prices(market: MarketDetails | None) -> dict[str, Decima
     return prices
 
 
+def follower_accepts_pool(kind: ContinuousPortfolioKind, pool_class: str) -> bool:
+    for _, follower_kind, accepted in FOLLOWER_KIND_SPECS:
+        if kind is follower_kind:
+            return accepted is None or pool_class in accepted
+    return False
+
+
+def adverse_price_drift_exceeded(
+    *,
+    action: LeaderTradeAction,
+    price_movement: Decimal,
+    gross_notional: Decimal,
+    maximum_ratio: Decimal | None,
+) -> bool:
+    """Return True when a BUY fill's adverse move exceeds the configured ratio.
+
+    The baseline policy keeps ``maximum_ratio`` as None and never filters.
+    """
+
+    if maximum_ratio is None or action is not LeaderTradeAction.BUY or gross_notional <= ZERO:
+        return False
+    return price_movement / gross_notional > maximum_ratio
+
+
+def mark_freshness(
+    *,
+    mark_status: str,
+    source_timestamp: datetime | None,
+    evaluated_at: datetime,
+    maximum_age_ms: int,
+) -> tuple[int | None, str]:
+    """Return (source_age_ms, freshness) for operator reporting."""
+
+    if source_timestamp is None:
+        return None, "MISSING"
+    age = evaluated_at - source_timestamp
+    age_ms = max(0, int(age.total_seconds() * 1000))
+    if mark_status == "VERIFIED_SETTLEMENT":
+        return age_ms, "VERIFIED_SETTLEMENT"
+    if mark_status == "VERIFIED_EXECUTABLE_BID" and age <= timedelta(milliseconds=maximum_age_ms):
+        return age_ms, "FRESH"
+    if mark_status == "LAST_KNOWN_GOOD":
+        return age_ms, "STALE_LAST_KNOWN_GOOD"
+    if mark_status == "VERIFIED_EXECUTABLE_BID":
+        return age_ms, "STALE"
+    return age_ms, "MISSING"
+
+
 __all__ = [
     "BookWalk",
     "ContinuousEvaluationStatus",
@@ -323,8 +405,13 @@ __all__ = [
     "ContinuousPosition",
     "ContinuousShadowConfig",
     "ContinuousShadowLifecycle",
+    "FOLLOWER_KINDS",
+    "FOLLOWER_KIND_SPECS",
     "FeeEvidence",
+    "adverse_price_drift_exceeded",
     "calculate_verified_taker_fee",
+    "follower_accepts_pool",
+    "mark_freshness",
     "quote_is_fresh",
     "verified_settlement_prices",
     "walk_order_book",

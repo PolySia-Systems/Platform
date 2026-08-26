@@ -122,3 +122,64 @@ def test_settlement_requires_closed_complete_exact_zero_one_outcomes() -> None:
         "no": Decimal("0"),
     }
     assert verified_settlement_prices(ambiguous) is None
+
+
+def test_adverse_drift_is_disabled_in_the_baseline_policy() -> None:
+    from polysia.domain.copytrading.continuous_shadow import adverse_price_drift_exceeded
+
+    assert (
+        adverse_price_drift_exceeded(
+            action=LeaderTradeAction.BUY,
+            price_movement=Decimal("1"),
+            gross_notional=Decimal("10"),
+            maximum_ratio=None,
+        )
+        is False
+    )
+    assert (
+        adverse_price_drift_exceeded(
+            action=LeaderTradeAction.BUY,
+            price_movement=Decimal("1"),
+            gross_notional=Decimal("10"),
+            maximum_ratio=Decimal("0.05"),
+        )
+        is True
+    )
+
+
+def test_walk_forward_does_not_use_future_fills_for_wallet_evidence() -> None:
+    from datetime import timedelta
+
+    from polysia.domain.copytrading.continuous_shadow_experiments import (
+        RecordedShadowFill,
+        walk_forward_policy_report,
+    )
+
+    fills = tuple(
+        RecordedShadowFill(
+            evaluated_at=NOW + timedelta(hours=index),
+            wallet_id="wallet-a",
+            pool_class="ALPHA",
+            action=LeaderTradeAction.BUY,
+            leader_price=Decimal("0.40"),
+            follower_price=Decimal("0.41"),
+            filled_size=Decimal("5"),
+            gross_notional=Decimal("2.05"),
+            fee=Decimal("0.01"),
+            price_movement=Decimal("0.05"),
+            spread_cost=Decimal("0.01"),
+            depth_impact=Decimal("0"),
+            realized_pnl=None,
+            status="SIMULATED",
+        )
+        for index in range(6)
+    )
+    report = walk_forward_policy_report(fills, split_at=NOW + timedelta(hours=2))
+    wallet_policy = next(
+        item for item in report["policies"] if item["policy_id"] == "wallet-min-evidence-3"
+    )
+
+    assert report["look_ahead"] is False
+    assert report["claim"] == "not_a_profitability_or_live_promotion_result"
+    assert wallet_policy["in_sample"]["buy_count"] == 0
+    assert wallet_policy["out_of_sample"]["buy_count"] == 3

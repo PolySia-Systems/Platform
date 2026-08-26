@@ -21,18 +21,24 @@ from polysia.application.ports.continuous_shadow import (
     FollowerAttribution,
 )
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
+from polysia.domain.copytrading import LeaderTradeAction
 from polysia.domain.copytrading.continuous_shadow import (
+    FOLLOWER_KIND_SPECS,
     ContinuousPortfolio,
     ContinuousPortfolioKind,
     ContinuousPosition,
     ContinuousShadowConfig,
     ContinuousShadowLifecycle,
 )
+from polysia.domain.copytrading.continuous_shadow_experiments import (
+    RecordedShadowFill,
+    walk_forward_policy_report,
+)
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
-CONTINUOUS_SHADOW_SCHEMA_VERSION = 3
+CONTINUOUS_SHADOW_SCHEMA_VERSION = 4
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
@@ -141,21 +147,24 @@ class ContinuousShadowRepository:
                 reset_active=False,
                 wallet_bankroll=config.wallet_bankroll,
             )
-            connection.execute(
-                "INSERT INTO continuous_shadow_portfolios "
-                "(experiment_id, portfolio_id, kind, wallet_id, initial_cash, cash, "
-                "realized_pnl, unrealized_pnl, fees, nav, high_water_nav, drawdown, "
-                "exposure, updated_at) VALUES (?, 'follower', 'FOLLOWER', NULL, ?, ?, "
-                "'0', '0', '0', ?, ?, '0', '0', ?)",
-                (
-                    experiment_id,
-                    _decimal(config.follower_bankroll),
-                    _decimal(config.follower_bankroll),
-                    _decimal(config.follower_bankroll),
-                    _decimal(config.follower_bankroll),
-                    _iso(started_at),
-                ),
-            )
+            for portfolio_id, kind, _accepted in FOLLOWER_KIND_SPECS:
+                connection.execute(
+                    "INSERT INTO continuous_shadow_portfolios "
+                    "(experiment_id, portfolio_id, kind, wallet_id, initial_cash, cash, "
+                    "realized_pnl, unrealized_pnl, fees, nav, high_water_nav, drawdown, "
+                    "exposure, updated_at) VALUES (?, ?, ?, NULL, ?, ?, "
+                    "'0', '0', '0', ?, ?, '0', '0', ?)",
+                    (
+                        experiment_id,
+                        portfolio_id,
+                        kind.value,
+                        _decimal(config.follower_bankroll),
+                        _decimal(config.follower_bankroll),
+                        _decimal(config.follower_bankroll),
+                        _decimal(config.follower_bankroll),
+                        _iso(started_at),
+                    ),
+                )
             connection.commit()
             row = connection.execute(
                 "SELECT * FROM continuous_shadow_experiments WHERE experiment_id = ?",
@@ -344,9 +353,71 @@ class ContinuousShadowRepository:
                 outcome_reference=str(row["outcome_reference"]),
                 quantity=Decimal(str(row["quantity"])),
                 cost_basis=Decimal(str(row["cost_basis"])),
+                portfolio_id=str(row["portfolio_id"]),
+                pool_class=str(row["pool_class"]),
+                last_event_id=(
+                    None if row["last_event_id"] is None else str(row["last_event_id"])
+                ),
             )
             for row in rows
         )
+
+    def terminal_book_cache(
+        self,
+        token_ids: tuple[str, ...],
+        *,
+        now: datetime,
+    ) -> dict[str, str]:
+        if not token_ids:
+            return {}
+        now = _utc(now)
+        cached: dict[str, str] = {}
+        connection = self._connect()
+        try:
+            placeholders = ",".join("?" for _ in token_ids)
+            rows = connection.execute(
+                "SELECT token_id, reason, expires_at, hit_count "
+                f"FROM continuous_shadow_terminal_book_cache "
+                f"WHERE token_id IN ({placeholders}) AND expires_at > ?",
+                (*token_ids, _iso(now)),
+            ).fetchall()
+            for row in rows:
+                cached[str(row["token_id"])] = str(row["reason"])
+                connection.execute(
+                    "UPDATE continuous_shadow_terminal_book_cache "
+                    "SET hit_count = hit_count + 1, last_seen_at = ? WHERE token_id = ?",
+                    (_iso(now), str(row["token_id"])),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return cached
+
+    def remember_terminal_books(
+        self,
+        entries: tuple[tuple[str, str], ...],
+        *,
+        now: datetime,
+        ttl_seconds: int,
+    ) -> None:
+        if not entries:
+            return
+        now = _utc(now)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        connection = self._connect()
+        try:
+            for token_id, reason in entries:
+                connection.execute(
+                    "INSERT INTO continuous_shadow_terminal_book_cache "
+                    "(token_id, reason, first_seen_at, last_seen_at, expires_at, hit_count) "
+                    "VALUES (?, ?, ?, ?, ?, 1) "
+                    "ON CONFLICT(token_id) DO UPDATE SET reason = excluded.reason, "
+                    "last_seen_at = excluded.last_seen_at, expires_at = excluded.expires_at",
+                    (token_id, reason, _iso(now), _iso(now), _iso(expires_at)),
+                )
+            connection.commit()
+        finally:
+            connection.close()
 
     def start_poll(
         self,
@@ -551,15 +622,19 @@ class ContinuousShadowRepository:
                     continue
                 connection.execute(
                     "INSERT INTO continuous_shadow_follower_attribution "
-                    "(experiment_id, wallet_id, market_reference, outcome_reference, "
-                    "quantity, cost_basis) VALUES (?, ?, ?, ?, ?, ?)",
+                    "(experiment_id, portfolio_id, wallet_id, market_reference, "
+                    "outcome_reference, quantity, cost_basis, pool_class, last_event_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         experiment.experiment_id,
+                        attribution_row.portfolio_id,
                         attribution_row.wallet_id,
                         attribution_row.market_reference,
                         attribution_row.outcome_reference,
                         _decimal(attribution_row.quantity),
                         _decimal(attribution_row.cost_basis),
+                        attribution_row.pool_class,
+                        attribution_row.last_event_id,
                     ),
                 )
             for ledger_row in completion.ledger:
@@ -817,6 +892,22 @@ class ContinuousShadowRepository:
                 ).fetchone()[0]
             )
             ledger_balanced = _ledger_balanced(connection, experiment.experiment_id)
+            initialization_unknown_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM continuous_shadow_evaluations "
+                    "WHERE experiment_id = ? AND status = 'UNKNOWN' "
+                    "AND reason IN ("
+                    "'source_and_signal_delay_exceeded', "
+                    "'current_order_book_unavailable'"
+                    ")",
+                    (experiment.experiment_id,),
+                ).fetchone()[0]
+            )
+            rolling_windows = _rolling_health_windows(
+                connection,
+                experiment.experiment_id,
+                now=now,
+            )
         finally:
             connection.close()
         reasons: list[str] = []
@@ -845,9 +936,15 @@ class ContinuousShadowRepository:
             if evaluation_count == 0
             else Decimal(unknown_count) / Decimal(evaluation_count)
         )
-        if unknown_ratio is not None and unknown_ratio > Decimal("0.5"):
-            reasons.append("continuous_shadow_unknown_ratio_high")
+        rolling_1h = rolling_windows.get("1h")
+        rolling_unknown = (
+            rolling_1h.get("unknown_ratio") if isinstance(rolling_1h, dict) else None
+        )
+        if isinstance(rolling_unknown, str) and Decimal(rolling_unknown) > Decimal("0.5"):
+            reasons.append("continuous_shadow_rolling_1h_unknown_ratio_high")
             level = "warning" if level == "healthy" else level
+        elif unknown_ratio is not None and unknown_ratio > Decimal("0.5"):
+            reasons.append("continuous_shadow_cumulative_unknown_includes_initialization_backlog")
         if unknown_fee_count:
             reasons.append("continuous_shadow_fee_provenance_unknown")
             level = "warning" if level == "healthy" else level
@@ -886,6 +983,8 @@ class ContinuousShadowRepository:
             unknown_fee_count=unknown_fee_count,
             open_position_count=open_position_count,
             settlement_backlog_count=settlement_backlog_count,
+            rolling_windows=rolling_windows,
+            initialization_unknown_count=initialization_unknown_count,
         )
 
     def results(self, experiment_id: str, *, limit: int) -> dict[str, object]:
@@ -899,7 +998,7 @@ class ContinuousShadowRepository:
             ).fetchone()
             if experiment_row is None:
                 raise ContinuousShadowStoreError("Continuous Shadow experiment is unavailable.")
-            follower = connection.execute(
+            followers = connection.execute(
                 "SELECT p.*, (SELECT COUNT(*) FROM continuous_shadow_positions x "
                 "WHERE x.experiment_id = p.experiment_id "
                 "AND x.portfolio_id = p.portfolio_id) AS open_position_count, "
@@ -915,9 +1014,14 @@ class ContinuousShadowRepository:
                 "), 'MISSING') <> 'VERIFIED_EXECUTABLE_BID') "
                 "AS unmarked_position_count "
                 "FROM continuous_shadow_portfolios p WHERE p.experiment_id = ? "
-                "AND p.kind = 'FOLLOWER'",
+                "AND p.kind IN ('FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS') "
+                "ORDER BY p.kind",
                 (experiment_id,),
-            ).fetchone()
+            ).fetchall()
+            follower = next(
+                (row for row in followers if str(row["kind"]) == "FOLLOWER"),
+                None,
+            )
             status_rows = connection.execute(
                 "SELECT pool_class, status, COUNT(*) AS count FROM continuous_shadow_evaluations "
                 "WHERE experiment_id = ? GROUP BY pool_class, status "
@@ -1007,7 +1111,8 @@ class ContinuousShadowRepository:
             ).fetchall()
             close_rows = connection.execute(
                 "SELECT l.portfolio_id, p.kind, p.wallet_id, l.entry_type, "
-                "l.realized_pnl_delta, l.fee_delta, e.pool_class "
+                "l.realized_pnl_delta, l.fee_delta, l.wallet_id AS ledger_wallet_id, "
+                "l.pool_class AS ledger_pool_class, l.market_reference, e.pool_class "
                 "FROM continuous_shadow_ledger l "
                 "JOIN continuous_shadow_portfolios p ON p.experiment_id = l.experiment_id "
                 "AND p.portfolio_id = l.portfolio_id "
@@ -1053,6 +1158,62 @@ class ContinuousShadowRepository:
             duplicate_processing_count = _duplicate_processing_count(
                 connection, experiment_id
             )
+            pnl_decomposition_rows = connection.execute(
+                "SELECT entry_type, realized_pnl_delta, fee_delta "
+                "FROM continuous_shadow_ledger WHERE experiment_id = ? "
+                "AND portfolio_id = 'follower'",
+                (experiment_id,),
+            ).fetchall()
+            wallet_attribution_rows = connection.execute(
+                "SELECT COALESCE(l.wallet_id, p.wallet_id) AS wallet_id, "
+                "COALESCE(l.pool_class, e.pool_class) AS pool_class, "
+                "l.entry_type, l.realized_pnl_delta, l.fee_delta, l.market_reference "
+                "FROM continuous_shadow_ledger l "
+                "JOIN continuous_shadow_portfolios p ON p.experiment_id = l.experiment_id "
+                "AND p.portfolio_id = l.portfolio_id "
+                "LEFT JOIN continuous_shadow_evaluations e "
+                "ON e.experiment_id = l.experiment_id AND e.event_id = l.event_id "
+                "AND e.portfolio_id = l.portfolio_id "
+                "WHERE l.experiment_id = ? AND l.portfolio_id = 'follower' "
+                "AND l.entry_type IN ('CLOSE', 'SETTLEMENT')",
+                (experiment_id,),
+            ).fetchall()
+            poll_latency_rows = connection.execute(
+                "SELECT started_at, completed_at FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? AND status = 'succeeded' AND completed_at IS NOT NULL "
+                "ORDER BY completed_at",
+                (experiment_id,),
+            ).fetchall()
+            latest_marks = connection.execute(
+                "SELECT p.portfolio_id, p.market_reference, p.outcome_reference, "
+                "p.mark_price, p.marked_at, "
+                "m.mark_status, m.source_timestamp, m.source_age_ms, m.freshness, m.marked_at "
+                "AS mark_recorded_at "
+                "FROM continuous_shadow_positions p "
+                "LEFT JOIN continuous_shadow_position_marks m "
+                "ON m.experiment_id = p.experiment_id AND m.portfolio_id = p.portfolio_id "
+                "AND m.market_reference = p.market_reference "
+                "AND m.outcome_reference = p.outcome_reference "
+                "AND m.poll_run_id = ("
+                "SELECT last_poll_run_id FROM continuous_shadow_checkpoint "
+                "WHERE experiment_id = p.experiment_id) "
+                "WHERE p.experiment_id = ? AND p.portfolio_id = 'follower'",
+                (experiment_id,),
+            ).fetchall()
+            cache_hits = connection.execute(
+                "SELECT reason, SUM(hit_count) AS hits, COUNT(*) AS tokens "
+                "FROM continuous_shadow_terminal_book_cache GROUP BY reason"
+            ).fetchall()
+            fill_rows = connection.execute(
+                "SELECT e.evaluated_at, e.wallet_id, e.pool_class, j.action, j.leader_price, "
+                "e.follower_price, e.filled_size, e.gross_notional, e.fee, e.price_movement, "
+                "e.spread_cost, e.depth_impact, e.realized_pnl, e.status "
+                "FROM continuous_shadow_evaluations e "
+                "JOIN continuous_shadow_event_journal j ON j.event_id = e.event_id "
+                "WHERE e.experiment_id = ? AND e.portfolio_id = 'follower' "
+                "ORDER BY e.evaluated_at, e.event_id",
+                (experiment_id,),
+            ).fetchall()
         finally:
             connection.close()
         assert follower is not None
@@ -1091,11 +1252,18 @@ class ContinuousShadowRepository:
             }
             for row in candidate_rows
         }
+        follower_ids = {"follower", "follower-alpha", "follower-stress"}
         wallet_evaluations = [
-            row for row in evaluation_rows if str(row["portfolio_id"]) != "follower"
+            row for row in evaluation_rows if str(row["portfolio_id"]) not in follower_ids
         ]
         follower_evaluations = [
             row for row in evaluation_rows if str(row["portfolio_id"]) == "follower"
+        ]
+        alpha_follower_evaluations = [
+            row for row in evaluation_rows if str(row["portfolio_id"]) == "follower-alpha"
+        ]
+        stress_follower_evaluations = [
+            row for row in evaluation_rows if str(row["portfolio_id"]) == "follower-stress"
         ]
         alpha_wallets = {
             wallet_id
@@ -1126,23 +1294,27 @@ class ContinuousShadowRepository:
         ]
         follower_closes = [row for row in close_rows if str(row["kind"]) == "FOLLOWER"]
         wallet_closes = [row for row in close_rows if str(row["kind"]) == "WALLET"]
+        alpha_follower_closes = [
+            row for row in close_rows if str(row["kind"]) == "FOLLOWER_ALPHA"
+        ]
+        stress_follower_closes = [
+            row for row in close_rows if str(row["kind"]) == "FOLLOWER_STRESS"
+        ]
         alpha_closes = [
             row
             for row in wallet_closes
             if (
-                row["pool_class"] is not None
-                and str(row["pool_class"]) in {"ALPHA", "ALPHA_STRESS"}
+                _close_pool_class(row) in {"ALPHA", "ALPHA_STRESS"}
             )
-            or (row["pool_class"] is None and str(row["wallet_id"]) in alpha_wallets)
+            or (_close_pool_class(row) is None and str(row["wallet_id"]) in alpha_wallets)
         ]
         stress_closes = [
             row
             for row in wallet_closes
             if (
-                row["pool_class"] is not None
-                and str(row["pool_class"]) in {"STRESS", "ALPHA_STRESS"}
+                _close_pool_class(row) in {"STRESS", "ALPHA_STRESS"}
             )
-            or (row["pool_class"] is None and str(row["wallet_id"]) in stress_wallets)
+            or (_close_pool_class(row) is None and str(row["wallet_id"]) in stress_wallets)
         ]
         latest_poll_at = (
             None
@@ -1172,6 +1344,67 @@ class ContinuousShadowRepository:
             settlement_backlog_count=current_settlement_backlog,
             untrusted_mark_count=untrusted_mark_count,
         )
+        alpha_row = next(
+            (row for row in followers if str(row["kind"]) == "FOLLOWER_ALPHA"),
+            None,
+        )
+        stress_row = next(
+            (row for row in followers if str(row["kind"]) == "FOLLOWER_STRESS"),
+            None,
+        )
+        pnl_decomposition = _pnl_decomposition(pnl_decomposition_rows)
+        latency = _poll_latency(poll_latency_rows)
+        mark_report = _mark_freshness_report(latest_marks)
+        recorded_fills = tuple(
+            RecordedShadowFill(
+                evaluated_at=_datetime(str(row["evaluated_at"])),
+                wallet_id=str(row["wallet_id"]),
+                pool_class=str(row["pool_class"]),
+                action=LeaderTradeAction(str(row["action"])),
+                leader_price=Decimal(str(row["leader_price"])),
+                follower_price=_optional_row_decimal(row["follower_price"]),
+                filled_size=Decimal(str(row["filled_size"])),
+                gross_notional=_optional_row_decimal(row["gross_notional"]),
+                fee=_optional_row_decimal(row["fee"]),
+                price_movement=_optional_row_decimal(row["price_movement"]),
+                spread_cost=_optional_row_decimal(row["spread_cost"]),
+                depth_impact=_optional_row_decimal(row["depth_impact"]),
+                realized_pnl=_optional_row_decimal(row["realized_pnl"]),
+                status=str(row["status"]),
+            )
+            for row in fill_rows
+        )
+        policy_experiments = walk_forward_policy_report(recorded_fills)
+        decision_readiness = _decision_readiness(
+            confidence=confidence,
+            identity_status=identity_status,
+            ledger_balanced=ledger_balanced,
+            duplicate_processing_count=duplicate_processing_count,
+            observation_seconds=observation_seconds,
+            open_positions=open_positions,
+        )
+        rolling = health.rolling_windows or {}
+        rolling_1h = rolling.get("1h")
+        rolling_1h_unknown = (
+            rolling_1h.get("unknown_ratio") if isinstance(rolling_1h, dict) else None
+        )
+        total_pnl = realized + unrealized - fees
+        operator_summary = {
+            "alpha_follower_total_pnl": _follower_total_pnl(alpha_row),
+            "confidence": confidence,
+            "decision_readiness": decision_readiness["status"],
+            "follower_total_pnl": _decimal(total_pnl),
+            "follower_valuation": (
+                "CURRENTLY_MARKED"
+                if int(follower["unmarked_position_count"]) == 0
+                else "PARTIAL_OR_LAST_KNOWN_GOOD"
+            ),
+            "latency_p95_ms": latency["p95"],
+            "open_position_count": open_positions,
+            "real_orders": False,
+            "rolling_1h_unknown_ratio": rolling_1h_unknown,
+            "stress_follower_total_pnl": _follower_total_pnl(stress_row),
+        }
         return {
             "accounting": {
                 "identity": "NAV = initial_cash + realized_pnl + unrealized_pnl - fees",
@@ -1190,6 +1423,7 @@ class ContinuousShadowRepository:
                 "maximum_possible_level": "MODERATE",
                 "observation_seconds": observation_seconds,
             },
+            "decision_readiness": decision_readiness,
             "event_journal": {
                 "active_markets": int(event_window["active_markets"]),
                 "active_wallets": int(event_window["active_wallets"]),
@@ -1236,14 +1470,47 @@ class ContinuousShadowRepository:
             },
             "follower_activity": follower_activity,
             "follower_closes": follower_close_summary,
+            "follower_portfolios": {
+                "MIXED_BASELINE": {
+                    "label": "shared follower mixing Alpha and Stress; not a live book",
+                    "portfolio": _follower_payload(follower),
+                    "activity": follower_activity,
+                    "closes": follower_close_summary,
+                },
+                "SHADOW_ALPHA": {
+                    "label": "independent Alpha follower; started empty at schema v4",
+                    "portfolio": _follower_payload(alpha_row),
+                    "activity": _evaluation_summary(alpha_follower_evaluations),
+                    "closes": _close_summary(alpha_follower_closes),
+                },
+                "SHADOW_STRESS": {
+                    "label": "independent Stress follower; started empty at schema v4",
+                    "portfolio": _follower_payload(stress_row),
+                    "activity": _evaluation_summary(stress_follower_evaluations),
+                    "closes": _close_summary(stress_follower_closes),
+                },
+            },
             "health": health.to_dict(),
+            "latency": latency,
+            "mark_freshness": mark_report,
+            "off_host_backup": {
+                "encrypted_destination_configured": False,
+                "gap": "no_approved_encrypted_off_host_backup_destination",
+            },
             "open_position_count": open_positions,
+            "operator_summary": operator_summary,
             "all_portfolios_valuation_complete": untrusted_mark_count == 0,
             "unmarked_cost_basis_all_portfolios": _decimal(unmarked_cost_basis),
+            "pnl_decomposition": pnl_decomposition,
             "pool_results": {
                 "SHADOW_ALPHA": {
                     "activity": _evaluation_summary(alpha_evaluations),
                     "closes": _close_summary(alpha_closes),
+                    "independent_follower": {
+                        "activity": _evaluation_summary(alpha_follower_evaluations),
+                        "closes": _close_summary(alpha_follower_closes),
+                        "portfolio": _follower_payload(alpha_row),
+                    },
                     "membership_count": len(alpha_wallets),
                     "portfolio": _portfolio_summary(alpha_portfolios),
                     "activity_scope": "event_time_membership",
@@ -1252,6 +1519,11 @@ class ContinuousShadowRepository:
                 "SHADOW_STRESS": {
                     "activity": _evaluation_summary(stress_evaluations),
                     "closes": _close_summary(stress_closes),
+                    "independent_follower": {
+                        "activity": _evaluation_summary(stress_follower_evaluations),
+                        "closes": _close_summary(stress_follower_closes),
+                        "portfolio": _follower_payload(stress_row),
+                    },
                     "membership_count": len(stress_wallets),
                     "portfolio": _portfolio_summary(stress_portfolios),
                     "activity_scope": "event_time_membership",
@@ -1259,6 +1531,7 @@ class ContinuousShadowRepository:
                 },
                 "overlap_wallet_count": len(alpha_wallets & stress_wallets),
             },
+            "policy_experiments": policy_experiments,
             "pools": [
                 {
                     "count": int(row["count"]),
@@ -1301,7 +1574,16 @@ class ContinuousShadowRepository:
                 "pool_overlap_is_included_in_each_selected_pool": True,
                 "pool_portfolios_are_independent_counterfactuals": True,
                 "real_orders": False,
+                "alpha_stress_followers_not_backfilled": True,
             },
+            "terminal_book_cache": {
+                str(row["reason"]): {
+                    "hits": int(row["hits"]),
+                    "tokens": int(row["tokens"]),
+                }
+                for row in cache_hits
+            },
+            "wallet_market_attribution": _wallet_market_attribution(wallet_attribution_rows),
             "status": "succeeded",
             "wallets": [
                 {
@@ -1414,6 +1696,188 @@ class ContinuousShadowRepository:
         row = connection.execute("PRAGMA integrity_check").fetchone()
         if row is None or row[0] != "ok":
             raise ContinuousShadowStoreError("Continuous Shadow SQLite integrity check failed.")
+
+
+def _close_pool_class(row: sqlite3.Row) -> str | None:
+    for key in ("ledger_pool_class", "pool_class"):
+        try:
+            value = row[key]
+        except (IndexError, KeyError):
+            continue
+        if value is not None:
+            return str(value)
+    return None
+
+
+def _optional_row_decimal(value: object) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+def _follower_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    realized = Decimal(str(row["realized_pnl"]))
+    unrealized = Decimal(str(row["unrealized_pnl"]))
+    fees = Decimal(str(row["fees"]))
+    return {
+        "cash": str(row["cash"]),
+        "drawdown": str(row["drawdown"]),
+        "exposure": str(row["exposure"]),
+        "fees": str(row["fees"]),
+        "initial_cash": str(row["initial_cash"]),
+        "kind": str(row["kind"]),
+        "nav": str(row["nav"]),
+        "open_position_count": int(row["open_position_count"]),
+        "portfolio_id": str(row["portfolio_id"]),
+        "realized_pnl": str(row["realized_pnl"]),
+        "total_pnl": _decimal(realized + unrealized - fees),
+        "unmarked_position_count": int(row["unmarked_position_count"]),
+        "unrealized_pnl": str(row["unrealized_pnl"]),
+    }
+
+
+def _follower_total_pnl(row: sqlite3.Row | None) -> str | None:
+    payload = _follower_payload(row)
+    return None if payload is None else str(payload["total_pnl"])
+
+
+def _pnl_decomposition(rows: list[sqlite3.Row]) -> dict[str, object]:
+    trading = _ZERO
+    settlement = _ZERO
+    fees = _ZERO
+    for row in rows:
+        realized = Decimal(str(row["realized_pnl_delta"]))
+        fees += Decimal(str(row["fee_delta"]))
+        entry_type = str(row["entry_type"])
+        if entry_type in {"CLOSE", "REDUCE"}:
+            trading += realized
+        elif entry_type == "SETTLEMENT":
+            settlement += realized
+    return {
+        "fees": _decimal(fees),
+        "settlement_realized_pnl": _decimal(settlement),
+        "stale_valuation_note": (
+            "Unrealized P&L on LAST_KNOWN_GOOD or missing marks is excluded from "
+            "realized totals and labelled separately in follower.total_pnl_status."
+        ),
+        "trading_close_realized_pnl": _decimal(trading),
+    }
+
+
+def _poll_latency(rows: list[sqlite3.Row]) -> dict[str, object]:
+    samples: list[int] = []
+    for row in rows:
+        started = _datetime(str(row["started_at"]))
+        completed = _datetime(str(row["completed_at"]))
+        samples.append(max(0, int((completed - started).total_seconds() * 1000)))
+    distribution = _integer_distribution(samples)
+    return {
+        **distribution,
+        "median": distribution["p50"],
+        "unit": "ms",
+        "scope": "in_process_poll_excluding_container_start",
+    }
+
+
+def _mark_freshness_report(rows: list[sqlite3.Row]) -> dict[str, object]:
+    marks = []
+    for row in rows:
+        marks.append(
+            {
+                "freshness": None if row["freshness"] is None else str(row["freshness"]),
+                "mark_price": None if row["mark_price"] is None else str(row["mark_price"]),
+                "mark_status": None if row["mark_status"] is None else str(row["mark_status"]),
+                "market_reference": str(row["market_reference"]),
+                "outcome_reference": str(row["outcome_reference"]),
+                "source_age_ms": (
+                    None if row["source_age_ms"] is None else int(row["source_age_ms"])
+                ),
+                "source_timestamp": (
+                    None if row["source_timestamp"] is None else str(row["source_timestamp"])
+                ),
+            }
+        )
+    return {
+        "count": len(marks),
+        "positions": marks,
+        "stale_or_missing_count": sum(
+            1
+            for item in marks
+            if item["freshness"] not in {"FRESH", "VERIFIED_SETTLEMENT"}
+        ),
+    }
+
+
+def _wallet_market_attribution(rows: list[sqlite3.Row]) -> dict[str, object]:
+    by_wallet: dict[str, Decimal] = {}
+    by_market: dict[str, Decimal] = {}
+    by_pool: dict[str, Decimal] = {}
+    unattributed = _ZERO
+    for row in rows:
+        net = Decimal(str(row["realized_pnl_delta"])) - Decimal(str(row["fee_delta"]))
+        wallet_id = row["wallet_id"]
+        market = row["market_reference"]
+        pool = row["pool_class"]
+        if wallet_id is None:
+            unattributed += net
+        else:
+            key = str(wallet_id)
+            by_wallet[key] = by_wallet.get(key, _ZERO) + net
+        if market is None:
+            unattributed += _ZERO
+        else:
+            market_key = str(market)
+            by_market[market_key] = by_market.get(market_key, _ZERO) + net
+        if pool is not None:
+            pool_key = str(pool)
+            by_pool[pool_key] = by_pool.get(pool_key, _ZERO) + net
+    return {
+        "markets": {
+            key: _decimal(value)
+            for key, value in sorted(by_market.items(), key=lambda item: item[0])
+        },
+        "pools": {key: _decimal(value) for key, value in sorted(by_pool.items())},
+        "unattributed_net": _decimal(unattributed),
+        "wallets": {
+            key: _decimal(value)
+            for key, value in sorted(by_wallet.items(), key=lambda item: item[0])
+        },
+    }
+
+
+def _decision_readiness(
+    *,
+    confidence: str,
+    identity_status: str,
+    ledger_balanced: bool,
+    duplicate_processing_count: int,
+    observation_seconds: int,
+    open_positions: int,
+) -> dict[str, object]:
+    if not ledger_balanced or duplicate_processing_count:
+        status = "NOT_DECISION_READY"
+        reason = "accounting_or_duplicate_processing_failure"
+    elif confidence in {"UNTRUSTWORTHY", "INSUFFICIENT", "LOW"}:
+        status = "NOT_DECISION_READY"
+        reason = "confidence_below_research_threshold"
+    elif open_positions:
+        status = "OBSERVE_ONLY"
+        reason = "open_synthetic_exposure_remains"
+    elif observation_seconds < 86_400:
+        status = "OBSERVE_ONLY"
+        reason = "less_than_24_hours_observation"
+    elif identity_status != "VERIFIED":
+        status = "OBSERVE_ONLY"
+        reason = "valuation_incomplete"
+    else:
+        status = "RESEARCH_ONLY"
+        reason = "synthetic_shadow_not_live_authority"
+    return {
+        "live_promotion": False,
+        "real_orders": False,
+        "reason": reason,
+        "status": status,
+    }
 
 
 def _evaluation_summary(rows: list[sqlite3.Row]) -> dict[str, object]:
@@ -1670,9 +2134,15 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     version = int(rows[0][0])
     if version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
         return
-    if version != 2:
+    if version == 2:
+        _migrate_v2_to_v3(connection)
+        version = 3
+    if version != 3:
         raise ContinuousShadowStoreError("Continuous Shadow schema version is unsupported.")
+    _migrate_v3_to_v4(connection)
 
+
+def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
     try:
         connection.execute("BEGIN IMMEDIATE")
         journal_columns = {
@@ -1699,30 +2169,312 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
                 "ADD COLUMN settlement_backlog_count INTEGER NOT NULL DEFAULT 0 "
                 "CHECK(settlement_backlog_count >= 0)"
             )
-        initialized_at = str(
-            connection.execute(
-                "SELECT initialized_at FROM continuous_shadow_metadata"
-            ).fetchone()[0]
-        )
-        connection.execute(
-            "ALTER TABLE continuous_shadow_metadata "
-            "RENAME TO continuous_shadow_metadata_v2"
-        )
-        connection.execute(
-            "CREATE TABLE continuous_shadow_metadata ("
-            "schema_version INTEGER PRIMARY KEY CHECK(schema_version = 3), "
-            "initialized_at TEXT NOT NULL)"
-        )
-        connection.execute(
-            "INSERT INTO continuous_shadow_metadata (schema_version, initialized_at) "
-            "VALUES (?, ?)",
-            (CONTINUOUS_SHADOW_SCHEMA_VERSION, initialized_at),
-        )
-        connection.execute("DROP TABLE continuous_shadow_metadata_v2")
+        _replace_metadata_version(connection, version=3)
         connection.commit()
     except Exception:
         connection.rollback()
         raise
+
+
+def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+    try:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("BEGIN IMMEDIATE")
+        _rebuild_portfolios_table(connection)
+        _rebuild_attribution_table(connection)
+        _add_column_if_missing(
+            connection,
+            "continuous_shadow_ledger",
+            "wallet_id",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "continuous_shadow_ledger",
+            "pool_class",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "continuous_shadow_position_marks",
+            "source_timestamp",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "continuous_shadow_position_marks",
+            "source_age_ms",
+            "INTEGER",
+        )
+        _add_column_if_missing(
+            connection,
+            "continuous_shadow_position_marks",
+            "freshness",
+            "TEXT NOT NULL DEFAULT 'MISSING'",
+        )
+        _backfill_ledger_attribution(connection)
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS continuous_shadow_terminal_book_cache ("
+            "token_id TEXT PRIMARY KEY, "
+            "reason TEXT NOT NULL CHECK(reason IN ('TERMINAL_404', 'MARKET_CLOSED')), "
+            "first_seen_at TEXT NOT NULL, "
+            "last_seen_at TEXT NOT NULL, "
+            "expires_at TEXT NOT NULL, "
+            "hit_count INTEGER NOT NULL DEFAULT 1 CHECK(hit_count >= 1))"
+        )
+        connection.execute("DROP INDEX IF EXISTS idx_continuous_shadow_one_follower")
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_follower_kind "
+            "ON continuous_shadow_portfolios(experiment_id, kind) "
+            "WHERE kind IN ('FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS')"
+        )
+        _patch_experiment_configs(connection)
+        _ensure_specialized_followers(connection)
+        _replace_metadata_version(connection, version=4)
+        connection.execute("PRAGMA foreign_key_check")
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+
+def _replace_metadata_version(connection: sqlite3.Connection, *, version: int) -> None:
+    initialized_at = str(
+        connection.execute(
+            "SELECT initialized_at FROM continuous_shadow_metadata"
+        ).fetchone()[0]
+    )
+    connection.execute(
+        "ALTER TABLE continuous_shadow_metadata RENAME TO continuous_shadow_metadata_old"
+    )
+    connection.execute(
+        "CREATE TABLE continuous_shadow_metadata ("
+        f"schema_version INTEGER PRIMARY KEY CHECK(schema_version = {int(version)}), "
+        "initialized_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_metadata (schema_version, initialized_at) "
+        "VALUES (?, ?)",
+        (version, initialized_at),
+    )
+    connection.execute("DROP TABLE continuous_shadow_metadata_old")
+
+
+def _add_column_if_missing(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    columns = {
+        str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _backfill_ledger_attribution(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "UPDATE continuous_shadow_ledger SET "
+        "wallet_id = ("
+        "SELECT e.wallet_id FROM continuous_shadow_evaluations AS e "
+        "WHERE e.experiment_id = continuous_shadow_ledger.experiment_id "
+        "AND e.event_id = continuous_shadow_ledger.event_id "
+        "AND e.portfolio_id = continuous_shadow_ledger.portfolio_id LIMIT 1"
+        "), "
+        "pool_class = ("
+        "SELECT e.pool_class FROM continuous_shadow_evaluations AS e "
+        "WHERE e.experiment_id = continuous_shadow_ledger.experiment_id "
+        "AND e.event_id = continuous_shadow_ledger.event_id "
+        "AND e.portfolio_id = continuous_shadow_ledger.portfolio_id LIMIT 1"
+        ") "
+        "WHERE wallet_id IS NULL AND event_id IS NOT NULL"
+    )
+
+
+def _rebuild_portfolios_table(connection: sqlite3.Connection) -> None:
+    sql = str(
+        connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'continuous_shadow_portfolios'"
+        ).fetchone()[0]
+    )
+    if "FOLLOWER_ALPHA" in sql:
+        return
+    connection.execute("DROP VIEW IF EXISTS continuous_shadow_portfolio_current")
+    connection.execute(
+        "CREATE TABLE continuous_shadow_portfolios_v4 ("
+        "experiment_id TEXT NOT NULL, "
+        "portfolio_id TEXT NOT NULL, "
+        "kind TEXT NOT NULL CHECK("
+        "kind IN ('WALLET', 'FOLLOWER', 'FOLLOWER_ALPHA', 'FOLLOWER_STRESS')), "
+        "wallet_id TEXT, "
+        "initial_cash TEXT NOT NULL, "
+        "cash TEXT NOT NULL, "
+        "realized_pnl TEXT NOT NULL DEFAULT '0', "
+        "unrealized_pnl TEXT NOT NULL DEFAULT '0', "
+        "fees TEXT NOT NULL DEFAULT '0', "
+        "nav TEXT NOT NULL, "
+        "high_water_nav TEXT NOT NULL, "
+        "drawdown TEXT NOT NULL DEFAULT '0', "
+        "exposure TEXT NOT NULL DEFAULT '0', "
+        "updated_at TEXT NOT NULL, "
+        "PRIMARY KEY(experiment_id, portfolio_id), "
+        "UNIQUE(experiment_id, wallet_id), "
+        "FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id), "
+        "FOREIGN KEY(wallet_id) REFERENCES canonical_wallets(wallet_id))"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_portfolios_v4 SELECT * FROM continuous_shadow_portfolios"
+    )
+    connection.execute("DROP TABLE continuous_shadow_portfolios")
+    connection.execute(
+        "ALTER TABLE continuous_shadow_portfolios_v4 RENAME TO continuous_shadow_portfolios"
+    )
+    _recreate_portfolio_current_view(connection)
+
+
+def _recreate_portfolio_current_view(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP VIEW IF EXISTS continuous_shadow_portfolio_current")
+    connection.execute(
+        "CREATE VIEW continuous_shadow_portfolio_current AS "
+        "SELECT e.source_id, e.experiment_id, e.lifecycle, e.policy_version, "
+        "e.cost_model_version, e.bankroll_version, e.started_at, "
+        "e.last_successful_poll_at, p.portfolio_id, p.kind, p.wallet_id, "
+        "p.initial_cash, p.cash, p.realized_pnl, p.unrealized_pnl, p.fees, "
+        "p.nav, p.high_water_nav, p.drawdown, p.exposure, p.updated_at "
+        "FROM continuous_shadow_experiments e "
+        "JOIN continuous_shadow_portfolios p ON p.experiment_id = e.experiment_id"
+    )
+
+
+def _rebuild_attribution_table(connection: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1])
+        for row in connection.execute(
+            "PRAGMA table_info(continuous_shadow_follower_attribution)"
+        ).fetchall()
+    }
+    if "portfolio_id" in columns and "pool_class" in columns:
+        return
+    connection.execute(
+        "CREATE TABLE continuous_shadow_follower_attribution_v4 ("
+        "experiment_id TEXT NOT NULL, "
+        "portfolio_id TEXT NOT NULL, "
+        "wallet_id TEXT NOT NULL, "
+        "market_reference TEXT NOT NULL, "
+        "outcome_reference TEXT NOT NULL, "
+        "quantity TEXT NOT NULL, "
+        "cost_basis TEXT NOT NULL, "
+        "pool_class TEXT NOT NULL, "
+        "last_event_id TEXT, "
+        "PRIMARY KEY("
+        "experiment_id, portfolio_id, wallet_id, market_reference, outcome_reference), "
+        "FOREIGN KEY(experiment_id, wallet_id) "
+        "REFERENCES continuous_shadow_candidates(experiment_id, wallet_id) ON DELETE CASCADE, "
+        "FOREIGN KEY(experiment_id, portfolio_id) "
+        "REFERENCES continuous_shadow_portfolios(experiment_id, portfolio_id) ON DELETE CASCADE)"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_follower_attribution_v4 "
+        "(experiment_id, portfolio_id, wallet_id, market_reference, outcome_reference, "
+        "quantity, cost_basis, pool_class, last_event_id) "
+        "SELECT experiment_id, 'follower', wallet_id, market_reference, outcome_reference, "
+        "quantity, cost_basis, 'UNKNOWN', NULL "
+        "FROM continuous_shadow_follower_attribution"
+    )
+    connection.execute("DROP TABLE continuous_shadow_follower_attribution")
+    connection.execute(
+        "ALTER TABLE continuous_shadow_follower_attribution_v4 "
+        "RENAME TO continuous_shadow_follower_attribution"
+    )
+
+
+def _patch_experiment_configs(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        "SELECT experiment_id, config_json FROM continuous_shadow_experiments"
+    ).fetchall()
+    for row in rows:
+        payload = json.loads(str(row["config_json"]))
+        if not isinstance(payload, dict):
+            raise ContinuousShadowStoreError("Continuous Shadow config is invalid.")
+        payload.setdefault("price_drift_max_ratio", None)
+        payload.setdefault("negative_cache_ttl_seconds", 21_600)
+        connection.execute(
+            "UPDATE continuous_shadow_experiments SET config_json = ? "
+            "WHERE experiment_id = ?",
+            (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                str(row["experiment_id"]),
+            ),
+        )
+
+
+def _ensure_specialized_followers(connection: sqlite3.Connection) -> None:
+    experiments = connection.execute(
+        "SELECT experiment_id, updated_at, initial_cash FROM continuous_shadow_portfolios "
+        "WHERE kind = 'FOLLOWER'"
+    ).fetchall()
+    for row in experiments:
+        for portfolio_id, kind, _accepted in FOLLOWER_KIND_SPECS:
+            if kind is ContinuousPortfolioKind.FOLLOWER:
+                continue
+            connection.execute(
+                "INSERT OR IGNORE INTO continuous_shadow_portfolios "
+                "(experiment_id, portfolio_id, kind, wallet_id, initial_cash, cash, "
+                "realized_pnl, unrealized_pnl, fees, nav, high_water_nav, drawdown, "
+                "exposure, updated_at) VALUES (?, ?, ?, NULL, ?, ?, '0', '0', '0', ?, ?, "
+                "'0', '0', ?)",
+                (
+                    str(row["experiment_id"]),
+                    portfolio_id,
+                    kind.value,
+                    str(row["initial_cash"]),
+                    str(row["initial_cash"]),
+                    str(row["initial_cash"]),
+                    str(row["initial_cash"]),
+                    str(row["updated_at"]),
+                ),
+            )
+
+
+def _rolling_health_windows(
+    connection: sqlite3.Connection,
+    experiment_id: str,
+    *,
+    now: datetime,
+) -> dict[str, object]:
+    windows: dict[str, object] = {}
+    for label, hours in (("1h", 1), ("6h", 6), ("24h", 24)):
+        start = _iso(now - timedelta(hours=hours))
+        row = connection.execute(
+            "SELECT COUNT(*) AS polls, "
+            "COALESCE(SUM(evaluation_count), 0) AS evaluations, "
+            "COALESCE(SUM(unknown_count), 0) AS unknown_count, "
+            "COALESCE(SUM(simulated_count), 0) AS simulated_count, "
+            "COALESCE(SUM(rejected_count), 0) AS rejected_count "
+            "FROM continuous_shadow_poll_runs "
+            "WHERE experiment_id = ? AND status = 'succeeded' AND completed_at >= ?",
+            (experiment_id, start),
+        ).fetchone()
+        assert row is not None
+        evaluations = int(row["evaluations"])
+        unknown_count = int(row["unknown_count"])
+        windows[label] = {
+            "evaluation_count": evaluations,
+            "poll_count": int(row["polls"]),
+            "rejected_count": int(row["rejected_count"]),
+            "simulated_count": int(row["simulated_count"]),
+            "unknown_count": unknown_count,
+            "unknown_ratio": (
+                None
+                if evaluations == 0
+                else format(Decimal(unknown_count) / Decimal(evaluations), "f")
+            ),
+        }
+    return windows
 
 
 def _duplicate_processing_count(
@@ -1847,8 +2599,8 @@ def _write_ledger(
         "INSERT INTO continuous_shadow_ledger "
         "(experiment_id, entry_id, poll_run_id, portfolio_id, event_id, entry_type, "
         "market_reference, outcome_reference, quantity_delta, cash_delta, cost_basis_delta, "
-        "realized_pnl_delta, fee_delta, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "realized_pnl_delta, fee_delta, created_at, wallet_id, pool_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             experiment_id,
             item.entry_id,
@@ -1864,6 +2616,8 @@ def _write_ledger(
             _decimal(item.realized_pnl_delta),
             _decimal(item.fee_delta),
             _iso(item.created_at),
+            item.wallet_id,
+            item.pool_class,
         ),
     )
 
@@ -1877,8 +2631,9 @@ def _write_mark(
     connection.execute(
         "INSERT INTO continuous_shadow_position_marks "
         "(experiment_id, poll_run_id, portfolio_id, market_reference, outcome_reference, "
-        "quantity, mark_price, market_value, unrealized_pnl, mark_status, marked_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "quantity, mark_price, market_value, unrealized_pnl, mark_status, marked_at, "
+        "source_timestamp, source_age_ms, freshness) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             experiment_id,
             poll_run_id,
@@ -1891,6 +2646,9 @@ def _write_mark(
             _optional_decimal(item.unrealized_pnl),
             item.mark_status,
             _iso(item.marked_at),
+            None if item.source_timestamp is None else _iso(item.source_timestamp),
+            item.source_age_ms,
+            item.freshness,
         ),
     )
 
@@ -2028,6 +2786,12 @@ def _config(value: object) -> ContinuousShadowConfig:
             policy_version=str(value["policy_version"]),
             cost_model_version=str(value["cost_model_version"]),
             bankroll_version=str(value["bankroll_version"]),
+            price_drift_max_ratio=(
+                None
+                if value.get("price_drift_max_ratio") is None
+                else Decimal(str(value["price_drift_max_ratio"]))
+            ),
+            negative_cache_ttl_seconds=int(value.get("negative_cache_ttl_seconds", 21_600)),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ContinuousShadowStoreError("Continuous Shadow config is invalid.") from error

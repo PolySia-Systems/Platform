@@ -10,10 +10,11 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
-- [`wallet-intelligence-stage4b-continuous-shadow.md`](wallet-intelligence-stage4b-continuous-shadow.md)
-  records the persistent first-seen journal, independent wallet portfolios,
-  shared follower capital/liquidity, market-specific fees, Decimal ledger, and
-  no-order boundary.
+- [`wallet-intelligence-stage4b-v4-reliability.md`](wallet-intelligence-stage4b-v4-reliability.md)
+  records schema v4 attribution, Alpha/Stress isolation, persistent DATA_ONLY
+  worker, and the remaining Finland deploy steps. The prior
+  [`wallet-intelligence-stage4b-continuous-shadow.md`](wallet-intelligence-stage4b-continuous-shadow.md)
+  remains the last verified Helsinki schema-v3 runtime evidence.
 - [`wallet-intelligence-stage4-dynamic-shadow.md`](wallet-intelligence-stage4-dynamic-shadow.md)
   records the dynamic Alpha/Stress consumer, official all-market Polymarket
   reads, modeled Historical evaluation, current-book Forward Shadow, and

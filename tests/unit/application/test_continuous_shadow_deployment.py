@@ -14,11 +14,22 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert 'LIVE_TRADING_ENABLED: "false"' in section
     assert "TRADING_MODE: DATA_ONLY" in section
     assert "portfolio-sync" in section
+    assert "--loop" in section
     assert "continuous-shadow.json" in section
     assert "tiny-execute" not in section
     assert "tiny-copy" not in section
     assert "cancel-order" not in section
     assert "private" not in section.casefold()
+
+    service = (
+        ROOT
+        / "deploy"
+        / "systemd"
+        / "polysia-wallet-intelligence-shadow-portfolio.service"
+    ).read_text(encoding="utf-8")
+    assert "Type=simple" in service
+    assert "Restart=on-failure" in service
+    assert "tiny-execute" not in service
 
 
 def test_fast_timer_is_additive_and_stage4a_ten_minute_timer_is_preserved() -> None:
