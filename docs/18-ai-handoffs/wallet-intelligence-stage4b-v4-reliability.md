@@ -2,11 +2,12 @@
 
 ## Status
 
-Repository implementation is complete on `codex/stage4b-shadow-reliability`.
-Merge, Finland deploy of the exact merged SHA, and post-deploy observation are
-separate remaining operator steps recorded below as pending until verified.
+PR `#92` merged as `c49652565cd7ddab6432e3488ca73fa1c9c352b5` and is deployed on
+`Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Schema v4 migrated forward.
+The persistent worker is running. No real order was sent. `3x-ui` was not
+restarted.
 
-This change does not enable Live trading and does not send orders.
+This change does not enable Live trading.
 
 ## Objective
 
@@ -74,17 +75,25 @@ Exact commands and results from this workstation:
 - Stages 1–4A commands, timers, and schema v1 are preserved.
 - `3x-ui` is not in the diff.
 
-## Pending after merge
+## Finland deploy evidence
 
-1. Merge only after required GitHub checks pass.
-2. Deploy the exact merged SHA to `Hetzner-Finland-Helsinki-01` as an immutable
-   archive because repository Deploy Keys are disabled.
-3. Backup the wallet-intelligence database before the v4 migrate, rehearse a
-   disposable restore, then disable the Stage 4B timer and enable the persistent
-   service.
-4. Verify DATA_ONLY, Live false, zero real orders, Decimal identity, worker
-   health, Stages 1–4, latency, rolling health, Alpha/Stress isolation,
-   settlement attribution, rate-limit telemetry, mark freshness, and unchanged
-   `3x-ui` identity/uptime/restart count.
-5. Observe long enough for a smoke comparison. Do not treat a short window as
-   profit evidence. Keep Shadow running.
+- Merged SHA deployed: `c49652565cd7ddab6432e3488ca73fa1c9c352b5`
+- Release archive SHA-256:
+  `1011dbc4026572ccf1f2fae82a534b38a6fda35dba41d6d082f4aceb70b70c80`
+- Image: `polysia:c49652565cd7ddab6432e3488ca73fa1c9c352b5`
+  (`sha256:a40174b91d0535b47deceba06975500feaae583050365afd76384d72487d24c5`)
+- Pre-migration v3 backup:
+  `wallet-intelligence-20260826T082746331668Z.sqlite3`, SHA-256
+  `ec24a4e618b2e0e17b98ce0d558a57a79df870a6261e3f9b98a6432f2cac9e4a`
+- Post-migration v4 backup:
+  `wallet-intelligence-20260826T083658818909Z.sqlite3`, SHA-256
+  `f0ab4f87ae758105ebe10143e18bc998db1b75a7887c9d9d103fe063d6474ebd`
+- Runtime: `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`, empty Live
+  allowlist. Persistent worker active; oneshot timer disabled. Stages 1–3,
+  Stage 4A, and history timers remain enabled.
+- Smoke: ledger_balanced true; rolling 1h unknown ~0.24 versus cumulative ~0.55;
+  mixed follower total P&L about `-397` with 113 open positions; Alpha NAV
+  `999.55` and Stress NAV `999.81` after empty start; in-process poll mean
+  `32.3s`, median `33.5s`, P95 `38.7s`. Confidence remains `LOW`.
+- `3x-ui` restart count 0 and start time `2026-08-21T10:33:56Z` unchanged.
+- Encrypted off-host backup remains absent. Shadow stays running.
