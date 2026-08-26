@@ -1053,6 +1053,35 @@ def _started_service(
 
 
 @pytest.mark.asyncio
+async def test_poll_initialization_sqlite_busy_is_classified_and_recovers(
+    tmp_path: Path,
+) -> None:
+    database, _started, clock, scenario = _started_service(tmp_path)
+    restarted = _service(database, scenario, _MarketPort(clock), clock)
+    competing_stage4a = sqlite3.connect(database, timeout=0)
+    competing_stage4a.execute("BEGIN EXCLUSIVE")
+    try:
+        with pytest.raises(ContinuousShadowError) as failed:
+            await restarted.poll("polycop")
+    finally:
+        competing_stage4a.rollback()
+        competing_stage4a.close()
+
+    assert failed.value.error_code == "sqlite_busy"
+    assert failed.value.processing_stage == "initialize"
+    clock.value = NOW + timedelta(minutes=2)
+    recovered = await restarted.poll("polycop")
+    assert recovered.new_event_count == 0
+    health = ContinuousShadowRepository(database).health(
+        "polycop",
+        now=clock.value,
+        poll_interval_seconds=60,
+    )
+    assert health.ledger_balanced is True
+    assert health.duplicate_processing_count == 0
+
+
+@pytest.mark.asyncio
 async def test_fail_poll_recording_error_preserves_original_failure_category(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
