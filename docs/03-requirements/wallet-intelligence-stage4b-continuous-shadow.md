@@ -136,6 +136,9 @@ transient SQLite lock during initialization, lease acquisition, poll
 persistence, lease release, or health publication is classified at that exact
 boundary; the current attempt is skipped safely and the normal interval retries
 without terminating the worker.
+Transient source-unavailable and market-read failures use the same bounded
+persistent-loop retry behavior. Persistence, lease-integrity, and unexpected
+failures remain fail-closed and may terminate the worker for systemd recovery.
 
 The schema is additive version 4 in the protected wallet-intelligence database.
 Version 4 preserves CLOSE/SETTLEMENT Wallet, Pool, market, and event attribution,

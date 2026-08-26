@@ -9,10 +9,96 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from polysia.application.services.continuous_shadow import ContinuousShadowError
+from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_MARKET_READ_FAILED,
+    FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
+    FAILURE_CATEGORY_SQLITE_BUSY,
+)
 from polysia.cli import app
+from polysia.cli_commands.wallet_intelligence import (
+    _RETRYABLE_PERSISTENT_SHADOW_FAILURES,
+)
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 
 runner = CliRunner()
+
+
+def test_persistent_shadow_retries_only_expected_transient_failures() -> None:
+    assert {
+        FAILURE_CATEGORY_MARKET_READ_FAILED,
+        FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
+        FAILURE_CATEGORY_SQLITE_BUSY,
+    } == _RETRYABLE_PERSISTENT_SHADOW_FAILURES
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [FAILURE_CATEGORY_SOURCE_UNAVAILABLE, FAILURE_CATEGORY_MARKET_READ_FAILED],
+)
+def test_persistent_shadow_keeps_running_after_transient_source_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error_code: str,
+) -> None:
+    handlers: dict[int, object] = {}
+    polls = 0
+
+    def emit_poll(*_args: object, **_kwargs: object) -> None:
+        nonlocal polls
+        polls += 1
+        raise ContinuousShadowError(
+            "sanitized transient failure",
+            error_code=error_code,
+            processing_stage="collect_events",
+        )
+
+    def install_handler(sig: int, handler: object) -> None:
+        handlers[sig] = handler
+
+    def stop_after_retry_delay(_seconds: float) -> None:
+        handler = handlers[2]
+        assert callable(handler)
+        handler()
+
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._require_continuous_shadow_safety",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._continuous_shadow_service",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._source",
+        lambda _source: SimpleNamespace(source_id="polycop"),
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._emit_portfolio_poll", emit_poll
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence.signal.signal", install_handler
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence.time.sleep", stop_after_retry_delay
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "portfolio-sync",
+            "--database",
+            str(tmp_path / "wallet-intelligence.sqlite3"),
+            "--loop",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert polls == 1
+    payload = json.loads(result.stdout)
+    assert payload["error_code"] == error_code
+    assert payload["status"] == "skipped"
 
 
 def test_restore_check_reports_continuous_shadow_evidence(

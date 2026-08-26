@@ -35,6 +35,8 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowService,
 )
 from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_MARKET_READ_FAILED,
+    FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
     FAILURE_CATEGORY_SQLITE_BUSY,
     FAILURE_STAGE_REPORT_HEALTH,
     classify_continuous_shadow_failure,
@@ -78,6 +80,13 @@ DEFAULT_BACKUP_DIR = Path("backups/wallet-intelligence")
 DEFAULT_HEALTH_REPORT = Path("reports/wallet-intelligence/latest.json")
 DEFAULT_CONTINUOUS_SHADOW_HEALTH = Path(
     "reports/wallet-intelligence/continuous-shadow.json"
+)
+_RETRYABLE_PERSISTENT_SHADOW_FAILURES = frozenset(
+    {
+        FAILURE_CATEGORY_MARKET_READ_FAILED,
+        FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
+        FAILURE_CATEGORY_SQLITE_BUSY,
+    }
 )
 
 
@@ -783,16 +792,14 @@ def portfolio_sync(
                     error,
                     stage=getattr(error, "processing_stage", "unexpected"),
                 )
-                if classified.category != FAILURE_CATEGORY_SQLITE_BUSY:
+                if classified.category not in _RETRYABLE_PERSISTENT_SHADOW_FAILURES:
                     raise
                 typer.echo(
                     json.dumps(
                         {
                             "error_code": classified.category,
-                            "message": (
-                                "Persistent Shadow worker skipped a transient SQLite-busy "
-                                "poll; durable prior state was kept and no order was sent."
-                            ),
+                            "message": "Persistent Shadow worker skipped a transient "
+                            "poll; durable prior state was kept and no order was sent.",
                             "processing_stage": classified.stage,
                             "status": "skipped",
                         },
