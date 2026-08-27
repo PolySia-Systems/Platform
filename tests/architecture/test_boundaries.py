@@ -118,3 +118,9 @@ def test_dynamic_shadow_core_has_no_trading_authority_dependency() -> None:
     }
 
     assert {path: imports for path, imports in findings.items() if imports} == {}
+
+
+def test_continuous_shadow_service_does_not_import_monitoring() -> None:
+    imports = _imports(PACKAGE / "application" / "services" / "continuous_shadow.py")
+    forbidden = sorted(name for name in imports if name.startswith("polysia.monitoring"))
+    assert forbidden == []

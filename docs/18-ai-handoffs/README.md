@@ -10,6 +10,9 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
+- [`latency-performance-intelligence-v0-1.md`](latency-performance-intelligence-v0-1.md)
+  records the observational latency contract, bounded SQLite telemetry, and
+  pending 24-hour Helsinki real-data gate.
 - [`wallet-intelligence-stage4b-v4-reliability.md`](wallet-intelligence-stage4b-v4-reliability.md)
   records schema v4 attribution, Alpha/Stress isolation, persistent DATA_ONLY
   worker, and the remaining Finland deploy steps. The prior

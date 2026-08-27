@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -33,6 +34,7 @@ from polysia.application.ports.dynamic_shadow import (
     LeaderSourceFactory,
     ProtectedShadowCandidate,
 )
+from polysia.application.ports.latency_telemetry import LatencyRecorderPort
 from polysia.application.services.continuous_shadow_failures import (
     FAILURE_CATEGORY_MARKET_READ_FAILED,
     FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
@@ -160,6 +162,7 @@ class ContinuousShadowService:
         clock: Clock | None = None,
         concurrency: int = 6,
         maximum_pages_per_wallet: int = 40,
+        latency_recorder: LatencyRecorderPort | None = None,
     ) -> None:
         if not 1 <= concurrency <= 12:
             raise ValueError("concurrency must be within [1, 12]")
@@ -176,6 +179,11 @@ class ContinuousShadowService:
         self._maximum_pages = maximum_pages_per_wallet
         self._store_initialized = False
         self._lease_port_initialized = False
+        self._latency = latency_recorder
+
+    @property
+    def latency_recorder(self) -> LatencyRecorderPort | None:
+        return self._latency
 
     def start(self, source_id: str) -> ContinuousShadowExperiment:
         self._initialize_store()
@@ -270,6 +278,21 @@ class ContinuousShadowService:
         *,
         lease: CandidatePipelineLease,
     ) -> ContinuousPollOutcome:
+        self._begin_latency_trace("poll")
+        with self._latency_span("application", "poll") as root_span_id:
+            return await self._poll_locked_traced(
+                source_id,
+                lease=lease,
+                root_span_id=root_span_id,
+            )
+
+    async def _poll_locked_traced(
+        self,
+        source_id: str,
+        *,
+        lease: CandidatePipelineLease,
+        root_span_id: str,
+    ) -> ContinuousPollOutcome:
         experiment = self._required_experiment(source_id)
         if experiment.lifecycle is ContinuousShadowLifecycle.FINALIZED:
             raise ContinuousShadowError("Finalized Continuous Shadow cannot accept polls.")
@@ -277,13 +300,19 @@ class ContinuousShadowService:
             raise ContinuousShadowError(
                 "Continuous Shadow runtime config differs from the versioned experiment."
             )
-        selection_run_id, current_candidates = self._candidate_port.current_candidates(source_id)
-        retained = self._store.retained_candidates(experiment.experiment_id)
+        with self._latency_span(
+            "application", "candidate_lookup", parent_span_id=root_span_id
+        ):
+            selection_run_id, current_candidates = self._candidate_port.current_candidates(
+                source_id
+            )
+            retained = self._store.retained_candidates(experiment.experiment_id)
         candidates = _merge_candidates(current_candidates, retained)
         if not candidates:
             raise ContinuousShadowError("Continuous Shadow has no candidates to poll.")
         window_end = self._now().replace(microsecond=0)
-        watermark = self._store.watermark(experiment.experiment_id)
+        with self._latency_span("application", "db_read", parent_span_id=root_span_id):
+            watermark = self._store.watermark(experiment.experiment_id)
         if watermark is None:
             window_start = max(
                 experiment.started_at.replace(microsecond=0),
@@ -301,33 +330,43 @@ class ContinuousShadowService:
             started_at=self._now(),
             candidate_count=len(candidates),
         )
+        self._bind_latency_poll(poll_run_id=poll_run_id, experiment_id=experiment.experiment_id)
         source: LeaderTradeSourcePort | None = None
         stage = FAILURE_STAGE_COLLECT_EVENTS
         try:
             source = self._source_factory(
                 {candidate.wallet_id: candidate.address for candidate in candidates}
             )
-            raw_events, source_duplicates = await self._collect_events(
-                source,
-                candidates,
-                window_start=window_start,
-                window_end=window_end,
-            )
+            with self._latency_span(
+                "source",
+                "source_fetch",
+                parent_span_id=root_span_id,
+                endpoint_id="polymarket:data-api",
+                venue_id="polymarket",
+            ):
+                raw_events, source_duplicates = await self._collect_events(
+                    source,
+                    candidates,
+                    window_start=window_start,
+                    window_end=window_end,
+                )
             eligible = tuple(
                 event for event in raw_events if event.executed_at >= experiment.started_at
             )
-            seen = self._store.seen_event_ids(tuple(event.event_id for event in eligible))
-            new_events = tuple(event for event in eligible if event.event_id not in seen)
-            duplicate_count = source_duplicates + len(eligible) - len(new_events)
-            portfolios = _mutable_portfolios(
-                self._store.portfolios(experiment.experiment_id),
-                current_candidates=current_candidates,
-                wallet_bankroll=self._config.wallet_bankroll,
-                follower_bankroll=self._config.follower_bankroll,
-            )
-            attributions = _mutable_attributions(
-                self._store.attributions(experiment.experiment_id)
-            )
+            with self._latency_span("application", "db_read", parent_span_id=root_span_id):
+                seen = self._store.seen_event_ids(tuple(event.event_id for event in eligible))
+                new_events = tuple(event for event in eligible if event.event_id not in seen)
+                duplicate_count = source_duplicates + len(eligible) - len(new_events)
+                portfolios = _mutable_portfolios(
+                    self._store.portfolios(experiment.experiment_id),
+                    current_candidates=current_candidates,
+                    wallet_bankroll=self._config.wallet_bankroll,
+                    follower_bankroll=self._config.follower_bankroll,
+                )
+                attributions = _mutable_attributions(
+                    self._store.attributions(experiment.experiment_id)
+                )
+            self._record_source_observations(new_events)
             market_ids = {
                 position.market_reference
                 for portfolio in portfolios.values()
@@ -339,61 +378,71 @@ class ContinuousShadowService:
                 for position in portfolio.positions.values()
             } | {event.outcome_reference for event in new_events}
             stage = FAILURE_STAGE_MARKET_READ
-            markets = await self._markets(market_ids)
-            books = await self._books(token_ids, markets_by_id=markets)
+            with self._latency_span(
+                "source",
+                "source_fetch",
+                parent_span_id=root_span_id,
+                endpoint_id="polymarket:gamma-clob",
+                venue_id="polymarket",
+            ):
+                markets = await self._markets(market_ids)
+                books = await self._books(token_ids, markets_by_id=markets)
             evaluated_at = self._now()
             stage = FAILURE_STAGE_APPLY_EVENTS
-            ledger, marks, settlement_count, settlement_backlog_count = _apply_settlements(
-                portfolios,
-                attributions,
-                markets,
-                evaluated_at=evaluated_at,
-            )
+            with self._latency_span("application", "settlement", parent_span_id=root_span_id):
+                ledger, marks, settlement_count, settlement_backlog_count = _apply_settlements(
+                    portfolios,
+                    attributions,
+                    markets,
+                    evaluated_at=evaluated_at,
+                )
             evaluations: list[ContinuousEvaluationRecord] = []
             consumed_by_scope: dict[tuple[str, str], dict[Decimal, Decimal]] = {}
             current_by_wallet = {item.wallet_id: item for item in current_candidates}
             retained_by_wallet = {item.wallet_id: item for item in retained}
             all_by_wallet = {**retained_by_wallet, **current_by_wallet}
-            for event in sorted(new_events, key=lambda item: (item.executed_at, item.event_id)):
-                candidate = all_by_wallet[event.leader_id]
-                pool_class = _pool_class(candidate.pools)
-                wallet_portfolio = portfolios[f"wallet:{event.leader_id}"]
-                targets = [wallet_portfolio]
-                for portfolio in portfolios.values():
-                    if portfolio.kind not in FOLLOWER_KINDS or portfolio in targets:
-                        continue
-                    if event.trade_action is LeaderTradeAction.BUY:
-                        if follower_accepts_pool(portfolio.kind, pool_class):
+            with self._latency_span("application", "evaluation", parent_span_id=root_span_id):
+                for event in sorted(new_events, key=lambda item: (item.executed_at, item.event_id)):
+                    candidate = all_by_wallet[event.leader_id]
+                    pool_class = _pool_class(candidate.pools)
+                    wallet_portfolio = portfolios[f"wallet:{event.leader_id}"]
+                    targets = [wallet_portfolio]
+                    for portfolio in portfolios.values():
+                        if portfolio.kind not in FOLLOWER_KINDS or portfolio in targets:
+                            continue
+                        if event.trade_action is LeaderTradeAction.BUY:
+                            if follower_accepts_pool(portfolio.kind, pool_class):
+                                targets.append(portfolio)
+                        elif any(
+                            key[0] == portfolio.portfolio_id
+                            and key[1] == event.leader_id
+                            and key[2] == event.market_reference
+                            and key[3] == event.outcome_reference
+                            for key in attributions
+                        ) or follower_accepts_pool(portfolio.kind, pool_class):
                             targets.append(portfolio)
-                    elif any(
-                        key[0] == portfolio.portfolio_id
-                        and key[1] == event.leader_id
-                        and key[2] == event.market_reference
-                        and key[3] == event.outcome_reference
-                        for key in attributions
-                    ) or follower_accepts_pool(portfolio.kind, pool_class):
-                        targets.append(portfolio)
-                for portfolio in targets:
-                    evaluation, entry = self._apply_event(
-                        portfolio,
-                        event,
-                        pool_class=pool_class,
-                        lifecycle=experiment.lifecycle,
-                        market=markets.get(event.market_reference),
-                        book=books.get(event.outcome_reference),
-                        attributions=attributions,
-                        consumed_by_scope=consumed_by_scope,
-                        evaluated_at=evaluated_at,
-                    )
-                    evaluations.append(evaluation)
-                    if entry is not None:
-                        ledger.append(entry)
-            new_marks = _mark_positions(
-                portfolios,
-                books,
-                evaluated_at=evaluated_at,
-                maximum_age_ms=self._config.maximum_quote_age_ms,
-            )
+                    for portfolio in targets:
+                        evaluation, entry = self._apply_event(
+                            portfolio,
+                            event,
+                            pool_class=pool_class,
+                            lifecycle=experiment.lifecycle,
+                            market=markets.get(event.market_reference),
+                            book=books.get(event.outcome_reference),
+                            attributions=attributions,
+                            consumed_by_scope=consumed_by_scope,
+                            evaluated_at=evaluated_at,
+                        )
+                        evaluations.append(evaluation)
+                        if entry is not None:
+                            ledger.append(entry)
+            with self._latency_span("application", "marking", parent_span_id=root_span_id):
+                new_marks = _mark_positions(
+                    portfolios,
+                    books,
+                    evaluated_at=evaluated_at,
+                    maximum_age_ms=self._config.maximum_quote_age_ms,
+                )
             marks.extend(new_marks)
             stage = FAILURE_STAGE_RENEW_LEASE
             self._lease_port.renew_lease(
@@ -434,14 +483,15 @@ class ContinuousShadowService:
                 request_telemetry=_safe_mapping(source, "request_telemetry"),
             )
             stage = FAILURE_STAGE_PERSIST
-            return self._store.complete_poll(
-                poll_run_id,
-                experiment=experiment,
-                selection_run_id=selection_run_id,
-                current_candidates=current_candidates,
-                completion=completion,
-                completed_at=self._now(),
-            )
+            with self._latency_span("application", "persistence", parent_span_id=root_span_id):
+                return self._store.complete_poll(
+                    poll_run_id,
+                    experiment=experiment,
+                    selection_run_id=selection_run_id,
+                    current_candidates=current_candidates,
+                    completion=completion,
+                    completed_at=self._now(),
+                )
         except Exception as error:
             classified = classify_continuous_shadow_failure(error, stage=stage)
             try:
@@ -467,6 +517,66 @@ class ContinuousShadowService:
                 error_code=classified.category,
                 processing_stage=classified.stage,
             ) from error
+
+    def _begin_latency_trace(self, operation: str) -> None:
+        recorder = self._latency
+        if recorder is None:
+            return
+        try:
+            recorder.begin_trace(operation=operation)
+        except Exception:
+            return
+
+    def _bind_latency_poll(self, *, poll_run_id: str, experiment_id: str) -> None:
+        recorder = self._latency
+        if recorder is None:
+            return
+        try:
+            recorder.bind_poll(poll_run_id=poll_run_id, experiment_id=experiment_id)
+        except Exception:
+            return
+
+    def _latency_span(
+        self,
+        component: str,
+        operation: str,
+        *,
+        parent_span_id: str | None = None,
+        endpoint_id: str | None = None,
+        venue_id: str | None = None,
+    ) -> AbstractContextManager[str]:
+        recorder = self._latency
+        if recorder is None:
+            return nullcontext("UNKNOWN")
+        try:
+            return recorder.span(
+                component=component,
+                operation=operation,
+                parent_span_id=parent_span_id,
+                endpoint_id=endpoint_id,
+                venue_id=venue_id,
+            )
+        except Exception:
+            return nullcontext("UNKNOWN")
+
+    def _record_source_observations(self, events: tuple[LeaderTradeEvent, ...]) -> None:
+        recorder = self._latency
+        if recorder is None:
+            return
+        try:
+            for event in events:
+                lag = event.observed_at - event.executed_at
+                value_ns = int(lag.total_seconds() * 1_000_000_000)
+                if value_ns < 0:
+                    continue
+                recorder.record_measurement(
+                    kind="source_to_observation_ms",
+                    value_ns=value_ns,
+                    started_at_utc=event.executed_at,
+                    venue_id=event.source_id.split(":", 1)[0] if event.source_id else None,
+                )
+        except Exception:
+            return
 
     async def _collect_events(
         self,

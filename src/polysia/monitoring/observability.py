@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Literal
 
 from polysia.config.settings import AppSettings
+from polysia.monitoring.latency_intelligence.report import (
+    insufficient_report,
+    render_latency_report_markdown,
+)
 from polysia.monitoring.metrics import build_operator_status
 from polysia.monitoring.readiness import build_deployment_readiness
 from polysia.risk.kill_switch import KillSwitch
@@ -50,6 +54,7 @@ class ObservabilitySnapshot:
     open_order_read_status: dict[str, object]
     last_live_result_summary: dict[str, object]
     latency_metrics: dict[str, object]
+    latency_performance_intelligence: dict[str, object]
     health_counters: dict[str, object]
     blocking_reasons: tuple[str, ...]
     warnings: tuple[str, ...]
@@ -63,6 +68,7 @@ class ObservabilitySnapshot:
             "health_counters": self.health_counters,
             "last_live_result_summary": self.last_live_result_summary,
             "latency_metrics": self.latency_metrics,
+            "latency_performance_intelligence": self.latency_performance_intelligence,
             "live_path_readiness": self.live_path_readiness,
             "open_order_read_status": self.open_order_read_status,
             "orderbook_freshness": self.orderbook_freshness,
@@ -123,6 +129,9 @@ def build_observability_snapshot(
     open_order_status = _open_order_read_status(post_live)
     last_live_summary = _last_live_result_summary(tiny_live or post_live)
     latency = _latency_metrics(shadow_run)
+    latency_intelligence = _read_mapping(output_dir / "latency-performance-intelligence.json")
+    if not latency_intelligence:
+        latency_intelligence = insufficient_report(generated_at=now)
 
     for status_payload in (
         stream_health,
@@ -181,6 +190,7 @@ def build_observability_snapshot(
         open_order_read_status=open_order_status,
         last_live_result_summary=last_live_summary,
         latency_metrics=latency,
+        latency_performance_intelligence=latency_intelligence,
         health_counters=health_counters,
         blocking_reasons=tuple(blocking),
         warnings=tuple(dict.fromkeys(warnings)),
@@ -268,6 +278,10 @@ def render_observability_snapshot_markdown(snapshot: ObservabilitySnapshot) -> s
             "",
             _table(snapshot.latency_metrics),
             "",
+            "## Latency Performance Intelligence",
+            "",
+            render_latency_report_markdown(snapshot.latency_performance_intelligence),
+            "",
             "## Health Counters",
             "",
             _table(snapshot.health_counters),
@@ -308,6 +322,16 @@ def render_observability_snapshot_html(snapshot: ObservabilitySnapshot) -> str:
         "Open Orders": snapshot.open_order_read_status,
         "Last Live Result": snapshot.last_live_result_summary,
         "Latency": snapshot.latency_metrics,
+        "Latency Performance Intelligence": {
+            "confidence": snapshot.latency_performance_intelligence.get("confidence"),
+            "contract": snapshot.latency_performance_intelligence.get(
+                "performance_contract_version"
+            ),
+            "generated_at": snapshot.latency_performance_intelligence.get("generated_at"),
+            "primary_bottleneck": _mapping(
+                snapshot.latency_performance_intelligence.get("bottlenecks")
+            ).get("primary"),
+        },
     }
     section_markup = "".join(
         f"<section><h2>{escape(title)}</h2><table>{_html_rows(values)}</table></section>"

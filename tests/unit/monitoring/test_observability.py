@@ -52,6 +52,7 @@ def test_observability_snapshot_schema_is_stable(tmp_path: Path) -> None:
         "health_counters",
         "last_live_result_summary",
         "latency_metrics",
+        "latency_performance_intelligence",
         "live_path_readiness",
         "open_order_read_status",
         "orderbook_freshness",
@@ -71,7 +72,10 @@ def test_observability_snapshot_schema_is_stable(tmp_path: Path) -> None:
         "p99_ms": "2.5",
         "status": "available",
     }
-    assert payload["last_live_result_summary"]["final_result"] == "LIVE_ORDER_FILLED"
+    assert payload["latency_performance_intelligence"]["confidence"] == "INSUFFICIENT_DATA"
+    assert payload["latency_performance_intelligence"]["execution"]["submit"]["status"] == (
+        "UNKNOWN"
+    )
 
 
 def test_observability_snapshot_writes_json_markdown_and_html(tmp_path: Path) -> None:
