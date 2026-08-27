@@ -2,9 +2,10 @@
 
 ## Status
 
-PR `#96` merged as `abb96570ba0e27deb163688e1fe25f8d0fefe9b8` and is deployed on
+PR `#101` merged as `41221e7edef56faeccfe5783a22415956c7ffddf` and is deployed on
 `Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Schema v4 remains in place
-from PR `#92`. Reporting isolation from PR `#94` remains in place. The
+from PR `#92`. Reporting isolation from PR `#94`, the Compose lifecycle from
+PR `#96`, and contention hardening from PRs `#98`–`#101` remain in place. The
 persistent worker is running as a Compose project member. No real order was
 sent. `3x-ui` was not restarted.
 
@@ -173,3 +174,67 @@ Local workstation gates on the implementation commit `857c8e4` (2026-08-26):
   `duplicate_processing_count=0`, `TRADING_MODE=DATA_ONLY`,
   `LIVE_TRADING_ENABLED=false`.
 - `3x-ui` restart count 0 and start time `2026-08-21T10:33:56Z` unchanged.
+
+## Final contention-hardening closeout (PRs `#98`–`#101`)
+
+The repair was completed as four small, evidence-driven changes. PR `#98`
+introduced bounded SQLite busy classification. PR `#99` removed repeated
+per-poll store initialization, corrected systemd/Compose lifecycle handling,
+kept health reporting fail-soft, and corrected backlog-age semantics. PR `#100`
+made only `source_unavailable`, `market_read_failed`, and `sqlite_busy`
+retryable inside the persistent loop. PR `#101` added the missing outer poll
+boundary so raw storage failures raised while loading experiment or candidate
+state are classified as `sqlite_busy/load_state` before they can terminate the
+process. Persistence, lease, and unexpected failures still fail closed.
+
+Two intermediate deployments exposed remaining boundaries and were deliberately
+superseded. This is positive runtime evidence, not hidden success-only history.
+The final PR `#101` head passed the normal quality gates, including 837 tests,
+and GitHub Actions run `33026629181` completed successfully.
+
+### Final deployment and recovery evidence
+
+- Merge and deployed SHA:
+  `41221e7edef56faeccfe5783a22415956c7ffddf`
+- Release path:
+  `/opt/polysia-releases/41221e7edef56faeccfe5783a22415956c7ffddf`
+- Release archive SHA-256:
+  `b41f56d58797a44145b54481cfeb93b137492fa1e1f67622920cfb9aeef6d2f6`
+- Image ID:
+  `sha256:d0486bacd1bf76ad5d5e40201c6315a50c561d117a703c7a40d8ab8676d4b8fe`
+- Pre-switch backup:
+  `wallet-intelligence-20260827T040936773971Z.sqlite3`, SHA-256
+  `ac1a43fe46c346d0225479de3d355fc5a9a09589a092659f414bd952e7bb3c8d`
+- Final online backup:
+  `wallet-intelligence-20260827T045026736563Z.sqlite3`, 481,038,336 bytes,
+  SHA-256 `df1552b4c44b869100cd959689f5cf451939c2d073402e808fd954aee3eb9347`
+- Both restore checks passed checksum, SQLite integrity, foreign keys, schema,
+  and row-count validation.
+
+The final worker started at 04:14:30 UTC. Natural Stage 4A cycles started at
+04:20:14, 04:30:12, and 04:40:11 UTC and all finished successfully. Across
+those overlaps the worker recorded two classified SQLite busy skips and one
+classified source-unavailable skip, then continued normally. The final online
+backup added one more classified busy skip. No raw `database is locked`
+traceback occurred, `NRestarts` remained zero, and duplicate processing stayed
+zero. This proves bounded recovery for the observed single-host SQLite
+contention class; it does not claim that contention can never occur.
+
+Snapshot evidence at 04:50 UTC:
+
+- 1,927 successful polls, 5,640 unique events, and 1,941 overlap duplicates;
+- 13,840 evaluations: 2,393 simulated, 5,511 rejected, and 5,936 unknown;
+- 554 verified settlements and 23 current settlement-backlog items;
+- Decimal identity delta `-1E-25`, unmarked-adjusted delta `-1E-25`, and
+  `ledger_balanced=true`;
+- 247 open positions and `real_orders=false`;
+- mixed modeled P&L `-495.81`, Alpha `-46.33`, and Stress `-276.37`, all
+  low-confidence and not decision-ready.
+
+Fresh interval telemetry recorded zero rate limits, zero cooldowns, zero
+retries, a closed circuit, and maximum trade scheduling delay below 0.67 s.
+The atomic report remained `warning` for genuine stale marks and settlement
+backlog. Safety remained `TRADING_MODE=DATA_ONLY` and
+`LIVE_TRADING_ENABLED=false`; no Risk, Execution, signing, or Live service ran.
+`3x-ui` retained identity `ab567d6d…`, restart count zero, and start time
+2026-08-21 10:33:56 UTC.
