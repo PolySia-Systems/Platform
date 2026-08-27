@@ -239,6 +239,11 @@ services:
       APP_ENV: production
       LIVE_TRADING_ENABLED: "false"
       TRADING_MODE: DATA_ONLY
+      POLYSIA_HOST_ID: ${POLYSIA_HOST_ID:-hetzner-finland-helsinki-01}
+      POLYSIA_PROVIDER: ${POLYSIA_PROVIDER:-hetzner}
+      POLYSIA_REGION: ${POLYSIA_REGION:-helsinki}
+      POLYSIA_LATENCY_TELEMETRY_ENABLED: ${POLYSIA_LATENCY_TELEMETRY_ENABLED:-true}
+      POLYSIA_LATENCY_PROBE_ENABLED: ${POLYSIA_LATENCY_PROBE_ENABLED:-true}
     command:
       - wallet-intelligence
       - portfolio-sync

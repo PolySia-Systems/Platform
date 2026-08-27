@@ -5,6 +5,7 @@ import json
 import signal
 import sqlite3
 import time
+from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -60,6 +61,22 @@ from polysia.domain.wallet_intelligence.copyability_selection import (
     SelectionPoolId,
     SelectionStatus,
 )
+from polysia.monitoring.latency_intelligence.identity import (
+    load_runtime_identity,
+    probes_enabled,
+    telemetry_enabled,
+)
+from polysia.monitoring.latency_intelligence.policy import LatencyPolicy
+from polysia.monitoring.latency_intelligence.probes import (
+    POLYMARKET_READ_ENDPOINTS,
+    probe_endpoint,
+    record_probe,
+)
+from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
+from polysia.monitoring.latency_intelligence.report import (
+    build_latency_performance_intelligence,
+    insufficient_report,
+)
 from polysia.monitoring.wallet_intelligence_health import (
     WalletIntelligenceHealthReportError,
     read_wallet_intelligence_health_payload,
@@ -73,6 +90,7 @@ from polysia.storage.continuous_shadow import (
 )
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.dynamic_shadow import DynamicShadowRepository, DynamicShadowStoreError
+from polysia.storage.latency_telemetry import LatencyTelemetryStore
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
 
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
@@ -80,6 +98,9 @@ DEFAULT_BACKUP_DIR = Path("backups/wallet-intelligence")
 DEFAULT_HEALTH_REPORT = Path("reports/wallet-intelligence/latest.json")
 DEFAULT_CONTINUOUS_SHADOW_HEALTH = Path(
     "reports/wallet-intelligence/continuous-shadow.json"
+)
+DEFAULT_LATENCY_REPORT = Path(
+    "reports/wallet-intelligence/latency-performance-intelligence.json"
 )
 _RETRYABLE_PERSISTENT_SHADOW_FAILURES = frozenset(
     {
@@ -765,6 +786,7 @@ def portfolio_sync(
         signal.signal(signal.SIGINT, _stop)
         while running:
             started = time.monotonic()
+            wait_ns: int | None = None
             try:
                 _emit_portfolio_poll(
                     service,
@@ -807,8 +829,12 @@ def portfolio_sync(
                     )
                 )
             remaining = poll_interval_seconds - (time.monotonic() - started)
+            remaining = _maybe_run_latency_probe(service, remaining)
             if running and remaining > 0:
+                sleep_started = time.monotonic()
                 time.sleep(remaining)
+                wait_ns = int((time.monotonic() - sleep_started) * 1_000_000_000)
+            _record_poll_wait(service, wait_ns)
     except (
         ContinuousShadowError,
         ContinuousShadowStoreError,
@@ -829,6 +855,7 @@ def _emit_portfolio_poll(
 ) -> None:
     outcome = asyncio.run(service.poll(source_id))
     payload = outcome.to_dict()
+    _flush_latency_telemetry(service, database, health_report)
     observed_at = datetime.now(UTC)
     try:
         report = ContinuousShadowRepository(database).health(
@@ -1180,6 +1207,12 @@ def _continuous_shadow_service(
     config: ContinuousShadowConfig,
 ) -> ContinuousShadowService:
     _source(source)
+    recorder = None
+    if telemetry_enabled():
+        recorder = LatencyRecorder(
+            LatencyTelemetryStore(database),
+            load_runtime_identity(venue_id="polymarket"),
+        )
     return ContinuousShadowService(
         ContinuousShadowRepository(database),
         DynamicShadowRepository(database),
@@ -1190,7 +1223,80 @@ def _continuous_shadow_service(
         ),
         PolymarketPublicAdapter(),
         config=config,
+        latency_recorder=recorder,
     )
+
+
+_PROBE_INDEX = 0
+
+
+def _flush_latency_telemetry(
+    service: object,
+    database: Path,
+    health_report: Path,
+) -> None:
+    recorder = getattr(service, "latency_recorder", None)
+    if recorder is None:
+        return
+    try:
+        recorder.flush()
+        store = LatencyTelemetryStore(database)
+        report = build_latency_performance_intelligence(store, health=recorder.health())
+        write_wallet_intelligence_health_payload(
+            report,
+            health_report.parent / DEFAULT_LATENCY_REPORT.name,
+        )
+        try:
+            store.mark_artifact_written(written_at=datetime.now(UTC))
+        except Exception:
+            return
+    except Exception:
+        try:
+            write_wallet_intelligence_health_payload(
+                insufficient_report(health=recorder.health()),
+                health_report.parent / DEFAULT_LATENCY_REPORT.name,
+            )
+        except Exception:
+            return
+
+
+def _maybe_run_latency_probe(service: object, remaining: float) -> float:
+    global _PROBE_INDEX
+    recorder = getattr(service, "latency_recorder", None)
+    policy = LatencyPolicy()
+    if (
+        recorder is None
+        or not probes_enabled()
+        or remaining < policy.probe_min_remaining_seconds
+    ):
+        return remaining
+    started = time.monotonic()
+    try:
+        endpoint = POLYMARKET_READ_ENDPOINTS[_PROBE_INDEX % len(POLYMARKET_READ_ENDPOINTS)]
+        _PROBE_INDEX += 1
+        sample = probe_endpoint(endpoint, policy=policy)
+        record_probe(recorder, sample)
+        recorder.flush()
+    except Exception:
+        record_probe_failure = getattr(recorder, "record_probe_outcome", None)
+        if record_probe_failure is not None:
+            with suppress(Exception):
+                record_probe_failure(success=False)
+    return remaining - (time.monotonic() - started)
+
+
+def _record_poll_wait(service: object, wait_ns: int | None) -> None:
+    recorder = getattr(service, "latency_recorder", None)
+    if recorder is None or wait_ns is None:
+        return
+    try:
+        recorder.record_measurement(
+            kind="poll_wait_component_ms",
+            value_ns=wait_ns,
+            started_at_utc=datetime.now(UTC),
+        )
+    except Exception:
+        return
 
 
 def _continuous_shadow_config(
