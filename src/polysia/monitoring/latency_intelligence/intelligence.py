@@ -479,4 +479,3 @@ def reference_from_evidence(value_ns: int | None, *, estimated: bool = False) ->
         "value_ms": _ns_ms(value_ns),
         "value_ns": value_ns,
     }
-
