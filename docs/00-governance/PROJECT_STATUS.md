@@ -4,13 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-26 |
+| Review date | 2026-08-27 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `ac104c708100bf9fff7e632acefd89bf90b8e509` |
-| Last verified deployed baseline | `abb96570ba0e27deb163688e1fe25f8d0fefe9b8` |
+| Audited repository baseline | `41221e7edef56faeccfe5783a22415956c7ffddf` |
+| Last verified deployed baseline | `41221e7edef56faeccfe5783a22415956c7ffddf` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 4B worker `compose up` (PR `#96`) deployed on Finland at `abb9657` |
+| Latest repository maintenance | Stage 4B contention hardening (PRs `#98`–`#101`) deployed on Finland at `41221e7` |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -37,10 +37,8 @@ PRs `#80` through `#88` completed the all-market Dynamic Shadow consumer,
 protected dynamic pre-Live handoff, read-only publication repair, official
 position-pagination bound, persistent restore scratch, and the Continuous
 Shadow Portfolio. Exact runtime commit
-`d39f5b355b1d83ed2019a93c6647b8ceb1572e5f` is deployed from a verified immutable
-Git archive because repository Deploy Keys are disabled. The later `main`
-baseline `596e820` changes only Standards adoption, governance documentation,
-and its validator; it does not change runtime behavior.
+`41221e7edef56faeccfe5783a22415956c7ffddf` is deployed from a verified immutable
+Git archive because repository Deploy Keys are disabled.
 
 The monitor is healthy with no published port. `TRADING_MODE=DATA_ONLY`,
 `LIVE_TRADING_ENABLED=false`, and the Live allowlist is empty. Credentials were
@@ -68,8 +66,9 @@ its exact-102 and BTC 15-minute safety invariants.
 
 Continuous Shadow Portfolio v0.2 / schema v4 is CURRENT in `DATA_ONLY` on
 `Hetzner-Finland-Helsinki-01` at exact merge commit
-`abb96570ba0e27deb163688e1fe25f8d0fefe9b8` (PR `#96`, including PR `#94`
-reporting isolation and PR `#92` schema v4). The mixed FOLLOWER portfolio
+`41221e7edef56faeccfe5783a22415956c7ffddf` (PR `#101`, including PRs `#98`–`#100`,
+PR `#96` worker lifecycle, PR `#94` reporting isolation, and PR `#92` schema
+v4). The mixed FOLLOWER portfolio
 remains the labeled baseline.
 Independent Alpha and Stress followers started empty after migration.
 CLOSE/SETTLEMENT attribution, rolling 1h/6h/24h health, mark freshness, and a
@@ -118,6 +117,44 @@ Thirty host artifact reads were 0.0000–0.0003 s. After that smoke: ledger
 balanced, duplicate processing 0, last poll succeeded, marks fresh/stale/missing
 159/93/0, `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`. `3x-ui`
 restart count remained 0.
+
+The final contention-hardening sequence closed four distinct failure
+boundaries without changing schema, journal mode, financial policy, or Live
+controls. PR `#98` added bounded SQLite busy handling; PR `#99` made worker
+initialization and unit lifecycle deterministic; PR `#100` kept transient
+source failures inside the persistent process; and PR `#101` classified a raw
+SQLite busy error that could occur before a poll run existed. Intermediate
+deployments were observed rather than assumed correct: two exposed remaining
+boundaries and were superseded. Final local validation passed 837 tests and all
+normal quality gates; CI run `33026629181` passed on the PR `#101` head.
+
+Final Helsinki verification used exact SHA `41221e7`. Three natural Stage 4A
+cycles at 04:20, 04:30, and 04:40 UTC all exited successfully while the Stage
+4B worker stayed active with `NRestarts=0`, no traceback, and no uncaught
+`database is locked`. Two genuine overlap locks and one transient source outage
+were safely classified and skipped; durable prior state was retained and the
+next normal poll succeeded. A final online backup intentionally overlapped the
+worker and caused another classified `sqlite_busy` skip without a restart.
+
+The final verified backup is
+`wallet-intelligence-20260827T045026736563Z.sqlite3` (481,038,336 bytes,
+SHA-256 `df1552b4c44b869100cd959689f5cf451939c2d073402e808fd954aee3eb9347`).
+Its restore-check passed. Snapshot evidence contained 1,927 successful polls,
+5,640 unique events, 1,941 overlap duplicates, zero duplicate processing,
+13,840 evaluations (2,393 simulated, 5,511 rejected, 5,936 unknown), and 554
+settlements. The Decimal identity delta and unmarked-adjusted delta were both
+`-1E-25`; the ledger balanced. The current report remained `warning` because
+23 genuine settlement-backlog items and stale marks remain, not because the
+worker crashed. Current modeled results remain negative and low-confidence;
+this operational repair is not a profitability or Live-readiness claim.
+
+The deployed archive SHA-256 is
+`b41f56d58797a44145b54481cfeb93b137492fa1e1f67622920cfb9aeef6d2f6` and the
+image ID is
+`sha256:d0486bacd1bf76ad5d5e40201c6315a50c561d117a703c7a40d8ab8676d4b8fe`.
+`TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`, and no Live service or
+order path ran. `3x-ui` retained container identity `ab567d6d…`, restart count
+zero, and its 2026-08-21 10:33:56 UTC start time.
 
 ## Completed stages
 
