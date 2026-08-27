@@ -1082,6 +1082,35 @@ async def test_poll_initialization_sqlite_busy_is_classified_and_recovers(
 
 
 @pytest.mark.asyncio
+async def test_poll_state_load_sqlite_busy_is_classified_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database, service, clock, _scenario = _started_service(tmp_path)
+
+    def busy_read(_source_id: str) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as context:
+        context.setattr(service._store, "active_experiment", busy_read)
+        with pytest.raises(ContinuousShadowError) as failed:
+            await service.poll("polycop")
+
+    assert failed.value.error_code == "sqlite_busy"
+    assert failed.value.processing_stage == "load_state"
+    clock.value = NOW + timedelta(minutes=2)
+    recovered = await service.poll("polycop")
+    assert recovered.new_event_count == 0
+    health = ContinuousShadowRepository(database).health(
+        "polycop",
+        now=clock.value,
+        poll_interval_seconds=60,
+    )
+    assert health.ledger_balanced is True
+    assert health.duplicate_processing_count == 0
+
+
+@pytest.mark.asyncio
 async def test_fail_poll_recording_error_preserves_original_failure_category(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

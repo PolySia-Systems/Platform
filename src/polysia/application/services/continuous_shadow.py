@@ -42,6 +42,7 @@ from polysia.application.services.continuous_shadow_failures import (
     FAILURE_STAGE_COLLECT_EVENTS,
     FAILURE_STAGE_FAIL_POLL,
     FAILURE_STAGE_INITIALIZE,
+    FAILURE_STAGE_LOAD_STATE,
     FAILURE_STAGE_MARKET_READ,
     FAILURE_STAGE_PERSIST,
     FAILURE_STAGE_RELEASE_LEASE,
@@ -231,7 +232,15 @@ class ContinuousShadowService:
                 stage=FAILURE_STAGE_ACQUIRE_LEASE,
             ) from error
         try:
-            return await self._poll_locked(source_id, lease=lease)
+            try:
+                return await self._poll_locked(source_id, lease=lease)
+            except ContinuousShadowError:
+                raise
+            except Exception as error:
+                raise _classified_poll_boundary_error(
+                    error,
+                    stage=FAILURE_STAGE_LOAD_STATE,
+                ) from error
         finally:
             try:
                 self._lease_port.release_lease(lease)
