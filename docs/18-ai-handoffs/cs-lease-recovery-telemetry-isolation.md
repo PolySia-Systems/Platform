@@ -1,7 +1,9 @@
 # Continuous Shadow lease recovery and telemetry isolation
 
-Status: CURRENT implementation pending Helsinki three-hour acceptance
-after merge. This change does not enable Live trading.
+Status: CURRENT PR #104 deployment confirmed stable ownership and telemetry
+isolation, but its Helsinki acceptance failed on orphaned-poll recovery. The
+focused follow-up below is implemented locally and pending delivery and runtime
+verification. Neither change enables Live trading.
 
 ## Root cause
 
@@ -26,3 +28,18 @@ TTL, fencing tokens, and expiry semantics were not the defect.
 
 `source_fetch` behavior is unchanged. A new worker process still cannot
 steal an unexpired lease; that is required fencing, not a recovery bug.
+
+## Helsinki follow-up
+
+The first deployed acceptance window confirmed stable worker ownership and
+physical telemetry isolation, but exposed a second recovery boundary. A poll
+started at `2026-08-29T11:49:51Z`; persistence contention then prevented both
+completion and failure recording. The row remained `running`, so later workers
+exited on `persistence_failed/load_state` until initialization marked it
+`abandoned_poll` at `2026-08-29T12:21:57Z`.
+
+The follow-up correction lets `start_poll` replace an orphaned `running` row
+only while holding a matching, unexpired SQLite lease and fencing token. The
+orphan transition and the new poll insert share one transaction. An expired or
+stale owner cannot recover or start a poll. TTL, fencing, Ledger, telemetry,
+financial policy, and Live controls remain unchanged.

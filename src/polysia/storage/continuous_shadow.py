@@ -11,6 +11,9 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from polysia.application.ports.candidate_intelligence import (
+    CandidatePipelineLeaseLostError,
+)
 from polysia.application.ports.continuous_shadow import (
     ContinuousLedgerRecord,
     ContinuousPollCompletion,
@@ -34,6 +37,7 @@ from polysia.domain.copytrading.continuous_shadow_experiments import (
     RecordedShadowFill,
     walk_forward_policy_report,
 )
+from polysia.domain.wallet_intelligence import CandidatePipelineLease
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
@@ -444,6 +448,7 @@ class ContinuousShadowRepository:
     def start_poll(
         self,
         *,
+        lease: CandidatePipelineLease,
         experiment_id: str,
         selection_run_id: str,
         window_start: datetime,
@@ -453,17 +458,37 @@ class ContinuousShadowRepository:
     ) -> str:
         if candidate_count < 1 or window_end <= window_start:
             raise ValueError("Continuous Shadow poll bounds are invalid")
+        started_at = _utc(started_at)
         poll_run_id = uuid.uuid4().hex
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            live_lease = connection.execute(
+                "SELECT 1 FROM candidate_pipeline_leases WHERE resource = ? "
+                "AND owner_id = ? AND fencing_token = ? AND lease_expires_at > ?",
+                (
+                    lease.resource,
+                    lease.owner_id,
+                    lease.fencing_token,
+                    _iso(started_at),
+                ),
+            ).fetchone()
+            if live_lease is None:
+                raise CandidatePipelineLeaseLostError(
+                    "Wallet-intelligence pipeline lease was lost before poll start."
+                )
             running = connection.execute(
-                "SELECT 1 FROM continuous_shadow_poll_runs WHERE experiment_id = ? "
+                "SELECT poll_run_id FROM continuous_shadow_poll_runs WHERE experiment_id = ? "
                 "AND status = 'running'",
                 (experiment_id,),
             ).fetchone()
             if running is not None:
-                raise ContinuousShadowStoreError("A Continuous Shadow poll is already running.")
+                connection.execute(
+                    "UPDATE continuous_shadow_poll_runs SET status = 'failed', failed_at = ?, "
+                    "last_error_code = 'orphaned_poll' WHERE poll_run_id = ? "
+                    "AND status = 'running'",
+                    (_iso(started_at), str(running["poll_run_id"])),
+                )
             connection.execute(
                 "INSERT INTO continuous_shadow_poll_runs "
                 "(poll_run_id, experiment_id, selection_run_id, window_start, window_end, "

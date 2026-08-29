@@ -171,8 +171,15 @@ def _restrict_permissions(path: Path) -> None:
 
 
 def _prune_backups(backup_dir: Path, *, keep: int, prefix: str = BACKUP_PREFIX) -> None:
+    exact_name = re.compile(
+        rf"^{re.escape(prefix)}\d{{8}}T\d{{12}}Z{re.escape(BACKUP_SUFFIX)}$"
+    )
     backups = sorted(
-        backup_dir.glob(f"{prefix}*{BACKUP_SUFFIX}"),
+        (
+            path
+            for path in backup_dir.glob(f"{prefix}*{BACKUP_SUFFIX}")
+            if exact_name.fullmatch(path.name) is not None
+        ),
         key=lambda path: path.name,
         reverse=True,
     )

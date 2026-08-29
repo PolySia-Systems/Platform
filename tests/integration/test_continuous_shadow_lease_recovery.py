@@ -72,6 +72,18 @@ class _PersistBusyOnce:
         return self._inner.complete_poll(*args, **kwargs)
 
 
+class _PersistAndFailPollBusyOnce(_PersistBusyOnce):
+    def __init__(self, inner: ContinuousShadowRepository) -> None:
+        super().__init__(inner)
+        self.fail_remaining = 1
+
+    def fail_poll(self, *args: object, **kwargs: object) -> None:
+        if self.fail_remaining:
+            self.fail_remaining -= 1
+            raise sqlite3.OperationalError("database is locked")
+        self._inner.fail_poll(*args, **kwargs)
+
+
 def _seeded_service(tmp_path: Path) -> tuple[Path, ContinuousShadowService, _Clock, _Scenario]:
     database = tmp_path / "wallet-intelligence.sqlite3"
     _seed_stage3(database)
@@ -151,6 +163,83 @@ async def test_persist_sqlite_busy_keeps_prior_ledger_and_next_poll_succeeds(
     health = _health(database, clock)
     assert health.ledger_balanced is True
     assert health.duplicate_processing_count == 0
+
+
+@pytest.mark.asyncio
+async def test_orphaned_poll_is_recovered_by_the_next_fenced_poll(
+    tmp_path: Path,
+) -> None:
+    database, service, clock, _scenario = _seeded_service(tmp_path)
+    service._store = _PersistAndFailPollBusyOnce(ContinuousShadowRepository(database))
+    service._lease_port = _ReleaseBusyOnce(CandidateIntelligenceRepository(database))
+
+    with pytest.raises(ContinuousShadowError) as raised:
+        await service.poll("polycop")
+    assert raised.value.error_code == FAILURE_CATEGORY_SQLITE_BUSY
+    assert raised.value.processing_stage == FAILURE_STAGE_RELEASE_LEASE
+
+    connection = sqlite3.connect(database)
+    try:
+        running = connection.execute(
+            "SELECT poll_run_id FROM continuous_shadow_poll_runs WHERE status = 'running'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert running is not None
+
+    clock.value = NOW + timedelta(minutes=1)
+    recovered = await service.poll("polycop")
+    assert recovered is not None
+
+    connection = sqlite3.connect(database)
+    try:
+        orphan = connection.execute(
+            "SELECT status, last_error_code FROM continuous_shadow_poll_runs "
+            "WHERE poll_run_id = ?",
+            (str(running[0]),),
+        ).fetchone()
+    finally:
+        connection.close()
+    assert orphan == ("failed", "orphaned_poll")
+    health = _health(database, clock)
+    assert health.ledger_balanced is True
+    assert health.duplicate_processing_count == 0
+
+
+def test_expired_lease_cannot_recover_or_start_a_poll(tmp_path: Path) -> None:
+    database, _service_instance, _clock, _scenario = _seeded_service(tmp_path)
+    lease_store = CandidateIntelligenceRepository(database)
+    lease = lease_store.acquire_lease(
+        CONTINUOUS_SHADOW_LEASE_RESOURCE,
+        owner_id="continuous-shadow-expired",
+        acquired_at=NOW,
+        lease_duration=timedelta(minutes=1),
+    )
+    store = ContinuousShadowRepository(database)
+    experiment = store.active_experiment("polycop")
+    assert experiment is not None
+
+    with pytest.raises(CandidatePipelineLeaseLostError):
+        store.start_poll(
+            lease=lease,
+            experiment_id=experiment.experiment_id,
+            selection_run_id=experiment.selection_run_id,
+            window_start=NOW,
+            window_end=NOW + timedelta(minutes=1),
+            started_at=NOW + timedelta(minutes=2),
+            candidate_count=1,
+        )
+
+    connection = sqlite3.connect(database)
+    try:
+        running_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_poll_runs WHERE status = 'running'"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert running_count == 0
 
 
 @pytest.mark.asyncio

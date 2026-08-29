@@ -340,6 +340,7 @@ class ContinuousShadowService:
         if window_start >= window_end:
             window_start = window_end - timedelta(seconds=1)
         poll_run_id = self._store.start_poll(
+            lease=lease,
             experiment_id=experiment.experiment_id,
             selection_run_id=selection_run_id,
             window_start=window_start,
