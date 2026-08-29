@@ -1,9 +1,10 @@
 # Continuous Shadow lease recovery and telemetry isolation
 
-Status: CURRENT PR #104 deployment confirmed stable ownership and telemetry
-isolation, but its Helsinki acceptance failed on orphaned-poll recovery. The
-focused follow-up below is implemented locally and pending delivery and runtime
-verification. Neither change enables Live trading.
+Status: CURRENT. PR #104 confirmed stable ownership and telemetry isolation but
+failed its Helsinki acceptance on orphaned-poll recovery. PR #105 corrected
+that boundary and was deployed from exact merge commit
+`2c73ca6765b4f15f7c3531b4b75131a6c1534842`. Neither change enables Live
+trading.
 
 ## Root cause
 
@@ -43,3 +44,24 @@ only while holding a matching, unexpired SQLite lease and fencing token. The
 orphan transition and the new poll insert share one transaction. An expired or
 stale owner cannot recover or start a poll. TTL, fencing, Ledger, telemetry,
 financial policy, and Live controls remain unchanged.
+
+## Delivery verification
+
+- All local gates passed, including 874 tests; GitHub quality, container,
+  Windows compatibility, and aggregate CI gates passed on PR #105.
+- Checksummed financial and latency backups were restored into disposable
+  databases before cutover; integrity, foreign keys, schema versions, and row
+  counts passed.
+- Helsinki started the exact merge image at `2026-08-29T18:03:32Z` with
+  `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`, and zero service
+  restarts.
+- The first three post-deployment polls succeeded. The latest health artifact
+  reported a balanced Ledger and zero duplicate processing. No real order path
+  was enabled.
+- The unrelated `3x-ui` container retained its prior identity, zero restart
+  count, and original start time.
+
+This immediate smoke confirms delivery and normal-cycle recovery. The
+deterministic integration test injects the exact combined `complete_poll`,
+`fail_poll`, and `release_lease` contention sequence. A longer observation
+window remains operational evidence, not a prerequisite for the code fix.
