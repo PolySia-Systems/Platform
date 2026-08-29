@@ -14,6 +14,7 @@ from polysia.domain.copytrading.continuous_shadow import (
     ContinuousShadowLifecycle,
 )
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
+from polysia.domain.wallet_intelligence import CandidatePipelineLease
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +314,7 @@ class ContinuousShadowStorePort(Protocol):
     def start_poll(
         self,
         *,
+        lease: CandidatePipelineLease,
         experiment_id: str,
         selection_run_id: str,
         window_start: datetime,

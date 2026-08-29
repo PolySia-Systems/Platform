@@ -227,3 +227,39 @@ def test_latency_sidecar_is_backed_up_and_restored_independently(tmp_path: Path)
     assert restored.sha256 == latency.sha256
     assert financial.backup_path.name.startswith("wallet-intelligence-")
     assert latency.backup_path.name.startswith("wallet-intelligence-latency-")
+
+
+def test_financial_and_latency_retention_do_not_prune_each_other(tmp_path: Path) -> None:
+    from polysia.deployment.wallet_intelligence_backup import (
+        backup_wallet_intelligence_state,
+    )
+    from polysia.storage.latency_telemetry import (
+        LatencyTelemetryStore,
+        default_latency_telemetry_path,
+    )
+
+    database = tmp_path / "data" / "wallet-intelligence.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    LatencyTelemetryStore(default_latency_telemetry_path(database)).initialize()
+    backup_dir = tmp_path / "backups"
+    started_at = datetime(2026, 8, 22, tzinfo=UTC)
+
+    first_financial, first_latency = backup_wallet_intelligence_state(
+        database,
+        backup_dir,
+        keep=1,
+        now=started_at,
+    )
+    second_financial, second_latency = backup_wallet_intelligence_state(
+        database,
+        backup_dir,
+        keep=1,
+        now=started_at + timedelta(seconds=1),
+    )
+
+    assert first_latency is not None
+    assert second_latency is not None
+    assert not first_financial.backup_path.exists()
+    assert not first_latency.backup_path.exists()
+    assert second_financial.backup_path.is_file()
+    assert second_latency.backup_path.is_file()
