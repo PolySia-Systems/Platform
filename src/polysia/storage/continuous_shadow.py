@@ -35,7 +35,6 @@ from polysia.domain.copytrading.continuous_shadow_experiments import (
     walk_forward_policy_report,
 )
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
-from polysia.storage.latency_telemetry import ensure_latency_telemetry_schema
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
@@ -100,11 +99,6 @@ class ContinuousShadowRepository:
                 (_iso(datetime.now(UTC)), cutoff),
             )
             connection.commit()
-            try:
-                ensure_latency_telemetry_schema(connection)
-                connection.commit()
-            except Exception:
-                connection.rollback()
             self._require_schema(connection)
             self._require_integrity(connection)
         finally:

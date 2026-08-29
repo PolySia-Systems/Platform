@@ -16,7 +16,11 @@ from polysia.monitoring.latency_intelligence.policy import (
 from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
-from polysia.storage.latency_telemetry import LatencyTelemetryStore
+from polysia.storage.latency_telemetry import (
+    LatencyTelemetryStore,
+    copy_latency_telemetry_from_financial,
+    default_latency_telemetry_path,
+)
 
 
 def _span(**overrides: object) -> PerformanceSpan:
@@ -68,14 +72,13 @@ def test_telemetry_migration_is_additive_and_keeps_cs_schema_v4(tmp_path: Path) 
     DynamicShadowRepository(database).initialize()
     ContinuousShadowRepository(database).initialize()
     ContinuousShadowRepository(database).initialize()
+    sidecar = default_latency_telemetry_path(database)
+    copy_latency_telemetry_from_financial(database, sidecar)
 
     connection = sqlite3.connect(database)
     try:
         cs_version = connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0]
-        telemetry_version = connection.execute(
-            "SELECT schema_version FROM latency_telemetry_metadata"
         ).fetchone()[0]
         tables = {
             row[0]
@@ -85,9 +88,77 @@ def test_telemetry_migration_is_additive_and_keeps_cs_schema_v4(tmp_path: Path) 
         connection.close()
 
     assert cs_version == 4
-    assert telemetry_version == 1
-    assert "latency_spans" in tables
+    assert "latency_spans" not in tables
     assert "continuous_shadow_ledger" in tables
+    assert sidecar.is_file()
+    dest = sqlite3.connect(sidecar)
+    try:
+        telemetry_version = dest.execute(
+            "SELECT schema_version FROM latency_telemetry_metadata"
+        ).fetchone()[0]
+    finally:
+        dest.close()
+    assert telemetry_version == 1
+
+
+def test_existing_financial_telemetry_is_copied_and_not_deleted(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    DynamicShadowRepository(database).initialize()
+    ContinuousShadowRepository(database).initialize()
+    legacy = LatencyTelemetryStore(database)
+    legacy.insert_batch(
+        (_span(span_id="span-copy"),),
+        (),
+        health={"buffer_capacity": 4, "buffer_usage": 0},
+    )
+    before_financial = _financial_counts(database)
+    before_spans = len(legacy.load_spans())
+
+    sidecar = default_latency_telemetry_path(database)
+    first = copy_latency_telemetry_from_financial(database, sidecar)
+    second = copy_latency_telemetry_from_financial(database, sidecar)
+    dest = LatencyTelemetryStore(sidecar)
+    dest.insert_batch(
+        (_span(span_id="new-sidecar"),),
+        (),
+        health={"buffer_capacity": 4, "buffer_usage": 0},
+    )
+
+    after_spans = len(legacy.load_spans())
+    after_financial = _financial_counts(database)
+
+    assert first["latency_spans"] == 1
+    assert second["latency_spans"] == 1
+    assert after_spans == before_spans
+    assert after_financial == before_financial
+    assert len(dest.load_spans()) == 2
+    sidecar_health = dest.load_health()
+    assert sidecar_health is not None
+
+
+def test_restart_copy_does_not_clobber_newer_sidecar_health(tmp_path: Path) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    DynamicShadowRepository(database).initialize()
+    ContinuousShadowRepository(database).initialize()
+    LatencyTelemetryStore(database).insert_batch(
+        (_span(span_id="legacy"),),
+        (),
+        health={"buffer_capacity": 4, "buffer_usage": 0, "dropped_measurements": 1},
+    )
+    sidecar = default_latency_telemetry_path(database)
+    copy_latency_telemetry_from_financial(database, sidecar)
+    dest = LatencyTelemetryStore(sidecar)
+    dest.insert_batch(
+        (_span(span_id="post-copy"),),
+        (),
+        health={"buffer_capacity": 8, "buffer_usage": 1, "dropped_measurements": 7},
+    )
+    copy_latency_telemetry_from_financial(database, sidecar)
+    health = dest.load_health()
+    assert health is not None
+    assert int(health["dropped_measurements"]) == 7
+    assert int(health["buffer_capacity"]) == 8
+    assert {span.span_id for span in dest.load_spans()} == {"legacy", "post-copy"}
 
 
 def test_telemetry_cleanup_does_not_modify_financial_tables(tmp_path: Path) -> None:
@@ -95,8 +166,9 @@ def test_telemetry_cleanup_does_not_modify_financial_tables(tmp_path: Path) -> N
     DynamicShadowRepository(database).initialize()
     ContinuousShadowRepository(database).initialize()
     before = _financial_counts(database)
+    sidecar = default_latency_telemetry_path(database)
     store = LatencyTelemetryStore(
-        database,
+        sidecar,
         policy=LatencyPolicy(detail_retention_days=1, cleanup_batch_size=10),
     )
     old = datetime.now(UTC) - timedelta(days=8)
@@ -107,12 +179,16 @@ def test_telemetry_cleanup_does_not_modify_financial_tables(tmp_path: Path) -> N
     )
     deleted = store.cleanup(now=datetime.now(UTC))
     after = _financial_counts(database)
+    remaining = len(store.load_spans())
     connection = sqlite3.connect(database)
     try:
-        remaining = connection.execute("SELECT COUNT(*) FROM latency_spans").fetchone()[0]
         cs_version = connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
         ).fetchone()[0]
+        financial_tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
     finally:
         connection.close()
 
@@ -120,6 +196,7 @@ def test_telemetry_cleanup_does_not_modify_financial_tables(tmp_path: Path) -> N
     assert remaining == 0
     assert cs_version == 4
     assert after == before
+    assert "latency_spans" not in financial_tables
 
 
 def test_sqlite_busy_drops_telemetry_without_retry_delay(tmp_path: Path) -> None:

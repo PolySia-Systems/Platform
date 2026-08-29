@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,6 +19,14 @@ from polysia.monitoring.latency_intelligence.policy import (
 )
 
 LATENCY_TELEMETRY_SCHEMA_PATH = Path(__file__).with_name("latency_telemetry_schema.sql")
+LATENCY_TELEMETRY_FILENAME = "wallet-intelligence-latency.sqlite3"
+_COPY_TABLES = (
+    "latency_telemetry_metadata",
+    "latency_spans",
+    "latency_measurements",
+    "latency_aggregates",
+    "latency_telemetry_health",
+)
 
 
 class LatencyTelemetryStoreError(RuntimeError):
@@ -305,6 +314,123 @@ def ensure_latency_telemetry_schema(
     ).fetchall()
     if len(rows) != 1 or int(rows[0][0]) != LATENCY_TELEMETRY_SCHEMA_VERSION:
         raise LatencyTelemetryStoreError("Latency telemetry schema version is unsupported.")
+
+
+def default_latency_telemetry_path(financial_database: Path) -> Path:
+    """Place observational telemetry beside the financial database, never inside it."""
+
+    return Path(financial_database).with_name(LATENCY_TELEMETRY_FILENAME)
+
+
+def copy_latency_telemetry_from_financial(
+    source: Path,
+    destination: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Copy existing telemetry out of the financial file without modifying it.
+
+    The financial database is opened read-only. Destination writes are transactional
+    and idempotent (`INSERT OR IGNORE`). After a successful copy, later restarts
+    skip the data scan via `latency_telemetry_copy_state` and never rewrite sidecar
+    health or newer sidecar rows.
+    """
+
+    source = Path(source)
+    destination = Path(destination)
+    copied = {table: 0 for table in _COPY_TABLES}
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not source.is_file() or source.resolve() == destination.resolve():
+        LatencyTelemetryStore(destination).initialize()
+        return copied
+
+    source_connection = sqlite3.connect(
+        f"{source.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=0,
+    )
+    source_connection.row_factory = sqlite3.Row
+    try:
+        source_connection.execute("PRAGMA query_only = ON")
+        source_tables = {
+            str(row[0])
+            for row in source_connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if not source_tables.intersection(_COPY_TABLES):
+            LatencyTelemetryStore(destination).initialize()
+            return copied
+        destination_connection = sqlite3.connect(destination, timeout=0)
+        destination_connection.isolation_level = None
+        try:
+            ensure_latency_telemetry_schema(destination_connection)
+            destination_connection.execute("BEGIN IMMEDIATE")
+            fingerprint = str(source.resolve())
+            existing_state = destination_connection.execute(
+                "SELECT span_count, measurement_count FROM latency_telemetry_copy_state "
+                "WHERE source_fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if existing_state is not None:
+                copied["latency_spans"] = int(existing_state[0])
+                copied["latency_measurements"] = int(existing_state[1])
+                destination_connection.commit()
+                return copied
+            dest_tables = {
+                str(row[0])
+                for row in destination_connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            for table in _COPY_TABLES:
+                if table not in source_tables or table not in dest_tables:
+                    continue
+                source_columns = [
+                    str(row[1])
+                    for row in source_connection.execute(f'PRAGMA table_info("{table}")')
+                ]
+                dest_columns = {
+                    str(row[1])
+                    for row in destination_connection.execute(
+                        f'PRAGMA table_info("{table}")'
+                    )
+                }
+                columns = [column for column in source_columns if column in dest_columns]
+                if not columns:
+                    continue
+                column_sql = ", ".join(f'"{column}"' for column in columns)
+                placeholders = ", ".join("?" for _ in columns)
+                rows = list(
+                    source_connection.execute(f'SELECT {column_sql} FROM "{table}"')
+                )
+                destination_connection.executemany(
+                    f'INSERT OR IGNORE INTO "{table}" ({column_sql}) VALUES ({placeholders})',
+                    rows,
+                )
+                copied[table] = len(rows)
+            moment = _iso(_utc(now or datetime.now(UTC)))
+            destination_connection.execute(
+                "INSERT OR REPLACE INTO latency_telemetry_copy_state ("
+                "source_fingerprint, copied_at, span_count, measurement_count"
+                ") VALUES (?, ?, ?, ?)",
+                (
+                    fingerprint,
+                    moment,
+                    copied.get("latency_spans", 0),
+                    copied.get("latency_measurements", 0),
+                ),
+            )
+            destination_connection.commit()
+        except sqlite3.OperationalError:
+            with suppress(sqlite3.Error):
+                destination_connection.rollback()
+            raise
+        finally:
+            destination_connection.close()
+    finally:
+        source_connection.close()
+    return copied
 
 
 def _bounded_delete(

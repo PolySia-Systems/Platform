@@ -165,3 +165,65 @@ def test_backup_is_actually_restored_and_wallet_schema_is_validated(tmp_path: Pa
     assert restored.validation.dynamic_shadow_run_count == 1
     assert restored.validation.dynamic_shadow_evaluation_count == 1
     assert list(working_directory.iterdir()) == []
+
+
+def test_latency_sidecar_is_backed_up_and_restored_independently(tmp_path: Path) -> None:
+    from polysia.deployment.wallet_intelligence_backup import (
+        backup_wallet_intelligence_state,
+        rehearse_latency_telemetry_restore,
+    )
+    from polysia.monitoring.latency_intelligence.contract import (
+        PerformanceSpan,
+    )
+    from polysia.monitoring.latency_intelligence.policy import PERFORMANCE_CONTRACT_VERSION
+    from polysia.storage.latency_telemetry import (
+        LatencyTelemetryStore,
+        default_latency_telemetry_path,
+    )
+
+    database = tmp_path / "data" / "wallet-intelligence.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    sidecar = default_latency_telemetry_path(database)
+    store = LatencyTelemetryStore(sidecar)
+    store.insert_batch(
+        (
+            PerformanceSpan(
+                performance_contract_version=PERFORMANCE_CONTRACT_VERSION,
+                trace_id="t1",
+                span_id="s1",
+                parent_span_id=None,
+                component="application",
+                operation="poll",
+                status="ok",
+                duration_ns=1_000,
+                started_at_utc=datetime(2026, 8, 22, tzinfo=UTC),
+                venue_id="polymarket",
+                endpoint_id=None,
+                host_id="host-a",
+                provider="hetzner",
+                region="helsinki",
+                deploy_sha="abc",
+                runtime_version="3.14.6",
+                image_digest="sha256:test",
+                configuration_version="latency-intelligence-v0.1",
+                policy_version="latency-intelligence-v0.1",
+            ),
+        ),
+        (),
+        health={"buffer_capacity": 2, "buffer_usage": 0},
+    )
+    financial, latency = backup_wallet_intelligence_state(
+        database,
+        tmp_path / "backups",
+        now=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+    assert latency is not None
+    restored = rehearse_latency_telemetry_restore(
+        latency.backup_path,
+        working_directory=tmp_path / "latency-restore",
+    )
+    assert restored.schema_version == 1
+    assert restored.span_count == 1
+    assert restored.sha256 == latency.sha256
+    assert financial.backup_path.name.startswith("wallet-intelligence-")
+    assert latency.backup_path.name.startswith("wallet-intelligence-latency-")
