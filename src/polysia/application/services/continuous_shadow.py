@@ -180,6 +180,12 @@ class ContinuousShadowService:
         self._store_initialized = False
         self._lease_port_initialized = False
         self._latency = latency_recorder
+        self._lease_owner_id = f"continuous-shadow-{uuid.uuid4().hex}"
+        self._poll_in_flight = False
+
+    @property
+    def lease_owner_id(self) -> str:
+        return self._lease_owner_id
 
     @property
     def latency_recorder(self) -> LatencyRecorderPort | None:
@@ -215,6 +221,17 @@ class ContinuousShadowService:
         )
 
     async def poll(self, source_id: str) -> ContinuousPollOutcome:
+        if self._poll_in_flight:
+            raise CandidatePipelineBusyError(
+                "Wallet-intelligence pipeline is already running."
+            )
+        self._poll_in_flight = True
+        try:
+            return await self._poll_exclusive(source_id)
+        finally:
+            self._poll_in_flight = False
+
+    async def _poll_exclusive(self, source_id: str) -> ContinuousPollOutcome:
         try:
             self._initialize_store()
             self._initialize_lease_port()
@@ -228,7 +245,7 @@ class ContinuousShadowService:
         try:
             lease = self._lease_port.acquire_lease(
                 CONTINUOUS_SHADOW_LEASE_RESOURCE,
-                owner_id=f"continuous-shadow-{uuid.uuid4().hex}",
+                owner_id=self._lease_owner_id,
                 acquired_at=self._now(),
                 lease_duration=timedelta(minutes=30),
             )

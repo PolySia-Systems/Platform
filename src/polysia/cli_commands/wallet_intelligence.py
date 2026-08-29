@@ -52,6 +52,8 @@ from polysia.application.services.dynamic_shadow import DynamicShadowError, Dyna
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.wallet_intelligence_backup import (
     backup_wallet_intelligence_database,
+    backup_wallet_intelligence_state,
+    rehearse_latency_telemetry_restore,
     rehearse_wallet_intelligence_restore,
 )
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
@@ -90,7 +92,11 @@ from polysia.storage.continuous_shadow import (
 )
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.dynamic_shadow import DynamicShadowRepository, DynamicShadowStoreError
-from polysia.storage.latency_telemetry import LatencyTelemetryStore
+from polysia.storage.latency_telemetry import (
+    LatencyTelemetryStore,
+    copy_latency_telemetry_from_financial,
+    default_latency_telemetry_path,
+)
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
 
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
@@ -1066,7 +1072,9 @@ def backup(
 ) -> None:
     """Create and verify a protected online backup."""
     try:
-        result = backup_wallet_intelligence_database(database, backup_dir, keep=keep)
+        financial, latency = backup_wallet_intelligence_state(
+            database, backup_dir, keep=keep
+        )
     except Exception as error:
         typer.echo(
             json.dumps(
@@ -1080,12 +1088,15 @@ def backup(
             err=True,
         )
         raise typer.Exit(code=1) from error
-    typer.echo(
-        json.dumps(
-            {"backup": str(result.backup_path), "sha256": result.sha256, "status": "succeeded"},
-            sort_keys=True,
-        )
-    )
+    payload: dict[str, object] = {
+        "backup": str(financial.backup_path),
+        "sha256": financial.sha256,
+        "status": "succeeded",
+    }
+    if latency is not None:
+        payload["latency_backup"] = str(latency.backup_path)
+        payload["latency_sha256"] = latency.sha256
+    typer.echo(json.dumps(payload, sort_keys=True))
 
 
 def restore_check(
@@ -1097,6 +1108,13 @@ def restore_check(
             help="Protected same-volume scratch directory; defaults beside the backup.",
         ),
     ] = None,
+    latency_backup: Annotated[
+        Path | None,
+        typer.Option(
+            "--latency-backup",
+            help="Optional isolated latency telemetry backup to restore separately.",
+        ),
+    ] = None,
 ) -> None:
     """Perform a non-destructive restore rehearsal into disposable state."""
     try:
@@ -1104,6 +1122,12 @@ def restore_check(
             backup_path,
             working_directory=working_directory,
         )
+        latency_result = None
+        if latency_backup is not None:
+            latency_result = rehearse_latency_telemetry_restore(
+                latency_backup,
+                working_directory=working_directory,
+            )
     except Exception as error:
         typer.echo(
             json.dumps(
@@ -1117,50 +1141,45 @@ def restore_check(
             err=True,
         )
         raise typer.Exit(code=1) from error
-    typer.echo(
-        json.dumps(
-            {
-                "restored_row_count": result.validation.row_count,
-                "restored_snapshot_count": result.validation.snapshot_count,
-                "candidate_intelligence_schema_version": (
-                    result.validation.candidate_intelligence_schema_version
-                ),
-                "copyability_selection_schema_version": (
-                    result.validation.copyability_selection_schema_version
-                ),
-                "restored_candidate_pool_count": result.validation.candidate_pool_count,
-                "restored_candidate_run_count": result.validation.candidate_run_count,
-                "restored_copyability_membership_count": (
-                    result.validation.copyability_membership_count
-                ),
-                "restored_copyability_run_count": result.validation.copyability_run_count,
-                "dynamic_shadow_schema_version": (result.validation.dynamic_shadow_schema_version),
-                "restored_dynamic_shadow_run_count": (result.validation.dynamic_shadow_run_count),
-                "restored_dynamic_shadow_evaluation_count": (
-                    result.validation.dynamic_shadow_evaluation_count
-                ),
-                "continuous_shadow_schema_version": (
-                    result.validation.continuous_shadow_schema_version
-                ),
-                "restored_continuous_shadow_experiment_count": (
-                    result.validation.continuous_shadow_experiment_count
-                ),
-                "restored_continuous_shadow_poll_count": (
-                    result.validation.continuous_shadow_poll_count
-                ),
-                "restored_continuous_shadow_event_count": (
-                    result.validation.continuous_shadow_event_count
-                ),
-                "restored_continuous_shadow_ledger_count": (
-                    result.validation.continuous_shadow_ledger_count
-                ),
-                "schema_version": result.validation.schema_version,
-                "sha256": result.sha256,
-                "status": "succeeded",
-            },
-            sort_keys=True,
-        )
-    )
+    payload: dict[str, object] = {
+        "restored_row_count": result.validation.row_count,
+        "restored_snapshot_count": result.validation.snapshot_count,
+        "candidate_intelligence_schema_version": (
+            result.validation.candidate_intelligence_schema_version
+        ),
+        "copyability_selection_schema_version": (
+            result.validation.copyability_selection_schema_version
+        ),
+        "restored_candidate_pool_count": result.validation.candidate_pool_count,
+        "restored_candidate_run_count": result.validation.candidate_run_count,
+        "restored_copyability_membership_count": (
+            result.validation.copyability_membership_count
+        ),
+        "restored_copyability_run_count": result.validation.copyability_run_count,
+        "dynamic_shadow_schema_version": result.validation.dynamic_shadow_schema_version,
+        "restored_dynamic_shadow_run_count": result.validation.dynamic_shadow_run_count,
+        "restored_dynamic_shadow_evaluation_count": (
+            result.validation.dynamic_shadow_evaluation_count
+        ),
+        "continuous_shadow_schema_version": result.validation.continuous_shadow_schema_version,
+        "restored_continuous_shadow_experiment_count": (
+            result.validation.continuous_shadow_experiment_count
+        ),
+        "restored_continuous_shadow_poll_count": result.validation.continuous_shadow_poll_count,
+        "restored_continuous_shadow_event_count": result.validation.continuous_shadow_event_count,
+        "restored_continuous_shadow_ledger_count": (
+            result.validation.continuous_shadow_ledger_count
+        ),
+        "schema_version": result.validation.schema_version,
+        "sha256": result.sha256,
+        "status": "succeeded",
+    }
+    if latency_result is not None:
+        payload["latency_schema_version"] = latency_result.schema_version
+        payload["latency_sha256"] = latency_result.sha256
+        payload["restored_latency_span_count"] = latency_result.span_count
+        payload["restored_latency_measurement_count"] = latency_result.measurement_count
+    typer.echo(json.dumps(payload, sort_keys=True))
 
 
 def _selection_row_payload(row: CopyabilityPoolRow) -> dict[str, object]:
@@ -1200,6 +1219,13 @@ def _selection_row_payload(row: CopyabilityPoolRow) -> dict[str, object]:
     }
 
 
+def _latency_telemetry_store(database: Path) -> LatencyTelemetryStore:
+    destination = default_latency_telemetry_path(database)
+    with suppress(Exception):
+        copy_latency_telemetry_from_financial(database, destination)
+    return LatencyTelemetryStore(destination)
+
+
 def _continuous_shadow_service(
     source: str,
     database: Path,
@@ -1210,7 +1236,7 @@ def _continuous_shadow_service(
     recorder = None
     if telemetry_enabled():
         recorder = LatencyRecorder(
-            LatencyTelemetryStore(database),
+            _latency_telemetry_store(database),
             load_runtime_identity(venue_id="polymarket"),
         )
     return ContinuousShadowService(
@@ -1240,7 +1266,9 @@ def _flush_latency_telemetry(
         return
     try:
         recorder.flush()
-        store = LatencyTelemetryStore(database)
+        store = getattr(recorder, "store", None)
+        if store is None:
+            store = _latency_telemetry_store(database)
         report = build_latency_performance_intelligence(store, health=recorder.health())
         write_wallet_intelligence_health_payload(
             report,

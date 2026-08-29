@@ -94,3 +94,10 @@ CREATE TABLE IF NOT EXISTS latency_telemetry_health (
     last_successful_probe_utc TEXT,
     artifact_written_at_utc TEXT
 );
+
+CREATE TABLE IF NOT EXISTS latency_telemetry_copy_state (
+    source_fingerprint TEXT PRIMARY KEY,
+    copied_at TEXT NOT NULL,
+    span_count INTEGER NOT NULL,
+    measurement_count INTEGER NOT NULL
+);

@@ -10,6 +10,9 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
+- [`cs-lease-recovery-telemetry-isolation.md`](cs-lease-recovery-telemetry-isolation.md)
+  records stable Continuous Shadow lease ownership, process-local poll
+  exclusion, and physical isolation of latency telemetry SQLite.
 - [`latency-performance-intelligence-v0-1.md`](latency-performance-intelligence-v0-1.md)
   records the observational latency contract, bounded SQLite telemetry, and
   pending 24-hour Helsinki real-data gate.

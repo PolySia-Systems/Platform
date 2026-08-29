@@ -56,6 +56,10 @@ class LatencyRecorder:
         self._last_write_duration_ns: int | None = None
         self._last_probe: datetime | None = None
 
+    @property
+    def store(self) -> LatencyTelemetryStore:
+        return self._store
+
     def begin_trace(self, *, operation: str) -> str:
         try:
             trace_id = uuid.uuid4().hex
