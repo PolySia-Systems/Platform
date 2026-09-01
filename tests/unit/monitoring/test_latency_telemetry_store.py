@@ -67,7 +67,7 @@ def _financial_counts(database: Path) -> dict[str, int]:
         connection.close()
 
 
-def test_telemetry_migration_is_additive_and_keeps_cs_schema_v4(tmp_path: Path) -> None:
+def test_telemetry_migration_is_additive_and_keeps_shadow_schema(tmp_path: Path) -> None:
     database = tmp_path / "wallet-intelligence.sqlite3"
     DynamicShadowRepository(database).initialize()
     ContinuousShadowRepository(database).initialize()
@@ -87,7 +87,7 @@ def test_telemetry_migration_is_additive_and_keeps_cs_schema_v4(tmp_path: Path) 
     finally:
         connection.close()
 
-    assert cs_version == 4
+    assert cs_version == 5
     assert "latency_spans" not in tables
     assert "continuous_shadow_ledger" in tables
     assert sidecar.is_file()
@@ -194,7 +194,7 @@ def test_telemetry_cleanup_does_not_modify_financial_tables(tmp_path: Path) -> N
 
     assert deleted["spans_deleted"] >= 1
     assert remaining == 0
-    assert cs_version == 4
+    assert cs_version == 5
     assert after == before
     assert "latency_spans" not in financial_tables
 

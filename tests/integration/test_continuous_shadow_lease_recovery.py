@@ -21,8 +21,10 @@ from polysia.application.services.continuous_shadow_failures import (
     FAILURE_STAGE_PERSIST,
     FAILURE_STAGE_RELEASE_LEASE,
 )
-from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
-from polysia.storage.continuous_shadow import ContinuousShadowRepository
+from polysia.storage.continuous_shadow import (
+    ContinuousShadowLeaseRepository,
+    ContinuousShadowRepository,
+)
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
 from tests.integration.test_continuous_shadow_portfolio import (
     NOW,
@@ -32,12 +34,13 @@ from tests.integration.test_continuous_shadow_portfolio import (
     _Scenario,
     _seed_stage3,
     _service,
+    _shadow_database,
     _Source,
 )
 
 
 class _ReleaseBusyOnce:
-    def __init__(self, inner: CandidateIntelligenceRepository) -> None:
+    def __init__(self, inner: ContinuousShadowLeaseRepository) -> None:
         self._inner = inner
         self.remaining = 1
 
@@ -96,7 +99,7 @@ def _seeded_service(tmp_path: Path) -> tuple[Path, ContinuousShadowService, _Clo
 
 
 def _health(database: Path, clock: _Clock):
-    return ContinuousShadowRepository(database).health(
+    return ContinuousShadowRepository(_shadow_database(database)).health(
         "polycop",
         now=clock.value,
         poll_interval_seconds=60,
@@ -109,7 +112,9 @@ async def test_release_lease_sqlite_busy_same_owner_recovers_before_expiry(
 ) -> None:
     database, service, clock, scenario = _seeded_service(tmp_path)
     owner = service.lease_owner_id
-    service._lease_port = _ReleaseBusyOnce(CandidateIntelligenceRepository(database))
+    service._lease_port = _ReleaseBusyOnce(
+        ContinuousShadowLeaseRepository(_shadow_database(database))
+    )
     other = _service(database, scenario, _MarketPort(clock), clock)
 
     with pytest.raises(ContinuousShadowError) as raised:
@@ -133,7 +138,9 @@ async def test_release_lease_sqlite_busy_same_owner_recovers_before_expiry(
 @pytest.mark.asyncio
 async def test_other_worker_cannot_steal_valid_lease_until_expiry(tmp_path: Path) -> None:
     database, service, clock, scenario = _seeded_service(tmp_path)
-    service._lease_port = _ReleaseBusyOnce(CandidateIntelligenceRepository(database))
+    service._lease_port = _ReleaseBusyOnce(
+        ContinuousShadowLeaseRepository(_shadow_database(database))
+    )
     with pytest.raises(ContinuousShadowError):
         await service.poll("polycop")
     other = _service(database, scenario, _MarketPort(clock), clock)
@@ -152,7 +159,9 @@ async def test_persist_sqlite_busy_keeps_prior_ledger_and_next_poll_succeeds(
     tmp_path: Path,
 ) -> None:
     database, service, clock, _scenario = _seeded_service(tmp_path)
-    service._store = _PersistBusyOnce(ContinuousShadowRepository(database))
+    service._store = _PersistBusyOnce(
+        ContinuousShadowRepository(_shadow_database(database))
+    )
     with pytest.raises(ContinuousShadowError) as raised:
         await service.poll("polycop")
     assert raised.value.error_code == FAILURE_CATEGORY_SQLITE_BUSY
@@ -170,15 +179,19 @@ async def test_orphaned_poll_is_recovered_by_the_next_fenced_poll(
     tmp_path: Path,
 ) -> None:
     database, service, clock, _scenario = _seeded_service(tmp_path)
-    service._store = _PersistAndFailPollBusyOnce(ContinuousShadowRepository(database))
-    service._lease_port = _ReleaseBusyOnce(CandidateIntelligenceRepository(database))
+    service._store = _PersistAndFailPollBusyOnce(
+        ContinuousShadowRepository(_shadow_database(database))
+    )
+    service._lease_port = _ReleaseBusyOnce(
+        ContinuousShadowLeaseRepository(_shadow_database(database))
+    )
 
     with pytest.raises(ContinuousShadowError) as raised:
         await service.poll("polycop")
     assert raised.value.error_code == FAILURE_CATEGORY_SQLITE_BUSY
     assert raised.value.processing_stage == FAILURE_STAGE_RELEASE_LEASE
 
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(_shadow_database(database))
     try:
         running = connection.execute(
             "SELECT poll_run_id FROM continuous_shadow_poll_runs WHERE status = 'running'"
@@ -191,7 +204,7 @@ async def test_orphaned_poll_is_recovered_by_the_next_fenced_poll(
     recovered = await service.poll("polycop")
     assert recovered is not None
 
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(_shadow_database(database))
     try:
         orphan = connection.execute(
             "SELECT status, last_error_code FROM continuous_shadow_poll_runs "
@@ -208,14 +221,15 @@ async def test_orphaned_poll_is_recovered_by_the_next_fenced_poll(
 
 def test_expired_lease_cannot_recover_or_start_a_poll(tmp_path: Path) -> None:
     database, _service_instance, _clock, _scenario = _seeded_service(tmp_path)
-    lease_store = CandidateIntelligenceRepository(database)
+    shadow_database = _shadow_database(database)
+    lease_store = ContinuousShadowLeaseRepository(shadow_database)
     lease = lease_store.acquire_lease(
         CONTINUOUS_SHADOW_LEASE_RESOURCE,
         owner_id="continuous-shadow-expired",
         acquired_at=NOW,
         lease_duration=timedelta(minutes=1),
     )
-    store = ContinuousShadowRepository(database)
+    store = ContinuousShadowRepository(shadow_database)
     experiment = store.active_experiment("polycop")
     assert experiment is not None
 
@@ -223,14 +237,14 @@ def test_expired_lease_cannot_recover_or_start_a_poll(tmp_path: Path) -> None:
         store.start_poll(
             lease=lease,
             experiment_id=experiment.experiment_id,
-            selection_run_id=experiment.selection_run_id,
+            selection=store.selection_snapshot(experiment.selection_run_id),
+            selection_fresh=True,
             window_start=NOW,
             window_end=NOW + timedelta(minutes=1),
             started_at=NOW + timedelta(minutes=2),
-            candidate_count=1,
         )
 
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(shadow_database)
     try:
         running_count = int(
             connection.execute(
@@ -262,9 +276,9 @@ async def test_process_local_guard_rejects_overlapping_polls(tmp_path: Path) -> 
             )
 
     service = ContinuousShadowService(
-        ContinuousShadowRepository(database),
+        ContinuousShadowRepository(_shadow_database(database)),
         DynamicShadowRepository(database),
-        CandidateIntelligenceRepository(database),
+        ContinuousShadowLeaseRepository(_shadow_database(database)),
         lambda leaders: _SlowSource(dict(leaders), scenario),
         _MarketPort(clock),
         clock=clock,
@@ -281,7 +295,7 @@ async def test_process_local_guard_rejects_overlapping_polls(tmp_path: Path) -> 
 
 def test_expired_lease_takeover_increments_fencing_token(tmp_path: Path) -> None:
     database = tmp_path / "wallet-intelligence.sqlite3"
-    repo = CandidateIntelligenceRepository(database)
+    repo = ContinuousShadowLeaseRepository(database)
     repo.initialize()
     first = repo.acquire_lease(
         CONTINUOUS_SHADOW_LEASE_RESOURCE,

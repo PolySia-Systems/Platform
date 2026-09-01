@@ -53,6 +53,7 @@ EXPECTED_COMMANDS = {
         "portfolio-drain",
         "portfolio-finalize",
         "portfolio-health",
+        "portfolio-migrate",
         "portfolio-results",
         "portfolio-start",
         "portfolio-sync",

@@ -10,6 +10,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from polysia.application.ports.continuous_shadow import (
+    ContinuousSelectionSnapshot,
+    ContinuousSelectionUnavailableError,
+)
 from polysia.application.ports.dynamic_shadow import (
     DynamicShadowHealth,
     DynamicShadowRunRecord,
@@ -83,39 +87,65 @@ class DynamicShadowRepository:
             ).fetchall()
         finally:
             connection.close()
-        by_wallet: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            wallet_id = str(row["wallet_id"])
-            address = str(row["normalized_address"])
-            if _WALLET_PATTERN.fullmatch(address) is None:
-                raise DynamicShadowStoreError("Protected candidate address is invalid.")
-            item = by_wallet.setdefault(
-                wallet_id,
-                {"address": address, "pools": [], "alpha_rank": None, "stress_rank": None},
-            )
-            if item["address"] != address:
-                raise DynamicShadowStoreError("Canonical candidate identity is inconsistent.")
-            pool_id = str(row["pool_id"])
-            pools = item["pools"]
-            assert isinstance(pools, list)
-            pools.append(pool_id)
-            if pool_id == "SHADOW_ALPHA":
-                item["alpha_rank"] = int(row["pool_rank"])
-            else:
-                item["stress_rank"] = int(row["pool_rank"])
-        candidates = tuple(
-            ProtectedShadowCandidate(
-                wallet_id=wallet_id,
-                address=str(item["address"]),
-                pools=tuple(str(value) for value in item["pools"]),
-                alpha_rank=_optional_int(item["alpha_rank"]),
-                stress_rank=_optional_int(item["stress_rank"]),
-            )
-            for wallet_id, item in sorted(by_wallet.items())
-        )
+        candidates = _protected_candidates(rows)
         if not candidates:
             raise DynamicShadowStoreError("Current Stage 3 selection has no Shadow candidates.")
         return selection_run_id, candidates
+
+    def current_snapshot(self, source_id: str) -> ContinuousSelectionSnapshot:
+        """Read one coherent, versioned Stage 3 selection without writing upstream state."""
+        connection = self._connect(read_only=True)
+        try:
+            try:
+                connection.execute("BEGIN")
+                current = connection.execute(
+                    "SELECT r.run_id, r.source_id, r.source_snapshot_id, "
+                    "r.feature_set_version, r.policy_id, r.policy_version, "
+                    "r.ranking_version, c.published_at "
+                    "FROM copyability_selection_current c "
+                    "JOIN copyability_selection_runs r ON r.run_id = c.run_id "
+                    "WHERE c.source_id = ? AND r.status = 'succeeded'",
+                    (source_id,),
+                ).fetchone()
+                if current is None:
+                    raise ContinuousSelectionUnavailableError(
+                        "Current Stage 3 selection is unavailable."
+                    )
+                selection_run_id = str(current["run_id"])
+                rows = connection.execute(
+                    "SELECT m.wallet_id, m.pool_id, m.pool_rank, w.normalized_address "
+                    "FROM copyability_pool_memberships m "
+                    "JOIN canonical_wallets w ON w.wallet_id = m.wallet_id "
+                    "WHERE m.run_id = ? "
+                    "AND m.pool_id IN ('SHADOW_ALPHA', 'SHADOW_STRESS') "
+                    "ORDER BY m.wallet_id, m.pool_id",
+                    (selection_run_id,),
+                ).fetchall()
+                connection.commit()
+            except ContinuousSelectionUnavailableError:
+                raise
+            except sqlite3.DatabaseError as error:
+                raise ContinuousSelectionUnavailableError(
+                    "Current Stage 3 selection read failed safely."
+                ) from error
+        finally:
+            connection.close()
+        candidates = _protected_candidates(rows)
+        if not candidates:
+            raise ContinuousSelectionUnavailableError(
+                "Current Stage 3 selection has no Shadow candidates."
+            )
+        return ContinuousSelectionSnapshot.create(
+            source_id=str(current["source_id"]),
+            selection_run_id=selection_run_id,
+            source_snapshot_id=str(current["source_snapshot_id"]),
+            feature_set_version=str(current["feature_set_version"]),
+            policy_id=str(current["policy_id"]),
+            policy_version=str(current["policy_version"]),
+            ranking_version=str(current["ranking_version"]),
+            published_at=_datetime(str(current["published_at"])),
+            candidates=candidates,
+        )
 
     def successful_run(
         self,
@@ -576,6 +606,39 @@ def _optional_decimal(value: object | None) -> str | None:
 
 def _optional_int(value: object) -> int | None:
     return None if value is None else int(str(value))
+
+
+def _protected_candidates(rows: list[sqlite3.Row]) -> tuple[ProtectedShadowCandidate, ...]:
+    by_wallet: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        wallet_id = str(row["wallet_id"])
+        address = str(row["normalized_address"])
+        if _WALLET_PATTERN.fullmatch(address) is None:
+            raise DynamicShadowStoreError("Protected candidate address is invalid.")
+        item = by_wallet.setdefault(
+            wallet_id,
+            {"address": address, "pools": [], "alpha_rank": None, "stress_rank": None},
+        )
+        if item["address"] != address:
+            raise DynamicShadowStoreError("Canonical candidate identity is inconsistent.")
+        pool_id = str(row["pool_id"])
+        pools = item["pools"]
+        assert isinstance(pools, list)
+        pools.append(pool_id)
+        if pool_id == "SHADOW_ALPHA":
+            item["alpha_rank"] = int(row["pool_rank"])
+        else:
+            item["stress_rank"] = int(row["pool_rank"])
+    return tuple(
+        ProtectedShadowCandidate(
+            wallet_id=wallet_id,
+            address=str(item["address"]),
+            pools=tuple(str(value) for value in item["pools"]),
+            alpha_rank=_optional_int(item["alpha_rank"]),
+            stress_rank=_optional_int(item["stress_rank"]),
+        )
+        for wallet_id, item in sorted(by_wallet.items())
+    )
 
 
 def _safe_error_code(value: str) -> str:

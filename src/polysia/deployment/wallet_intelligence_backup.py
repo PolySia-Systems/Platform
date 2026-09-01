@@ -5,12 +5,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 
 from polysia.deployment.sqlite_backup import (
     BackupResult,
     backup_sqlite_database,
     restore_sqlite_backup,
     verify_sqlite_backup,
+)
+from polysia.storage.continuous_shadow import (
+    CONTINUOUS_SHADOW_SCHEMA_VERSION,
+    ContinuousShadowRepository,
+    ContinuousShadowStoreError,
 )
 from polysia.storage.latency_telemetry import (
     LatencyTelemetryStore,
@@ -23,12 +29,29 @@ from polysia.storage.wallet_intelligence import (
 
 WALLET_INTELLIGENCE_BACKUP_PREFIX = "wallet-intelligence-"
 LATENCY_TELEMETRY_BACKUP_PREFIX = "wallet-intelligence-latency-"
+CONTINUOUS_SHADOW_BACKUP_PREFIX = "continuous-shadow-"
 
 
 @dataclass(frozen=True, slots=True)
 class WalletIntelligenceRestoreCheck:
     sha256: str
     validation: WalletIntelligenceDatabaseValidation
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuousShadowDatabaseValidation:
+    schema_version: int
+    experiment_count: int
+    poll_count: int
+    event_count: int
+    ledger_count: int
+    ledger_balanced: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuousShadowRestoreCheck:
+    sha256: str
+    validation: ContinuousShadowDatabaseValidation
 
 
 def backup_wallet_intelligence_database(
@@ -71,14 +94,37 @@ def backup_latency_telemetry_database(
     return result
 
 
-def backup_wallet_intelligence_state(
+def backup_continuous_shadow_database(
     database_path: Path,
     backup_dir: Path,
     *,
     keep: int = 14,
     now: datetime | None = None,
-) -> tuple[BackupResult, BackupResult | None]:
-    """Back up the financial database and, when present, the telemetry sidecar."""
+) -> BackupResult:
+    """Validate and back up the Stage 4B single-writer financial database."""
+
+    _validate_continuous_shadow_database(database_path)
+    result = backup_sqlite_database(
+        database_path,
+        backup_dir,
+        keep=keep,
+        now=now,
+        prefix=CONTINUOUS_SHADOW_BACKUP_PREFIX,
+    )
+    verify_sqlite_backup(result.backup_path)
+    _validate_continuous_shadow_database(result.backup_path)
+    return result
+
+
+def backup_wallet_intelligence_state(
+    database_path: Path,
+    backup_dir: Path,
+    *,
+    continuous_shadow_path: Path | None = None,
+    keep: int = 14,
+    now: datetime | None = None,
+) -> tuple[BackupResult, BackupResult | None, BackupResult | None]:
+    """Back up intelligence, Stage 4B state, and optional telemetry sidecar."""
 
     financial = backup_wallet_intelligence_database(
         database_path,
@@ -86,16 +132,24 @@ def backup_wallet_intelligence_state(
         keep=keep,
         now=now,
     )
+    shadow = None
+    if continuous_shadow_path is not None and continuous_shadow_path.is_file():
+        shadow = backup_continuous_shadow_database(
+            continuous_shadow_path,
+            backup_dir,
+            keep=keep,
+            now=now,
+        )
     latency_path = default_latency_telemetry_path(database_path)
     if not latency_path.is_file():
-        return financial, None
+        return financial, shadow, None
     latency = backup_latency_telemetry_database(
         latency_path,
         backup_dir,
         keep=keep,
         now=now,
     )
-    return financial, latency
+    return financial, shadow, latency
 
 
 def rehearse_wallet_intelligence_restore(
@@ -116,12 +170,96 @@ def rehearse_wallet_intelligence_restore(
     return WalletIntelligenceRestoreCheck(sha256=sha256, validation=validation)
 
 
+def rehearse_continuous_shadow_restore(
+    backup_path: Path,
+    *,
+    working_directory: Path | None = None,
+) -> ContinuousShadowRestoreCheck:
+    """Restore Stage 4B into disposable state and verify ledger and schema."""
+
+    scratch_root = working_directory or backup_path.parent
+    scratch_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with TemporaryDirectory(
+        prefix="polysia-shadow-restore-",
+        dir=scratch_root,
+    ) as temporary_directory:
+        restored_path = Path(temporary_directory) / "continuous-shadow.sqlite3"
+        sha256 = restore_sqlite_backup(backup_path, restored_path)
+        validation = _validate_continuous_shadow_database(restored_path)
+    return ContinuousShadowRestoreCheck(sha256=sha256, validation=validation)
+
+
 @dataclass(frozen=True, slots=True)
 class LatencyTelemetryRestoreCheck:
     sha256: str
     schema_version: int
     span_count: int
     measurement_count: int
+
+
+def _validate_continuous_shadow_database(
+    database_path: Path,
+) -> ContinuousShadowDatabaseValidation:
+    if not database_path.is_file():
+        raise FileNotFoundError("Continuous Shadow database is unavailable.")
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=0,
+    )
+    connection.row_factory = sqlite3.Row
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        if integrity is None or integrity[0] != "ok":
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow SQLite integrity check failed."
+            )
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow foreign-key check failed."
+            )
+        metadata = connection.execute(
+            "SELECT schema_version FROM continuous_shadow_metadata"
+        ).fetchall()
+        if len(metadata) != 1 or int(metadata[0][0]) != CONTINUOUS_SHADOW_SCHEMA_VERSION:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow schema version is unsupported."
+            )
+        counts = {
+            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in (
+                "continuous_shadow_experiments",
+                "continuous_shadow_poll_runs",
+                "continuous_shadow_event_journal",
+                "continuous_shadow_ledger",
+            )
+        }
+        experiments = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT experiment_id FROM continuous_shadow_experiments"
+            ).fetchall()
+        ]
+    finally:
+        connection.close()
+    repository = ContinuousShadowRepository(database_path)
+    ledger_balanced = True
+    for experiment_id in experiments:
+        accounting = cast(
+            dict[str, object],
+            repository.results(experiment_id, limit=1)["accounting"],
+        )
+        ledger_balanced = ledger_balanced and bool(accounting["ledger_balanced"])
+    if not ledger_balanced:
+        raise ContinuousShadowStoreError("Continuous Shadow ledger identity is unbalanced.")
+    return ContinuousShadowDatabaseValidation(
+        schema_version=CONTINUOUS_SHADOW_SCHEMA_VERSION,
+        experiment_count=counts["continuous_shadow_experiments"],
+        poll_count=counts["continuous_shadow_poll_runs"],
+        event_count=counts["continuous_shadow_event_journal"],
+        ledger_count=counts["continuous_shadow_ledger"],
+        ledger_balanced=ledger_balanced,
+    )
 
 
 def rehearse_latency_telemetry_restore(

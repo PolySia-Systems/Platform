@@ -13,6 +13,7 @@ is authoritative; target and future elements are always labeled.
 - [Architecture decision records](adrs/)
 - [Shadow Control Kernel decision](adrs/ADR-0012-shadow-control-kernel.md)
 - [Continuous Shadow portfolio decision](adrs/ADR-0013-continuous-shadow-portfolio.md)
+- [Continuous Shadow state ownership](adrs/ADR-0014-continuous-shadow-state-ownership.md)
 - [Architecture visualization system](visual-system/README.md)
 - [Diagram index](visual-system/architecture-visualization-index.md)
 

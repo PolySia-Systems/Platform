@@ -72,6 +72,7 @@ wallet_intelligence_app.command("portfolio-health")(wallet_intelligence.portfoli
 wallet_intelligence_app.command("portfolio-results")(wallet_intelligence.portfolio_results)
 wallet_intelligence_app.command("portfolio-drain")(wallet_intelligence.portfolio_drain)
 wallet_intelligence_app.command("portfolio-finalize")(wallet_intelligence.portfolio_finalize)
+wallet_intelligence_app.command("portfolio-migrate")(wallet_intelligence.portfolio_migrate)
 wallet_intelligence_app.command("runtime-bank")(wallet_intelligence.runtime_bank)
 wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
 wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)

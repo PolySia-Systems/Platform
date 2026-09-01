@@ -52,6 +52,8 @@ offset pagination remain external limitations.
 | Path | Content | Handling |
 |---|---|---|
 | `/var/lib/polysia/wallet-intelligence/data/wallet-intelligence.sqlite3` | Accepted source history, protected identities, derived features, policy history, and current candidate pool | UID/GID `10001`, private |
+| `/var/lib/polysia/wallet-intelligence/data/continuous-shadow.sqlite3` | Stage 4B experiment, journal, portfolios, positions, Decimal ledger, marks, settlement, and local selection snapshots | UID/GID `10001`, private; Stage 4B sole runtime writer |
+| `/var/lib/polysia/wallet-intelligence/data/wallet-intelligence-latency.sqlite3` | Fail-open latency telemetry | UID/GID `10001`, private; not financial state |
 | `/var/lib/polysia/wallet-intelligence/backups/` | Checksummed local SQLite backups | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/reports/latest.json` | Sanitized health only | UID/GID `10001`, private |
 | `/var/lib/polysia/wallet-intelligence/reports/continuous-shadow.json` | Sanitized interval, accounting, lifecycle, and freshness health for Stage 4B | UID/GID `10001`, private |
@@ -290,24 +292,48 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
-## Continuous Shadow Portfolio v0.2 / schema v4
+## Continuous Shadow Portfolio / standalone schema v5
 
 Stage 4B is additive to the immutable Stage 4A windows above. It persists a
 first-seen journal, cross-run inventory, independent Wallet portfolios, a labeled
 mixed baseline follower, independent Alpha and Stress followers, market-specific
-official fees, marks, settlement, and Decimal ledger evidence. Schema v4 keeps
-Wallet, Pool, market, and event attribution on CLOSE and SETTLEMENT. Its complete
-contract is
+official fees, marks, settlement, and Decimal ledger evidence. Schema v5 keeps
+that financial model but makes Stage 4B the only runtime writer of
+`continuous-shadow.sqlite3`. Stage 4A remains in `wallet-intelligence.sqlite3`.
+Its complete contract is
 `docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.
 
-Create or idempotently reuse one versioned experiment before enabling the worker.
-Existing v0.2 experiments continue after the v4 migration; Alpha and Stress
-followers start empty and are not backfilled.
+For an existing combined schema-v4 deployment, stop only the Stage 4B worker,
+create a verified backup while stopped, and extract the new database atomically:
+
+```bash
+sudo systemctl stop polysia-wallet-intelligence-shadow-portfolio.service
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-sync wallet-intelligence backup \
+  --database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --continuous-shadow-database /var/lib/polysia/data/continuous-shadow.sqlite3 \
+  --backup-dir /var/lib/polysia/backups/wallet-intelligence
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-migrate \
+  --legacy-backup /var/lib/polysia/backups/wallet-intelligence/<cutover-wallet-backup>.sqlite3 \
+  --database /var/lib/polysia/data/continuous-shadow.sqlite3 \
+  --maintenance
+```
+
+Migration refuses an existing destination, unfinished poll, unsupported source,
+missing selection provenance, integrity/foreign-key mismatch, count mismatch, or
+unbalanced ledger. It preserves all Stage 4B history and starts a fresh local
+lease/fencing epoch. Rehearse restore of both backup files before starting the
+new image.
+
+Create or idempotently reuse one versioned experiment only for a new empty
+deployment. Existing experiments continue after extraction.
 
 ```bash
 docker compose --profile wallet-intelligence run --rm \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-start \
-  --database /var/lib/polysia/data/wallet-intelligence.sqlite3
+  --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --database /var/lib/polysia/data/continuous-shadow.sqlite3
 ```
 
 Inspect sanitized current health from the atomic artifact on the host. Do not
@@ -350,7 +376,7 @@ docker run --rm --network none \
   -v /var/lib/polysia/wallet-intelligence/backups:/var/lib/polysia/backups/wallet-intelligence:ro \
   "polysia:${POLYSIA_IMAGE_TAG}" \
   wallet-intelligence portfolio-results \
-  --database /var/lib/polysia/backups/wallet-intelligence/<verified-backup>.sqlite3 \
+  --database /var/lib/polysia/backups/wallet-intelligence/<continuous-shadow-backup>.sqlite3 \
   --limit 100
 ```
 
@@ -384,11 +410,17 @@ Oneshot `docker compose run` jobs on the same project then cannot drop its
 network when they exit. Health still reads the host artifact; detailed
 analytics still use a verified snapshot, not the live SQLite file.
 
-The worker stays fenced by `continuous-shadow-portfolio-pipeline` and sleeps
-between polls. The separate ten-minute Stage 4A job remains enabled as windowed
-comparison and recovery evidence. A schema-v3 rollback restores the prior image
-and the oneshot timer; switching v4 code onto a v3 database migrates forward,
-while switching v3 code onto a v4 database fails closed.
+The worker stays fenced locally by `continuous-shadow-portfolio-pipeline` and
+sleeps between polls. It reads one coherent Stage 3 snapshot from the intelligence
+database, then atomically stores its provenance and digest locally. The separate
+ten-minute Stage 4A job remains enabled and cannot contend with Stage 4B's file.
+If selection input exceeds 36 hours, health reports `STALE`, new exposure stops,
+and exits, marks, and settlement continue.
+
+Before the first successful schema-v5 mutation, rollback may restore the cutover
+checkpoint. After schema v5 progresses, never resume stale combined schema-v4
+state: stop the worker, preserve both files, then explicitly restore the cutover
+checkpoint or record that post-cutover Shadow evidence is abandoned.
 
 Stop the persistent worker before drain or finalize. Those commands still use
 `docker compose run` against the live database and must not race the writer.
@@ -396,10 +428,12 @@ Stop the persistent worker before drain or finalize. Those commands still use
 ```bash
 docker compose --profile wallet-intelligence run --rm --no-deps \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-drain \
-  --database /var/lib/polysia/data/wallet-intelligence.sqlite3
+  --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --database /var/lib/polysia/data/continuous-shadow.sqlite3
 docker compose --profile wallet-intelligence run --rm --no-deps \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-finalize \
-  --database /var/lib/polysia/data/wallet-intelligence.sqlite3
+  --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --database /var/lib/polysia/data/continuous-shadow.sqlite3
 ```
 
 Do not finalize by deleting positions or changing lifecycle rows. Missing fee,
