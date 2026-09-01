@@ -20,6 +20,7 @@ from polysia.application.ports.continuous_shadow import (
     ContinuousPollCompletion,
     ContinuousPollOutcome,
     ContinuousPositionMark,
+    ContinuousSelectionUnavailableError,
     ContinuousShadowExperiment,
     ContinuousShadowStorePort,
     FollowerAttribution,
@@ -162,12 +163,15 @@ class ContinuousShadowService:
         clock: Clock | None = None,
         concurrency: int = 6,
         maximum_pages_per_wallet: int = 40,
+        maximum_selection_age: timedelta = timedelta(hours=36),
         latency_recorder: LatencyRecorderPort | None = None,
     ) -> None:
         if not 1 <= concurrency <= 12:
             raise ValueError("concurrency must be within [1, 12]")
         if not 1 <= maximum_pages_per_wallet <= 100:
             raise ValueError("maximum_pages_per_wallet must be within [1, 100]")
+        if not timedelta(hours=1) <= maximum_selection_age <= timedelta(days=7):
+            raise ValueError("maximum_selection_age must be within [1 hour, 7 days]")
         self._store = store
         self._candidate_port = candidate_port
         self._lease_port = lease_port
@@ -177,6 +181,7 @@ class ContinuousShadowService:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._concurrency = concurrency
         self._maximum_pages = maximum_pages_per_wallet
+        self._maximum_selection_age = maximum_selection_age
         self._store_initialized = False
         self._lease_port_initialized = False
         self._latency = latency_recorder
@@ -193,11 +198,9 @@ class ContinuousShadowService:
 
     def start(self, source_id: str) -> ContinuousShadowExperiment:
         self._initialize_store()
-        selection_run_id, candidates = self._candidate_port.current_candidates(source_id)
+        selection = self._candidate_port.current_snapshot(source_id)
         return self._store.start_experiment(
-            source_id=source_id,
-            selection_run_id=selection_run_id,
-            candidates=candidates,
+            selection=selection,
             config=self._config,
             started_at=self._now(),
         )
@@ -320,14 +323,20 @@ class ContinuousShadowService:
         with self._latency_span(
             "application", "candidate_lookup", parent_span_id=root_span_id
         ):
-            selection_run_id, current_candidates = self._candidate_port.current_candidates(
-                source_id
-            )
+            try:
+                selection = self._candidate_port.current_snapshot(source_id)
+            except ContinuousSelectionUnavailableError:
+                selection = self._store.last_known_selection(experiment.experiment_id)
+            current_candidates = selection.candidates
             retained = self._store.retained_candidates(experiment.experiment_id)
         candidates = _merge_candidates(current_candidates, retained)
         if not candidates:
             raise ContinuousShadowError("Continuous Shadow has no candidates to poll.")
         window_end = self._now().replace(microsecond=0)
+        selection_fresh = (
+            selection.published_at <= window_end
+            and window_end - selection.published_at <= self._maximum_selection_age
+        )
         with self._latency_span("application", "db_read", parent_span_id=root_span_id):
             watermark = self._store.watermark(experiment.experiment_id)
         if watermark is None:
@@ -342,11 +351,11 @@ class ContinuousShadowService:
         poll_run_id = self._store.start_poll(
             lease=lease,
             experiment_id=experiment.experiment_id,
-            selection_run_id=selection_run_id,
+            selection=selection,
+            selection_fresh=selection_fresh,
             window_start=window_start,
             window_end=window_end,
             started_at=self._now(),
-            candidate_count=len(candidates),
         )
         self._bind_latency_poll(poll_run_id=poll_run_id, experiment_id=experiment.experiment_id)
         source: LeaderTradeSourcePort | None = None
@@ -445,6 +454,7 @@ class ContinuousShadowService:
                             event,
                             pool_class=pool_class,
                             lifecycle=experiment.lifecycle,
+                            exposure_increase_allowed=selection_fresh,
                             market=markets.get(event.market_reference),
                             book=books.get(event.outcome_reference),
                             attributions=attributions,
@@ -505,8 +515,7 @@ class ContinuousShadowService:
                 return self._store.complete_poll(
                     poll_run_id,
                     experiment=experiment,
-                    selection_run_id=selection_run_id,
-                    current_candidates=current_candidates,
+                    selection=selection,
                     completion=completion,
                     completed_at=self._now(),
                 )
@@ -758,6 +767,7 @@ class ContinuousShadowService:
         *,
         pool_class: str,
         lifecycle: ContinuousShadowLifecycle,
+        exposure_increase_allowed: bool,
         market: MarketDetails | None,
         book: MarketOrderBookSnapshot | None,
         attributions: dict[tuple[str, str, str, str], _MutableAttribution],
@@ -809,6 +819,11 @@ class ContinuousShadowService:
 
         if total_delay > self._config.maximum_forward_delay_ms:
             return evidence(ContinuousEvaluationStatus.UNKNOWN, "source_and_signal_delay_exceeded")
+        if event.trade_action is LeaderTradeAction.BUY and not exposure_increase_allowed:
+            return evidence(
+                ContinuousEvaluationStatus.REJECTED,
+                "stale_selection_blocks_new_exposure",
+            )
         if book is None:
             return evidence(ContinuousEvaluationStatus.UNKNOWN, "current_order_book_unavailable")
         if not quote_is_fresh(

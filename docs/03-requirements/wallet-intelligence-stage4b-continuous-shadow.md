@@ -37,6 +37,8 @@ Every experiment has an immutable `experiment_id` and records:
 - policy, cost-model, and synthetic-bankroll versions;
 - the complete validated capital and polling configuration;
 - the Stage 3 selection version at start and on every poll;
+- the source snapshot, feature set, policy, ranking, publication time, protected
+  membership, and deterministic selection digest;
 - `RUNNING -> DRAINING -> FINALIZED` lifecycle timestamps.
 
 `RUNNING` accepts verified buys and sells. `DRAINING` rejects new buys but keeps
@@ -140,24 +142,31 @@ Transient source-unavailable and market-read failures use the same bounded
 persistent-loop retry behavior. Persistence, lease-integrity, and unexpected
 failures remain fail-closed and may terminate the worker for systemd recovery.
 
-The schema is additive version 4 in the protected wallet-intelligence database.
-Version 4 preserves CLOSE/SETTLEMENT Wallet, Pool, market, and event attribution,
-adds independent Alpha and Stress follower portfolios, records mark source age,
-and stores a bounded terminal order-book negative cache. The mixed FOLLOWER
-portfolio remains the labeled baseline and is not replaced by price-drift or
-other counterfactual policies. Walk-forward policy experiments are report-time
-filters on recorded fills. Schema v3-to-v4 migration is transactional and
-idempotent. Backup and disposable restore validation verify Stage 4A v1 and
-Stage 4B v4 counts. Encrypted off-host backup is not part of this schema; if no
-approved destination exists, that operational gap remains. A failed source, market, quote, calculation, or transaction records a safe
-poll failure without advancing the watermark or replacing the last known good
-portfolio. Code rollback disables the Stage 4B persistent worker, restores the
-pre-migration backup, and re-enables the optional oneshot timer only when the
-prior schema-v3 image is restored. A rollback from schema v3
-to prior schema-v2 code additionally restores the verified pre-migration
-database backup; a code-only switch intentionally fails closed rather than
-running against an unsupported schema. The v3 database is preserved separately
-for forward recovery.
+Schema v5 is standalone in `continuous-shadow.sqlite3`. Stage 4B is its only
+runtime writer; maintenance migration or restore may write only while the worker
+is explicitly stopped. Stages 1–4A remain in `wallet-intelligence.sqlite3` and
+cannot block Stage 4B's financial transaction. Telemetry remains in its existing
+sidecar. The application uses a short read-only Stage 3 transaction followed by
+an atomic local snapshot; it does not use `ATTACH` or a cross-database transaction.
+
+The current selection is last-known-good input. If source reading fails, the
+local snapshot is reused. If its publication time exceeds the default 36-hour
+versioned freshness policy, Stage 4B records `STALE`, rejects BUY/new exposure,
+and continues exits, marks, and settlement. A fresh later snapshot restores
+normal RUNNING behavior without changing the experiment identity.
+
+Offline extraction from combined schema v4 preserves all financial and audit
+state, validates counts, integrity, foreign keys, provenance, and Decimal ledger
+identity, and initializes a fresh local lease/fencing epoch. Both database files
+have independent checksummed backup and disposable restore validation. A failed
+source, market, quote, calculation, or transaction records a safe poll failure
+without advancing the watermark or replacing last-known-good state.
+
+Rollback before the first schema-v5 mutation may restore the cutover checkpoint.
+After schema v5 progresses, the old combined state must never be resumed silently:
+both files are preserved and the operator explicitly restores the checkpoint or
+abandons the post-cutover Shadow interval. Encrypted off-host backup remains an
+operational gap when no approved destination exists.
 
 `portfolio-results` reports first/latest event evidence, event-level outcome
 counts, explicit duplicate-processing evidence, follower and per-wallet state,
@@ -172,6 +181,12 @@ an incomplete valuation as reconciled.
 ## Acceptance criteria
 
 - Stage 4A schema and behavior remain unchanged.
+- Stage 4A and Stage 4B use separate SQLite files and can write concurrently
+  without file-lock contention.
+- Stage 4B records an atomic, versioned selection snapshot and is the only
+  runtime writer of its financial database.
+- A stale or temporarily unavailable source selection never creates new
+  exposure; exits, marks, and settlement continue from local last-known-good state.
 - Restart and overlapping polls cannot duplicate events, fills, fees, or ledger entries.
 - Stage 4A overlap or operational-report contention cannot terminate the Stage
   4B worker; transient SQLite-busy failures retain durable prior state and are
@@ -188,6 +203,7 @@ an incomplete valuation as reconciled.
 - Shared follower liquidity is consumed once and supports deterministic partial fills.
 - Fee provenance is market-specific or `UNKNOWN`; no flat 2% assumption is used.
 - Accounting identity and signed ledger reconstruction are Decimal-consistent.
-- Failure keeps last known good state; backup, real restore, and restart pass.
+- Failure keeps last known good state; migration, both backups, real restores,
+  restart, and no-state-fork rollback evidence pass.
 - No Stage 4B domain or application module imports Risk, Execution, strategy,
   wallet, signing, cancellation, or trading-authority code.

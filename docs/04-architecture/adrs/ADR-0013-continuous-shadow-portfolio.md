@@ -35,11 +35,15 @@ The application depends only on public read, candidate, lease, and local storage
 ports. It has no Strategy, Risk, Execution, signing, order, cancellation, account,
 or wallet-mutation port. Compose additionally forces `DATA_ONLY` and Live false.
 
-Schema v4, dated 2026-08-26, keeps the mixed FOLLOWER portfolio as the labeled
+Schema v4, dated 2026-08-26, kept the mixed FOLLOWER portfolio as the labeled
 baseline, adds independent Alpha and Stress followers that start empty on
 migration, persists CLOSE/SETTLEMENT attribution, records mark source age, and
 runs a persistent fenced worker. Report-time walk-forward filters do not replace
 the baseline fill policy.
+
+ADR-0014 subsequently moves this unchanged financial model into standalone
+schema v5 so Stage 4B has one explicit runtime writer. Stage 4A remains in the
+intelligence database and no longer shares Stage 4B's mutable SQLite file.
 
 ## Consequences
 
@@ -70,7 +74,6 @@ first-seen dedupe, persistent cross-run exits, settlement, failure recovery,
 schema idempotency, Stage 4A compatibility, address-free output, CLI safety,
 backup/restore, container configuration, and restart behavior.
 
-Rollback disables `polysia-wallet-intelligence-shadow-portfolio.service`,
-restores the prior immutable application release and pre-migration backup, and
-re-enables the optional oneshot timer only when rolling back to a schema-v3
-image. Stage 4A and Stages 1–3 continue independently.
+Rollback follows ADR-0014 after the split-store cutover. In particular, once
+schema v5 has progressed, operators must not silently resume stale combined
+schema-v4 state. Stage 4A and Stages 1–3 continue independently.

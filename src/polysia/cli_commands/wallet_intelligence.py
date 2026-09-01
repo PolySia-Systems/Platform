@@ -50,9 +50,14 @@ from polysia.application.services.dynamic_live_handoff import (
 )
 from polysia.application.services.dynamic_shadow import DynamicShadowError, DynamicShadowService
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.deployment.continuous_shadow_migration import (
+    migrate_continuous_shadow_database,
+)
 from polysia.deployment.wallet_intelligence_backup import (
+    backup_continuous_shadow_database,
     backup_wallet_intelligence_database,
     backup_wallet_intelligence_state,
+    rehearse_continuous_shadow_restore,
     rehearse_latency_telemetry_restore,
     rehearse_wallet_intelligence_restore,
 )
@@ -87,6 +92,7 @@ from polysia.monitoring.wallet_intelligence_health import (
 )
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
 from polysia.storage.continuous_shadow import (
+    ContinuousShadowLeaseRepository,
     ContinuousShadowRepository,
     ContinuousShadowStoreError,
 )
@@ -100,6 +106,7 @@ from polysia.storage.latency_telemetry import (
 from polysia.storage.wallet_intelligence import CandidateStoreError, WalletIntelligenceRepository
 
 DEFAULT_DATABASE = Path("data/wallet-intelligence.sqlite3")
+DEFAULT_CONTINUOUS_SHADOW_DATABASE = Path("data/continuous-shadow.sqlite3")
 DEFAULT_BACKUP_DIR = Path("backups/wallet-intelligence")
 DEFAULT_HEALTH_REPORT = Path("reports/wallet-intelligence/latest.json")
 DEFAULT_CONTINUOUS_SHADOW_HEALTH = Path(
@@ -250,6 +257,13 @@ def sync(
 def ensure(
     source: Annotated[str, typer.Option("--source")] = "polycop",
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    continuous_shadow_database: Annotated[
+        Path,
+        typer.Option(
+            "--continuous-shadow-database",
+            help="Standalone Stage 4B SQLite path; backed up when present.",
+        ),
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
     health_report: Annotated[Path, typer.Option("--health-report")] = DEFAULT_HEALTH_REPORT,
     scheduled_for: Annotated[str | None, typer.Option("--scheduled-for")] = None,
@@ -302,6 +316,16 @@ def ensure(
                 "sha256": backup_result.sha256,
                 "verified": True,
             }
+            if continuous_shadow_database.is_file():
+                shadow_backup = backup_continuous_shadow_database(
+                    continuous_shadow_database,
+                    backup_dir,
+                    keep=backup_keep,
+                )
+                backup_payload["continuous_shadow_path"] = str(
+                    shadow_backup.backup_path
+                )
+                backup_payload["continuous_shadow_sha256"] = shadow_backup.sha256
         health_payload, _ = _combined_health(
             source_adapter,
             source_store,
@@ -630,7 +654,12 @@ def shadow_results(
 
 def portfolio_start(
     source: Annotated[str, typer.Option("--source")] = "polycop",
-    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    source_database: Annotated[
+        Path, typer.Option("--source-database")
+    ] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     wallet_bankroll: Annotated[str, typer.Option("--wallet-bankroll")] = "100",
     follower_bankroll: Annotated[str, typer.Option("--follower-bankroll")] = "1000",
     maximum_event_notional: Annotated[
@@ -669,6 +698,7 @@ def portfolio_start(
         _require_continuous_shadow_safety()
         service = _continuous_shadow_service(
             source,
+            source_database,
             database,
             config=_continuous_shadow_config(
                 wallet_bankroll=wallet_bankroll,
@@ -703,7 +733,12 @@ def portfolio_start(
 
 def portfolio_sync(
     source: Annotated[str, typer.Option("--source")] = "polycop",
-    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    source_database: Annotated[
+        Path, typer.Option("--source-database")
+    ] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     health_report: Annotated[
         Path,
         typer.Option("--health-report", help="Sanitized atomic Stage 4B health path."),
@@ -743,6 +778,9 @@ def portfolio_sync(
     overlap_seconds: Annotated[
         int, typer.Option("--overlap-seconds", min=0, max=300)
     ] = 30,
+    maximum_selection_age_hours: Annotated[
+        int, typer.Option("--maximum-selection-age-hours", min=1, max=168)
+    ] = 36,
     loop: Annotated[
         bool,
         typer.Option(
@@ -756,6 +794,7 @@ def portfolio_sync(
         _require_continuous_shadow_safety()
         service = _continuous_shadow_service(
             source,
+            source_database,
             database,
             config=_continuous_shadow_config(
                 wallet_bankroll=wallet_bankroll,
@@ -771,6 +810,7 @@ def portfolio_sync(
                 initial_lookback_minutes=initial_lookback_minutes,
                 overlap_seconds=overlap_seconds,
             ),
+            maximum_selection_age=timedelta(hours=maximum_selection_age_hours),
         )
         source_id = _source(source).source_id
         if not loop:
@@ -933,7 +973,7 @@ def portfolio_results(
             "--database",
             help="Verified snapshot or backup SQLite path; do not use the active worker file.",
         ),
-    ] = DEFAULT_DATABASE,
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     experiment_id: Annotated[str | None, typer.Option("--experiment-id")] = None,
     limit: Annotated[int, typer.Option("--limit", min=1, max=10_000)] = 100,
 ) -> None:
@@ -961,13 +1001,18 @@ def portfolio_results(
 
 def portfolio_drain(
     source: Annotated[str, typer.Option("--source")] = "polycop",
-    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    source_database: Annotated[
+        Path, typer.Option("--source-database")
+    ] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
 ) -> None:
     """Block new entries while retaining exits, marks, and verified settlement."""
     try:
         _require_continuous_shadow_safety()
         experiment = _continuous_shadow_service(
-            source, database, config=ContinuousShadowConfig()
+            source, source_database, database, config=ContinuousShadowConfig()
         ).drain(_source(source).source_id)
     except (ContinuousShadowError, ContinuousShadowStoreError, CandidateStoreError) as error:
         _emit_continuous_shadow_failure(error)
@@ -976,17 +1021,74 @@ def portfolio_drain(
 
 def portfolio_finalize(
     source: Annotated[str, typer.Option("--source")] = "polycop",
-    database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    source_database: Annotated[
+        Path, typer.Option("--source-database")
+    ] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
 ) -> None:
     """Finalize a drained experiment only after every synthetic position is closed."""
     try:
         _require_continuous_shadow_safety()
         experiment = _continuous_shadow_service(
-            source, database, config=ContinuousShadowConfig()
+            source, source_database, database, config=ContinuousShadowConfig()
         ).finalize(_source(source).source_id)
     except (ContinuousShadowError, ContinuousShadowStoreError, CandidateStoreError) as error:
         _emit_continuous_shadow_failure(error)
     typer.echo(json.dumps({"experiment": experiment.to_dict(), "status": "succeeded"}))
+
+
+def portfolio_migrate(
+    legacy_backup: Annotated[
+        Path,
+        typer.Option(
+            "--legacy-backup",
+            help="Stopped-worker schema-v4 wallet-intelligence backup to extract.",
+        ),
+    ],
+    database: Annotated[
+        Path,
+        typer.Option("--database", help="New standalone Stage 4B SQLite path."),
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+    maintenance: Annotated[
+        bool,
+        typer.Option(
+            "--maintenance",
+            help="Acknowledge that the Stage 4B worker is stopped for migration.",
+        ),
+    ] = False,
+    maximum_selection_age_hours: Annotated[
+        int, typer.Option("--maximum-selection-age-hours", min=1, max=168)
+    ] = 36,
+) -> None:
+    """Atomically extract legacy Stage 4B state into its single-writer database."""
+
+    try:
+        _require_continuous_shadow_safety()
+        if not maintenance:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow migration requires explicit maintenance mode."
+            )
+        result = migrate_continuous_shadow_database(
+            legacy_backup,
+            database,
+            maximum_selection_age=timedelta(hours=maximum_selection_age_hours),
+        )
+    except (ContinuousShadowStoreError, CandidateStoreError, OSError, ValueError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(
+        json.dumps(
+            {
+                "experiment_id": result.experiment_id,
+                "ledger_balanced": result.ledger_balanced,
+                "schema_version": result.schema_version,
+                "status": "succeeded",
+                "table_counts": result.table_counts,
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def runtime_bank(
@@ -1067,13 +1169,23 @@ def runtime_bank(
 
 def backup(
     database: Annotated[Path, typer.Option("--database")] = DEFAULT_DATABASE,
+    continuous_shadow_database: Annotated[
+        Path,
+        typer.Option(
+            "--continuous-shadow-database",
+            help="Standalone Stage 4B SQLite path; backed up when present.",
+        ),
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
     keep: Annotated[int, typer.Option("--keep", min=1, max=90)] = 14,
 ) -> None:
     """Create and verify a protected online backup."""
     try:
-        financial, latency = backup_wallet_intelligence_state(
-            database, backup_dir, keep=keep
+        financial, shadow, latency = backup_wallet_intelligence_state(
+            database,
+            backup_dir,
+            continuous_shadow_path=continuous_shadow_database,
+            keep=keep,
         )
     except Exception as error:
         typer.echo(
@@ -1096,6 +1208,9 @@ def backup(
     if latency is not None:
         payload["latency_backup"] = str(latency.backup_path)
         payload["latency_sha256"] = latency.sha256
+    if shadow is not None:
+        payload["continuous_shadow_backup"] = str(shadow.backup_path)
+        payload["continuous_shadow_sha256"] = shadow.sha256
     typer.echo(json.dumps(payload, sort_keys=True))
 
 
@@ -1115,6 +1230,13 @@ def restore_check(
             help="Optional isolated latency telemetry backup to restore separately.",
         ),
     ] = None,
+    continuous_shadow_backup: Annotated[
+        Path | None,
+        typer.Option(
+            "--continuous-shadow-backup",
+            help="Optional standalone Stage 4B backup to restore and verify separately.",
+        ),
+    ] = None,
 ) -> None:
     """Perform a non-destructive restore rehearsal into disposable state."""
     try:
@@ -1126,6 +1248,12 @@ def restore_check(
         if latency_backup is not None:
             latency_result = rehearse_latency_telemetry_restore(
                 latency_backup,
+                working_directory=working_directory,
+            )
+        shadow_result = None
+        if continuous_shadow_backup is not None:
+            shadow_result = rehearse_continuous_shadow_restore(
+                continuous_shadow_backup,
                 working_directory=working_directory,
             )
     except Exception as error:
@@ -1179,6 +1307,26 @@ def restore_check(
         payload["latency_sha256"] = latency_result.sha256
         payload["restored_latency_span_count"] = latency_result.span_count
         payload["restored_latency_measurement_count"] = latency_result.measurement_count
+    if shadow_result is not None:
+        payload["continuous_shadow_schema_version"] = (
+            shadow_result.validation.schema_version
+        )
+        payload["continuous_shadow_sha256"] = shadow_result.sha256
+        payload["restored_continuous_shadow_experiment_count"] = (
+            shadow_result.validation.experiment_count
+        )
+        payload["restored_continuous_shadow_poll_count"] = (
+            shadow_result.validation.poll_count
+        )
+        payload["restored_continuous_shadow_event_count"] = (
+            shadow_result.validation.event_count
+        )
+        payload["restored_continuous_shadow_ledger_count"] = (
+            shadow_result.validation.ledger_count
+        )
+        payload["continuous_shadow_ledger_balanced"] = (
+            shadow_result.validation.ledger_balanced
+        )
     typer.echo(json.dumps(payload, sort_keys=True))
 
 
@@ -1228,27 +1376,34 @@ def _latency_telemetry_store(database: Path) -> LatencyTelemetryStore:
 
 def _continuous_shadow_service(
     source: str,
+    source_database: Path,
     database: Path,
     *,
     config: ContinuousShadowConfig,
+    maximum_selection_age: timedelta = timedelta(hours=36),
 ) -> ContinuousShadowService:
     _source(source)
+    if source_database.resolve() == database.resolve():
+        raise ValueError(
+            "Continuous Shadow source and financial databases must be separate."
+        )
     recorder = None
     if telemetry_enabled():
         recorder = LatencyRecorder(
-            _latency_telemetry_store(database),
+            _latency_telemetry_store(source_database),
             load_runtime_identity(venue_id="polymarket"),
         )
     return ContinuousShadowService(
         ContinuousShadowRepository(database),
-        DynamicShadowRepository(database),
-        CandidateIntelligenceRepository(database),
+        DynamicShadowRepository(source_database),
+        ContinuousShadowLeaseRepository(database),
         lambda leaders: PolymarketCopyTradingSource(
             leaders,
             market_scope=PolymarketMarketScope.ALL_VERIFIED,
         ),
         PolymarketPublicAdapter(),
         config=config,
+        maximum_selection_age=maximum_selection_age,
         latency_recorder=recorder,
     )
 

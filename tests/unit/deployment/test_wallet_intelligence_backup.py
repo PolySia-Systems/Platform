@@ -11,7 +11,9 @@ from polysia.application.services.candidate_intelligence import (
 )
 from polysia.application.services.copyability_selection import CopyabilitySelectionService
 from polysia.deployment.wallet_intelligence_backup import (
+    backup_continuous_shadow_database,
     backup_wallet_intelligence_database,
+    rehearse_continuous_shadow_restore,
     rehearse_wallet_intelligence_restore,
 )
 from polysia.domain.copytrading import LeaderTradeAction
@@ -23,6 +25,7 @@ from polysia.domain.copytrading.dynamic_shadow import (
 )
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
+from polysia.storage.continuous_shadow import ContinuousShadowRepository
 from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
 from polysia.storage.wallet_intelligence import WalletIntelligenceRepository
@@ -212,12 +215,13 @@ def test_latency_sidecar_is_backed_up_and_restored_independently(tmp_path: Path)
         (),
         health={"buffer_capacity": 2, "buffer_usage": 0},
     )
-    financial, latency = backup_wallet_intelligence_state(
+    financial, shadow, latency = backup_wallet_intelligence_state(
         database,
         tmp_path / "backups",
         now=datetime(2026, 8, 22, tzinfo=UTC),
     )
     assert latency is not None
+    assert shadow is None
     restored = rehearse_latency_telemetry_restore(
         latency.backup_path,
         working_directory=tmp_path / "latency-restore",
@@ -244,13 +248,13 @@ def test_financial_and_latency_retention_do_not_prune_each_other(tmp_path: Path)
     backup_dir = tmp_path / "backups"
     started_at = datetime(2026, 8, 22, tzinfo=UTC)
 
-    first_financial, first_latency = backup_wallet_intelligence_state(
+    first_financial, first_shadow, first_latency = backup_wallet_intelligence_state(
         database,
         backup_dir,
         keep=1,
         now=started_at,
     )
-    second_financial, second_latency = backup_wallet_intelligence_state(
+    second_financial, second_shadow, second_latency = backup_wallet_intelligence_state(
         database,
         backup_dir,
         keep=1,
@@ -259,7 +263,30 @@ def test_financial_and_latency_retention_do_not_prune_each_other(tmp_path: Path)
 
     assert first_latency is not None
     assert second_latency is not None
+    assert first_shadow is None
+    assert second_shadow is None
     assert not first_financial.backup_path.exists()
     assert not first_latency.backup_path.exists()
     assert second_financial.backup_path.is_file()
     assert second_latency.backup_path.is_file()
+
+
+def test_continuous_shadow_backup_restores_independently(tmp_path: Path) -> None:
+    database = tmp_path / "data" / "continuous-shadow.sqlite3"
+    ContinuousShadowRepository(database).initialize()
+
+    backup = backup_continuous_shadow_database(
+        database,
+        tmp_path / "backups",
+        now=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+    restored = rehearse_continuous_shadow_restore(
+        backup.backup_path,
+        working_directory=tmp_path / "restore",
+    )
+
+    assert backup.backup_path.name.startswith("continuous-shadow-")
+    assert restored.sha256 == backup.sha256
+    assert restored.validation.schema_version == 5
+    assert restored.validation.experiment_count == 0
+    assert restored.validation.ledger_balanced is True

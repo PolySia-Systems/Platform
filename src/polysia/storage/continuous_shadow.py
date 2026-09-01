@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from polysia.application.ports.candidate_intelligence import (
+    CandidatePipelineBusyError,
     CandidatePipelineLeaseLostError,
 )
 from polysia.application.ports.continuous_shadow import (
@@ -19,6 +20,7 @@ from polysia.application.ports.continuous_shadow import (
     ContinuousPollCompletion,
     ContinuousPollOutcome,
     ContinuousPositionMark,
+    ContinuousSelectionSnapshot,
     ContinuousShadowExperiment,
     ContinuousShadowHealth,
     FollowerAttribution,
@@ -38,11 +40,10 @@ from polysia.domain.copytrading.continuous_shadow_experiments import (
     walk_forward_policy_report,
 )
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
-from polysia.storage.copyability_selection import CopyabilitySelectionRepository
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
-CONTINUOUS_SHADOW_SCHEMA_VERSION = 4
+CONTINUOUS_SHADOW_SCHEMA_VERSION = 5
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
@@ -74,6 +75,169 @@ class ContinuousShadowStoreError(CandidateStoreError):
     """Safe Stage 4B persistence failure without protected identity values."""
 
 
+class ContinuousShadowLeaseRepository:
+    """Stage 4B-local fenced lease; never coordinates unrelated research writers."""
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+
+    def initialize(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        connection = self._connect()
+        try:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS continuous_shadow_leases ("
+                "resource TEXT PRIMARY KEY, owner_id TEXT NOT NULL, "
+                "fencing_token INTEGER NOT NULL CHECK(fencing_token > 0), "
+                "acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, "
+                "lease_expires_at TEXT NOT NULL)"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        _restrict_file(self._path)
+
+    def acquire_lease(
+        self,
+        resource: str,
+        *,
+        owner_id: str,
+        acquired_at: datetime,
+        lease_duration: timedelta,
+    ) -> CandidatePipelineLease:
+        _require_lease_input(resource, owner_id, lease_duration)
+        acquired_at = _utc(acquired_at)
+        expires_at = acquired_at + lease_duration
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT owner_id, fencing_token, acquired_at, lease_expires_at "
+                "FROM continuous_shadow_leases WHERE resource = ?",
+                (resource,),
+            ).fetchone()
+            if row is None:
+                fencing_token = 1
+                original_acquired_at = acquired_at
+                connection.execute(
+                    "INSERT INTO continuous_shadow_leases "
+                    "(resource, owner_id, fencing_token, acquired_at, heartbeat_at, "
+                    "lease_expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        resource,
+                        owner_id,
+                        fencing_token,
+                        _iso(acquired_at),
+                        _iso(acquired_at),
+                        _iso(expires_at),
+                    ),
+                )
+            else:
+                existing_expiry = _datetime(str(row["lease_expires_at"]))
+                existing_owner = str(row["owner_id"])
+                if existing_expiry > acquired_at and existing_owner != owner_id:
+                    raise CandidatePipelineBusyError(
+                        "Continuous Shadow pipeline is already running."
+                    )
+                if existing_expiry > acquired_at:
+                    fencing_token = int(row["fencing_token"])
+                    original_acquired_at = _datetime(str(row["acquired_at"]))
+                else:
+                    fencing_token = int(row["fencing_token"]) + 1
+                    original_acquired_at = acquired_at
+                connection.execute(
+                    "UPDATE continuous_shadow_leases SET owner_id = ?, fencing_token = ?, "
+                    "acquired_at = ?, heartbeat_at = ?, lease_expires_at = ? "
+                    "WHERE resource = ?",
+                    (
+                        owner_id,
+                        fencing_token,
+                        _iso(original_acquired_at),
+                        _iso(acquired_at),
+                        _iso(expires_at),
+                        resource,
+                    ),
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return CandidatePipelineLease(
+            resource=resource,
+            owner_id=owner_id,
+            fencing_token=fencing_token,
+            acquired_at=original_acquired_at,
+            heartbeat_at=acquired_at,
+            lease_expires_at=expires_at,
+        )
+
+    def renew_lease(
+        self,
+        lease: CandidatePipelineLease,
+        *,
+        renewed_at: datetime,
+        lease_duration: timedelta,
+    ) -> CandidatePipelineLease:
+        _require_lease_input(lease.resource, lease.owner_id, lease_duration)
+        renewed_at = _utc(renewed_at)
+        expires_at = renewed_at + lease_duration
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            updated = connection.execute(
+                "UPDATE continuous_shadow_leases SET heartbeat_at = ?, lease_expires_at = ? "
+                "WHERE resource = ? AND owner_id = ? AND fencing_token = ? "
+                "AND lease_expires_at > ?",
+                (
+                    _iso(renewed_at),
+                    _iso(expires_at),
+                    lease.resource,
+                    lease.owner_id,
+                    lease.fencing_token,
+                    _iso(renewed_at),
+                ),
+            ).rowcount
+            if updated != 1:
+                raise CandidatePipelineLeaseLostError(
+                    "Continuous Shadow lease was lost before renewal."
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return CandidatePipelineLease(
+            resource=lease.resource,
+            owner_id=lease.owner_id,
+            fencing_token=lease.fencing_token,
+            acquired_at=lease.acquired_at,
+            heartbeat_at=renewed_at,
+            lease_expires_at=expires_at,
+        )
+
+    def release_lease(self, lease: CandidatePipelineLease) -> None:
+        connection = self._connect()
+        try:
+            connection.execute(
+                "UPDATE continuous_shadow_leases SET lease_expires_at = heartbeat_at "
+                "WHERE resource = ? AND owner_id = ? AND fencing_token = ?",
+                (lease.resource, lease.owner_id, lease.fencing_token),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        return connection
+
+
 class ContinuousShadowRepository:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
@@ -83,7 +247,7 @@ class ContinuousShadowRepository:
         return self._path
 
     def initialize(self) -> None:
-        CopyabilitySelectionRepository(self._path).initialize()
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         connection = self._connect()
         try:
             _migrate_schema(connection)
@@ -112,18 +276,20 @@ class ContinuousShadowRepository:
     def start_experiment(
         self,
         *,
-        source_id: str,
-        selection_run_id: str,
-        candidates: tuple[ProtectedShadowCandidate, ...],
+        selection: ContinuousSelectionSnapshot,
         config: ContinuousShadowConfig,
         started_at: datetime,
     ) -> ContinuousShadowExperiment:
+        source_id = selection.source_id
+        selection_run_id = selection.selection_run_id
+        candidates = selection.candidates
         if not candidates:
             raise ContinuousShadowStoreError("Continuous Shadow candidates are unavailable.")
         started_at = _utc(started_at)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            self._upsert_selection_snapshot(connection, selection, recorded_at=started_at)
             active = connection.execute(
                 "SELECT * FROM continuous_shadow_experiments WHERE source_id = ? "
                 "AND lifecycle IN ('RUNNING', 'DRAINING')",
@@ -292,7 +458,7 @@ class ContinuousShadowRepository:
             rows = connection.execute(
                 "SELECT c.wallet_id, c.pools_json, c.alpha_rank, c.stress_rank, "
                 "w.normalized_address FROM continuous_shadow_candidates c "
-                "JOIN canonical_wallets w ON w.wallet_id = c.wallet_id "
+                "JOIN continuous_shadow_wallets w ON w.wallet_id = c.wallet_id "
                 "WHERE c.experiment_id = ? AND (c.active = 1 OR EXISTS ("
                 "SELECT 1 FROM continuous_shadow_positions p "
                 "JOIN continuous_shadow_portfolios pf ON pf.experiment_id = p.experiment_id "
@@ -307,6 +473,80 @@ class ContinuousShadowRepository:
         finally:
             connection.close()
         return tuple(_candidate(row) for row in rows)
+
+    def selection_snapshot(self, selection_run_id: str) -> ContinuousSelectionSnapshot:
+        """Load the last locally committed candidate snapshot for fail-safe exits."""
+        connection = self._connect(read_only=True)
+        try:
+            row = connection.execute(
+                "SELECT * FROM continuous_shadow_selection_snapshots "
+                "WHERE selection_run_id = ?",
+                (selection_run_id,),
+            ).fetchone()
+            candidates = connection.execute(
+                "SELECT m.wallet_id, m.pools_json, m.alpha_rank, m.stress_rank, "
+                "w.normalized_address FROM continuous_shadow_selection_memberships m "
+                "JOIN continuous_shadow_wallets w ON w.wallet_id = m.wallet_id "
+                "WHERE m.selection_run_id = ? ORDER BY m.wallet_id",
+                (selection_run_id,),
+            ).fetchall()
+        finally:
+            connection.close()
+        if row is None or not candidates:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow local selection snapshot is unavailable."
+            )
+        snapshot = ContinuousSelectionSnapshot(
+            source_id=str(row["source_id"]),
+            selection_run_id=str(row["selection_run_id"]),
+            source_snapshot_id=str(row["source_snapshot_id"]),
+            feature_set_version=str(row["feature_set_version"]),
+            policy_id=str(row["policy_id"]),
+            policy_version=str(row["policy_version"]),
+            ranking_version=str(row["ranking_version"]),
+            published_at=_datetime(str(row["published_at"])),
+            candidates=tuple(_candidate(candidate) for candidate in candidates),
+            digest=str(row["digest"]),
+        )
+        expected = ContinuousSelectionSnapshot.create(
+            source_id=snapshot.source_id,
+            selection_run_id=snapshot.selection_run_id,
+            source_snapshot_id=snapshot.source_snapshot_id,
+            feature_set_version=snapshot.feature_set_version,
+            policy_id=snapshot.policy_id,
+            policy_version=snapshot.policy_version,
+            ranking_version=snapshot.ranking_version,
+            published_at=snapshot.published_at,
+            candidates=snapshot.candidates,
+        )
+        if expected.digest != snapshot.digest:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow local selection digest is invalid."
+            )
+        return snapshot
+
+    def last_known_selection(self, experiment_id: str) -> ContinuousSelectionSnapshot:
+        connection = self._connect(read_only=True)
+        try:
+            row = connection.execute(
+                "SELECT selection_run_id FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? AND status = 'succeeded' "
+                "ORDER BY completed_at DESC LIMIT 1",
+                (experiment_id,),
+            ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    "SELECT selection_run_id FROM continuous_shadow_experiments "
+                    "WHERE experiment_id = ?",
+                    (experiment_id,),
+                ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow last-known-good selection is unavailable."
+            )
+        return self.selection_snapshot(str(row["selection_run_id"]))
 
     def watermark(self, experiment_id: str) -> datetime | None:
         connection = self._connect(read_only=True)
@@ -450,12 +690,13 @@ class ContinuousShadowRepository:
         *,
         lease: CandidatePipelineLease,
         experiment_id: str,
-        selection_run_id: str,
+        selection: ContinuousSelectionSnapshot,
+        selection_fresh: bool,
         window_start: datetime,
         window_end: datetime,
         started_at: datetime,
-        candidate_count: int,
     ) -> str:
+        candidate_count = len(selection.candidates)
         if candidate_count < 1 or window_end <= window_start:
             raise ValueError("Continuous Shadow poll bounds are invalid")
         started_at = _utc(started_at)
@@ -464,7 +705,7 @@ class ContinuousShadowRepository:
         try:
             connection.execute("BEGIN IMMEDIATE")
             live_lease = connection.execute(
-                "SELECT 1 FROM candidate_pipeline_leases WHERE resource = ? "
+                "SELECT 1 FROM continuous_shadow_leases WHERE resource = ? "
                 "AND owner_id = ? AND fencing_token = ? AND lease_expires_at > ?",
                 (
                     lease.resource,
@@ -489,19 +730,24 @@ class ContinuousShadowRepository:
                     "AND status = 'running'",
                     (_iso(started_at), str(running["poll_run_id"])),
                 )
+            self._upsert_selection_snapshot(connection, selection, recorded_at=started_at)
             connection.execute(
                 "INSERT INTO continuous_shadow_poll_runs "
                 "(poll_run_id, experiment_id, selection_run_id, window_start, window_end, "
-                "status, started_at, candidate_count) "
-                "VALUES (?, ?, ?, ?, ?, 'running', ?, ?)",
+                "status, started_at, candidate_count, selection_snapshot_digest, "
+                "selection_published_at, selection_fresh) "
+                "VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)",
                 (
                     poll_run_id,
                     experiment_id,
-                    selection_run_id,
+                    selection.selection_run_id,
                     _iso(window_start),
                     _iso(window_end),
                     _iso(started_at),
                     candidate_count,
+                    selection.digest,
+                    _iso(selection.published_at),
+                    int(selection_fresh),
                 ),
             )
             connection.commit()
@@ -517,16 +763,18 @@ class ContinuousShadowRepository:
         poll_run_id: str,
         *,
         experiment: ContinuousShadowExperiment,
-        selection_run_id: str,
-        current_candidates: tuple[ProtectedShadowCandidate, ...],
+        selection: ContinuousSelectionSnapshot,
         completion: ContinuousPollCompletion,
         completed_at: datetime,
     ) -> ContinuousPollOutcome:
+        selection_run_id = selection.selection_run_id
+        current_candidates = selection.candidates
         completed_at = _utc(completed_at)
         _validate_completion(completion)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            self._upsert_selection_snapshot(connection, selection, recorded_at=completed_at)
             poll = connection.execute(
                 "SELECT * FROM continuous_shadow_poll_runs "
                 "WHERE poll_run_id = ? AND status = 'running'",
@@ -1014,11 +1262,22 @@ class ContinuousShadowRepository:
         level = "healthy"
         last_poll_at = None
         last_poll_status = None
+        selection_run_id = None
+        selection_snapshot_digest = None
+        selection_published_at = None
+        selection_fresh = None
         if poll is None:
             reasons.append("continuous_shadow_poll_unavailable")
             level = "warning"
         else:
             last_poll_status = str(poll["status"])
+            selection_run_id = str(poll["selection_run_id"])
+            selection_snapshot_digest = str(poll["selection_snapshot_digest"])
+            selection_published_at = _datetime(str(poll["selection_published_at"]))
+            selection_fresh = bool(poll["selection_fresh"])
+            if not selection_fresh:
+                reasons.append("continuous_shadow_selection_stale")
+                level = "warning"
             raw_time = poll["completed_at"] or poll["failed_at"] or poll["started_at"]
             last_poll_at = _datetime(str(raw_time))
             age = now - last_poll_at
@@ -1093,6 +1352,10 @@ class ContinuousShadowRepository:
             last_failure_stage=last_failure_stage,
             last_failure_at=last_failure_at,
             operator_summary=operator_summary,
+            selection_run_id=selection_run_id,
+            selection_snapshot_digest=selection_snapshot_digest,
+            selection_published_at=selection_published_at,
+            selection_fresh=selection_fresh,
         )
 
     def results(self, experiment_id: str, *, limit: int) -> dict[str, object]:
@@ -1655,6 +1918,20 @@ class ContinuousShadowRepository:
                     "commit atomically; overlap duplicates are detected but not processed."
                 ),
             },
+            "selection": {
+                "digest": health.selection_snapshot_digest,
+                "fresh": health.selection_fresh,
+                "published_at": (
+                    None
+                    if health.selection_published_at is None
+                    else _iso(health.selection_published_at)
+                ),
+                "selection_run_id": health.selection_run_id,
+                "semantics": (
+                    "Versioned source provenance copied atomically into the local "
+                    "Continuous Shadow store; protected addresses are not reported."
+                ),
+            },
             "reporting_semantics": {
                 "event_categories_may_overlap": True,
                 "pool_overlap_is_included_in_each_selected_pool": True,
@@ -1700,6 +1977,87 @@ class ContinuousShadowRepository:
                 )[:limit]
             ],
         }
+
+    def _upsert_selection_snapshot(
+        self,
+        connection: sqlite3.Connection,
+        selection: ContinuousSelectionSnapshot,
+        *,
+        recorded_at: datetime,
+    ) -> None:
+        if not selection.candidates or len(selection.digest) != 64:
+            raise ContinuousShadowStoreError("Continuous Shadow selection is invalid.")
+        connection.execute(
+            "INSERT INTO continuous_shadow_selection_snapshots "
+            "(selection_run_id, source_id, source_snapshot_id, feature_set_version, "
+            "policy_id, policy_version, ranking_version, published_at, candidate_count, "
+            "digest, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(selection_run_id) DO UPDATE SET "
+            "source_id = excluded.source_id, source_snapshot_id = excluded.source_snapshot_id, "
+            "feature_set_version = excluded.feature_set_version, "
+            "policy_id = excluded.policy_id, policy_version = excluded.policy_version, "
+            "ranking_version = excluded.ranking_version, published_at = excluded.published_at, "
+            "candidate_count = excluded.candidate_count, digest = excluded.digest "
+            "WHERE continuous_shadow_selection_snapshots.digest = excluded.digest",
+            (
+                selection.selection_run_id,
+                selection.source_id,
+                selection.source_snapshot_id,
+                selection.feature_set_version,
+                selection.policy_id,
+                selection.policy_version,
+                selection.ranking_version,
+                _iso(selection.published_at),
+                len(selection.candidates),
+                selection.digest,
+                _iso(recorded_at),
+            ),
+        )
+        row = connection.execute(
+            "SELECT digest FROM continuous_shadow_selection_snapshots "
+            "WHERE selection_run_id = ?",
+            (selection.selection_run_id,),
+        ).fetchone()
+        if row is None or str(row["digest"]) != selection.digest:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow selection provenance conflicts with recorded history."
+            )
+        for candidate in selection.candidates:
+            connection.execute(
+                "INSERT INTO continuous_shadow_wallets "
+                "(wallet_id, normalized_address, first_seen_at, last_seen_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(wallet_id) DO UPDATE SET "
+                "last_seen_at = excluded.last_seen_at "
+                "WHERE continuous_shadow_wallets.normalized_address = excluded.normalized_address",
+                (
+                    candidate.wallet_id,
+                    candidate.address,
+                    _iso(recorded_at),
+                    _iso(recorded_at),
+                ),
+            )
+            wallet = connection.execute(
+                "SELECT normalized_address FROM continuous_shadow_wallets WHERE wallet_id = ?",
+                (candidate.wallet_id,),
+            ).fetchone()
+            if wallet is None or str(wallet["normalized_address"]) != candidate.address:
+                raise ContinuousShadowStoreError(
+                    "Continuous Shadow protected wallet identity conflicts with history."
+                )
+            connection.execute(
+                "INSERT INTO continuous_shadow_selection_memberships "
+                "(selection_run_id, wallet_id, pools_json, alpha_rank, stress_rank) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(selection_run_id, wallet_id) "
+                "DO UPDATE SET pools_json = excluded.pools_json, "
+                "alpha_rank = excluded.alpha_rank, stress_rank = excluded.stress_rank",
+                (
+                    selection.selection_run_id,
+                    candidate.wallet_id,
+                    json.dumps(candidate.pools, separators=(",", ":")),
+                    candidate.alpha_rank,
+                    candidate.stress_rank,
+                ),
+            )
 
     def _upsert_candidates(
         self,
@@ -2244,12 +2602,9 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     version = int(rows[0][0])
     if version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
         return
-    if version == 2:
-        _migrate_v2_to_v3(connection)
-        version = 3
-    if version != 3:
-        raise ContinuousShadowStoreError("Continuous Shadow schema version is unsupported.")
-    _migrate_v3_to_v4(connection)
+    raise ContinuousShadowStoreError(
+        "Continuous Shadow schema requires the offline split-store migration."
+    )
 
 
 def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
@@ -3026,6 +3381,13 @@ def _iso(value: datetime) -> str:
     return _utc(value).isoformat().replace("+00:00", "Z")
 
 
+def _require_lease_input(resource: str, owner_id: str, duration: timedelta) -> None:
+    if not resource or not owner_id or len(resource) > 128 or len(owner_id) > 128:
+        raise ValueError("Continuous Shadow lease identity is invalid.")
+    if duration <= timedelta(0) or duration > timedelta(hours=24):
+        raise ValueError("Continuous Shadow lease duration is invalid.")
+
+
 def _datetime(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return _utc(parsed)
@@ -3048,6 +3410,7 @@ def _restrict_file(path: Path) -> None:
 
 __all__ = [
     "CONTINUOUS_SHADOW_SCHEMA_VERSION",
+    "ContinuousShadowLeaseRepository",
     "ContinuousShadowRepository",
     "ContinuousShadowStoreError",
 ]

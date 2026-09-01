@@ -1,8 +1,50 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 4),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 5),
     initialized_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_selection_snapshots (
+    selection_run_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    source_snapshot_id TEXT NOT NULL,
+    feature_set_version TEXT NOT NULL,
+    policy_id TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    ranking_version TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL CHECK(candidate_count > 0),
+    digest TEXT NOT NULL CHECK(length(digest) = 64),
+    recorded_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_wallets (
+    wallet_id TEXT PRIMARY KEY,
+    normalized_address TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_selection_memberships (
+    selection_run_id TEXT NOT NULL,
+    wallet_id TEXT NOT NULL,
+    pools_json TEXT NOT NULL CHECK(json_valid(pools_json)),
+    alpha_rank INTEGER CHECK(alpha_rank IS NULL OR alpha_rank > 0),
+    stress_rank INTEGER CHECK(stress_rank IS NULL OR stress_rank > 0),
+    PRIMARY KEY(selection_run_id, wallet_id),
+    FOREIGN KEY(selection_run_id)
+        REFERENCES continuous_shadow_selection_snapshots(selection_run_id),
+    FOREIGN KEY(wallet_id) REFERENCES continuous_shadow_wallets(wallet_id)
+);
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_leases (
+    resource TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
+    acquired_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_experiments (
@@ -19,7 +61,8 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_experiments (
     finalized_at TEXT,
     last_successful_poll_at TEXT,
     last_error_code TEXT,
-    FOREIGN KEY(selection_run_id) REFERENCES copyability_selection_runs(run_id)
+    FOREIGN KEY(selection_run_id)
+        REFERENCES continuous_shadow_selection_snapshots(selection_run_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_active
@@ -38,8 +81,9 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_candidates (
     last_selected_at TEXT NOT NULL,
     PRIMARY KEY(experiment_id, wallet_id),
     FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id),
-    FOREIGN KEY(wallet_id) REFERENCES canonical_wallets(wallet_id),
-    FOREIGN KEY(selection_run_id) REFERENCES copyability_selection_runs(run_id)
+    FOREIGN KEY(wallet_id) REFERENCES continuous_shadow_wallets(wallet_id),
+    FOREIGN KEY(selection_run_id)
+        REFERENCES continuous_shadow_selection_snapshots(selection_run_id)
 );
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_poll_runs (
@@ -54,6 +98,9 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_poll_runs (
     failed_at TEXT,
     last_error_code TEXT,
     candidate_count INTEGER NOT NULL CHECK(candidate_count > 0),
+    selection_snapshot_digest TEXT NOT NULL CHECK(length(selection_snapshot_digest) = 64),
+    selection_published_at TEXT NOT NULL,
+    selection_fresh INTEGER NOT NULL CHECK(selection_fresh IN (0, 1)),
     raw_event_count INTEGER NOT NULL DEFAULT 0 CHECK(raw_event_count >= 0),
     new_event_count INTEGER NOT NULL DEFAULT 0 CHECK(new_event_count >= 0),
     duplicate_count INTEGER NOT NULL DEFAULT 0 CHECK(duplicate_count >= 0),
@@ -68,7 +115,9 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_poll_runs (
     source_api_lag_max_ms INTEGER NOT NULL DEFAULT 0 CHECK(source_api_lag_max_ms >= 0),
     signal_delay_max_ms INTEGER NOT NULL DEFAULT 0 CHECK(signal_delay_max_ms >= 0),
     request_telemetry_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(request_telemetry_json)),
-    FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id)
+    FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id),
+    FOREIGN KEY(selection_run_id)
+        REFERENCES continuous_shadow_selection_snapshots(selection_run_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_continuous_shadow_polls
@@ -100,7 +149,7 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_event_journal (
     pools_json TEXT NOT NULL CHECK(json_valid(pools_json)),
     processing_status TEXT NOT NULL DEFAULT 'PROCESSED'
         CHECK(processing_status = 'PROCESSED'),
-    FOREIGN KEY(wallet_id) REFERENCES canonical_wallets(wallet_id),
+    FOREIGN KEY(wallet_id) REFERENCES continuous_shadow_wallets(wallet_id),
     FOREIGN KEY(first_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id)
 );
 
@@ -127,7 +176,7 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_portfolios (
     PRIMARY KEY(experiment_id, portfolio_id),
     UNIQUE(experiment_id, wallet_id),
     FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id),
-    FOREIGN KEY(wallet_id) REFERENCES canonical_wallets(wallet_id)
+    FOREIGN KEY(wallet_id) REFERENCES continuous_shadow_wallets(wallet_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_follower_kind

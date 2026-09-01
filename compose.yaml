@@ -123,6 +123,8 @@ services:
       - polycop
       - --database
       - /var/lib/polysia/data/wallet-intelligence.sqlite3
+      - --continuous-shadow-database
+      - /var/lib/polysia/data/continuous-shadow.sqlite3
       - --backup-dir
       - /var/lib/polysia/backups/wallet-intelligence
       - --health-report
@@ -249,8 +251,10 @@ services:
       - portfolio-sync
       - --source
       - polycop
-      - --database
+      - --source-database
       - /var/lib/polysia/data/wallet-intelligence.sqlite3
+      - --database
+      - /var/lib/polysia/data/continuous-shadow.sqlite3
       - --health-report
       - /var/lib/polysia/reports/wallet-intelligence/continuous-shadow.json
       - --poll-interval-seconds
@@ -279,6 +283,8 @@ services:
       - "${POLYSIA_CONTINUOUS_SHADOW_INITIAL_LOOKBACK_MINUTES:-15}"
       - --overlap-seconds
       - "${POLYSIA_CONTINUOUS_SHADOW_OVERLAP_SECONDS:-30}"
+      - --maximum-selection-age-hours
+      - "${POLYSIA_CONTINUOUS_SHADOW_SELECTION_MAX_AGE_HOURS:-36}"
       - --loop
     user: "10001:10001"
     read_only: true

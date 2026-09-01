@@ -15,6 +15,10 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert "TRADING_MODE: DATA_ONLY" in section
     assert "POLYSIA_LATENCY_TELEMETRY_ENABLED" in section
     assert "portfolio-sync" in section
+    assert "--source-database" in section
+    assert "/var/lib/polysia/data/wallet-intelligence.sqlite3" in section
+    assert "/var/lib/polysia/data/continuous-shadow.sqlite3" in section
+    assert "--maximum-selection-age-hours" in section
     assert "--loop" in section
     assert "continuous-shadow.json" in section
     assert "container_name: polysia-shadow-portfolio-worker" in section
@@ -56,3 +60,10 @@ def test_fast_timer_is_additive_and_stage4a_ten_minute_timer_is_preserved() -> N
     assert "OnCalendar=*-*-* *:*:00 UTC" in fast
     assert "Persistent=true" in fast
     assert "OnCalendar=*-*-* *:00/10:00 UTC" in stage4a
+
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    stage4a_section = compose.split(
+        "  wallet-intelligence-shadow:", maxsplit=1
+    )[1].split("\n  wallet-intelligence-shadow-portfolio:", maxsplit=1)[0]
+    assert "/var/lib/polysia/data/wallet-intelligence.sqlite3" in stage4a_section
+    assert "/var/lib/polysia/data/continuous-shadow.sqlite3" not in stage4a_section

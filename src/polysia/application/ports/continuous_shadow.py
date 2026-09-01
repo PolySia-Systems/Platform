@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 
@@ -15,6 +17,77 @@ from polysia.domain.copytrading.continuous_shadow import (
 )
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
+
+
+class ContinuousSelectionUnavailableError(RuntimeError):
+    """Current read-only Stage 3 snapshot could not be obtained safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuousSelectionSnapshot:
+    """Immutable Stage 3 provenance and protected candidates consumed by Stage 4B."""
+
+    source_id: str
+    selection_run_id: str
+    source_snapshot_id: str
+    feature_set_version: str
+    policy_id: str
+    policy_version: str
+    ranking_version: str
+    published_at: datetime
+    candidates: tuple[ProtectedShadowCandidate, ...]
+    digest: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        source_id: str,
+        selection_run_id: str,
+        source_snapshot_id: str,
+        feature_set_version: str,
+        policy_id: str,
+        policy_version: str,
+        ranking_version: str,
+        published_at: datetime,
+        candidates: tuple[ProtectedShadowCandidate, ...],
+    ) -> ContinuousSelectionSnapshot:
+        if published_at.tzinfo is None or published_at.utcoffset() != timedelta(0):
+            raise ValueError("selection published_at must be timezone-aware UTC")
+        ordered_candidates = tuple(sorted(candidates, key=lambda item: item.wallet_id))
+        payload = {
+            "candidates": [
+                {
+                    "address": candidate.address,
+                    "alpha_rank": candidate.alpha_rank,
+                    "pools": list(candidate.pools),
+                    "stress_rank": candidate.stress_rank,
+                    "wallet_id": candidate.wallet_id,
+                }
+                for candidate in ordered_candidates
+            ],
+            "feature_set_version": feature_set_version,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "published_at": published_at.isoformat(),
+            "ranking_version": ranking_version,
+            "selection_run_id": selection_run_id,
+            "source_id": source_id,
+            "source_snapshot_id": source_snapshot_id,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return cls(
+            source_id=source_id,
+            selection_run_id=selection_run_id,
+            source_snapshot_id=source_snapshot_id,
+            feature_set_version=feature_set_version,
+            policy_id=policy_id,
+            policy_version=policy_version,
+            ranking_version=ranking_version,
+            published_at=published_at,
+            candidates=ordered_candidates,
+            digest=hashlib.sha256(encoded).hexdigest(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +296,10 @@ class ContinuousShadowHealth:
     last_failure_stage: str | None = None
     last_failure_at: datetime | None = None
     operator_summary: dict[str, object] | None = None
+    selection_run_id: str | None = None
+    selection_snapshot_digest: str | None = None
+    selection_published_at: datetime | None = None
+    selection_fresh: bool | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -251,6 +328,14 @@ class ContinuousShadowHealth:
             "rolling_windows": self.rolling_windows or {},
             "settlement_backlog_age_seconds": self.settlement_backlog_age_seconds,
             "settlement_backlog_count": self.settlement_backlog_count,
+            "selection_fresh": self.selection_fresh,
+            "selection_published_at": (
+                None
+                if self.selection_published_at is None
+                else self.selection_published_at.isoformat()
+            ),
+            "selection_run_id": self.selection_run_id,
+            "selection_snapshot_digest": self.selection_snapshot_digest,
             "stale_last_known_good_mark_count": self.stale_last_known_good_mark_count,
             "unknown_fee_count": self.unknown_fee_count,
             "unknown_ratio": (
@@ -266,9 +351,7 @@ class ContinuousShadowStorePort(Protocol):
     def start_experiment(
         self,
         *,
-        source_id: str,
-        selection_run_id: str,
-        candidates: tuple[ProtectedShadowCandidate, ...],
+        selection: ContinuousSelectionSnapshot,
         config: ContinuousShadowConfig,
         started_at: datetime,
     ) -> ContinuousShadowExperiment: ...
@@ -287,6 +370,16 @@ class ContinuousShadowStorePort(Protocol):
         self,
         experiment_id: str,
     ) -> tuple[ProtectedShadowCandidate, ...]: ...
+
+    def selection_snapshot(
+        self,
+        selection_run_id: str,
+    ) -> ContinuousSelectionSnapshot: ...
+
+    def last_known_selection(
+        self,
+        experiment_id: str,
+    ) -> ContinuousSelectionSnapshot: ...
 
     def watermark(self, experiment_id: str) -> datetime | None: ...
 
@@ -316,11 +409,11 @@ class ContinuousShadowStorePort(Protocol):
         *,
         lease: CandidatePipelineLease,
         experiment_id: str,
-        selection_run_id: str,
+        selection: ContinuousSelectionSnapshot,
+        selection_fresh: bool,
         window_start: datetime,
         window_end: datetime,
         started_at: datetime,
-        candidate_count: int,
     ) -> str: ...
 
     def complete_poll(
@@ -328,8 +421,7 @@ class ContinuousShadowStorePort(Protocol):
         poll_run_id: str,
         *,
         experiment: ContinuousShadowExperiment,
-        selection_run_id: str,
-        current_candidates: tuple[ProtectedShadowCandidate, ...],
+        selection: ContinuousSelectionSnapshot,
         completion: ContinuousPollCompletion,
         completed_at: datetime,
     ) -> ContinuousPollOutcome: ...
@@ -360,14 +452,16 @@ class ContinuousMarketReadPort(Protocol):
 
 
 class ContinuousCandidatePort(Protocol):
-    def current_candidates(
+    def current_snapshot(
         self,
         source_id: str,
-    ) -> tuple[str, tuple[ProtectedShadowCandidate, ...]]: ...
+    ) -> ContinuousSelectionSnapshot: ...
 
 
 __all__ = [
     "ContinuousCandidatePort",
+    "ContinuousSelectionSnapshot",
+    "ContinuousSelectionUnavailableError",
     "ContinuousEvaluationRecord",
     "ContinuousLedgerRecord",
     "ContinuousMarketReadPort",
