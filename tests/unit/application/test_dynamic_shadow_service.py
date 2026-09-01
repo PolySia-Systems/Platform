@@ -33,6 +33,37 @@ NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
 ADDRESSES = ("0x" + "1" * 40, "0x" + "2" * 40)
 
 
+def test_dynamic_repository_verifies_shared_database_integrity_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        WalletIntelligenceRepository,
+        "_require_integrity",
+        staticmethod(lambda _connection: calls.append("wallet")),
+    )
+    monkeypatch.setattr(
+        CandidateIntelligenceRepository,
+        "_require_integrity",
+        staticmethod(lambda _connection: calls.append("candidate")),
+    )
+    monkeypatch.setattr(
+        CopyabilitySelectionRepository,
+        "_require_integrity",
+        staticmethod(lambda _connection: calls.append("selection")),
+    )
+    monkeypatch.setattr(
+        DynamicShadowRepository,
+        "_require_integrity",
+        staticmethod(lambda _connection: calls.append("dynamic")),
+    )
+
+    DynamicShadowRepository(tmp_path / "wallet-intelligence.sqlite3").initialize()
+
+    assert calls == ["dynamic"]
+
+
 def _dataset() -> CandidateWalletDataset:
     records = tuple(
         CandidateWalletRecord(

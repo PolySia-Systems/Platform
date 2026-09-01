@@ -53,8 +53,8 @@ class CandidateIntelligenceRepository:
     def path(self) -> Path:
         return self._path
 
-    def initialize(self) -> None:
-        WalletIntelligenceRepository(self._path).initialize()
+    def initialize(self, *, verify_integrity: bool = True) -> None:
+        WalletIntelligenceRepository(self._path).initialize(verify_integrity=False)
         connection = self._connect()
         try:
             connection.executescript(
@@ -67,7 +67,8 @@ class CandidateIntelligenceRepository:
             )
             connection.commit()
             self._require_schema_version(connection)
-            self._require_integrity(connection)
+            if verify_integrity:
+                self._require_integrity(connection)
         finally:
             connection.close()
         _restrict_file(self._path)
