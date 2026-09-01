@@ -68,7 +68,7 @@ class WalletIntelligenceRepository:
     def path(self) -> Path:
         return self._path
 
-    def initialize(self) -> None:
+    def initialize(self, *, verify_integrity: bool = True) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         _restrict_directory(self._path.parent)
         connection = self._connect()
@@ -82,7 +82,8 @@ class WalletIntelligenceRepository:
                 (WALLET_INTELLIGENCE_SCHEMA_VERSION, _iso(datetime.now(UTC))),
             )
             connection.commit()
-            self._require_integrity(connection)
+            if verify_integrity:
+                self._require_integrity(connection)
             self._require_schema_version(connection)
         finally:
             connection.close()
