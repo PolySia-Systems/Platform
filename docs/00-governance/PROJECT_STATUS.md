@@ -4,13 +4,13 @@
 
 | Field | Verified value |
 |---|---|
-| Review date | 2026-08-27 |
+| Review date | 2026-09-02 |
 | Source-of-truth branch | `main` |
-| Audited repository baseline | `41221e7edef56faeccfe5783a22415956c7ffddf` |
-| Last verified deployed baseline | `41221e7edef56faeccfe5783a22415956c7ffddf` |
+| Audited repository baseline | `dbb19c262dc6e28aa4872ac24682104356ffb2f7` |
+| Last verified deployed baseline | `dbb19c262dc6e28aa4872ac24682104356ffb2f7` |
 | Post-only repair merge baseline | `62342fee801aa2fabffa6fd78a728e2ce5b7279d` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Latest repository maintenance | Stage 4B contention hardening (PRs `#98`–`#101`) deployed on Finland at `41221e7` |
+| Latest repository maintenance | Stage 4B state-ownership cutover and legacy retirement (PRs `#107`–`#109`) deployed on Finland at `dbb19c2` |
 | Primary runtime | CPython `3.14.6` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.6.0` |
@@ -33,128 +33,63 @@ orders, fills, exposure, and experiment cost. No new Live authorization exists.
 
 ## Current Helsinki DATA_ONLY deployment
 
-PRs `#80` through `#88` completed the all-market Dynamic Shadow consumer,
-protected dynamic pre-Live handoff, read-only publication repair, official
-position-pagination bound, persistent restore scratch, and the Continuous
-Shadow Portfolio. Exact runtime commit
-`41221e7edef56faeccfe5783a22415956c7ffddf` is deployed from a verified immutable
-Git archive because repository Deploy Keys are disabled.
+Finland runs exact commit `dbb19c262dc6e28aa4872ac24682104356ffb2f7`
+from `/opt/polysia-releases/dbb19c262dc6e28aa4872ac24682104356ffb2f7`.
+The immutable deployment archive SHA-256 is
+`7e3655adbb144e3d65990987d47ad086af696a1f6eff56a42823314dbfac3ac2`;
+the active image ID is
+`sha256:728a96684679a1f7a979c9bd69d9e7ac860a151c1d78d467cee6992be329f8fd`.
+The image's embedded `BUILD_COMMIT` matches the deployed commit.
 
-The monitor is healthy with no published port. `TRADING_MODE=DATA_ONLY`,
-`LIVE_TRADING_ENABLED=false`, and the Live allowlist is empty. Credentials were
-checked only as present/redacted; no new Copy authorization or acknowledgement
-exists. Daily Stages 1–3, daily seven-day Historical Stage 4, and ten-minute
-Forward Shadow timers are enabled. The dynamic handoff is an operator-only
-one-shot with no timer and no network.
+Daily Stages 1–3, daily seven-day Historical Stage 4A, ten-minute Forward
+Stage 4A, and the persistent Stage 4B worker are enabled. All Wallet
+Intelligence services enforce `TRADING_MODE=DATA_ONLY` and
+`LIVE_TRADING_ENABLED=false`; no Live service or order path ran during this
+delivery. The existing monitor remains healthy on its prior image. The
+unrelated `3x-ui` container retained identity `ab567d6d...`, its
+`2026-08-21T10:33:56Z` start time, and restart count zero.
 
-The verified real read-only sample contains 21 PolyCop pages and 2,022 wallets;
-Stage 3 publishes Alpha 50 and Stress 100 with one overlap, five rejected, and
-zero Live-review candidates. The seven-day Stage 4 run evaluated 22,368 events,
-simulated 21,115, classified 1,253 unknown, rejected zero, and observed zero
-rate-limit responses with the circuit closed. These are modeled research facts,
-not proof of profit.
-
-The handoff found 119 evidence-qualified wallets and atomically published the
-existing runner's exact 102-wallet protected input. A one-cycle authenticated
-dry-run then completed `DRY_RUN_BOUNDED_COMPLETE`: no venue attempt, order,
-fill, cancellation, position, fee, or external mutation occurred. The protected
-input was regenerated after the terminal dry-run. Generic all-market Live
-execution remains out of scope; the legacy bounded Live runner still retains
-its exact-102 and BTC 15-minute safety invariants.
+The current source selection is fresh and contains 145 Stage 3 candidates.
+Stage 4A and Stage 4B remain modeled research/Shadow systems. Their output is
+not evidence of profitability, Live readiness, or authorization to trade.
 
 ## Stage 4B Continuous Shadow deployment
 
-Continuous Shadow Portfolio v0.2 / schema v4 is CURRENT in `DATA_ONLY` on
-`Hetzner-Finland-Helsinki-01` at exact merge commit
-`41221e7edef56faeccfe5783a22415956c7ffddf` (PR `#101`, including PRs `#98`–`#100`,
-PR `#96` worker lifecycle, PR `#94` reporting isolation, and PR `#92` schema
-v4). The mixed FOLLOWER portfolio
-remains the labeled baseline.
-Independent Alpha and Stress followers started empty after migration.
-CLOSE/SETTLEMENT attribution, rolling 1h/6h/24h health, mark freshness, and a
-persistent fenced worker are active. Encrypted off-host backup is still
-absent. `3x-ui` was not restarted.
+PRs `#107` and `#108` made schema v5 CURRENT. Stage 4B is now the sole runtime
+writer of `continuous-shadow.sqlite3`; Stages 1–4A own
+`wallet-intelligence.sqlite3`, and latency telemetry remains in
+`wallet-intelligence-latency.sqlite3`. Stage 4B imports one coherent, versioned
+Stage 3 selection through a short read-only transaction, then stores its digest
+and provenance locally. The lease and fencing epoch are local to the Stage 4B
+store. No queue, RPC, cross-database transaction, PostgreSQL service, or new
+runtime boundary was introduced.
 
-The initial uninterrupted run exceeded 90 minutes with zero duplicate
-processing and a balanced ledger. A later operator-workflow interruption left
-the intentionally stopped timer inactive for about 14 hours. Recovery resumed
-from the durable watermark without state loss, but correctly classified 1,270
-backlog events as `UNKNOWN` because their fresh executable-book evidence no
-longer existed. Subsequent natural polls recorded zero UNKNOWN and zero rate
-limits. Cumulative evidence at closeout contained 1,336 unique events, 34
-overlap duplicates, zero duplicate processing, 10 settlements, and six follower
-closes.
+Before legacy retirement, the exact backups below were restored into disposable
+state with checksum, SQLite integrity, schema, row-count, and Ledger checks:
 
-The current follower P&L is a negative, partial synthetic estimate and some
-marks are not fully current. Confidence is `LOW`; this evidence cannot support
-a profitability, Live-readiness, or promotion claim. See the Stage 4B handoff
-for exact backup, rollback, financial, and limitation evidence.
+- `wallet-intelligence-20260902T053846108697Z.sqlite3`, SHA-256
+  `0608f2b6895dae3d5dd744ebe92cd5e4297f76da87fa4168f41127f97429815b`;
+- `continuous-shadow-20260902T054800842182Z.sqlite3`, SHA-256
+  `599e3d9805d4bf7611be0f347075b4fe60c036631a1c27b7e7868c6b8064c997`;
+- `wallet-intelligence-latency-20260902T055516138250Z.sqlite3`, SHA-256
+  `997bf56303ba8217863f0cd0cca23ee1d7a284dbd06fde678278cd1de3203b5f`.
 
-Operational health on Helsinki now reads the atomic `continuous-shadow.json`
-artifact instead of the live SQLite file. Thirty host artifact reads completed
-in 0.0001–0.0002 s while the worker held the database. Fifteen `portfolio-health`
-CLI invocations inside the running worker did not increase `NRestarts` and
-produced no `database is locked` log lines. Snapshot `portfolio-results` against
-the verified 268 943 360-byte backup completed in 1.811 s inside a detached
-container; SQL latest-mark and aggregation queries on that file were all under
-90 ms. Indexes, WAL, and schema version were not changed.
+After the schema-v5 acceptance window, PR `#109` removed dead in-process legacy
+migration code and supplied a guarded one-time retirement script. In explicit
+maintenance mode the script removed the 15 remaining `continuous_shadow_*`
+objects from the active Intelligence database. It did not vacuum the file.
+Post-retirement `integrity_check` returned `ok`, the foreign-key check returned
+zero violations, and Stage 1–4A row counts remained unchanged.
 
-A later `docker compose run` one-shot used for snapshot timing tore down the
-Compose project veth and stopped the `compose run` worker at 12:59:06 UTC.
-systemd `Restart=on-failure` restarted it (`NRestarts` 0→1, `OOMKilled=false`).
-The failed poll recorded sanitized `source_unavailable` at 12:59:05 UTC rather
-than a generic `continuous_shadow_failed` code. After recovery, health was
-`warning` with `last_poll_status=succeeded`, `ledger_balanced=true`,
-`duplicate_processing_count=0`, fresh/stale/missing marks 168/82/0, and no
-real order. `3x-ui` remained restart count 0 since `2026-08-21T10:33:56Z`.
-
-PR `#96` changed the worker unit to `docker compose up` so it stays in the
-Compose project. Helsinki is on `abb96570ba0e27deb163688e1fe25f8d0fefe9b8`
-(`sha256:761ba8f1fbe19908744a8a39cb80cd019821c59e24b56b5457ad330cee58cb29`).
-A `docker compose run --rm` health one-shot of `wallet-intelligence-sync`
-completed in 11.095 s while the worker stayed `active` with `NRestarts=0`.
-Thirty host artifact reads were 0.0000–0.0003 s. After that smoke: ledger
-balanced, duplicate processing 0, last poll succeeded, marks fresh/stale/missing
-159/93/0, `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`. `3x-ui`
-restart count remained 0.
-
-The final contention-hardening sequence closed four distinct failure
-boundaries without changing schema, journal mode, financial policy, or Live
-controls. PR `#98` added bounded SQLite busy handling; PR `#99` made worker
-initialization and unit lifecycle deterministic; PR `#100` kept transient
-source failures inside the persistent process; and PR `#101` classified a raw
-SQLite busy error that could occur before a poll run existed. Intermediate
-deployments were observed rather than assumed correct: two exposed remaining
-boundaries and were superseded. Final local validation passed 837 tests and all
-normal quality gates; CI run `33026629181` passed on the PR `#101` head.
-
-Final Helsinki verification used exact SHA `41221e7`. Three natural Stage 4A
-cycles at 04:20, 04:30, and 04:40 UTC all exited successfully while the Stage
-4B worker stayed active with `NRestarts=0`, no traceback, and no uncaught
-`database is locked`. Two genuine overlap locks and one transient source outage
-were safely classified and skipped; durable prior state was retained and the
-next normal poll succeeded. A final online backup intentionally overlapped the
-worker and caused another classified `sqlite_busy` skip without a restart.
-
-The final verified backup is
-`wallet-intelligence-20260827T045026736563Z.sqlite3` (481,038,336 bytes,
-SHA-256 `df1552b4c44b869100cd959689f5cf451939c2d073402e808fd954aee3eb9347`).
-Its restore-check passed. Snapshot evidence contained 1,927 successful polls,
-5,640 unique events, 1,941 overlap duplicates, zero duplicate processing,
-13,840 evaluations (2,393 simulated, 5,511 rejected, 5,936 unknown), and 554
-settlements. The Decimal identity delta and unmarked-adjusted delta were both
-`-1E-25`; the ledger balanced. The current report remained `warning` because
-23 genuine settlement-backlog items and stale marks remain, not because the
-worker crashed. Current modeled results remain negative and low-confidence;
-this operational repair is not a profitability or Live-readiness claim.
-
-The deployed archive SHA-256 is
-`b41f56d58797a44145b54481cfeb93b137492fa1e1f67622920cfb9aeef6d2f6` and the
-image ID is
-`sha256:d0486bacd1bf76ad5d5e40201c6315a50c561d117a703c7a40d8ab8676d4b8fe`.
-`TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`, and no Live service or
-order path ran. `3x-ui` retained container identity `ab567d6d…`, restart count
-zero, and its 2026-08-21 10:33:56 UTC start time.
+The post-retirement worker started at `2026-09-02T10:42:04Z`. Its first three
+polls succeeded, including recovery of the intentional maintenance gap; the
+service retained `NRestarts=0`, schema v5, a valid local lease/fencing row, a
+fresh selection, a balanced Ledger, and zero duplicate processing. A natural
+Stage 4A Forward run overlapped the new worker and completed successfully with
+no shared-file lock. Current health remains `warning` for stale marks and a real
+settlement backlog, not for persistence failure. Modeled P&L remains negative
+and does not support promotion. Full delivery and rollback evidence is in the
+current Stage 4B ownership handoff.
 
 ## Completed stages
 

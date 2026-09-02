@@ -10,15 +10,19 @@ because that exact path is an immutable compliance artifact.
 
 ## Repository truth
 
+- [`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md)
+  is the current Stage 4B operating and recovery evidence. It records the
+  standalone schema-v5 financial store, Helsinki cutover, verified three-store
+  restore, legacy schema retirement, and post-retirement smoke. Earlier Stage
+  4B handoffs below remain historical evidence.
 - [`cs-lease-recovery-telemetry-isolation.md`](cs-lease-recovery-telemetry-isolation.md)
-  records stable Continuous Shadow lease ownership, process-local poll
-  exclusion, and physical isolation of latency telemetry SQLite.
+  records the predecessor lease-recovery and telemetry-isolation repairs.
 - [`latency-performance-intelligence-v0-1.md`](latency-performance-intelligence-v0-1.md)
   records the observational latency contract, bounded SQLite telemetry, and
   pending 24-hour Helsinki real-data gate.
 - [`wallet-intelligence-stage4b-v4-reliability.md`](wallet-intelligence-stage4b-v4-reliability.md)
-  records schema v4 attribution, Alpha/Stress isolation, persistent DATA_ONLY
-  worker, and the remaining Finland deploy steps. The prior
+  records historical schema-v4 attribution, Alpha/Stress isolation, and worker
+  reliability evidence. The prior
   [`wallet-intelligence-stage4b-continuous-shadow.md`](wallet-intelligence-stage4b-continuous-shadow.md)
   remains the last verified Helsinki schema-v3 runtime evidence.
 - [`wallet-intelligence-stage4-dynamic-shadow.md`](wallet-intelligence-stage4-dynamic-shadow.md)

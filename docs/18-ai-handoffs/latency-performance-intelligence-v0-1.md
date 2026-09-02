@@ -17,8 +17,9 @@ changing trading behavior, financial state, or Live authority.
   Submit, ACK, First Fill, Final Fill, Decode, Normalize, Pricing, Execution
   Preparation, and WebSocket RTT remain `UNKNOWN` until those stages exist.
 - Additive SQLite telemetry tables (`latency_telemetry_schema` v1). Continuous
-  Shadow remains schema v4. Telemetry never holds a transaction across
-  financial work. Buffer overflow and SQLite busy drop measurements.
+  Shadow now uses its standalone schema-v5 store. Telemetry never holds a
+  transaction across financial work. Buffer overflow and SQLite busy drop
+  measurements.
 - Out-of-band probes use the existing Polymarket `VenueErrorCategory` taxonomy
   and sanitized endpoint IDs. Probes never run inside `collect_events`.
 - Canonical object `latency_performance_intelligence` is computed once and

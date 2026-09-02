@@ -1,5 +1,9 @@
 # Wallet Intelligence Stage 4B Continuous Shadow Handoff
 
+Status: HISTORICAL schema-v3 evidence. Current operation and recovery use the
+standalone schema-v5 store documented in
+[`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md).
+
 ## Verified outcome
 
 Stage 4B Continuous Shadow Portfolio v0.2 is merged and deployed on
