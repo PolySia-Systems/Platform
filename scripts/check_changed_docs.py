@@ -64,14 +64,15 @@ REQUIRED_README_LINKS = (
     "docs/18-ai-handoffs/README.md",
     "docs/22-roadmap/roadmap.md",
 )
-LIVE_DEPLOYED_BASELINE_FIELD = re.compile(
+PROHIBITED_LIVE_STYLE_FIELD = re.compile(
     r"(?m)^\|\s*Last verified deployed baseline\s*\|"
 )
-LIVE_DEPLOYMENT_HEADING = re.compile(
+PROHIBITED_LIVE_STYLE_HEADING = re.compile(
     r"(?m)^## Current Helsinki DATA_ONLY deployment\s*$"
 )
 TRUTH_OWNERSHIP_HEADING = re.compile(r"(?m)^## Truth ownership\s*$")
-COMMIT_SHA = re.compile(r"\b[0-9a-f]{40}\b")
+AUDITED_SNAPSHOT_HEADING = re.compile(r"(?m)^## Audited runtime snapshot\s*$")
+AUDITED_AS_OF = re.compile(r"(?m)^Audited as of \d{4}-\d{2}-\d{2}\s*\.?\s*$")
 TEMPORARY_DIRECTORY_NAMES = frozenset(
     {"__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
 )
@@ -244,18 +245,20 @@ def _validate_project_status(repository: Path) -> list[str]:
         errors.append(
             f"{relative.as_posix()}: must tell readers that runtime state must be queried"
         )
-    if LIVE_DEPLOYED_BASELINE_FIELD.search(text):
+    if PROHIBITED_LIVE_STYLE_FIELD.search(text):
         errors.append(
-            f"{relative.as_posix()}: claims a live deployed baseline; use a dated snapshot"
+            f"{relative.as_posix()}: known prohibited live-style field "
+            "'Last verified deployed baseline'"
         )
-    if LIVE_DEPLOYMENT_HEADING.search(text):
+    if PROHIBITED_LIVE_STYLE_HEADING.search(text):
         errors.append(
-            f"{relative.as_posix()}: live deployment heading is not allowed; "
-            "use an audited snapshot"
+            f"{relative.as_posix()}: known prohibited live-style heading "
+            "'Current Helsinki DATA_ONLY deployment'"
         )
-    if COMMIT_SHA.search(text) and "Audited as of " not in text:
+    if AUDITED_SNAPSHOT_HEADING.search(text) and AUDITED_AS_OF.search(text) is None:
         errors.append(
-            f"{relative.as_posix()}: commit SHA without an 'Audited as of' label"
+            f"{relative.as_posix()}: Audited runtime snapshot requires "
+            "'Audited as of YYYY-MM-DD'"
         )
     return errors
 

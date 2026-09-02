@@ -12,7 +12,7 @@ platform. Polymarket is the first venue adapter, not the identity of the core
 platform. Preserve working behavior. Improve incrementally. Do not rebuild the
 project from scratch for cosmetic reasons.
 
-## 2. Instruction and Source-of-Truth Order
+## 2. Fact Owners and Instruction Precedence
 
 Higher-priority system, developer, and explicit user instructions always take
 precedence over repository guidance.
@@ -24,17 +24,21 @@ directory appear later and take precedence over broader root instructions.
 
 | Fact | Owner |
 |---|---|
-| Implementation | Current code, tests, schemas, and configuration |
-| Architecture decisions | Approved ADRs |
+| Implemented behavior | Current code, tests, schemas, and configuration |
 | Required behavior | Requirements documents relevant to the task |
-| Validation | CI and tests |
-| Active work and ordinary resume | The Issue or PR |
-| Current operational SHA and health | Host query, not Git Markdown |
+| Architecture rationale | Approved ADRs |
+| Validation evidence | CI and tests |
+| Active work and resume state | The Issue or PR |
+| Current operational state | Read-only runtime query, not Git Markdown |
 | Major operational evidence | Dated records under `docs/18-ai-handoffs/` |
 | Immutable baseline | `docs/13-ai-handoffs/BASELINE_AUDIT.md` |
 | Generated views | Disposable; never authoritative |
 
-For project facts and decisions, use this order:
+Use the Fact Owner table to determine factual truth. The authority order
+governs instruction and decision precedence and never overrides the
+authoritative owner of a fact.
+
+For instruction and decision conflicts, use this precedence:
 
 1. This root guidance plus applicable nested `AGENTS.md` files.
 2. `docs/00-governance/master-operating-charter.md`.

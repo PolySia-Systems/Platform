@@ -1,7 +1,7 @@
 # Polymarket Adapter Instructions
 
 Scope: `src/polysia/adapters/polymarket/` and descendants. Root `AGENTS.md`
-owns universal safety, Decimal, Risk authority, and
+owns universal safety, Decimal, Risk authority, SDK confinement, and
 Strategy -> Risk -> Execution -> Adapter. Do not repeat or weaken those rules.
 
 ## MUST
@@ -17,12 +17,4 @@ Strategy -> Risk -> Execution -> Adapter. Do not repeat or weaken those rules.
 - Preserve signer, funder, wallet, and signature semantics unless the task
   explicitly authorizes a tested migration.
 
-## NEVER
-
-- Do not leak SDK models into domain, strategy, portfolio, risk, ledger, or
-  persistence contracts.
-- Do not treat adapter registry or generalized capability discovery as
-  CURRENT unless implemented and approved. Venue-specific capability behavior
-  may remain explicit here.
-- Do not call a venue, wallet, chain, broker, or protocol from strategy code;
-  strategies stop at signals or pre-risk intents.
+Venue-specific capability behavior may remain explicit in this adapter.

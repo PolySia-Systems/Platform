@@ -204,7 +204,7 @@ def test_repository_hygiene_reports_obsolete_phase_and_temporary_paths(
     assert any("lacks required current-document link" in error for error in errors)
 
 
-def test_project_status_accepts_dated_snapshot(tmp_path: Path) -> None:
+def test_project_status_accepts_dated_audited_snapshot(tmp_path: Path) -> None:
     repository, _tracked = _current_docs_repository(tmp_path)
     status = repository / "docs/00-governance/PROJECT_STATUS.md"
     status.write_text(
@@ -215,6 +215,8 @@ def test_project_status_accepts_dated_snapshot(tmp_path: Path) -> None:
                 "## Truth ownership",
                 "",
                 "Runtime SHA, health, and restarts must be queried on the host.",
+                "",
+                "## Audited runtime snapshot",
                 "",
                 "Audited as of 2026-09-02.",
                 "",
@@ -228,7 +230,59 @@ def test_project_status_accepts_dated_snapshot(tmp_path: Path) -> None:
     assert _validate_project_status(repository) == []
 
 
-def test_project_status_rejects_live_deployed_baseline(tmp_path: Path) -> None:
+def test_project_status_rejects_missing_audited_as_of(tmp_path: Path) -> None:
+    repository, _tracked = _current_docs_repository(tmp_path)
+    status = repository / "docs/00-governance/PROJECT_STATUS.md"
+    status.write_text(
+        "\n".join(
+            (
+                "# Project status",
+                "",
+                "## Truth ownership",
+                "",
+                "Runtime SHA, health, and restarts must be queried on the host.",
+                "",
+                "## Audited runtime snapshot",
+                "",
+                f"Release `{BASELINE}`.",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    errors = _validate_project_status(repository)
+
+    assert any("Audited as of YYYY-MM-DD" in error for error in errors)
+
+
+def test_project_status_rejects_malformed_audited_as_of(tmp_path: Path) -> None:
+    repository, _tracked = _current_docs_repository(tmp_path)
+    status = repository / "docs/00-governance/PROJECT_STATUS.md"
+    status.write_text(
+        "\n".join(
+            (
+                "# Project status",
+                "",
+                "## Truth ownership",
+                "",
+                "Runtime SHA, health, and restarts must be queried on the host.",
+                "",
+                "## Audited runtime snapshot",
+                "",
+                "Audited as of 2 September 2026.",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    errors = _validate_project_status(repository)
+
+    assert any("Audited as of YYYY-MM-DD" in error for error in errors)
+
+
+def test_project_status_rejects_known_live_style_patterns(tmp_path: Path) -> None:
     repository, _tracked = _current_docs_repository(tmp_path)
     status = repository / "docs/00-governance/PROJECT_STATUS.md"
     status.write_text(
@@ -250,6 +304,28 @@ def test_project_status_rejects_live_deployed_baseline(tmp_path: Path) -> None:
 
     assert any("missing Truth ownership section" in error for error in errors)
     assert any("must be queried" in error for error in errors)
-    assert any("live deployed baseline" in error for error in errors)
-    assert any("live deployment heading" in error for error in errors)
-    assert any("Audited as of" in error for error in errors)
+    assert any("known prohibited live-style field" in error for error in errors)
+    assert any("known prohibited live-style heading" in error for error in errors)
+
+
+def test_project_status_allows_unrelated_commit_sha(tmp_path: Path) -> None:
+    repository, _tracked = _current_docs_repository(tmp_path)
+    status = repository / "docs/00-governance/PROJECT_STATUS.md"
+    status.write_text(
+        "\n".join(
+            (
+                "# Project status",
+                "",
+                "## Truth ownership",
+                "",
+                "Runtime SHA, health, and restarts must be queried on the host.",
+                "",
+                "Standards pin "
+                f"`{BASELINE}` is not a live runtime claim.",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert _validate_project_status(repository) == []
