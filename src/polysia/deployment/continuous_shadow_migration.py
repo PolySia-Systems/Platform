@@ -15,6 +15,7 @@ from polysia.storage.continuous_shadow import (
     CONTINUOUS_SHADOW_SCHEMA_VERSION,
     ContinuousShadowRepository,
     ContinuousShadowStoreError,
+    _backfill_current_valuation,
 )
 
 _SOURCE_SCHEMA_VERSION = 4
@@ -87,6 +88,7 @@ def migrate_continuous_shadow_database(
                 )
                 for table in _COPY_TABLES[2:]:
                     _copy_matching_table(source_connection, destination_connection, table)
+                _backfill_current_valuation(destination_connection)
                 violations = destination_connection.execute(
                     "PRAGMA foreign_key_check"
                 ).fetchall()

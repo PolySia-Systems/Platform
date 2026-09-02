@@ -9,7 +9,7 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineBusyError,
@@ -40,32 +40,22 @@ from polysia.domain.copytrading.continuous_shadow_experiments import (
     walk_forward_policy_report,
 )
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
+from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
-CONTINUOUS_SHADOW_SCHEMA_VERSION = 5
+CONTINUOUS_SHADOW_SCHEMA_VERSION = 6
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
-_CHECKPOINT_MARK_JOIN = (
-    "LEFT JOIN continuous_shadow_checkpoint c ON c.experiment_id = p.experiment_id "
-    "LEFT JOIN continuous_shadow_position_marks m "
-    "ON m.experiment_id = p.experiment_id AND m.portfolio_id = p.portfolio_id "
-    "AND m.market_reference = p.market_reference "
-    "AND m.outcome_reference = p.outcome_reference "
-    "AND m.poll_run_id = c.last_poll_run_id"
+_CURRENT_MARK_UNTRUSTED = (
+    "COALESCE(p.mark_status, 'MISSING') <> 'VERIFIED_EXECUTABLE_BID'"
 )
 _PORTFOLIO_POSITION_STATS = (
     "SELECT x.experiment_id, x.portfolio_id, COUNT(*) AS open_position_count, "
-    "SUM(CASE WHEN COALESCE(m.mark_status, 'MISSING') <> 'VERIFIED_EXECUTABLE_BID' "
+    "SUM(CASE WHEN COALESCE(x.mark_status, 'MISSING') <> 'VERIFIED_EXECUTABLE_BID' "
     "THEN 1 ELSE 0 END) AS unmarked_position_count "
     "FROM continuous_shadow_positions x "
-    "LEFT JOIN continuous_shadow_checkpoint c ON c.experiment_id = x.experiment_id "
-    "LEFT JOIN continuous_shadow_position_marks m "
-    "ON m.experiment_id = x.experiment_id AND m.portfolio_id = x.portfolio_id "
-    "AND m.market_reference = x.market_reference "
-    "AND m.outcome_reference = x.outcome_reference "
-    "AND m.poll_run_id = c.last_poll_run_id "
     "WHERE x.experiment_id = ? "
     "GROUP BY x.experiment_id, x.portfolio_id"
 )
@@ -73,6 +63,13 @@ _PORTFOLIO_POSITION_STATS = (
 
 class ContinuousShadowStoreError(CandidateStoreError):
     """Safe Stage 4B persistence failure without protected identity values."""
+
+
+class _CurrentValuation(TypedDict):
+    quantity: Decimal
+    mark_price: Decimal | None
+    mark_status: str | None
+    state_changed_at: datetime | None
 
 
 class ContinuousShadowLeaseRepository:
@@ -259,6 +256,7 @@ class ContinuousShadowRepository:
                 "(schema_version, initialized_at) VALUES (?, ?)",
                 (CONTINUOUS_SHADOW_SCHEMA_VERSION, _iso(datetime.now(UTC))),
             )
+            _upsert_lifecycle_policy(connection)
             cutoff = _iso(datetime.now(UTC) - _ABANDONED_POLL_AFTER)
             connection.execute(
                 "UPDATE continuous_shadow_poll_runs SET status = 'failed', failed_at = ?, "
@@ -272,6 +270,74 @@ class ContinuousShadowRepository:
         finally:
             connection.close()
         _restrict_file(self._path)
+
+    def prune_mark_history(
+        self,
+        *,
+        now: datetime,
+        deduplicate: bool = True,
+    ) -> dict[str, int]:
+        now = _utc(now)
+        policy = DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY
+        cutoff = _iso(now - policy.mark_history_retention)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            duplicate_count = 0
+            if deduplicate:
+                duplicate_count = _deduplicate_unchanged_marks(connection)
+            expired_row = connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_position_marks "
+                "WHERE marked_at < ?",
+                (cutoff,),
+            ).fetchone()
+            expired_count = int(expired_row[0])
+            connection.execute(
+                "DELETE FROM continuous_shadow_position_marks WHERE marked_at < ?",
+                (cutoff,),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return {
+            "deleted_duplicate_count": duplicate_count,
+            "deleted_expired_count": expired_count,
+        }
+
+    def capacity_report(self) -> dict[str, object]:
+        connection = self._connect(read_only=True)
+        try:
+            page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+            page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+            freelist = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+            mark_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM continuous_shadow_position_marks"
+                ).fetchone()[0]
+            )
+            position_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM continuous_shadow_positions"
+                ).fetchone()[0]
+            )
+        finally:
+            connection.close()
+        wal = Path(str(self._path) + "-wal")
+        return {
+            "daily_growth_bytes": None,
+            "free_pages": freelist,
+            "mark_count": mark_count,
+            "page_count": page_count,
+            "page_size": page_size,
+            "path": str(self._path),
+            "physical_bytes": self._path.stat().st_size if self._path.exists() else 0,
+            "position_count": position_count,
+            "used_bytes": page_size * (page_count - freelist),
+            "wal_bytes": wal.stat().st_size if wal.exists() else 0,
+        }
 
     def start_experiment(
         self,
@@ -782,6 +848,9 @@ class ContinuousShadowRepository:
             ).fetchone()
             if poll is None or str(poll["experiment_id"]) != experiment.experiment_id:
                 raise ContinuousShadowStoreError("Continuous Shadow poll is not publishable.")
+            previous_valuations = _current_valuations(
+                connection, experiment.experiment_id
+            )
             self._upsert_candidates(
                 connection,
                 experiment_id=experiment.experiment_id,
@@ -890,11 +959,27 @@ class ContinuousShadowRepository:
                 for position in portfolio.positions:
                     if position.quantity <= _ZERO:
                         continue
+                    previous = previous_valuations.get(
+                        (
+                            portfolio.portfolio_id,
+                            position.market_reference,
+                            position.outcome_reference,
+                        )
+                    )
+                    changed = _position_valuation_changed(previous, position)
+                    source_at = position.source_at or position.marked_at
+                    observed_at = position.observed_at or completed_at
+                    prior_changed = None if previous is None else previous["state_changed_at"]
+                    state_changed_at = (
+                        observed_at if changed or prior_changed is None else prior_changed
+                    )
                     connection.execute(
                         "INSERT INTO continuous_shadow_positions "
                         "(experiment_id, portfolio_id, market_reference, outcome_reference, "
-                        "quantity, cost_basis, entry_fees, mark_price, marked_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "quantity, cost_basis, entry_fees, mark_price, marked_at, mark_status, "
+                        "freshness, source_at, source_age_ms, observed_at, state_changed_at, "
+                        "last_observed_poll_run_id, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             experiment.experiment_id,
                             portfolio.portfolio_id,
@@ -904,7 +989,14 @@ class ContinuousShadowRepository:
                             _decimal(position.cost_basis),
                             _decimal(position.entry_fees),
                             _optional_decimal(position.mark_price),
-                            None if position.marked_at is None else _iso(position.marked_at),
+                            None if source_at is None else _iso(source_at),
+                            position.mark_status,
+                            position.freshness,
+                            None if source_at is None else _iso(source_at),
+                            position.source_age_ms,
+                            _iso(observed_at),
+                            _iso(state_changed_at),
+                            poll_run_id,
                             _iso(completed_at),
                         ),
                     )
@@ -935,7 +1027,15 @@ class ContinuousShadowRepository:
             for ledger_row in completion.ledger:
                 _write_ledger(connection, experiment.experiment_id, poll_run_id, ledger_row)
             for mark_row in completion.marks:
-                _write_mark(connection, experiment.experiment_id, poll_run_id, mark_row)
+                key = (
+                    mark_row.portfolio_id,
+                    mark_row.market_reference,
+                    mark_row.outcome_reference,
+                )
+                if _history_mark_required(previous_valuations.get(key), mark_row):
+                    _write_mark(
+                        connection, experiment.experiment_id, poll_run_id, mark_row
+                    )
 
             simulated = sum(
                 item.status.value == "SIMULATED" for item in completion.evaluations
@@ -1176,27 +1276,24 @@ class ContinuousShadowRepository:
             unmarked = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_positions p "
-                    + _CHECKPOINT_MARK_JOIN
-                    + " WHERE p.experiment_id = ? AND COALESCE(m.mark_status, 'MISSING') "
-                    "<> 'VERIFIED_EXECUTABLE_BID'",
+                    "WHERE p.experiment_id = ? AND " + _CURRENT_MARK_UNTRUSTED,
                     (experiment.experiment_id,),
                 ).fetchone()[0]
             )
             mark_counts = connection.execute(
                 "SELECT "
-                "SUM(CASE WHEN m.mark_status = 'VERIFIED_SETTLEMENT' "
-                "OR (m.mark_status = 'VERIFIED_EXECUTABLE_BID' "
-                "AND m.freshness IN ('FRESH', 'VERIFIED_SETTLEMENT')) THEN 1 ELSE 0 END) "
+                "SUM(CASE WHEN p.mark_status = 'VERIFIED_SETTLEMENT' "
+                "OR (p.mark_status = 'VERIFIED_EXECUTABLE_BID' "
+                "AND p.freshness IN ('FRESH', 'VERIFIED_SETTLEMENT')) THEN 1 ELSE 0 END) "
                 "AS fresh_verified, "
-                "SUM(CASE WHEN m.mark_status = 'LAST_KNOWN_GOOD' "
-                "OR (m.mark_status = 'VERIFIED_EXECUTABLE_BID' "
-                "AND m.freshness IN ('STALE', 'STALE_LAST_KNOWN_GOOD')) THEN 1 ELSE 0 END) "
+                "SUM(CASE WHEN p.mark_status = 'LAST_KNOWN_GOOD' "
+                "OR (p.mark_status = 'VERIFIED_EXECUTABLE_BID' "
+                "AND p.freshness IN ('STALE', 'STALE_LAST_KNOWN_GOOD')) THEN 1 ELSE 0 END) "
                 "AS stale, "
-                "SUM(CASE WHEN m.mark_status IS NULL OR m.mark_status = 'MISSING' "
+                "SUM(CASE WHEN p.mark_status IS NULL OR p.mark_status = 'MISSING' "
                 "THEN 1 ELSE 0 END) AS missing "
                 "FROM continuous_shadow_positions p "
-                + _CHECKPOINT_MARK_JOIN
-                + " WHERE p.experiment_id = ?",
+                "WHERE p.experiment_id = ?",
                 (experiment.experiment_id,),
             ).fetchone()
             fresh_verified_mark_count = int(mark_counts["fresh_verified"] or 0)
@@ -1497,9 +1594,7 @@ class ContinuousShadowRepository:
             untrusted_mark_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_positions p "
-                    + _CHECKPOINT_MARK_JOIN
-                    + " WHERE p.experiment_id = ? AND COALESCE(m.mark_status, 'MISSING') "
-                    "<> 'VERIFIED_EXECUTABLE_BID'",
+                    "WHERE p.experiment_id = ? AND " + _CURRENT_MARK_UNTRUSTED,
                     (experiment_id,),
                 ).fetchone()[0]
             )
@@ -1535,17 +1630,10 @@ class ContinuousShadowRepository:
             ).fetchall()
             latest_marks = connection.execute(
                 "SELECT p.portfolio_id, p.market_reference, p.outcome_reference, "
-                "p.mark_price, p.marked_at, "
-                "m.mark_status, m.source_timestamp, m.source_age_ms, m.freshness, m.marked_at "
-                "AS mark_recorded_at "
+                "p.mark_price, p.source_at AS marked_at, p.mark_status, "
+                "p.source_at AS source_timestamp, p.source_age_ms, p.freshness, "
+                "p.observed_at AS mark_recorded_at "
                 "FROM continuous_shadow_positions p "
-                "LEFT JOIN continuous_shadow_position_marks m "
-                "ON m.experiment_id = p.experiment_id AND m.portfolio_id = p.portfolio_id "
-                "AND m.market_reference = p.market_reference "
-                "AND m.outcome_reference = p.outcome_reference "
-                "AND m.poll_run_id = ("
-                "SELECT last_poll_run_id FROM continuous_shadow_checkpoint "
-                "WHERE experiment_id = p.experiment_id) "
                 "WHERE p.experiment_id = ? AND p.portfolio_id = 'follower'",
                 (experiment_id,),
             ).fetchall()
@@ -2601,10 +2689,226 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
         raise ContinuousShadowStoreError("Continuous Shadow schema version is invalid.")
     version = int(rows[0][0])
     if version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
+        _upsert_lifecycle_policy(connection)
         return
-    raise ContinuousShadowStoreError(
-        "Continuous Shadow schema requires the offline split-store migration."
+    if version != 5:
+        raise ContinuousShadowStoreError(
+            "Continuous Shadow schema requires the offline split-store migration."
+        )
+    _migrate_schema_v5_to_v6(connection)
+
+
+def _migrate_schema_v5_to_v6(connection: sqlite3.Connection) -> None:
+    existing = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(continuous_shadow_positions)")
+    }
+    additions = (
+        ("mark_status", "TEXT"),
+        ("freshness", "TEXT NOT NULL DEFAULT 'MISSING'"),
+        ("source_at", "TEXT"),
+        ("source_age_ms", "INTEGER"),
+        ("observed_at", "TEXT"),
+        ("state_changed_at", "TEXT"),
+        ("last_observed_poll_run_id", "TEXT"),
     )
+    for name, declaration in additions:
+        if name not in existing:
+            connection.execute(
+                f"ALTER TABLE continuous_shadow_positions ADD COLUMN {name} {declaration}"
+            )
+    initialized_at = connection.execute(
+        "SELECT initialized_at FROM continuous_shadow_metadata"
+    ).fetchone()[0]
+    connection.execute(
+        "CREATE TABLE continuous_shadow_metadata_v6 ("
+        "schema_version INTEGER PRIMARY KEY CHECK(schema_version = 6), "
+        "initialized_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_metadata_v6 (schema_version, initialized_at) "
+        "VALUES (6, ?)",
+        (initialized_at,),
+    )
+    connection.execute("DROP TABLE continuous_shadow_metadata")
+    connection.execute(
+        "ALTER TABLE continuous_shadow_metadata_v6 RENAME TO continuous_shadow_metadata"
+    )
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS continuous_shadow_lifecycle_policy ("
+        "policy_version TEXT PRIMARY KEY, "
+        "mark_history_retention_days INTEGER NOT NULL "
+        "CHECK(mark_history_retention_days >= 1), "
+        "recovery_bundle_keep INTEGER NOT NULL CHECK(recovery_bundle_keep >= 1), "
+        "disk_safety_floor_bytes INTEGER NOT NULL CHECK(disk_safety_floor_bytes > 0), "
+        "recovery_bundle_max_skew_seconds INTEGER NOT NULL "
+        "CHECK(recovery_bundle_max_skew_seconds >= 0), "
+        "recorded_at TEXT NOT NULL)"
+    )
+    _backfill_current_valuation(connection)
+    _upsert_lifecycle_policy(connection)
+
+
+def _backfill_current_valuation(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "UPDATE continuous_shadow_positions SET "
+        "mark_status = COALESCE(("
+        "SELECT m.mark_status FROM continuous_shadow_position_marks m "
+        "JOIN continuous_shadow_checkpoint c ON c.experiment_id = m.experiment_id "
+        "AND c.last_poll_run_id = m.poll_run_id "
+        "WHERE m.experiment_id = continuous_shadow_positions.experiment_id "
+        "AND m.portfolio_id = continuous_shadow_positions.portfolio_id "
+        "AND m.market_reference = continuous_shadow_positions.market_reference "
+        "AND m.outcome_reference = continuous_shadow_positions.outcome_reference"
+        "), mark_status, 'MISSING'), "
+        "freshness = COALESCE(("
+        "SELECT m.freshness FROM continuous_shadow_position_marks m "
+        "JOIN continuous_shadow_checkpoint c ON c.experiment_id = m.experiment_id "
+        "AND c.last_poll_run_id = m.poll_run_id "
+        "WHERE m.experiment_id = continuous_shadow_positions.experiment_id "
+        "AND m.portfolio_id = continuous_shadow_positions.portfolio_id "
+        "AND m.market_reference = continuous_shadow_positions.market_reference "
+        "AND m.outcome_reference = continuous_shadow_positions.outcome_reference"
+        "), freshness, 'MISSING'), "
+        "source_at = COALESCE(("
+        "SELECT m.source_timestamp FROM continuous_shadow_position_marks m "
+        "JOIN continuous_shadow_checkpoint c ON c.experiment_id = m.experiment_id "
+        "AND c.last_poll_run_id = m.poll_run_id "
+        "WHERE m.experiment_id = continuous_shadow_positions.experiment_id "
+        "AND m.portfolio_id = continuous_shadow_positions.portfolio_id "
+        "AND m.market_reference = continuous_shadow_positions.market_reference "
+        "AND m.outcome_reference = continuous_shadow_positions.outcome_reference"
+        "), source_at, marked_at), "
+        "source_age_ms = COALESCE(("
+        "SELECT m.source_age_ms FROM continuous_shadow_position_marks m "
+        "JOIN continuous_shadow_checkpoint c ON c.experiment_id = m.experiment_id "
+        "AND c.last_poll_run_id = m.poll_run_id "
+        "WHERE m.experiment_id = continuous_shadow_positions.experiment_id "
+        "AND m.portfolio_id = continuous_shadow_positions.portfolio_id "
+        "AND m.market_reference = continuous_shadow_positions.market_reference "
+        "AND m.outcome_reference = continuous_shadow_positions.outcome_reference"
+        "), source_age_ms), "
+        "observed_at = COALESCE(("
+        "SELECT m.marked_at FROM continuous_shadow_position_marks m "
+        "JOIN continuous_shadow_checkpoint c ON c.experiment_id = m.experiment_id "
+        "AND c.last_poll_run_id = m.poll_run_id "
+        "WHERE m.experiment_id = continuous_shadow_positions.experiment_id "
+        "AND m.portfolio_id = continuous_shadow_positions.portfolio_id "
+        "AND m.market_reference = continuous_shadow_positions.market_reference "
+        "AND m.outcome_reference = continuous_shadow_positions.outcome_reference"
+        "), observed_at, updated_at), "
+        "state_changed_at = COALESCE(state_changed_at, observed_at, updated_at), "
+        "last_observed_poll_run_id = COALESCE(("
+        "SELECT c.last_poll_run_id FROM continuous_shadow_checkpoint c "
+        "WHERE c.experiment_id = continuous_shadow_positions.experiment_id"
+        "), last_observed_poll_run_id)"
+    )
+
+
+def _upsert_lifecycle_policy(connection: sqlite3.Connection) -> None:
+    policy = DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY
+    connection.execute(
+        "INSERT INTO continuous_shadow_lifecycle_policy ("
+        "policy_version, mark_history_retention_days, recovery_bundle_keep, "
+        "disk_safety_floor_bytes, recovery_bundle_max_skew_seconds, recorded_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(policy_version) DO UPDATE SET "
+        "mark_history_retention_days = excluded.mark_history_retention_days, "
+        "recovery_bundle_keep = excluded.recovery_bundle_keep, "
+        "disk_safety_floor_bytes = excluded.disk_safety_floor_bytes, "
+        "recovery_bundle_max_skew_seconds = excluded.recovery_bundle_max_skew_seconds",
+        (
+            policy.policy_version,
+            policy.mark_history_retention_days,
+            policy.recovery_bundle_keep,
+            policy.disk_safety_floor_bytes,
+            policy.recovery_bundle_max_skew_seconds,
+            _iso(datetime.now(UTC)),
+        ),
+    )
+
+
+def _current_valuations(
+    connection: sqlite3.Connection, experiment_id: str
+) -> dict[tuple[str, str, str], _CurrentValuation]:
+    values: dict[tuple[str, str, str], _CurrentValuation] = {}
+    rows = connection.execute(
+        "SELECT portfolio_id, market_reference, outcome_reference, quantity, "
+        "mark_price, mark_status, state_changed_at "
+        "FROM continuous_shadow_positions WHERE experiment_id = ?",
+        (experiment_id,),
+    ).fetchall()
+    for row in rows:
+        values[
+            (
+                str(row["portfolio_id"]),
+                str(row["market_reference"]),
+                str(row["outcome_reference"]),
+            )
+        ] = {
+            "quantity": Decimal(str(row["quantity"])),
+            "mark_price": (
+                None if row["mark_price"] is None else Decimal(str(row["mark_price"]))
+            ),
+            "mark_status": None if row["mark_status"] is None else str(row["mark_status"]),
+            "state_changed_at": (
+                None
+                if row["state_changed_at"] is None
+                else _datetime(str(row["state_changed_at"]))
+            ),
+        }
+    return values
+
+
+def _canonical_decimal(value: Decimal | None) -> str | None:
+    return None if value is None else format(value, "f")
+
+
+def _position_valuation_changed(
+    previous: _CurrentValuation | None, position: ContinuousPosition
+) -> bool:
+    if previous is None:
+        return True
+    return (
+        _canonical_decimal(previous["quantity"]) != _canonical_decimal(position.quantity)
+        or _canonical_decimal(previous["mark_price"]) != _canonical_decimal(position.mark_price)
+        or previous["mark_status"] != position.mark_status
+    )
+
+
+def _history_mark_required(
+    previous: _CurrentValuation | None, mark: ContinuousPositionMark
+) -> bool:
+    if mark.mark_status == "VERIFIED_SETTLEMENT":
+        return True
+    if previous is None:
+        return True
+    return (
+        _canonical_decimal(previous["quantity"]) != _canonical_decimal(mark.quantity)
+        or _canonical_decimal(previous["mark_price"]) != _canonical_decimal(mark.mark_price)
+        or previous["mark_status"] != mark.mark_status
+    )
+
+
+def _deduplicate_unchanged_marks(connection: sqlite3.Connection) -> int:
+    cursor = connection.execute(
+        "DELETE FROM continuous_shadow_position_marks WHERE rowid IN ("
+        "SELECT rowid FROM ("
+        "SELECT rowid, mark_price, mark_status, quantity, "
+        "LAG(mark_price) OVER w AS prev_price, "
+        "LAG(mark_status) OVER w AS prev_status, "
+        "LAG(quantity) OVER w AS prev_quantity "
+        "FROM continuous_shadow_position_marks "
+        "WINDOW w AS ("
+        "PARTITION BY experiment_id, portfolio_id, market_reference, "
+        "outcome_reference ORDER BY marked_at, poll_run_id)"
+        ") WHERE prev_status IS NOT NULL "
+        "AND mark_status <> 'VERIFIED_SETTLEMENT' "
+        "AND IFNULL(mark_price, '') = IFNULL(prev_price, '') "
+        "AND mark_status = prev_status "
+        "AND quantity = prev_quantity)"
+    )
+    return int(cursor.rowcount)
 
 
 def _rolling_health_windows(
@@ -2999,6 +3303,9 @@ def _portfolio(
 
 
 def _position(row: sqlite3.Row) -> ContinuousPosition:
+    source_at = row["source_at"]
+    marked_at = row["marked_at"]
+    source_value = source_at if source_at is not None else marked_at
     return ContinuousPosition(
         portfolio_id=str(row["portfolio_id"]),
         market_reference=str(row["market_reference"]),
@@ -3007,7 +3314,24 @@ def _position(row: sqlite3.Row) -> ContinuousPosition:
         cost_basis=Decimal(str(row["cost_basis"])),
         entry_fees=Decimal(str(row["entry_fees"])),
         mark_price=None if row["mark_price"] is None else Decimal(str(row["mark_price"])),
-        marked_at=None if row["marked_at"] is None else _datetime(str(row["marked_at"])),
+        marked_at=None if source_value is None else _datetime(str(source_value)),
+        mark_status=None if row["mark_status"] is None else str(row["mark_status"]),
+        freshness=str(row["freshness"] or "MISSING"),
+        source_at=None if source_value is None else _datetime(str(source_value)),
+        source_age_ms=None if row["source_age_ms"] is None else int(row["source_age_ms"]),
+        observed_at=(
+            None if row["observed_at"] is None else _datetime(str(row["observed_at"]))
+        ),
+        state_changed_at=(
+            None
+            if row["state_changed_at"] is None
+            else _datetime(str(row["state_changed_at"]))
+        ),
+        last_observed_poll_run_id=(
+            None
+            if row["last_observed_poll_run_id"] is None
+            else str(row["last_observed_poll_run_id"])
+        ),
     )
 
 

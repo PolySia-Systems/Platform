@@ -46,7 +46,7 @@ def test_stage4b_schema_is_standalone_and_idempotent(tmp_path: Path) -> None:
     with sqlite3.connect(shadow) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == 6
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'dynamic_shadow_metadata'"
         ).fetchone() is None
@@ -81,7 +81,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
 
     result = migrate_continuous_shadow_database(legacy, destination)
 
-    assert result.schema_version == 5
+    assert result.schema_version == 6
     assert result.experiment_id == "exp-1"
     assert result.ledger_balanced is True
     assert result.table_counts["continuous_shadow_experiments"] == 1
@@ -96,7 +96,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
     with sqlite3.connect(destination) as target:
         assert target.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == 6
         assert target.execute(
             "SELECT COUNT(*) FROM continuous_shadow_leases"
         ).fetchone()[0] == 0
@@ -109,6 +109,18 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
             "SELECT normalized_address FROM continuous_shadow_wallets"
         ).fetchone()[0] == "0x" + "1" * 40
         assert target.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    ContinuousShadowRepository(destination).initialize()
+    with sqlite3.connect(destination) as upgraded:
+        assert upgraded.execute(
+            "SELECT schema_version FROM continuous_shadow_metadata"
+        ).fetchone()[0] == 6
+        columns = {
+            row[1]
+            for row in upgraded.execute("PRAGMA table_info(continuous_shadow_positions)")
+        }
+    assert "observed_at" in columns
+    assert "state_changed_at" in columns
 
 
 def test_migration_refuses_unfinished_poll_and_leaves_no_destination(

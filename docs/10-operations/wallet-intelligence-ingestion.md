@@ -95,10 +95,13 @@ Default retention is:
 - Stage 2 feature, policy, and run history: at least 365 days;
 - Stage 3 score, membership, and run history: at least 365 days;
 - Stage 4 event, wallet-summary, cost-model, and run history: 365 days by default;
-- Stage 4B experiment journal, portfolio, fill, fee, ledger, mark, and settlement
-  evidence: retained for the experiment lifetime; pruning requires a later explicit
-  retention decision after real growth is measured;
-- local checksummed backups: newest 14 copies.
+- Stage 4B experiment journal, portfolio, fill, fee, ledger, and settlement
+  evidence: retained for the experiment lifetime;
+- Stage 4B mark history: versioned change log, 30 days by default
+  (`stage4b-data-lifecycle-v1`); current valuation lives on positions and is
+  not pruned with history;
+- local checksummed DATA_ONLY recovery bundles: newest 3 rotating bundles;
+  pinned migration checkpoints are never auto-pruned.
 
 The current snapshot is never pruned, even if it is older than the retention
 cutoff. After seven accepted versions, a row-count change below 50% or above
@@ -292,14 +295,15 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
-## Continuous Shadow Portfolio / standalone schema v5
+## Continuous Shadow Portfolio / standalone schema v6
 
 Stage 4B is additive to the immutable Stage 4A windows above. It persists a
 first-seen journal, cross-run inventory, independent Wallet portfolios, a labeled
 mixed baseline follower, independent Alpha and Stress followers, market-specific
-official fees, marks, settlement, and Decimal ledger evidence. Schema v5 keeps
-that financial model but makes Stage 4B the only runtime writer of
-`continuous-shadow.sqlite3`. Stage 4A remains in `wallet-intelligence.sqlite3`.
+official fees, current valuation, change-driven marks, settlement, and Decimal
+ledger evidence. Schema v6 keeps Stage 4B as the only runtime writer of
+`continuous-shadow.sqlite3` and stores current marks on positions. Stage 4A
+remains in `wallet-intelligence.sqlite3`. ADR-0015 owns the lifecycle bounds.
 Its complete contract is
 `docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.
 
@@ -352,6 +356,26 @@ docker compose --profile wallet-intelligence run --rm \
   --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
   --database /var/lib/polysia/data/continuous-shadow.sqlite3
 ```
+
+History pruning and compact copies are explicit Stage 4B maintenance. Stop the
+worker first. Create and restore-check a recovery bundle, then prune through the
+Stage 4B lease and compact only an offline copy:
+
+```bash
+sudo systemctl stop polysia-wallet-intelligence-shadow-portfolio.service
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-prune-history \
+  --database /var/lib/polysia/data/continuous-shadow.sqlite3 \
+  --maintenance --deduplicate
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-sync wallet-intelligence compact-backup \
+  --source /var/lib/polysia/backups/wallet-intelligence/<offline-copy>.sqlite3 \
+  --destination /var/lib/polysia/backups/wallet-intelligence/<compact-copy>.sqlite3
+```
+
+Never `VACUUM` the active writer. `capacity` reports page/WAL/backup/disk
+figures outside the poll path. Rotating DATA_ONLY bundles keep three verified
+copies; directories under `pinned/` are never auto-pruned.
 
 Inspect sanitized current health from the atomic artifact on the host. Do not
 query the active worker database. Do not `docker compose run` the

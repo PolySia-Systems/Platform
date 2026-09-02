@@ -202,6 +202,9 @@ class ContinuousPositionMark:
     source_timestamp: datetime | None = None
     source_age_ms: int | None = None
     freshness: str = "MISSING"
+    observed_at: datetime | None = None
+    source_at: datetime | None = None
+    state_changed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

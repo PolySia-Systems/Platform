@@ -81,6 +81,31 @@ def backup_sqlite_database(
     return BackupResult(backup_path=backup_path, checksum_path=checksum_path, sha256=sha256)
 
 
+def compact_sqlite_database(source_path: Path, destination_path: Path) -> Path:
+    """Copy an offline SQLite file into a compact destination without vacuuming the source."""
+
+    if destination_path.exists():
+        raise FileExistsError(f"Compact destination already exists: {destination_path}")
+    if not source_path.is_file():
+        raise FileNotFoundError(f"SQLite database does not exist: {source_path}")
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(_read_only_uri(source_path), uri=True)
+    try:
+        quoted = str(destination_path.resolve()).replace("'", "''")
+        source.execute(f"VACUUM INTO '{quoted}'")
+    finally:
+        source.close()
+    _restrict_permissions(destination_path)
+    connection = sqlite3.connect(_read_only_uri(destination_path), uri=True)
+    try:
+        _require_integrity(connection)
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise ValueError("SQLite foreign-key check failed")
+    finally:
+        connection.close()
+    return destination_path
+
+
 def verify_sqlite_backup(backup_path: Path) -> str:
     """Verify checksum and SQLite integrity for one backup."""
     checksum_path = backup_path.with_suffix(f"{backup_path.suffix}.sha256")

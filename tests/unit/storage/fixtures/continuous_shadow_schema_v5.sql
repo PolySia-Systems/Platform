@@ -1,7 +1,7 @@
-PRAGMA foreign_keys = ON;
+﻿PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 6),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 5),
     initialized_at TEXT NOT NULL
 );
 
@@ -193,29 +193,11 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_positions (
     entry_fees TEXT NOT NULL,
     mark_price TEXT,
     marked_at TEXT,
-    mark_status TEXT,
-    freshness TEXT NOT NULL DEFAULT 'MISSING',
-    source_at TEXT,
-    source_age_ms INTEGER,
-    observed_at TEXT,
-    state_changed_at TEXT,
-    last_observed_poll_run_id TEXT,
     updated_at TEXT NOT NULL,
     PRIMARY KEY(experiment_id, portfolio_id, market_reference, outcome_reference),
     FOREIGN KEY(experiment_id, portfolio_id)
         REFERENCES continuous_shadow_portfolios(experiment_id, portfolio_id)
         ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS continuous_shadow_lifecycle_policy (
-    policy_version TEXT PRIMARY KEY,
-    mark_history_retention_days INTEGER NOT NULL
-        CHECK(mark_history_retention_days >= 1),
-    recovery_bundle_keep INTEGER NOT NULL CHECK(recovery_bundle_keep >= 1),
-    disk_safety_floor_bytes INTEGER NOT NULL CHECK(disk_safety_floor_bytes > 0),
-    recovery_bundle_max_skew_seconds INTEGER NOT NULL
-        CHECK(recovery_bundle_max_skew_seconds >= 0),
-    recorded_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_follower_attribution (

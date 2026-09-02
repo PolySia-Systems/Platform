@@ -122,10 +122,11 @@ other outcomes `$0`. Ambiguous prices never close a position.
 
 Health is tied to the configured poll interval and reports cumulative events,
 evaluations, overlap/replay duplicates, zero-or-nonzero duplicate processing,
-unknown ratio, unknown fee provenance, marks, open positions, verified-closed
-settlement backlog, lifecycle, and Decimal ledger consistency. Critical
-staleness, duplicate processing, unbalanced accounting, or a finalized
-experiment with positions fails closed.
+unknown ratio, unknown fee provenance, current mark freshness, open positions,
+verified-closed settlement backlog, lifecycle, and Decimal ledger consistency.
+Health reads mutable current valuation on positions. It does not require a
+history row for the latest poll. Critical staleness, duplicate processing,
+unbalanced accounting, or a finalized experiment with positions fails closed.
 
 Operational health publication is downstream of the atomic poll transaction. A
 temporary SQLite lock or artifact-write failure during that publication cannot
@@ -142,12 +143,13 @@ Transient source-unavailable and market-read failures use the same bounded
 persistent-loop retry behavior. Persistence, lease-integrity, and unexpected
 failures remain fail-closed and may terminate the worker for systemd recovery.
 
-Schema v5 is standalone in `continuous-shadow.sqlite3`. Stage 4B is its only
-runtime writer; maintenance migration or restore may write only while the worker
-is explicitly stopped. Stages 1–4A remain in `wallet-intelligence.sqlite3` and
-cannot block Stage 4B's financial transaction. Telemetry remains in its existing
-sidecar. The application uses a short read-only Stage 3 transaction followed by
-an atomic local snapshot; it does not use `ATTACH` or a cross-database transaction.
+Schema v6 remains standalone in `continuous-shadow.sqlite3`. Current valuation
+is mutable position state (`observed_at`, `source_at`, `state_changed_at`,
+price, mark status, freshness, source age, last observed poll). Mark history is
+appended only for a canonical Decimal price, mark status, relevant quantity, or
+settlement transition. The versioned DATA_ONLY default retains 30 days of that
+change log. Stage 4B is its only runtime writer; maintenance pruning, restore,
+or compact-backup may write only while the worker is explicitly stopped.
 
 The current selection is last-known-good input. If source reading fails, the
 local snapshot is reused. If its publication time exceeds the default 36-hour
@@ -203,8 +205,11 @@ an incomplete valuation as reconciled.
 - Shared follower liquidity is consumed once and supports deterministic partial fills.
 - Fee provenance is market-specific or `UNKNOWN`; no flat 2% assumption is used.
 - Accounting identity and signed ledger reconstruction are Decimal-consistent.
-- Failure keeps last known good state; migration, both backups, real restores,
-  restart, and no-state-fork rollback evidence pass.
+- A successful poll refreshes current valuation even when price is unchanged;
+  unchanged observations create zero historical mark rows.
+- Health remains correct without a history row matching the latest poll.
+- Mark history retention and recovery-bundle keep counts are versioned policy;
+  pinned migration checkpoints are never auto-pruned.
 - After standalone-store acceptance, frozen Stage 4B objects are absent from
   the active Intelligence database; the verified cutover backup remains the
   retained historical and rollback artifact.

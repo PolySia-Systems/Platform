@@ -120,6 +120,11 @@ class _MutablePosition:
     entry_fees: Decimal
     mark_price: Decimal | None
     marked_at: datetime | None
+    mark_status: str | None = None
+    freshness: str = "MISSING"
+    source_age_ms: int | None = None
+    observed_at: datetime | None = None
+    state_changed_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -1143,6 +1148,11 @@ def _mutable_portfolios(
                     entry_fees=position.entry_fees,
                     mark_price=position.mark_price,
                     marked_at=position.marked_at,
+                    mark_status=position.mark_status,
+                    freshness=position.freshness,
+                    source_age_ms=position.source_age_ms,
+                    observed_at=position.observed_at,
+                    state_changed_at=position.state_changed_at,
                 )
                 for position in item.positions
             },
@@ -1300,6 +1310,9 @@ def _apply_settlements(
                     source_timestamp=evaluated_at,
                     source_age_ms=age_ms,
                     freshness=freshness,
+                    observed_at=evaluated_at,
+                    source_at=evaluated_at,
+                    state_changed_at=evaluated_at,
                 )
             )
             del portfolio.positions[key]
@@ -1373,6 +1386,16 @@ def _mark_positions(
                 evaluated_at=evaluated_at,
                 maximum_age_ms=maximum_age_ms,
             )
+            if freshness == "FRESH" and mark_status != "VERIFIED_EXECUTABLE_BID":
+                freshness = (
+                    "STALE_LAST_KNOWN_GOOD"
+                    if mark_status == "LAST_KNOWN_GOOD"
+                    else "MISSING"
+                )
+            position.mark_status = mark_status
+            position.freshness = freshness
+            position.source_age_ms = age_ms
+            position.observed_at = evaluated_at
             market_value = (
                 None
                 if position.mark_price is None
@@ -1394,6 +1417,9 @@ def _mark_positions(
                     source_timestamp=source_timestamp,
                     source_age_ms=age_ms,
                     freshness=freshness,
+                    observed_at=evaluated_at,
+                    source_at=source_timestamp,
+                    state_changed_at=evaluated_at,
                 )
             )
     return marks
@@ -1420,6 +1446,12 @@ def _freeze_portfolio(portfolio: _MutablePortfolio) -> ContinuousPortfolio:
                 entry_fees=item.entry_fees,
                 mark_price=item.mark_price,
                 marked_at=item.marked_at,
+                mark_status=item.mark_status,
+                freshness=item.freshness,
+                source_at=item.marked_at,
+                source_age_ms=item.source_age_ms,
+                observed_at=item.observed_at,
+                state_changed_at=item.state_changed_at,
             )
             for item in sorted(
                 portfolio.positions.values(),

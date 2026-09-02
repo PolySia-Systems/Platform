@@ -32,6 +32,7 @@ from polysia.application.services.candidate_wallet_sync import (
     CandidateWalletSyncService,
 )
 from polysia.application.services.continuous_shadow import (
+    CONTINUOUS_SHADOW_LEASE_RESOURCE,
     ContinuousShadowError,
     ContinuousShadowService,
 )
@@ -54,7 +55,6 @@ from polysia.deployment.continuous_shadow_migration import (
     migrate_continuous_shadow_database,
 )
 from polysia.deployment.wallet_intelligence_backup import (
-    backup_continuous_shadow_database,
     backup_wallet_intelligence_database,
     backup_wallet_intelligence_state,
     rehearse_continuous_shadow_restore,
@@ -153,7 +153,7 @@ def sync(
         bool,
         typer.Option("--backup/--no-backup", help="Back up each newly accepted snapshot."),
     ] = True,
-    backup_keep: Annotated[int, typer.Option("--backup-keep", min=1, max=90)] = 14,
+    backup_keep: Annotated[int, typer.Option("--backup-keep", min=1, max=90)] = 3,
     history_days: Annotated[int, typer.Option("--history-days", min=30)] = 365,
     quarantine_days: Annotated[int, typer.Option("--quarantine-days", min=7)] = 30,
 ) -> None:
@@ -268,7 +268,7 @@ def ensure(
     health_report: Annotated[Path, typer.Option("--health-report")] = DEFAULT_HEALTH_REPORT,
     scheduled_for: Annotated[str | None, typer.Option("--scheduled-for")] = None,
     create_backup: Annotated[bool, typer.Option("--backup/--no-backup")] = True,
-    backup_keep: Annotated[int, typer.Option("--backup-keep", min=1, max=90)] = 14,
+    backup_keep: Annotated[int, typer.Option("--backup-keep", min=1, max=90)] = 3,
     history_days: Annotated[int, typer.Option("--history-days", min=30)] = 365,
     quarantine_days: Annotated[int, typer.Option("--quarantine-days", min=7)] = 30,
     intelligence_history_days: Annotated[
@@ -306,26 +306,23 @@ def ensure(
         )
         backup_payload: dict[str, object] | None = None
         if create_backup:
-            backup_result = backup_wallet_intelligence_database(
+            financial, shadow, latency = backup_wallet_intelligence_state(
                 database,
                 backup_dir,
+                continuous_shadow_path=continuous_shadow_database,
                 keep=backup_keep,
             )
             backup_payload = {
-                "path": str(backup_result.backup_path),
-                "sha256": backup_result.sha256,
+                "path": str(financial.backup_path),
+                "sha256": financial.sha256,
                 "verified": True,
             }
-            if continuous_shadow_database.is_file():
-                shadow_backup = backup_continuous_shadow_database(
-                    continuous_shadow_database,
-                    backup_dir,
-                    keep=backup_keep,
-                )
-                backup_payload["continuous_shadow_path"] = str(
-                    shadow_backup.backup_path
-                )
-                backup_payload["continuous_shadow_sha256"] = shadow_backup.sha256
+            if shadow is not None:
+                backup_payload["continuous_shadow_path"] = str(shadow.backup_path)
+                backup_payload["continuous_shadow_sha256"] = shadow.sha256
+            if latency is not None:
+                backup_payload["latency_path"] = str(latency.backup_path)
+                backup_payload["latency_sha256"] = latency.sha256
         health_payload, _ = _combined_health(
             source_adapter,
             source_store,
@@ -1177,7 +1174,7 @@ def backup(
         ),
     ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
-    keep: Annotated[int, typer.Option("--keep", min=1, max=90)] = 14,
+    keep: Annotated[int, typer.Option("--keep", min=1, max=90)] = 3,
 ) -> None:
     """Create and verify a protected online backup."""
     try:
@@ -1319,6 +1316,106 @@ def restore_check(
             shadow_result.validation.ledger_balanced
         )
     typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def portfolio_prune_history(
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+    maintenance: Annotated[
+        bool,
+        typer.Option(
+            "--maintenance",
+            help="Acknowledge that the Stage 4B worker is stopped for history pruning.",
+        ),
+    ] = False,
+    deduplicate: Annotated[bool, typer.Option("--deduplicate/--no-deduplicate")] = True,
+) -> None:
+    """Prune unchanged and expired mark history through the Stage 4B writer lease."""
+
+    try:
+        _require_continuous_shadow_safety()
+        if not maintenance:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow history pruning requires explicit maintenance mode."
+            )
+        store = ContinuousShadowRepository(database)
+        store.initialize()
+        leases = ContinuousShadowLeaseRepository(database)
+        leases.initialize()
+        lease = leases.acquire_lease(
+            CONTINUOUS_SHADOW_LEASE_RESOURCE,
+            owner_id="continuous-shadow-maintenance",
+            acquired_at=datetime.now(UTC),
+            lease_duration=timedelta(minutes=30),
+        )
+        try:
+            result = store.prune_mark_history(now=datetime.now(UTC), deduplicate=deduplicate)
+        finally:
+            leases.release_lease(lease)
+    except (
+        ContinuousShadowError,
+        ContinuousShadowStoreError,
+        CandidatePipelineBusyError,
+        CandidateStoreError,
+    ) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps({"status": "succeeded", **result}, sort_keys=True))
+
+
+def capacity(
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+    intelligence_database: Annotated[
+        Path, typer.Option("--intelligence-database")
+    ] = DEFAULT_DATABASE,
+    backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
+    disk_free_bytes: Annotated[
+        int | None,
+        typer.Option("--disk-free-bytes", help="Host free bytes from df; optional."),
+    ] = None,
+) -> None:
+    """Report Stage 4B capacity outside the trading critical path."""
+
+    from polysia.deployment.recovery_bundle import capacity_payload
+    from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY
+
+    _require_continuous_shadow_safety()
+    shadow = ContinuousShadowRepository(database)
+    if database.is_file():
+        shadow.initialize()
+        databases = {"continuous-shadow": shadow.capacity_report()}
+    else:
+        databases = {}
+    backup_files = list(backup_dir.glob("*.sqlite3")) if backup_dir.is_dir() else []
+    payload = capacity_payload(
+        databases=databases,
+        backup_count=len(backup_files),
+        backup_bytes=sum(path.stat().st_size for path in backup_files),
+        disk_free_bytes=disk_free_bytes,
+        policy=DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY,
+    )
+    if intelligence_database.is_file():
+        payload["intelligence_bytes"] = intelligence_database.stat().st_size
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def compact_backup(
+    source: Annotated[Path, typer.Option("--source", help="Offline SQLite copy to compact.")],
+    destination: Annotated[Path, typer.Option("--destination")],
+) -> None:
+    """VACUUM INTO an offline copy. Never compact the active writer in place."""
+
+    from polysia.deployment.sqlite_backup import compact_sqlite_database
+
+    _require_continuous_shadow_safety()
+    if source.resolve() == destination.resolve():
+        raise typer.BadParameter("compact-backup requires a separate destination")
+    path = compact_sqlite_database(source, destination)
+    typer.echo(
+        json.dumps({"destination": str(path), "status": "succeeded"}, sort_keys=True)
+    )
 
 
 def _selection_row_payload(row: CopyabilityPoolRow) -> dict[str, object]:
