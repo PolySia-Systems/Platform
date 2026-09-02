@@ -1,8 +1,11 @@
 # Continuous Shadow lease recovery and telemetry isolation
 
-Status: CURRENT. PR #104 confirmed stable ownership and telemetry isolation but
-failed its Helsinki acceptance on orphaned-poll recovery. PR #105 corrected
-that boundary and was deployed from exact merge commit
+Status: HISTORICAL. This records the predecessor schema-v4 recovery work.
+Current operation and recovery use the standalone schema-v5 store documented in
+[`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md). PR
+#104 confirmed stable ownership and telemetry isolation but failed its Helsinki
+acceptance on orphaned-poll recovery. PR #105 corrected that boundary and was
+deployed from exact merge commit
 `2c73ca6765b4f15f7c3531b4b75131a6c1534842`. Neither change enables Live
 trading.
 

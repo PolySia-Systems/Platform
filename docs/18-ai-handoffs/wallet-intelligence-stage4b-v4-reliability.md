@@ -2,12 +2,14 @@
 
 ## Status
 
-PR `#101` merged as `41221e7edef56faeccfe5783a22415956c7ffddf` and is deployed on
-`Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Schema v4 remains in place
-from PR `#92`. Reporting isolation from PR `#94`, the Compose lifecycle from
-PR `#96`, and contention hardening from PRs `#98`–`#101` remain in place. The
-persistent worker is running as a Compose project member. No real order was
-sent. `3x-ui` was not restarted.
+HISTORICAL. This is the accepted schema-v4 reliability record; current
+operation and recovery use the standalone schema-v5 store documented in
+[`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md).
+PR `#101` merged as `41221e7edef56faeccfe5783a22415956c7ffddf` and was deployed on
+`Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Reporting isolation from PR
+`#94`, the Compose lifecycle from PR `#96`, and contention hardening from PRs
+`#98`–`#101` remain historical foundations. No real order was sent. `3x-ui`
+was not restarted.
 
 This change does not enable Live trading.
 
