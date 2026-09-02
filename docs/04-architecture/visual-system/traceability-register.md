@@ -17,7 +17,7 @@
 | Paper execution | CURRENT | `src/polysia/execution/paper_broker.py` | `tests/integration/test_paper_vertical_slice.py`, `tests/unit/execution/test_paper_broker.py` | CAP-007 | ADR-0001 | Conservative local fills |
 | Guarded live execution | CURRENT | `src/polysia/execution/live_broker.py` | `tests/unit/execution/test_live_broker.py`, `tests/integration/test_tiny_live_round_trip_vertical_slice.py` | CAP-008, CAP-009 | ADR-0007, ADR-0008, ADR-0009 | No general automated strategy-to-Live connection |
 | Position and P&L | CURRENT | `src/polysia/portfolio/` | `tests/unit/portfolio/test_pnl.py`, `tests/integration/test_paper_vertical_slice.py` | CAP-007 | ADR-0001 | Operational ledger implementation |
-| SQLite repositories | CURRENT | `src/polysia/storage/` | `tests/unit/storage/`, `tests/integration/test_shadow_control_vertical_slice.py` | CAP-004 | ADR-0006 | Local/research and current single-runtime persistence |
+| SQLite repositories | CURRENT | `src/polysia/storage/` | `tests/unit/storage/`, `tests/integration/test_shadow_control_vertical_slice.py` | CAP-004 | ADR-0006, ADR-0014, ADR-0015 | Local/research and current single-runtime persistence; Stage 4B current valuation is mutable, mark history is a bounded change log |
 | Reconciliation and safety pause | CURRENT | `src/polysia/reconciliation/` | `tests/unit/reconciliation/`, `tests/integration/test_tiny_live_round_trip_vertical_slice.py` | CAP-010 | ADR-0008 | Mismatch can pause trading |
 | Monitoring and reports | CURRENT | `src/polysia/monitoring/` | `tests/unit/monitoring/` | CAP-011 | ADR-0009 | Sanitized operator outputs |
 | Backtesting and replay | CURRENT | `src/polysia/backtesting/` | `tests/unit/backtesting/` | CAP-005, CAP-007 | ADR-0009 | Paper-only execution path |

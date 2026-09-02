@@ -73,6 +73,11 @@ wallet_intelligence_app.command("portfolio-results")(wallet_intelligence.portfol
 wallet_intelligence_app.command("portfolio-drain")(wallet_intelligence.portfolio_drain)
 wallet_intelligence_app.command("portfolio-finalize")(wallet_intelligence.portfolio_finalize)
 wallet_intelligence_app.command("portfolio-migrate")(wallet_intelligence.portfolio_migrate)
+wallet_intelligence_app.command("portfolio-prune-history")(
+    wallet_intelligence.portfolio_prune_history
+)
+wallet_intelligence_app.command("capacity")(wallet_intelligence.capacity)
+wallet_intelligence_app.command("compact-backup")(wallet_intelligence.compact_backup)
 wallet_intelligence_app.command("runtime-bank")(wallet_intelligence.runtime_bank)
 wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
 wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)

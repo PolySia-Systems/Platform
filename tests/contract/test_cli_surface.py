@@ -47,6 +47,8 @@ EXPECTED_COMMANDS = {
     "control": {"apply", "history", "plan", "status"},
     "wallet-intelligence": {
         "backup",
+        "capacity",
+        "compact-backup",
         "ensure",
         "health",
         "pool",
@@ -54,6 +56,7 @@ EXPECTED_COMMANDS = {
         "portfolio-finalize",
         "portfolio-health",
         "portfolio-migrate",
+        "portfolio-prune-history",
         "portfolio-results",
         "portfolio-start",
         "portfolio-sync",

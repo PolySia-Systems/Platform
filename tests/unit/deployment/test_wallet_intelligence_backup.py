@@ -269,6 +269,16 @@ def test_financial_and_latency_retention_do_not_prune_each_other(tmp_path: Path)
     assert not first_latency.backup_path.exists()
     assert second_financial.backup_path.is_file()
     assert second_latency.backup_path.is_file()
+    bundles = sorted(path for path in backup_dir.glob("bundle-*") if path.is_dir())
+    assert len(bundles) == 1
+    from polysia.deployment.recovery_bundle import verify_bundle_checksums
+
+    manifest = verify_bundle_checksums(bundles[0])
+    assert manifest.role == "rotating"
+    assert {item.role for item in manifest.databases} == {
+        "wallet-intelligence",
+        "latency-telemetry",
+    }
 
 
 def test_continuous_shadow_backup_restores_independently(tmp_path: Path) -> None:
@@ -287,6 +297,6 @@ def test_continuous_shadow_backup_restores_independently(tmp_path: Path) -> None
 
     assert backup.backup_path.name.startswith("continuous-shadow-")
     assert restored.sha256 == backup.sha256
-    assert restored.validation.schema_version == 5
+    assert restored.validation.schema_version == 6
     assert restored.validation.experiment_count == 0
     assert restored.validation.ledger_balanced is True

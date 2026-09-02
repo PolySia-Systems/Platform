@@ -438,7 +438,7 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         shadow_backup.backup_path,
         working_directory=tmp_path / "restore",
     )
-    assert shadow_restored.validation.schema_version == 5
+    assert shadow_restored.validation.schema_version == 6
     assert shadow_restored.validation.experiment_count == 1
     assert shadow_restored.validation.poll_count == 3
     assert shadow_restored.validation.event_count == 2

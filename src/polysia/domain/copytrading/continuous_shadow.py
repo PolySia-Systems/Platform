@@ -152,6 +152,13 @@ class ContinuousPosition:
     entry_fees: Decimal
     mark_price: Decimal | None
     marked_at: datetime | None
+    mark_status: str | None = None
+    freshness: str = "MISSING"
+    source_at: datetime | None = None
+    source_age_ms: int | None = None
+    observed_at: datetime | None = None
+    state_changed_at: datetime | None = None
+    last_observed_poll_run_id: str | None = None
 
     @property
     def average_cost(self) -> Decimal:

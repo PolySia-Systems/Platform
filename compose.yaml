@@ -130,7 +130,7 @@ services:
       - --health-report
       - /var/lib/polysia/reports/wallet-intelligence/latest.json
       - --backup-keep
-      - "${POLYSIA_WALLET_BACKUP_RETENTION:-14}"
+      - "${POLYSIA_WALLET_BACKUP_RETENTION:-3}"
       - --history-days
       - "${POLYSIA_WALLET_HISTORY_DAYS:-365}"
       - --quarantine-days

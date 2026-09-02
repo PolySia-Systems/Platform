@@ -87,7 +87,7 @@ def test_telemetry_migration_is_additive_and_keeps_shadow_schema(tmp_path: Path)
     finally:
         connection.close()
 
-    assert cs_version == 5
+    assert cs_version == 6
     assert "latency_spans" not in tables
     assert "continuous_shadow_ledger" in tables
     assert sidecar.is_file()
@@ -194,7 +194,7 @@ def test_telemetry_cleanup_does_not_modify_financial_tables(tmp_path: Path) -> N
 
     assert deleted["spans_deleted"] >= 1
     assert remaining == 0
-    assert cs_version == 5
+    assert cs_version == 6
     assert after == before
     assert "latency_spans" not in financial_tables
 
