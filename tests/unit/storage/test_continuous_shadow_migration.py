@@ -10,7 +10,6 @@ from polysia.deployment.continuous_shadow_migration import (
     migrate_continuous_shadow_database,
 )
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
-from polysia.storage import continuous_shadow as continuous_store
 from polysia.storage.continuous_shadow import (
     ContinuousShadowRepository,
     ContinuousShadowStoreError,
@@ -18,7 +17,14 @@ from polysia.storage.continuous_shadow import (
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+RETIREMENT_SQL = (
+    Path(__file__).resolve().parents[3]
+    / "deploy"
+    / "migrations"
+    / "retire_legacy_continuous_shadow_v1.sql"
+)
 V3_SCHEMA = FIXTURES / "continuous_shadow_schema_v3.sql"
+V4_SCHEMA = FIXTURES / "continuous_shadow_schema_v4.sql"
 STAMP = "2026-08-25T00:00:00+00:00"
 
 
@@ -126,6 +132,44 @@ def test_migration_refuses_unfinished_poll_and_leaves_no_destination(
     assert not destination.exists()
 
 
+def test_retirement_removes_only_frozen_stage4b_schema(tmp_path: Path) -> None:
+    legacy = tmp_path / "wallet-intelligence-v4.sqlite3"
+    _legacy_v4_database(legacy)
+
+    with sqlite3.connect(legacy) as connection:
+        connection.executescript(RETIREMENT_SQL.read_text(encoding="utf-8"))
+        stage4b_objects = connection.execute(
+            "SELECT name FROM sqlite_master WHERE name LIKE 'continuous_shadow_%'"
+        ).fetchall()
+        assert stage4b_objects == []
+        assert connection.execute(
+            "SELECT schema_version FROM dynamic_shadow_metadata"
+        ).fetchone()[0] == 1
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_retirement_refuses_unfinished_legacy_poll(tmp_path: Path) -> None:
+    legacy = tmp_path / "wallet-intelligence-v4.sqlite3"
+    _legacy_v4_database(legacy)
+    with sqlite3.connect(legacy) as connection:
+        connection.execute(
+            "INSERT INTO continuous_shadow_poll_runs ("
+            "poll_run_id, experiment_id, selection_run_id, window_start, window_end, "
+            "status, started_at, candidate_count) VALUES ("
+            "'poll-running', 'exp-1', 'sel-1', ?, ?, 'running', ?, 1)",
+            (STAMP, "2026-08-25T00:01:00+00:00", STAMP),
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.executescript(RETIREMENT_SQL.read_text(encoding="utf-8"))
+
+        assert connection.execute(
+            "SELECT schema_version FROM continuous_shadow_metadata"
+        ).fetchone()[0] == 4
+
+
 def _legacy_v4_database(path: Path) -> None:
     DynamicShadowRepository(path).initialize()
     with sqlite3.connect(path) as connection:
@@ -172,10 +216,10 @@ def _legacy_v4_database(path: Path) -> None:
             "VALUES ('polycop', 'sel-1', ?)",
             (STAMP,),
         )
-        connection.executescript(V3_SCHEMA.read_text(encoding="utf-8"))
+        connection.executescript(V4_SCHEMA.read_text(encoding="utf-8"))
         connection.execute(
             "INSERT INTO continuous_shadow_metadata (schema_version, initialized_at) "
-            "VALUES (3, ?)",
+            "VALUES (4, ?)",
             (STAMP,),
         )
         connection.execute(
@@ -207,4 +251,3 @@ def _legacy_v4_database(path: Path) -> None:
                 (portfolio_id, kind, wallet_id, bankroll, bankroll, bankroll, bankroll, STAMP),
             )
         connection.commit()
-        continuous_store._migrate_v3_to_v4(connection)

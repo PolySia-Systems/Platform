@@ -425,11 +425,10 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         tmp_path / "backups",
         now=clock.value,
     )
-    restored = rehearse_wallet_intelligence_restore(
+    rehearse_wallet_intelligence_restore(
         backup.backup_path,
         working_directory=tmp_path / "restore",
     )
-    assert restored.validation.continuous_shadow_schema_version is None
     shadow_backup = backup_continuous_shadow_database(
         _shadow_database(database),
         tmp_path / "backups",

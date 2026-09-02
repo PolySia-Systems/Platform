@@ -43,6 +43,13 @@ The destination must not already exist and migration refuses unfinished polls,
 integrity failures, foreign-key failures, missing provenance, or an unbalanced
 ledger.
 
+After the standalone worker passes its bounded operational gate, the frozen
+schema-v4 Stage 4B tables are retired from the active intelligence database in
+one maintenance transaction. The verified cutover backup is retained as the
+immutable migration and rollback record. Runtime code does not retain in-place
+v2/v3/v4 schema mutation paths; legacy extraction remains an explicit offline
+operator workflow.
+
 Before the first successful schema-v5 mutation, code and files may be rolled
 back to the cutover checkpoint. After schema v5 progresses, silently restarting
 the old image against stale combined state is prohibited because it creates a

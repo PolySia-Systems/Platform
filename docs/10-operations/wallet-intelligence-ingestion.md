@@ -326,6 +326,23 @@ unbalanced ledger. It preserves all Stage 4B history and starts a fresh local
 lease/fencing epoch. Rehearse restore of both backup files before starting the
 new image.
 
+Only after the standalone worker has passed its bounded operational acceptance,
+retire the frozen schema-v4 Stage 4B objects from the active Intelligence file.
+This is a one-time maintenance action: disable the Stage 1–4A timers, stop all
+their services and the Stage 4B worker, verify fresh backups of both databases,
+then apply `deploy/migrations/retire_legacy_continuous_shadow_v1.sql` to
+`wallet-intelligence.sqlite3`. The SQL fails unless it sees the expected
+schema-v4 source and no unfinished legacy poll. It removes no Stage 1–4A or
+latency object and deliberately does not run `VACUUM`.
+
+Afterward, require `PRAGMA integrity_check = ok`, an empty
+`PRAGMA foreign_key_check`, and zero `sqlite_master` names matching
+`continuous_shadow_%` in the Intelligence file. Restore-check the standalone
+Shadow backup, re-enable the timers and worker, and confirm fresh successful
+polls before leaving maintenance mode. Never delete or overwrite the verified
+cutover backup: it is the immutable source for legacy extraction and explicit
+checkpoint rollback.
+
 Create or idempotently reuse one versioned experiment only for a new empty
 deployment. Existing experiments continue after extraction.
 

@@ -51,11 +51,6 @@ class WalletIntelligenceDatabaseValidation:
     dynamic_shadow_schema_version: int | None = None
     dynamic_shadow_run_count: int = 0
     dynamic_shadow_evaluation_count: int = 0
-    continuous_shadow_schema_version: int | None = None
-    continuous_shadow_experiment_count: int = 0
-    continuous_shadow_poll_count: int = 0
-    continuous_shadow_event_count: int = 0
-    continuous_shadow_ledger_count: int = 0
 
 
 class WalletIntelligenceRepository:
@@ -517,11 +512,6 @@ class WalletIntelligenceRepository:
             dynamic_shadow_schema_version: int | None = None
             dynamic_shadow_run_count = 0
             dynamic_shadow_evaluation_count = 0
-            continuous_shadow_schema_version: int | None = None
-            continuous_shadow_experiment_count = 0
-            continuous_shadow_poll_count = 0
-            continuous_shadow_event_count = 0
-            continuous_shadow_ledger_count = 0
             if candidate_table is not None:
                 candidate_rows = connection.execute(
                     "SELECT schema_version FROM candidate_intelligence_metadata"
@@ -587,40 +577,6 @@ class WalletIntelligenceRepository:
                         "SELECT COUNT(*) FROM dynamic_shadow_evaluations"
                     ).fetchone()[0]
                 )
-            continuous_shadow_table = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                "AND name = 'continuous_shadow_metadata'"
-            ).fetchone()
-            if continuous_shadow_table is not None:
-                continuous_rows = connection.execute(
-                    "SELECT schema_version FROM continuous_shadow_metadata"
-                ).fetchall()
-                if len(continuous_rows) != 1 or int(continuous_rows[0][0]) != 4:
-                    raise CandidateStoreError(
-                        "Continuous Shadow schema version is unsupported."
-                    )
-                continuous_shadow_schema_version = int(continuous_rows[0][0])
-                continuous_shadow_experiment_count = int(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM continuous_shadow_experiments"
-                    ).fetchone()[0]
-                )
-                continuous_shadow_poll_count = int(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM continuous_shadow_poll_runs "
-                        "WHERE status = 'succeeded'"
-                    ).fetchone()[0]
-                )
-                continuous_shadow_event_count = int(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM continuous_shadow_event_journal"
-                    ).fetchone()[0]
-                )
-                continuous_shadow_ledger_count = int(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM continuous_shadow_ledger"
-                    ).fetchone()[0]
-                )
         finally:
             connection.close()
         return WalletIntelligenceDatabaseValidation(
@@ -634,11 +590,6 @@ class WalletIntelligenceRepository:
             dynamic_shadow_schema_version=dynamic_shadow_schema_version,
             dynamic_shadow_run_count=dynamic_shadow_run_count,
             dynamic_shadow_evaluation_count=dynamic_shadow_evaluation_count,
-            continuous_shadow_schema_version=continuous_shadow_schema_version,
-            continuous_shadow_experiment_count=continuous_shadow_experiment_count,
-            continuous_shadow_poll_count=continuous_shadow_poll_count,
-            continuous_shadow_event_count=continuous_shadow_event_count,
-            continuous_shadow_ledger_count=continuous_shadow_ledger_count,
             source_count=source_count,
             snapshot_count=snapshot_count,
             row_count=row_count,
