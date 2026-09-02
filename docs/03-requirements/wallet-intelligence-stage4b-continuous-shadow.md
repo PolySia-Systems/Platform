@@ -205,5 +205,8 @@ an incomplete valuation as reconciled.
 - Accounting identity and signed ledger reconstruction are Decimal-consistent.
 - Failure keeps last known good state; migration, both backups, real restores,
   restart, and no-state-fork rollback evidence pass.
+- After standalone-store acceptance, frozen Stage 4B objects are absent from
+  the active Intelligence database; the verified cutover backup remains the
+  retained historical and rollback artifact.
 - No Stage 4B domain or application module imports Risk, Execution, strategy,
   wallet, signing, cancellation, or trading-authority code.

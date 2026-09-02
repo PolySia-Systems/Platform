@@ -101,7 +101,7 @@ def test_persistent_shadow_keeps_running_after_transient_source_failure(
     assert payload["status"] == "skipped"
 
 
-def test_restore_check_reports_continuous_shadow_evidence(
+def test_restore_check_reports_intelligence_evidence_only_without_shadow_backup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -109,11 +109,6 @@ def test_restore_check_reports_continuous_shadow_evidence(
         candidate_intelligence_schema_version=1,
         candidate_pool_count=2,
         candidate_run_count=1,
-        continuous_shadow_event_count=3,
-        continuous_shadow_experiment_count=1,
-        continuous_shadow_ledger_count=4,
-        continuous_shadow_poll_count=2,
-        continuous_shadow_schema_version=4,
         copyability_membership_count=2,
         copyability_run_count=1,
         copyability_selection_schema_version=1,
@@ -144,11 +139,8 @@ def test_restore_check_reports_continuous_shadow_evidence(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["continuous_shadow_schema_version"] == 4
-    assert payload["restored_continuous_shadow_experiment_count"] == 1
-    assert payload["restored_continuous_shadow_poll_count"] == 2
-    assert payload["restored_continuous_shadow_event_count"] == 3
-    assert payload["restored_continuous_shadow_ledger_count"] == 4
+    assert "continuous_shadow_schema_version" not in payload
+    assert "restored_continuous_shadow_experiment_count" not in payload
 
 
 def test_health_initializes_separate_database_and_reports_never_succeeded(

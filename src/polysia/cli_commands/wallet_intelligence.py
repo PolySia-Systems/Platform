@@ -1289,15 +1289,6 @@ def restore_check(
         "restored_dynamic_shadow_evaluation_count": (
             result.validation.dynamic_shadow_evaluation_count
         ),
-        "continuous_shadow_schema_version": result.validation.continuous_shadow_schema_version,
-        "restored_continuous_shadow_experiment_count": (
-            result.validation.continuous_shadow_experiment_count
-        ),
-        "restored_continuous_shadow_poll_count": result.validation.continuous_shadow_poll_count,
-        "restored_continuous_shadow_event_count": result.validation.continuous_shadow_event_count,
-        "restored_continuous_shadow_ledger_count": (
-            result.validation.continuous_shadow_ledger_count
-        ),
         "schema_version": result.validation.schema_version,
         "sha256": result.sha256,
         "status": "succeeded",
