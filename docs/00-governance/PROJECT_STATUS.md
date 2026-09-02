@@ -124,4 +124,3 @@ Do not duplicate these records here.
 | Architecture visual baseline | [architecture refresh](../18-ai-handoffs/architecture-truth-refresh-2026-08-18.md) |
 | Roadmap | [roadmap](../22-roadmap/roadmap.md) |
 | Recovery limitation (no off-host backup) | [server deployment](../10-operations/server-deployment.md) |
-

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.check_changed_docs import (
     _validate_architecture_docs,
+    _validate_project_status,
     _validate_repository_hygiene,
 )
 
@@ -97,6 +98,7 @@ def _architecture_repository(tmp_path: Path) -> Path:
 def _current_docs_repository(tmp_path: Path) -> tuple[Path, set[Path]]:
     root = tmp_path / "repository"
     required_targets = (
+        Path("docs/README.md"),
         Path("docs/00-governance/PROJECT_STATUS.md"),
         Path("docs/04-architecture/README.md"),
         Path("docs/10-operations/server-deployment.md"),
@@ -108,7 +110,22 @@ def _current_docs_repository(tmp_path: Path) -> tuple[Path, set[Path]]:
     )
     _write(root / "README.md", f"# PolySia\n\n{links}\n")
     for target in required_targets:
-        _write(root / target, f"# {target.stem}\n")
+        if target == Path("docs/00-governance/PROJECT_STATUS.md"):
+            _write(
+                root / target,
+                "\n".join(
+                    (
+                        "# Project status",
+                        "",
+                        "## Truth ownership",
+                        "",
+                        "Runtime SHA, health, and restarts must be queried on the host.",
+                        "",
+                    )
+                ),
+            )
+        else:
+            _write(root / target, f"# {target.stem}\n")
     return root, {Path("README.md"), *required_targets}
 
 
@@ -185,3 +202,54 @@ def test_repository_hygiene_reports_obsolete_phase_and_temporary_paths(
     assert any("temporary or generated path is tracked" in error for error in errors)
     assert any("numeric Phase-history language" in error for error in errors)
     assert any("lacks required current-document link" in error for error in errors)
+
+
+def test_project_status_accepts_dated_snapshot(tmp_path: Path) -> None:
+    repository, _tracked = _current_docs_repository(tmp_path)
+    status = repository / "docs/00-governance/PROJECT_STATUS.md"
+    status.write_text(
+        "\n".join(
+            (
+                "# Project status",
+                "",
+                "## Truth ownership",
+                "",
+                "Runtime SHA, health, and restarts must be queried on the host.",
+                "",
+                "Audited as of 2026-09-02.",
+                "",
+                f"Audited commit `{BASELINE}`.",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert _validate_project_status(repository) == []
+
+
+def test_project_status_rejects_live_deployed_baseline(tmp_path: Path) -> None:
+    repository, _tracked = _current_docs_repository(tmp_path)
+    status = repository / "docs/00-governance/PROJECT_STATUS.md"
+    status.write_text(
+        "\n".join(
+            (
+                "# Project status",
+                "",
+                "| Last verified deployed baseline | "
+                f"`{BASELINE}` |",
+                "",
+                "## Current Helsinki DATA_ONLY deployment",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    errors = _validate_project_status(repository)
+
+    assert any("missing Truth ownership section" in error for error in errors)
+    assert any("must be queried" in error for error in errors)
+    assert any("live deployed baseline" in error for error in errors)
+    assert any("live deployment heading" in error for error in errors)
+    assert any("Audited as of" in error for error in errors)

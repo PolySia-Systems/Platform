@@ -51,17 +51,27 @@ OBSOLETE_TRACKED_PATHS = frozenset(
 )
 CURRENT_DOCUMENTS = (
     Path("README.md"),
+    Path("docs/README.md"),
     Path("docs/00-governance/PROJECT_STATUS.md"),
     Path("docs/18-ai-handoffs/README.md"),
     Path("docs/22-roadmap/roadmap.md"),
 )
 REQUIRED_README_LINKS = (
+    "docs/README.md",
     "docs/00-governance/PROJECT_STATUS.md",
     "docs/04-architecture/README.md",
     "docs/10-operations/server-deployment.md",
     "docs/18-ai-handoffs/README.md",
     "docs/22-roadmap/roadmap.md",
 )
+LIVE_DEPLOYED_BASELINE_FIELD = re.compile(
+    r"(?m)^\|\s*Last verified deployed baseline\s*\|"
+)
+LIVE_DEPLOYMENT_HEADING = re.compile(
+    r"(?m)^## Current Helsinki DATA_ONLY deployment\s*$"
+)
+TRUTH_OWNERSHIP_HEADING = re.compile(r"(?m)^## Truth ownership\s*$")
+COMMIT_SHA = re.compile(r"\b[0-9a-f]{40}\b")
 TEMPORARY_DIRECTORY_NAMES = frozenset(
     {"__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
 )
@@ -216,6 +226,37 @@ def _validate_repository_hygiene(
             errors.append(f"current documentation path is missing: {relative.as_posix()}")
         else:
             errors.extend(_validate_links(repository, markdown))
+    errors.extend(_validate_project_status(repository))
+    return errors
+
+
+def _validate_project_status(repository: Path) -> list[str]:
+    relative = Path("docs/00-governance/PROJECT_STATUS.md")
+    path = repository / relative
+    if not path.exists():
+        return []
+
+    text = path.read_text(encoding="utf-8")
+    errors: list[str] = []
+    if TRUTH_OWNERSHIP_HEADING.search(text) is None:
+        errors.append(f"{relative.as_posix()}: missing Truth ownership section")
+    if "must be queried" not in text.lower():
+        errors.append(
+            f"{relative.as_posix()}: must tell readers that runtime state must be queried"
+        )
+    if LIVE_DEPLOYED_BASELINE_FIELD.search(text):
+        errors.append(
+            f"{relative.as_posix()}: claims a live deployed baseline; use a dated snapshot"
+        )
+    if LIVE_DEPLOYMENT_HEADING.search(text):
+        errors.append(
+            f"{relative.as_posix()}: live deployment heading is not allowed; "
+            "use an audited snapshot"
+        )
+    if COMMIT_SHA.search(text) and "Audited as of " not in text:
+        errors.append(
+            f"{relative.as_posix()}: commit SHA without an 'Audited as of' label"
+        )
     return errors
 
 
