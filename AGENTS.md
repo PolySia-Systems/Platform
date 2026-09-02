@@ -1,24 +1,18 @@
 # AGENTS.md - PolySia Repository Operating Instructions
 
-- **Version:** 1.1
+- **Version:** 1.2
 - **Scope:** Entire repository
 - **Audience:** Codex and other coding agents
 - **Technical artifact language:** English
 
 ## 1. Purpose
 
-PolySia is a risk-controlled, extensible trading and prediction-market platform.
+PolySia is a risk-controlled, extensible trading and prediction-market
+platform. Polymarket is the first venue adapter, not the identity of the core
+platform. Preserve working behavior. Improve incrementally. Do not rebuild the
+project from scratch for cosmetic reasons.
 
-Polymarket is the first venue adapter and practical MVP, not the identity of the
-core platform. The architecture must remain capable of adding other prediction
-markets, exchanges, brokers, data providers, wallets, chains, and Web3 protocols
-without rewriting core domain logic.
-
-This repository contains valuable working behavior. Preserve it, understand it,
-test it, and improve it incrementally. Do not rebuild the project from scratch
-for cosmetic reasons.
-
-## 2. Instruction and Source-of-Truth Order
+## 2. Fact Owners and Instruction Precedence
 
 Higher-priority system, developer, and explicit user instructions always take
 precedence over repository guidance.
@@ -28,21 +22,38 @@ working directory. In each directory it loads at most one file, checking
 `AGENTS.override.md` before `AGENTS.md`. Instructions closer to the working
 directory appear later and take precedence over broader root instructions.
 
-For project facts and decisions, use this order:
+| Fact | Owner |
+|---|---|
+| Implemented behavior | Current code, tests, schemas, and configuration |
+| Required behavior | Requirements documents relevant to the task |
+| Architecture rationale | Approved ADRs |
+| Validation evidence | CI and tests |
+| Active work and resume state | The Issue or PR |
+| Current operational state | Read-only runtime query, not Git Markdown |
+| Major operational evidence | Dated records under `docs/18-ai-handoffs/` |
+| Immutable baseline | `docs/13-ai-handoffs/BASELINE_AUDIT.md` |
+| Generated views | Disposable; never authoritative |
 
-1. This root guidance plus the applicable, more specific nested guidance.
+Use the Fact Owner table to determine factual truth. The authority order
+governs instruction and decision precedence and never overrides the
+authoritative owner of a fact.
+
+For instruction and decision conflicts, use this precedence:
+
+1. This root guidance plus applicable nested `AGENTS.md` files.
 2. `docs/00-governance/master-operating-charter.md`.
-3. Approved ADRs, RFCs, requirements, and current status documents relevant to
-   the task.
-4. The latest relevant approved handoff under `docs/18-ai-handoffs/`.
+3. Approved ADRs, RFCs, requirements, and `docs/00-governance/PROJECT_STATUS.md`
+   for durable status. Treat PROJECT_STATUS snapshots as dated evidence, not
+   live host truth.
+4. The Issue/PR for ordinary resume. Read a `docs/18-ai-handoffs/` file only
+   when the task needs that operational, safety, or delivery evidence.
 5. Verified current code, tests, schemas, configuration, and runtime behavior.
 6. Current official documentation for version-sensitive external systems.
 7. Historical or archived documentation.
 
 Do not silently resolve a material conflict. Preserve the safer verified
 behavior, record the conflict, and use an ADR, RFC, or explicit owner decision
-when required. Historical phase files are evidence, not automatically current
-truth.
+when required. Historical files are evidence, not automatically current truth.
 
 ### Adopted PolySia Standards
 
@@ -67,32 +78,26 @@ evidence without network access or credentials for the private Standards
 repository. The adopted requirement set has no grandfathered baseline.
 
 Codex's default project-guidance budget is 32 KiB for the combined instruction
-chain. Keep this root file compact enough to leave room for future nested files.
-If the chain approaches the configured `project_doc_max_bytes`, move stable
-directory-specific rules into focused nested files instead of duplicating root
-content.
+chain. Keep this root file for universal rules. Add a nested `AGENTS.md` only
+when unique local MUST/NEVER rules exist. Nested files must stay short.
 
 ## 3. Required Start-of-Task Protocol
 
+For a tiny, clearly scoped edit, state a one- or two-sentence plan and edit.
+
 For every non-trivial task:
 
-1. Confirm the repository root.
-2. Identify the root and nested agent instructions applicable to the files in
-   scope.
-3. Inspect `git status`, current branch, and `HEAD`.
-4. Read only the source files, tests, architecture documents, and handoffs
-   relevant to the requested change.
+1. Confirm the repository root, branch, and `HEAD`.
+2. Read only nested `AGENTS.md` files on the path to the files in scope.
+3. Resume ordinary work from the Issue or PR. Do not rebuild context from chat
+   or from `PROJECT_STATUS` runtime rows.
+4. Read the smallest authoritative set of code, tests, ADRs, and evidence.
 5. Identify the goal, in-scope files, constraints, acceptance criteria, and
-   prohibited changes.
-6. State a concise plan before editing.
-7. Do not repeat completed discovery, migration, tests, or audits unless current
+   prohibited changes, then state a concise plan.
+6. Do not repeat completed discovery, migration, tests, or audits unless current
    evidence or a new change requires revalidation.
 
-For a tiny, clearly scoped edit, keep the plan to one or two sentences. For a
-cross-module, architectural, migration, risk, execution, persistence, or
-long-running task, use an existing project planning mechanism when present;
-otherwise keep a self-contained task plan in the working session. Do not create
-planning files solely for ceremony.
+Do not create planning files or handoff files solely for ceremony.
 
 ## 4. Efficiency and Context Discipline
 
@@ -101,36 +106,24 @@ correctness or safety.
 
 - Search with `rg` or targeted inventories before opening large files.
 - Read the smallest authoritative set of files that can resolve the task.
-- Reuse verified findings and reports from the current task; do not re-read
-  unchanged long documents without a concrete reason.
-- Prefer focused tests while implementing. Escalate to broader gates according
-  to the files and behavior changed.
+- Reuse verified findings from the current task.
+- Prefer focused tests. Escalate to broader gates according to the files and
+  behavior changed.
 - For documentation-only changes, do not run the full runtime suite unless the
   documentation changes executable configuration, commands that require a
   smoke check, or repository policy explicitly requires it.
 - Do not spawn reviewers, subagents, or duplicate analysis unless the task asks
   for them, applicable instructions require them, or independent work materially
   reduces risk and the active environment permits it.
-- Batch independent read-only checks when safe. Keep state-changing actions
-  sequential and reviewable.
-- Keep progress updates and final responses concise by default. Expand only for
-  high-risk changes, failures, migrations, or when the owner requests detail.
 - Never save tokens by skipping a required safety gate, source check, or evidence
   needed to support a material claim.
 
 ## 5. Project Identity
 
-Use the canonical identity:
-
-- Product: `PolySia`
-- Repository: `Platform`
-- Python distribution: `polysia`
-- Python import namespace: `polysia`
-- CLI: `polysia`
-- Service prefix: `polysia-`
-- Operations console: `PolySia Console`
-- First venue adapter: Polymarket
-- Initial product domain: prediction and event markets
+Use the canonical identity: product `PolySia`; repository `Platform`; Python
+distribution and import namespace `polysia`; CLI `polysia`; service prefix
+`polysia-`; operations console `PolySia Console`; first venue adapter
+Polymarket; initial domain prediction and event markets.
 
 Do not reintroduce `pm_trader`, `pm-trader`, or "Polymarket Trading System" as
 canonical names. A legacy compatibility layer is allowed only when a verified
@@ -182,30 +175,10 @@ learning, online learning, PostgreSQL migration, or new production
 infrastructure merely for future-proofing. Such changes require measured need
 and an approved ADR or RFC.
 
-## 7. Polymarket Adapter Rules
+When working in `src/polysia/adapters/polymarket/`, also follow
+[`src/polysia/adapters/polymarket/AGENTS.md`](src/polysia/adapters/polymarket/AGENTS.md).
 
-Polymarket is an adapter behind canonical ports.
-
-When working in or near `src/polysia/adapters/polymarket/`:
-
-- Keep public data, authenticated account reads, execution, cancellation,
-  streaming, mapping, geoblock, and reconciliation concerns within documented
-  adapter boundaries.
-- Translate token IDs, condition IDs, market slugs, wallet/signature details,
-  SDK response types, and venue-specific errors at the boundary.
-- Do not leak SDK models into domain, strategy, portfolio, risk, ledger, or
-  persistence contracts.
-- Treat adapter registry and generalized capability discovery as TARGET unless
-  implemented and approved. Current venue-specific capability behavior may
-  remain explicit inside the adapter.
-- Verify version-sensitive behavior against current official documentation and
-  the official SDK repository.
-- Keep the pinned SDK version reproducible and update contract tests before an
-  SDK upgrade. Document upgrade and rollback effects.
-- Preserve signer, funder, wallet, and signature semantics unless the task
-  explicitly authorizes a tested migration.
-
-## 8. Runtime and Trading Safety
+## 7. Runtime and Trading Safety
 
 Owner-approved test credentials and the dedicated test wallet/account may be
 used only for explicitly authorized controlled validation. Never print, copy
@@ -213,6 +186,8 @@ into tracked files, include in reports, or expose credential values.
 
 Default rules:
 
+- Runtime defaults to `TRADING_MODE=DATA_ONLY` and
+  `LIVE_TRADING_ENABLED=false`.
 - Unit, property, architecture, contract, integration, and ordinary CLI tests
   must not mutate an external account.
 - Network tests must be opt-in and clearly marked.
@@ -233,7 +208,7 @@ Default rules:
 If external state is ambiguous, stop mutation, preserve evidence, reconcile,
 and report.
 
-## 9. Scope and Change Discipline
+## 8. Scope and Change Discipline
 
 - Make the smallest coherent change that fully satisfies the task.
 - Do not perform unrelated refactoring.
@@ -253,7 +228,7 @@ and report.
   not successful validation.
 - Preserve unrelated user changes and pre-existing untracked files.
 
-## 10. Python Engineering Standards
+## 9. Python Engineering Standards
 
 Follow `pyproject.toml`, repository tooling, and existing conventions.
 
@@ -278,23 +253,19 @@ Follow `pyproject.toml`, repository tooling, and existing conventions.
 - Use English for code, identifiers, comments, schemas, documents, commits, PRs,
   dashboards, and alerts.
 
-## 11. Test and Validation Policy
+## 10. Test and Validation Policy
 
 Add or update tests whenever behavior, contracts, state transitions, mappings,
 risk logic, accounting, persistence, or external integration changes.
 
-Use the appropriate layers:
-
-- Unit tests for domain logic and small services.
-- Property tests for Decimal arithmetic, limits, state transitions,
-  idempotency, and position updates.
-- Architecture tests for dependency boundaries and SDK confinement.
-- Contract tests for adapter/SDK surfaces using deterministic fakes or fixtures.
-- Integration tests for end-to-end internal slices and temporary SQLite state.
-- Characterization tests before behavior-preserving decomposition.
-- Migration tests for names, schemas, configuration, and compatibility.
-- CLI smoke tests for non-mutating commands.
-- Opt-in controlled network tests only under the runtime-safety rules above.
+Use the appropriate layers: unit tests for domain logic; property tests for
+Decimal arithmetic, limits, state transitions, idempotency, and position
+updates; architecture tests for dependency boundaries and SDK confinement;
+contract tests for adapter/SDK surfaces using deterministic fakes or fixtures;
+integration tests for internal slices and temporary SQLite; characterization
+tests before behavior-preserving decomposition; migration tests; CLI smoke
+tests for non-mutating commands; and opt-in network tests only under the
+runtime-safety rules above.
 
 The current CI quality gates are:
 
@@ -321,7 +292,7 @@ Validation rules:
 - Run focused tests during implementation and all relevant gates before
   completion.
 - Use `git diff --check`, path/link checks, size checks, and a content review for
-  documentation-only changes. Do not run the full Python suite when no source,
+  documentation-only changes. Do not run the full runtime suite when no source,
   test, build, dependency, or executable configuration changed unless explicitly
   required.
 - Run the secret scan when tracked content, configuration examples, reports, or
@@ -331,22 +302,21 @@ Validation rules:
 - Distinguish environment/tooling failure from a product defect.
 - Never weaken a test assertion unless expected behavior was explicitly changed.
 
-## 12. Documentation and Decision Records
+## 11. Documentation, Decisions, and Continuity
 
 Update documentation when behavior, contracts, architecture, operating
 procedures, configuration, or user-facing commands change.
 
-Use:
-
-- ADRs for material architecture decisions.
-- RFCs for major proposals requiring review before implementation.
-- Requirements and traceability documents for critical capabilities.
-- Runbooks for operational actions and recovery.
-- `docs/18-ai-handoffs/` for major task handoffs.
-- `docs/00-governance/PROJECT_STATUS.md` for the latest verified repository,
-  runtime, delivery, and operational status.
-- `prompts/active/` and `prompts/archive/` only if those directories exist in
-  the current repository structure.
+- The canonical documentation entrance is [`docs/README.md`](docs/README.md).
+  Do not add a parallel Start Here, Wiki, or vendor instruction forest.
+- ADRs own material architecture decisions. RFCs own major proposals before
+  implementation. Requirements own required behavior. Runbooks own operational
+  actions.
+- Ordinary in-progress work resumes from the Issue or PR. Create or update a
+  file under `docs/18-ai-handoffs/` only for major operational, safety,
+  deployment, incident, or compliance evidence that must outlive the PR.
+- `docs/00-governance/PROJECT_STATUS.md` owns durable status. It must not
+  present Markdown as live host truth.
 
 Documents and diagrams must distinguish Fact, Assumption, Decision,
 Recommendation, Risk, Open Question, Experimental Idea, CURRENT, TARGET,
@@ -354,7 +324,7 @@ FUTURE, and EXTERNAL as applicable.
 
 Repository code and approved artifacts are authoritative; chat memory is not.
 
-## 13. Git and Pull Request Workflow
+## 12. Git and Pull Request Workflow
 
 Unless the task or active environment specifies otherwise:
 
@@ -383,9 +353,9 @@ Allowed types include `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `ci`,
 For substantial changes, PR descriptions should cover objective, summary,
 affected modules, validation, architecture/risk impact, compatibility,
 limitations, rollback, and reviewer focus. Omit empty boilerplate for tiny
-documentation-only changes.
+documentation-only changes. The PR is the default resume artifact.
 
-## 14. Review Standard
+## 13. Review Standard
 
 Before declaring completion, review the final diff as a skeptical independent
 reviewer. Check requirement compliance, architecture boundaries, safety,
@@ -401,7 +371,7 @@ Use a separate reviewer or subagent only when explicitly requested, required by
 applicable instructions, materially justified, and permitted by the active
 environment.
 
-## 15. Definition of Done
+## 14. Definition of Done
 
 A task is complete only when:
 
@@ -414,10 +384,10 @@ A task is complete only when:
 7. Documentation, decisions, migrations, and runbooks are updated when needed.
 8. Compatibility and rollback are addressed when relevant.
 9. Current versus target/future status is represented honestly.
-10. A concise delivery summary and, for major tasks, a repository handoff are
-    produced.
+10. A concise delivery summary exists. Ordinary work uses the PR. Major
+    operational evidence may use `docs/18-ai-handoffs/`.
 
-## 16. Stop and Escalation Conditions
+## 15. Stop and Escalation Conditions
 
 Stop the affected action and report clearly when:
 
@@ -438,7 +408,7 @@ Stop the affected action and report clearly when:
 For non-critical ambiguity, make the safest reversible assumption, record it,
 and continue.
 
-## 17. Final Response
+## 16. Final Response
 
 Default to a concise delivery report containing:
 
@@ -454,20 +424,18 @@ migration actions, rollback instructions, and reviewer focus. Do not emit empty
 sections or repeat information solely to satisfy a template. Never claim work
 that was not performed.
 
-## 18. Nested Instructions
+## 17. Nested Instructions
 
-This root file contains repository-wide rules. Add smaller nested `AGENTS.md`
-files only when a directory has stable, genuinely different local requirements,
-for example:
+This root file contains universal rules. Add a nested `AGENTS.md` only when a
+directory has stable, unique local MUST/NEVER rules that are not already
+stated here. Current nested files:
 
-- `src/polysia/adapters/polymarket/`
-- `src/polysia/risk/`
-- `src/polysia/execution/`
-- `tests/integration/`
-- `docs/`
+- `src/polysia/adapters/polymarket/AGENTS.md`
+- `docs/04-architecture/AGENTS.md`
+- `tests/AGENTS.md`
 
-Nested files should add local commands, contracts, fixtures, and prohibited
-operations without duplicating this file. Use `AGENTS.override.md` only for a
-deliberate same-directory replacement; when present, the regular `AGENTS.md` in
-that directory is not loaded. Keep the combined instruction chain within the
-configured guidance budget.
+Do not add nested files for Risk or Execution solely because those directories
+exist; their universal invariants remain in this root file. Nested files must
+not duplicate or weaken root safety. Use `AGENTS.override.md` only for a
+deliberate same-directory replacement. Keep the combined instruction chain
+within the configured guidance budget.

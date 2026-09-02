@@ -9,6 +9,19 @@
 | Effective date | 2026-07-11 |
 | Review trigger | Material architecture, SDK, risk, or live-readiness change |
 
+## Fact owners
+
+| Fact | Owner |
+|---|---|
+| Code, schemas, configuration | Git |
+| Architecture decisions | ADRs |
+| Required behavior | Requirements |
+| Validation | CI and tests |
+| Active work / ordinary resume | Issue or PR |
+| Current operational SHA and health | Host query via the server deployment runbook |
+| Major operational evidence | Dated `docs/18-ai-handoffs/` records |
+| Human and agent views | Projections of the owners above |
+
 ## Authority order
 
 1. `master-operating-charter.md`
