@@ -10,10 +10,9 @@
 | `docs/03-requirements/` | Requirements and traceability |
 | `docs/04-architecture/` | Architecture and ADRs |
 | `docs/10-operations/` | Current runbooks and live-safety policy |
-| `docs/18-ai-handoffs/` | Canonical future tool handoffs per charter |
+| `docs/18-ai-handoffs/` | Major operational, safety, and delivery evidence; ordinary resume is the Issue or PR |
 | `docs/99-archive/` | Historical evidence not governing current state |
 | `locks/` | Platform-specific verified dependency snapshots |
 | `scripts/` | Safe local maintenance and export tools |
-| `prompts/` | Versioned execution packets |
 | `Polymarket Python SDK/` | Preserved, ignored migration baseline; deletion-gated |
 

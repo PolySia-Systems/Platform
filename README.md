@@ -170,16 +170,17 @@ locks/              Reproducible dependency inputs
 
 ## Authoritative documentation
 
-- [Project status](docs/00-governance/PROJECT_STATUS.md) — latest verified
-  repository, runtime, safety, and operational truth.
+- [Documentation entrance](docs/README.md) — canonical 30-second map.
+- [Project status](docs/00-governance/PROJECT_STATUS.md) — durable
+  capabilities, limits, and dated runtime snapshots. Not live host truth.
 - [Master Operating Charter](docs/00-governance/master-operating-charter.md) —
   approved governance and long-term architecture direction.
 - [Architecture](docs/04-architecture/README.md) — CURRENT/TARGET/FUTURE views
   and traceability.
 - [Operations](docs/10-operations/server-deployment.md) — controlled deployment
   and recovery procedures.
-- [Current evidence index](docs/18-ai-handoffs/README.md) — authoritative
-  handoffs and retained evidence.
+- [Current evidence index](docs/18-ai-handoffs/README.md) — major operational
+  evidence. Ordinary work resumes from the Issue or PR.
 - [Roadmap](docs/22-roadmap/roadmap.md) — prioritized product and maintenance
   work.
 - [Standards adoption](standards/adoption.toml) and

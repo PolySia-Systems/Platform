@@ -1182,9 +1182,16 @@ Every tool shall return:
 
 ## 75. Handoff Between Tools
 
-Create a machine- and human-readable handoff file under `docs/18-ai-handoffs/` or the issue/PR. It must contain enough context for another tool to continue without relying on the previous chat.
+Ordinary in-progress work resumes from the GitHub Issue or pull request. Do
+not create a new file under `docs/18-ai-handoffs/` for a routine session.
 
-Handoffs shall include:
+Create or update a machine- and human-readable handoff file under
+`docs/18-ai-handoffs/` only for major operational, safety, deployment,
+incident, or compliance evidence that must outlive the PR. The Issue, PR, or
+handoff file must contain enough context for another tool to continue without
+relying on the previous chat.
+
+When a handoff file is warranted, it shall include:
 
 - task and state;
 - source-of-truth links;

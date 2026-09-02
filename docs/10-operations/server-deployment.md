@@ -74,6 +74,28 @@ docker compose up --detach monitor
 
 No host firewall change or inbound port is required.
 
+## Current operational truth
+
+Git Markdown is not live host state. Query the controlled host when the
+current release SHA, service health, or restart count is required. Do not
+copy the result into `PROJECT_STATUS.md` as if it were still true later.
+
+From the host, typical read-only checks are:
+
+```bash
+readlink -f /opt/polysia
+basename "$(readlink -f /opt/polysia)"
+docker compose ps
+docker compose exec monitor python -m polysia.cli system health
+systemctl show polysia-wallet-intelligence-shadow-portfolio.service \
+  -p ActiveState,NRestarts,ExecMainStartTimestamp --no-pager
+```
+
+Inspect only. Do not restart services, deploy, read secrets, or send orders
+unless a separately authorized operational task says so. Dated snapshots may
+appear in `docs/00-governance/PROJECT_STATUS.md` or
+`docs/18-ai-handoffs/` labeled `Audited as of <timestamp>`.
+
 ## Routine operation
 
 Run these commands from `/opt/polysia`:

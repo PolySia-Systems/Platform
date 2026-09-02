@@ -1,5 +1,10 @@
 # Baseline Capability Catalog
 
+This catalog is a baseline non-live inventory. It is not current product
+truth for Wallet Intelligence, Stage 4B, or later DATA_ONLY work. Use
+[`docs/README.md`](../README.md) and
+[`PROJECT_STATUS.md`](../00-governance/PROJECT_STATUS.md) for CURRENT state.
+
 | ID | Capability | Current stage | Preservation gate |
 |---|---|---|---|
 | CAP-001 | Public market discovery and realtime stream | Foundation | Adapter and stream tests |
