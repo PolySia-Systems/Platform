@@ -16,8 +16,9 @@ echoing matched values, and rejects tracked `.env`, key, and PEM files. Runtime
 `pyproject.toml` is the only manually maintained pip declaration. Generated
 outputs are `locks/requirements-runtime-py314.txt` and
 `locks/requirements-dev-py314.txt`. They are produced by pip-tools 7.6.1 from
-`pyproject.toml` (development extras only on the development lock). Do not
-hand-edit generated rows. Conventional `.txt` names let GitHub's dependency
+`pyproject.toml` (development extras only on the development lock) with a
+stable header and no pip-compile annotations, so Linux and Windows Python 3.14
+can verify the same committed pins. Do not hand-edit generated rows. Conventional `.txt` names let GitHub's dependency
 graph see the resolved graph; Dependabot `exclude-paths` prevents duplicate
 version PRs against those generated files.
 

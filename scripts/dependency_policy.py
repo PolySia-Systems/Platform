@@ -70,7 +70,9 @@ UNSAFE_REQUIREMENT = re.compile(
     |(?:\s@\s)
     """
 )
-PIN_LINE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\\\s;]+)\s*(?:\\)?$")
+PIN_LINE = re.compile(
+    r"^([A-Za-z0-9_.-]+)==([^\\\s;]+)(?:\s*;\s*[^#]+)?\s*(?:\\)?$"
+)
 VERSION_SPLIT = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 
 

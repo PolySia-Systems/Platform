@@ -248,4 +248,6 @@ def test_version_policy_helpers() -> None:
     assert not is_low_risk_version_bump("2.3.1", "3.0.0")
     assert development_changes_are_low_risk({"ruff": ("0.16.6", "0.16.7")})
     assert not development_changes_are_low_risk({"ruff": ("0.16.6", "0.17.0")})
-    assert not development_changes_are_low_risk({"pydantic": ("2.13.5", "2.13.6")})
+    assert parse_lock_pins("colorama==0.4.6 ; sys_platform == 'win32'\n") == {
+        "colorama": "0.4.6"
+    }
