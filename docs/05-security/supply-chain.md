@@ -49,7 +49,10 @@ trading/financial, and sensitive security changes stay open for owner review.
 
 Weekly scheduled refresh uses the same pip-compile command. It opens no PR
 when the resolution is unchanged. Runtime lock drift in that PR requires
-review.
+review. The workflow also has an unfiltered `push` trigger with a cheap
+success job; omitting that trigger leaves GitHub's push evaluation with zero
+jobs, which prevents `workflow_dispatch` registration. Manual refresh is
+`gh workflow run "Dependency automation" --ref main`.
 
 ## 2026-07-11 verification evidence
 

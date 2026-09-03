@@ -1,18 +1,14 @@
 name: Dependency automation
 
 on:
+  # Unfiltered push is required. GitHub still evaluates this file on every
+  # push; if `push` is omitted or path-filtered, that evaluation concludes
+  # failure with zero jobs and `workflow_dispatch` is not registered.
+  push:
   pull_request:
   schedule:
     - cron: "47 5 * * 1"
-  workflow_dispatch:
-    inputs:
-      task:
-        description: Maintenance task
-        required: false
-        default: scheduled-refresh
-        type: choice
-        options:
-          - scheduled-refresh
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -22,6 +18,17 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Succeeds on ordinary push and human PRs so GitHub keeps this workflow
+  # registered. Skipped for Dependabot PRs, schedule, and manual refresh.
+  noop:
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - run: echo "No dependency-automation work for ${{ github.event_name }}."
+
   evaluate:
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
@@ -281,12 +288,15 @@ jobs:
           git add locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt
           git commit -m "chore(deps): refresh transitive pip locks"
           git push origin "$BRANCH"
-          PR_URL=$(gh pr create --title "chore(deps): refresh transitive pip locks" --body "## Summary
-- Weekly canonical pip-compile refresh from pyproject.toml.
-- No declaration-source change. Runtime lock changes require owner review.
-
-## Test plan
-- [ ] CI Gate green")
+          PR_BODY=$(printf '%s\n' \
+            "## Summary" \
+            "" \
+            "- Weekly canonical pip-compile refresh from pyproject.toml." \
+            "- No declaration-source change. Runtime lock changes require owner review." \
+            "" \
+            "## Test plan" \
+            "- [ ] CI Gate green")
+          PR_URL=$(gh pr create --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY")
           gh workflow run ci.yml --ref "$BRANCH"
           if [ "$ACTION" = "auto_merge" ]; then
             gh pr edit "$PR_URL" --add-label "risk:auto-merge,deps:development"
