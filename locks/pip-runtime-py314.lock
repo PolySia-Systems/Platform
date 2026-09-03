@@ -1,6 +1,7 @@
-# Exact production runtime baseline for Linux and Python 3.14.6.
+# Exact production runtime baseline for Linux and Python 3.14.7.
 # Development, test, build, and audit tools are intentionally excluded.
-# The Polymarket SDK was refreshed on 2026-08-21.
+# The Polymarket SDK was refreshed on 2026-08-21, and all direct
+# dependencies were upgraded on 2026-09-03.
 annotated-doc==0.0.4
 annotated-types==0.8.0
 anyio==4.14.2
@@ -32,14 +33,14 @@ pydantic==2.13.4
 pydantic_core==2.46.4
 pydantic-settings==2.14.2
 Pygments==2.20.0
-python-dotenv==1.2.2
+python-dotenv==1.2.3
 regex==2026.7.19
 rich==15.0.0
 rlp==4.1.0
 shellingham==1.5.4
 structlog==26.1.0
 toolz==1.1.0
-typer==0.27.0
+typer==0.27.1
 typing_extensions==4.16.0
 typing-inspection==0.4.2
 websockets==15.0.1
