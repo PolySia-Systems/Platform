@@ -5,14 +5,6 @@ on:
   schedule:
     - cron: "47 5 * * 1"
   workflow_dispatch:
-    inputs:
-      task:
-        description: Maintenance task
-        required: false
-        default: scheduled-refresh
-        type: choice
-        options:
-          - scheduled-refresh
 
 permissions:
   contents: read
@@ -22,6 +14,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # GitHub can evaluate this workflow on unmatched events (including push).
+  # If every job is skipped, the run concludes failure and workflow_dispatch
+  # is not registered. This job keeps those evaluations green and is skipped
+  # for Dependabot PRs, schedule, and manual refresh.
+  noop:
+    if: >
+      github.event_name != 'schedule' &&
+      github.event_name != 'workflow_dispatch' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.user.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - run: echo "No dependency-automation work for ${{ github.event_name }}."
+
   evaluate:
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
