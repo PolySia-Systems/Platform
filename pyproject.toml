@@ -16,7 +16,7 @@ dependencies = [
     "structlog>=26.1.0,<27",
     "rich>=15.0.0,<16",
     "typer>=0.27.1,<1",
-    "colorama==0.4.6; sys_platform == 'win32'",
+    "colorama==0.4.6",
 ]
 
 [project.optional-dependencies]
