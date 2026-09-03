@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-02 |
+| Review date | 2026-09-03 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.6` |
@@ -86,30 +86,31 @@ review; branch protection through a separate governance task.
 
 ## Audited runtime snapshot
 
-Audited as of 2026-09-02.
+Audited as of 2026-09-03.
 
 This snapshot is historical operational evidence copied from the Stage 4B
-ownership closeout. It is not a claim about the host at read time.
+data-lifecycle T0 closeout. It is not a claim about the host at read time.
 
 | Field | Audited value |
 |---|---|
-| Audited repository / release commit | `dbb19c262dc6e28aa4872ac24682104356ffb2f7` |
-| Release path | `/opt/polysia-releases/dbb19c262dc6e28aa4872ac24682104356ffb2f7` |
-| Archive SHA-256 | `7e3655adbb144e3d65990987d47ad086af696a1f6eff56a42823314dbfac3ac2` |
-| Image ID | `sha256:728a96684679a1f7a979c9bd69d9e7ac860a151c1d78d467cee6992be329f8fd` |
+| Audited repository / release commit | `6743f7464f94d3fb76edc057834e8219ca7ebfe0` |
+| Release path | `/opt/polysia-releases/6743f7464f94d3fb76edc057834e8219ca7ebfe0` |
+| Archive SHA-256 | `83a827d6137cf4a3bf9997c89928fe5c191bbc67df9b956529b214f3991f7d8f` |
+| Image ID | `sha256:98df02069c471e5e71aabcd31448a9a4862510f9e735ad9a3fe62c073855d3ee` |
 | Wallet Intelligence modes | `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false` |
-| Stage 4B worker start | `2026-09-02T10:42:04Z`, `NRestarts=0` |
-| 3x-ui identity (unrelated) | `ab567d6d...`, started `2026-08-21T10:33:56Z`, restart count zero |
+| Stage 4B worker start after compact cutover | `2026-09-02T23:48:37Z`, `NRestarts=0` |
+| Stage 4B schema | 6 |
+| 3x-ui identity (unrelated) | `ab567d6d...`, started `2026-08-21T10:33:56Z` |
 
-PRs `#107`–`#109` made schema v5 CURRENT, isolated Stage 4B onto
-`continuous-shadow.sqlite3`, and retired leftover Intelligence-database
-legacy objects after verified backups. Post-retirement smoke showed a
-balanced Ledger, zero duplicate processing, and a natural Stage 4A Forward
-overlap without a shared-file lock. Health warnings were stale marks and a
-settlement backlog, not persistence failure.
+PR `#112` made change-driven mark history and bounded recovery CURRENT.
+Helsinki migrated v5→v6, retained history for a 10-poll canary, then
+deduplicated and compacted Stage 4B offline. This is not 24-hour storage
+acceptance.
 
-Query the host for anything newer. Full delivery, checksums, and rollback
-evidence: [Stage 4B ownership cutover](../18-ai-handoffs/stage4b-data-ownership-cutover.md).
+Query the host for anything newer. Full delivery, checksums, canary, and T0:
+[Stage 4B data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md).
+The preceding schema-v5 ownership closeout remains
+[Stage 4B ownership cutover](../18-ai-handoffs/stage4b-data-ownership-cutover.md).
 
 ## Historical evidence owners
 
@@ -120,6 +121,7 @@ Do not duplicate these records here.
 | LIVE-004 completed round trip | [live-004 handoff](../18-ai-handoffs/polysia-live-004-final-handoff.md) |
 | Tiny Live Copy 004 cancellation | [004 diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md) |
 | Helsinki Stages 1–4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
+| Stage 4B data lifecycle T0 | [data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md) |
 | Python 3.14 / SDK upgrade | [UPGRADE-006](../18-ai-handoffs/polysia-upgrade-006-handoff.md) |
 | Architecture visual baseline | [architecture refresh](../18-ai-handoffs/architecture-truth-refresh-2026-08-18.md) |
 | Roadmap | [roadmap](../22-roadmap/roadmap.md) |
