@@ -18,7 +18,9 @@ outputs are `locks/requirements-runtime-py314.txt` and
 `locks/requirements-dev-py314.txt`. They are produced by pip-tools 7.6.1 from
 `pyproject.toml` (development extras only on the development lock) with a
 stable header and no pip-compile annotations, so Linux and Windows Python 3.14
-can verify the same committed pins. Do not hand-edit generated rows. Conventional `.txt` names let GitHub's dependency
+can verify the same committed pins. `colorama` is declared with a Windows
+environment marker because typer needs it on Windows and Linux `pip-compile`
+would otherwise drop it. Do not hand-edit generated rows. Conventional `.txt` names let GitHub's dependency
 graph see the resolved graph; Dependabot `exclude-paths` prevents duplicate
 version PRs against those generated files.
 
