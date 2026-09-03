@@ -7,4 +7,4 @@ dependencies:
   - setuptools=83.0.0
   - wheel=0.47.0
   - pip:
-      - -r locks/pip-py314.lock
+      - -r locks/requirements-dev-py314.txt

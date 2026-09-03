@@ -1,0 +1,301 @@
+name: Dependency automation
+
+on:
+  pull_request:
+  schedule:
+    - cron: "47 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Maintenance task
+        required: false
+        default: scheduled-refresh
+        type: choice
+        options:
+          - scheduled-refresh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-automation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  evaluate:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      status: ${{ steps.evaluate.outputs.status }}
+      reason: ${{ steps.evaluate.outputs.reason }}
+      payload: ${{ steps.evaluate.outputs.payload }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - id: evaluate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPENDENCY_PR_ACTOR: ${{ github.event.pull_request.user.login }}
+          DEPENDENCY_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          DEPENDENCY_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          DEPENDENCY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEPENDENCY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/dependency_locks.py lock-sync-evaluate --pr ${{ github.event.pull_request.number }}
+
+  generate:
+    needs: evaluate
+    if: needs.evaluate.outputs.status == 'generate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: locks/requirements-dev-py314.txt
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r locks/requirements-dev-py314.txt
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/dependency_locks.py lock-sync-prepare --head-sha ${{ github.event.pull_request.head.sha }} --destination "$RUNNER_TEMP/lock-sync"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: polysia-lock-sync
+          path: |
+            ${{ runner.temp }}/lock-sync/requirements-runtime-py314.txt
+            ${{ runner.temp }}/lock-sync/requirements-dev-py314.txt
+            ${{ runner.temp }}/lock-sync/pyproject.toml
+          retention-days: 1
+
+  publish:
+    needs: [evaluate, generate]
+    if: needs.evaluate.outputs.status == 'generate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@v7
+        with:
+          name: polysia-lock-sync
+          path: ${{ runner.temp }}/lock-sync
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/dependency_locks.py lock-sync-validate --artifact "$RUNNER_TEMP/lock-sync"
+          python scripts/dependency_locks.py classify-from-locks \
+            --actor "${{ github.event.pull_request.user.login }}" \
+            --head-branch "${{ github.event.pull_request.head.ref }}" \
+            --artifact "$RUNNER_TEMP/lock-sync" \
+            --base-root . > "$RUNNER_TEMP/decision.json"
+          ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['action'])")
+          REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['reason'])")
+          python scripts/dependency_locks.py lock-sync-commit \
+            --branch "${{ github.event.pull_request.head.ref }}" \
+            --artifact "$RUNNER_TEMP/lock-sync" \
+            --message "chore(deps): sync generated pip locks"
+          gh label create "risk:human-review" --force --description "Owner review required" >/dev/null
+          gh label create "risk:auto-merge" --force --description "Eligible for unattended merge" >/dev/null
+          gh label create "deps:development" --force >/dev/null
+          gh label create "deps:runtime" --force >/dev/null
+          gh workflow run ci.yml --ref "${{ github.event.pull_request.head.ref }}"
+          if [ "$ACTION" = "auto_merge" ]; then
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "risk:auto-merge,deps:development"
+            gh pr merge ${{ github.event.pull_request.number }} --auto --merge
+          elif [ "$ACTION" = "reject" ]; then
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "risk:reject"
+            gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency update rejected\n\n- **Reason:** %s\n- Automation will not merge this pull request.\n' "$REASON")"
+            exit 1
+          else
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "risk:human-review"
+            gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency review required\n\n- **Reason:** %s\n- **Owner action:** Review compatibility/security impact and merge only after CI Gate is green.\n- Automation will not merge this pull request unattended.\n' "$REASON")"
+          fi
+
+  reject:
+    needs: evaluate
+    if: needs.evaluate.outputs.status == 'reject'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency update rejected\n\n- **Reason:** %s\n- Automation will not merge this pull request.\n' '${{ needs.evaluate.outputs.reason }}')"
+          exit 1
+
+  label-existing:
+    needs: evaluate
+    if: needs.evaluate.outputs.status == 'noop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: dependabot/fetch-metadata@v2
+        id: metadata
+        with:
+          github-token: ${{ github.token }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          EVAL_PAYLOAD: ${{ needs.evaluate.outputs.payload }}
+          META_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          META_UPDATE: ${{ steps.metadata.outputs.update-type }}
+          META_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+        run: |
+          gh label create "risk:human-review" --force >/dev/null
+          gh label create "risk:auto-merge" --force >/dev/null
+          gh label create "deps:github-actions" --force >/dev/null
+          gh label create "deps:development" --force >/dev/null
+          gh label create "deps:runtime" --force >/dev/null
+          ECOSYSTEM=$(python -c "import json,os; print(json.loads(os.environ.get('EVAL_PAYLOAD') or '{}').get('ecosystem') or os.environ.get('META_ECOSYSTEM',''))")
+          ACTION=$(python -c "import json,os; p=json.loads(os.environ.get('EVAL_PAYLOAD') or '{}'); print(p.get('decision') or '')")
+          REASON=$(python -c "import json,os; p=json.loads(os.environ.get('EVAL_PAYLOAD') or '{}'); print(p.get('message') or p.get('reason') or 'ambiguous dependency classification')")
+          if [ "$ECOSYSTEM" = "github_actions" ] || [ "$META_ECOSYSTEM" = "github_actions" ]; then
+            if [ "$META_UPDATE" = "version-update:semver-patch" ]; then
+              ACTION="auto_merge"
+              REASON="GitHub Actions patch with complete required checks"
+            else
+              ACTION="human_review"
+              REASON="GitHub Actions minor/major or ambiguous Actions update"
+            fi
+            LABEL="risk:auto-merge,deps:github-actions"
+            REVIEW_LABEL="risk:human-review,deps:github-actions"
+          else
+            LABEL="risk:auto-merge,deps:development"
+            REVIEW_LABEL="risk:human-review"
+          fi
+          if [ "$ACTION" = "auto_merge" ]; then
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "$LABEL"
+            gh pr merge ${{ github.event.pull_request.number }} --auto --merge
+          else
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "$REVIEW_LABEL"
+            gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency review required\n\n- **Reason:** %s\n- **Ecosystem:** %s\n- **Update type:** %s\n- **Dependencies:** %s\n- **Owner action:** Review compatibility/security impact and merge only after CI Gate is green. Automation will not merge this pull request unattended.\n' "$REASON" "$ECOSYSTEM" "$META_UPDATE" "$META_NAMES")"
+          fi
+
+  scheduled-generate:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: locks/requirements-dev-py314.txt
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r locks/requirements-dev-py314.txt
+      - run: python scripts/dependency_locks.py refresh --scope pip --upgrade
+      - id: diff
+        run: |
+          if git diff --quiet -- locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: polysia-scheduled-locks
+          path: |
+            locks/requirements-dev-py314.txt
+            locks/requirements-runtime-py314.txt
+            pyproject.toml
+          retention-days: 1
+
+  scheduled-publish:
+    needs: scheduled-generate
+    if: needs.scheduled-generate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: polysia-scheduled-locks
+          path: ${{ runner.temp }}/scheduled-locks
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/dependency_locks.py lock-sync-validate --artifact "$RUNNER_TEMP/scheduled-locks"
+          BRANCH="codex/scheduled-lock-refresh-$(date -u +%Y%m%d)"
+          python scripts/dependency_locks.py classify-from-locks \
+            --actor "github-actions[bot]" \
+            --head-branch "$BRANCH" \
+            --artifact "$RUNNER_TEMP/scheduled-locks" \
+            --base-root . > "$RUNNER_TEMP/decision.json"
+          ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['action'])")
+          REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['reason'])")
+          cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt
+          cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt
+          git commit -m "chore(deps): refresh transitive pip locks"
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create --title "chore(deps): refresh transitive pip locks" --body "## Summary
+- Weekly canonical pip-compile refresh from pyproject.toml.
+- No declaration-source change. Runtime lock changes require owner review.
+
+## Test plan
+- [ ] CI Gate green")
+          gh workflow run ci.yml --ref "$BRANCH"
+          if [ "$ACTION" = "auto_merge" ]; then
+            gh pr edit "$PR_URL" --add-label "risk:auto-merge,deps:development"
+            gh pr merge "$PR_URL" --auto --merge
+          elif [ "$ACTION" = "reject" ]; then
+            gh pr edit "$PR_URL" --add-label "risk:reject"
+            gh pr comment "$PR_URL" --body "$(printf '## Dependency update rejected\n\n- **Reason:** %s\n' "$REASON")"
+            exit 1
+          else
+            gh pr edit "$PR_URL" --add-label "risk:human-review,deps:runtime"
+            gh pr comment "$PR_URL" --body "$(printf '## Dependency review required\n\n- **Reason:** %s\n- **Owner action:** Review runtime/transitive impact and merge only after CI Gate is green.\n' "$REASON")"
+          fi

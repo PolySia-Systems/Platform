@@ -30,8 +30,8 @@ def test_source_tests_and_tooling_receive_distinct_risk_maps() -> None:
 
 def test_packaging_dependency_container_and_windows_changes_are_explicit() -> None:
     package = classify_paths(("pyproject.toml",))
-    runtime_lock = classify_paths(("locks/pip-runtime-py314.lock",))
-    development_lock = classify_paths(("locks/pip-py314.lock",))
+    runtime_lock = classify_paths(("locks/requirements-runtime-py314.txt",))
+    development_lock = classify_paths(("locks/requirements-dev-py314.txt",))
     deployment = classify_paths(("compose.yaml",))
     powershell = classify_paths(("scripts/operator-check.ps1",))
 

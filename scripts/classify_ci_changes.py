@@ -46,7 +46,7 @@ PYTHON_PATTERNS = (
 PACKAGE_PATTERNS = (
     "src/**",
     "pyproject.toml",
-    "locks/pip-runtime-py314.lock",
+    "locks/requirements-runtime-py314.txt",
     "Makefile",
 )
 CONTAINER_PATTERNS = (
@@ -56,7 +56,7 @@ CONTAINER_PATTERNS = (
     ".dockerignore",
     ".env.example",
     "deploy/**",
-    "locks/pip-runtime-py314.lock",
+    "locks/requirements-runtime-py314.txt",
     "src/polysia/config/**",
     "src/polysia/deployment/**",
     "src/polysia/cli.py",
@@ -76,8 +76,8 @@ WINDOWS_PATTERNS = (
     "**/*.ps1",
     "environment.yml",
     "locks/conda-win-64.lock",
-    "locks/pip-py314.lock",
-    "locks/pip-runtime-py314.lock",
+    "locks/requirements-dev-py314.txt",
+    "locks/requirements-runtime-py314.txt",
     "pyproject.toml",
     ".python-version",
     ".github/actions/windows/**",

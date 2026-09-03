@@ -7,7 +7,7 @@
 !README.md
 !pyproject.toml
 !locks/
-!locks/pip-py314.lock
-!locks/pip-runtime-py314.lock
+!locks/requirements-dev-py314.txt
+!locks/requirements-runtime-py314.txt
 !src/
 !src/**

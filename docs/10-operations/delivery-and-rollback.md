@@ -3,10 +3,12 @@
 ## Delivery contents
 
 - Canonical source is the current Git `main` branch.
-- `environment.yml`, `locks/conda-win-64.lock`, and `locks/pip-py314.lock`
-  describe the verified Python 3.14 owner-workstation environment. The pip lock
-  is version-pinned and portable to compatible Windows and Linux Python 3.14
-  installations; the explicit Conda lock is Windows-specific.
+- `environment.yml`, `locks/conda-win-64.lock`, and
+  `locks/requirements-dev-py314.txt` describe the verified Python 3.14
+  owner-workstation environment. The development pip lock is version-pinned and
+  portable to compatible Windows and Linux Python 3.14 installations; the
+  production runtime pip lock is `locks/requirements-runtime-py314.txt`; the
+  explicit Conda lock is Windows-specific.
 - The Conda definitions retain `setuptools==83.0.0`, the latest Python 3.14
   bootstrap currently available from the `defaults` channel. The portable pip
   lock then promotes the completed development environment to the verified
