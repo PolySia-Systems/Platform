@@ -106,7 +106,7 @@ tomli_w==1.2.0
 tomlkit==0.15.1
 toolz==1.1.0
 trove-classifiers==2026.6.1.19
-typer==0.27.1
+typer==0.27.2
 typing-inspection==0.4.2
 typing_extensions==4.16.0
 tzdata==2026.3
