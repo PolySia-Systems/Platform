@@ -115,8 +115,8 @@ rows. The temporary database, backup, and report were automatically removed.
 No wallet address was printed.
 
 The optional whole-environment strict OSV audit reported vulnerabilities in an
-unrelated orphan `cryptography==48.0.0` installation (`Required-by` was empty).
-That package is absent from PolySia dependency declarations and lock files, and
-this task did not change dependencies. The finding was not hidden or repaired
-inside this feature scope. CycloneDX environment SBOM generation completed in
-ignored `artifacts/` state.
+unrelated orphan installation (`Required-by` was empty). That package is absent
+from PolySia dependency declarations and lock files, and this task did not
+change dependencies. The finding was not hidden or repaired inside this feature
+scope. CycloneDX environment SBOM generation completed in ignored `artifacts/`
+state.

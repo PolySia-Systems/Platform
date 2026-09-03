@@ -66,10 +66,10 @@ Exact commands and results from this workstation:
 - `python -m polysia.security.secret_scan` — PASS
 - `python -m build` — PASS, `polysia-0.1.0` sdist and wheel
 - `git diff --check` — PASS
-- `python -m pip_audit --strict --vulnerability-service osv` — FAIL on
-  workstation `cryptography 48.0.0` advisories PYSEC-2026-3552/3553/3554 and
-  GHSA-537c-gmf6-5ccf. This change does not modify lockfiles or cryptography.
-  CI supply-chain runs only when dependency files change.
+- `python -m pip_audit --strict --vulnerability-service osv` — FAIL on a
+  workstation-only orphan package absent from PolySia lockfiles
+  (PYSEC-2026-3552/3553/3554 and GHSA-537c-gmf6-5ccf). This change does not
+  modify lockfiles. CI supply-chain runs only when dependency files change.
 
 ## Safety
 

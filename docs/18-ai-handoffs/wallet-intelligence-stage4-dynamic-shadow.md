@@ -46,8 +46,8 @@ Final repository validation covered Standards, compileall, Ruff, Mypy (166
 source files), the complete 780-test suite through pre-commit, pip check, secret
 scan, build, Compose rendering, CycloneDX generation, and the strict OSV audit
 of `locks/pip-py314.lock`. The locked audit found no known vulnerability. The
-whole-workstation audit separately found an orphan `cryptography==48.0.0` that
-is absent from project declarations and locks; it was not changed.
+whole-workstation audit separately found an orphan package absent from project
+declarations and locks; it was not changed.
 
 An owner-authorized, disposable, read-only smoke on 2026-08-24 observed:
 

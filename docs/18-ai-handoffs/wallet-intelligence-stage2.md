@@ -114,9 +114,9 @@ The final implementation passed:
 - `git diff --check` and final content review.
 
 The whole-workstation audit separately reports an unrelated orphan
-`cryptography==48.0.0` installation with no `Required-by` packages. It is absent
-from PolySia declarations and lock files and was not modified. The isolated
-locked audit is the project and CI evidence.
+installation with no `Required-by` packages. It is absent from PolySia
+declarations and lock files and was not modified. The isolated locked audit is
+the project and CI evidence.
 
 ## Real read-only smoke
 
