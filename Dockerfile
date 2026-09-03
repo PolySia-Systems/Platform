@@ -10,9 +10,9 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /build
 
-COPY locks/pip-py314.lock locks/pip-py314.lock
+COPY locks/requirements-dev-py314.txt locks/requirements-dev-py314.txt
 RUN python -m pip install --upgrade pip==26.2.1 \
-    && python -m pip install --requirement locks/pip-py314.lock
+    && python -m pip install --requirement locks/requirements-dev-py314.txt
 
 COPY pyproject.toml README.md ./
 COPY src/ src/
@@ -37,9 +37,9 @@ RUN groupadd --gid 10001 polysia \
 WORKDIR /opt/polysia
 
 COPY .env.example .gitignore Makefile README.md pyproject.toml ./
-COPY locks/pip-runtime-py314.lock locks/pip-runtime-py314.lock
+COPY locks/requirements-runtime-py314.txt locks/requirements-runtime-py314.txt
 RUN python -m pip install --upgrade pip==26.2.1 \
-    && python -m pip install --requirement locks/pip-runtime-py314.lock
+    && python -m pip install --requirement locks/requirements-runtime-py314.txt
 
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-deps /wheels/*.whl \

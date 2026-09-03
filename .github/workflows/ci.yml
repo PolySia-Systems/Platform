@@ -90,7 +90,7 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: locks/pip-py314.lock
+          cache-dependency-path: locks/requirements-dev-py314.txt
       - name: Diff and path/link checks
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -105,7 +105,7 @@ jobs:
         if: needs.changes.outputs.python == 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r locks/pip-py314.lock
+          python -m pip install -r locks/requirements-dev-py314.txt
           python -m pip install --no-deps -e .
       - name: Compile
         if: needs.changes.outputs.python == 'true'
@@ -122,6 +122,9 @@ jobs:
       - name: Environment integrity
         if: needs.changes.outputs.python == 'true'
         run: python -m pip check
+      - name: Dependency lock check
+        if: needs.changes.outputs.python == 'true'
+        run: python scripts/dependency_locks.py check
       - name: Build package
         if: needs.changes.outputs.package == 'true'
         run: python -m build
@@ -130,7 +133,7 @@ jobs:
         shell: bash
         run: |
           python -m venv .wheel-smoke
-          .wheel-smoke/bin/python -m pip install -r locks/pip-runtime-py314.lock
+          .wheel-smoke/bin/python -m pip install -r locks/requirements-runtime-py314.txt
           .wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
           .wheel-smoke/bin/python -c "import polysia"
           .wheel-smoke/bin/python -m polysia.cli --help
@@ -147,11 +150,11 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: locks/pip-py314.lock
+          cache-dependency-path: locks/requirements-dev-py314.txt
       - name: Install compatibility environment
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r locks/pip-py314.lock
+          python -m pip install -r locks/requirements-dev-py314.txt
           python -m pip install --no-deps -e .
       - name: Compile
         run: python -m compileall -q src tests
@@ -159,6 +162,8 @@ jobs:
         run: python -m pytest -q
       - name: Environment integrity
         run: python -m pip check
+      - name: Dependency lock check
+        run: python scripts/dependency_locks.py check
       - name: Build package
         run: python -m build
       - name: CLI smoke
@@ -201,12 +206,12 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: locks/pip-py314.lock
+          cache-dependency-path: locks/requirements-dev-py314.txt
       - run: python -m venv "$RUNNER_TEMP/polysia-audit-venv"
       - run: |
           "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install --upgrade pip
       - run: |
-          "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install -r locks/pip-py314.lock
+          "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install -r locks/requirements-dev-py314.txt
       - run: |
           "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip_audit --strict --vulnerability-service osv
       - name: Generate SBOM

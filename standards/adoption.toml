@@ -44,7 +44,7 @@ reusable_library_interface = "src/polysia/__init__.py and explicit package expor
 public_cli = "pyproject.toml [project.scripts] and src/polysia/cli.py"
 python_serialized_models = "src/polysia domain models and explicit JSON boundaries"
 external_effect_tests_by_default = "AGENTS.md runtime safety rules and tests"
-repeatable_verification_environment = "locks/pip-py314.lock; environment.yml; CI"
+repeatable_verification_environment = "locks/requirements-dev-py314.txt; environment.yml; CI"
 
 [python]
 distribution = "polysia"

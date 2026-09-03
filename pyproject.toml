@@ -16,15 +16,18 @@ dependencies = [
     "structlog>=26.1.0,<27",
     "rich>=15.0.0,<16",
     "typer>=0.27.1,<1",
+    "colorama==0.4.6",
 ]
 
 [project.optional-dependencies]
 dev = [
     "build==1.6.0",
     "cyclonedx-bom==7.3.1",
+    "hatchling==1.32.0",
     "hypothesis==6.167.1",
     "mypy==2.3.1",
     "pip-audit==2.10.1",
+    "pip-tools==7.6.1",
     "pre-commit==4.6.2",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",

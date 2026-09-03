@@ -62,7 +62,7 @@ name = "python-profile-consumer"
 classification = "applicable"
 verdict = "pass"
 ids = ["PRF-PYS-001", "PRF-PYS-002", "PRF-PYS-003", "PRF-PYS-004", "PRF-PYS-005", "PRF-PYS-006"]
-evidence = "pyproject.toml; src/polysia; tests; locks/pip-py314.lock; CI"
+evidence = "pyproject.toml; src/polysia; tests; locks/requirements-dev-py314.txt; CI"
 
 [[results]]
 name = "python-profile-owner-review"

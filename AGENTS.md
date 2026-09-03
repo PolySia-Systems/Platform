@@ -276,6 +276,7 @@ python -m ruff check .
 python -m mypy src
 python -m pytest -q
 python -m pip check
+python scripts/dependency_locks.py check
 python -m polysia.security.secret_scan
 python -m build
 ```

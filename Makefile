@@ -1,4 +1,4 @@
-.PHONY: install fast test lint typecheck standards security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff
+.PHONY: install fast test lint typecheck standards security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff dependency-locks-check dependency-locks
 
 install:
 	python -m pip install -e ".[dev]"
@@ -30,8 +30,15 @@ build:
 sbom:
 	cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json
 
+dependency-locks-check:
+	python scripts/dependency_locks.py check
+
+dependency-locks:
+	python scripts/dependency_locks.py refresh --scope pip --upgrade
+
 check: lint typecheck standards test security
 	python -m pip check
+	python scripts/dependency_locks.py check
 
 health:
 	python -m polysia.cli system health
