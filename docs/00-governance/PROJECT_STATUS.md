@@ -7,9 +7,9 @@
 | Review date | 2026-09-03 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Primary runtime | CPython `3.14.6` |
+| Primary runtime | CPython `3.14.7` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
-| Polymarket SDK | `polymarket-client==0.6.0` |
+| Polymarket SDK | `polymarket-client==0.7.1` |
 | Conformance status | `STANDARDS_V0_4_0_FULLY_ENFORCED` |
 
 This document is durable repository status. It is not a live runtime

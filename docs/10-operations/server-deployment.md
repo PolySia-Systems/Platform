@@ -239,7 +239,7 @@ The experiment runs as the `copy-experiment` Compose profile with:
   market-time gate; the shared Copy Trading domain default remains seven minutes;
 - a detached heartbeat watchdog and `on-failure:3` restart policy.
 
-The pinned `polymarket-client==0.6.0` requires a GTD timestamp at least 180
+The pinned `polymarket-client==0.7.1` requires a GTD timestamp at least 180
 seconds in the future. PolySia therefore cancels and confirms the entry at the
 90-second operational TTL, while allowing a 185-second venue GTD backstop only
 when that backstop still expires before the final-entry cutoff. Signals that

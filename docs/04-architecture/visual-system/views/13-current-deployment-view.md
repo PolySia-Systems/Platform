@@ -22,7 +22,7 @@ flowchart LR
 
   subgraph WORKSTATION["Owner Windows workstation [CURRENT]"]
     Repo["Local Git repository\nmain branch"]:::storage
-    Conda["Conda environment: PolySia\nPython 3.14.6"]:::current
+    Conda["Conda environment: PolySia\nPython 3.14.7"]:::current
     Process["Operator-run polysia CLI\nmodular monolith"]:::application
     Secrets["Ignored local .env\nsecret boundary; values never diagrammed"]:::risk
     SQLite[("SQLite databases / local files\nignored runtime state")]:::storage
@@ -91,7 +91,7 @@ persistent state, monitoring, and external read-only endpoints.
 ## Current implementation mapping
 
 The current deployment remains one Python modular monolith. Local operator use
-continues in the `PolySia` Python 3.14.6 Conda environment. The continuously
+continues in the `PolySia` Python 3.14.7 Conda environment. The continuously
 managed runtime includes the non-root Docker monitor plus systemd-triggered,
 ephemeral Wallet Intelligence Stage 1–4B jobs on the controlled Ubuntu host.
 The host receives a verified exact-commit Git archive because repository Deploy
