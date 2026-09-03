@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from yaml import safe_load
+
 from scripts.dependency_locks import (
     approved_sdk_versions,
     assert_sdk_pins_synchronized,
@@ -242,15 +244,19 @@ def test_lock_sync_intent_is_adaptive_and_fail_closed() -> None:
 
 
 def test_dependency_automation_workflow_registers_push_and_dispatch() -> None:
-    text = (repository_root() / ".github/workflows/dependency-automation.yml").read_text(
-        encoding="utf-8"
-    )
+    path = repository_root() / ".github/workflows/dependency-automation.yml"
+    text = path.read_text(encoding="utf-8")
     assert text.startswith("name: Dependency automation\n")
     assert "\n  push:\n" in text
     assert "\n  pull_request:\n" in text
     assert "\n  workflow_dispatch: {}\n" in text
     assert "noop:" in text
     assert "github.event_name == 'push'" in text
+    assert not any(line.startswith("- ") for line in text.splitlines()), (
+        "unindented YAML sequence items break GitHub workflow parsing"
+    )
+    loaded = safe_load(text)
+    assert loaded["name"] == "Dependency automation"
 
 
 def test_version_policy_helpers() -> None:

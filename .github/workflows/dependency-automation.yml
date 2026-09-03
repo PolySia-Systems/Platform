@@ -288,12 +288,15 @@ jobs:
           git add locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt
           git commit -m "chore(deps): refresh transitive pip locks"
           git push origin "$BRANCH"
-          PR_URL=$(gh pr create --title "chore(deps): refresh transitive pip locks" --body "## Summary
-- Weekly canonical pip-compile refresh from pyproject.toml.
-- No declaration-source change. Runtime lock changes require owner review.
-
-## Test plan
-- [ ] CI Gate green")
+          PR_BODY=$(printf '%s\n' \
+            "## Summary" \
+            "" \
+            "- Weekly canonical pip-compile refresh from pyproject.toml." \
+            "- No declaration-source change. Runtime lock changes require owner review." \
+            "" \
+            "## Test plan" \
+            "- [ ] CI Gate green")
+          PR_URL=$(gh pr create --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY")
           gh workflow run ci.yml --ref "$BRANCH"
           if [ "$ACTION" = "auto_merge" ]; then
             gh pr edit "$PR_URL" --add-label "risk:auto-merge,deps:development"
