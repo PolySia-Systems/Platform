@@ -10,4 +10,4 @@
 | DEP-001 | SDK | `polymarket-client==0.7.1`. | Verified | Upgrade only with contract, lock, security, CI, and rollback evidence. |
 | DEP-002 | Runtime | Python `>=3.14,<3.15`; locked primary runtime 3.14.7; CI verifies the Python 3.14 line only. | Verified | Change only through a supported-version decision with synchronized metadata, tooling, CI, and documentation. |
 | DEP-003 | Storage | SQLite local/research persistence. | Accepted | Revisit only at documented concurrency/availability triggers. |
-| DEP-004 | Tooling | Mypy 2.3.1 and Ruff 0.16.5. | Verified | Upgrade only with synchronized lock and reproducibility validation. |
+| DEP-004 | Tooling | Mypy 2.3.1 and Ruff 0.16.6. | Verified | Upgrade only with synchronized lock and reproducibility validation. |
