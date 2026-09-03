@@ -1,10 +1,14 @@
 name: Dependency automation
 
 on:
+  # Unfiltered push is required. GitHub still evaluates this file on every
+  # push; if `push` is omitted or path-filtered, that evaluation concludes
+  # failure with zero jobs and `workflow_dispatch` is not registered.
+  push:
   pull_request:
   schedule:
     - cron: "47 5 * * 1"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -14,16 +18,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # GitHub can evaluate this workflow on unmatched events (including push).
-  # If every job is skipped, the run concludes failure and workflow_dispatch
-  # is not registered. This job keeps those evaluations green and is skipped
-  # for Dependabot PRs, schedule, and manual refresh.
+  # Succeeds on ordinary push and human PRs so GitHub keeps this workflow
+  # registered. Skipped for Dependabot PRs, schedule, and manual refresh.
   noop:
-    if: >
-      github.event_name != 'schedule' &&
-      github.event_name != 'workflow_dispatch' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.user.login != 'dependabot[bot]')
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:

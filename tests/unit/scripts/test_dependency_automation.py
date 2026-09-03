@@ -241,6 +241,18 @@ def test_lock_sync_intent_is_adaptive_and_fail_closed() -> None:
     assert classify_lock_sync_intent(("src/polysia/cli.py",)) == "reject"
 
 
+def test_dependency_automation_workflow_registers_push_and_dispatch() -> None:
+    text = (repository_root() / ".github/workflows/dependency-automation.yml").read_text(
+        encoding="utf-8"
+    )
+    assert text.startswith("name: Dependency automation\n")
+    assert "\n  push:\n" in text
+    assert "\n  pull_request:\n" in text
+    assert "\n  workflow_dispatch: {}\n" in text
+    assert "noop:" in text
+    assert "github.event_name == 'push'" in text
+
+
 def test_version_policy_helpers() -> None:
     assert is_low_risk_version_bump("0.16.6", "0.16.7")
     assert not is_low_risk_version_bump("0.16.6", "0.17.0")
