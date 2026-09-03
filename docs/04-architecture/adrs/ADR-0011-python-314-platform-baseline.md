@@ -1,18 +1,17 @@
-# ADR-0011: Python 3.14 and Polymarket SDK 0.6 Baseline
+# ADR-0011: Python 3.14 and Polymarket SDK Baseline
 
 - Status: Accepted
 - Date: 2026-07-28
-- Last amended: 2026-08-21
+- Last amended: 2026-09-03
 - Supersedes: ADR-0005
 
 ## Context
 
 Before this decision, PolySia's verified baseline used Python 3.13.14 and
 `polymarket-client==0.1.0b11`. The promoted and locked workstation baseline is
-Python 3.14.6. The official Polymarket unified SDK left beta and released
-`polymarket-client==0.2.0`. Official stable releases 0.3.0 through 0.6.0 were
-subsequently reviewed on 2026-08-21, and 0.6.0 is the latest compatible stable
-release.
+Python 3.14.7. The official Polymarket unified SDK left beta and released
+`polymarket-client==0.2.0`. Official stable releases 0.3.0 through 0.7.1 were
+subsequently reviewed, and 0.7.1 is the latest compatible stable release.
 
 The existing environment also contained vulnerable `setuptools==82.0.1`.
 Project delivery requires a reproducible Windows workstation baseline, a
@@ -25,13 +24,13 @@ runtime without redundant compatibility jobs.
 
 - Support only the CPython 3.14 minor line, expressed as `>=3.14,<3.15` in
   package metadata. Python 3.11 and 3.13 are no longer supported.
-- Keep CPython 3.14.6 as the locked owner-workstation and container baseline;
+- Keep CPython 3.14.7 as the locked owner-workstation and container baseline;
   CI resolves the latest available Python 3.14 maintenance release.
 - Configure canonical Linux quality validation for Python 3.14 only. Keep full
   Windows compatibility validation weekly, manually dispatchable, and
   conditional on verified Windows-sensitive changes rather than on ordinary
   pull requests.
-- Pin the official unified Polymarket SDK to `0.6.0`.
+- Pin the official unified Polymarket SDK to `0.7.1`.
 - Pin direct development tools and the portable transitive lock to versions
   verified by repository quality and supply-chain gates.
 - Require `setuptools==84.0.0` in the final pip-managed development
@@ -50,8 +49,9 @@ The SDK surface contracts verify the public and secure client methods, order
 parameters, signer/private-key and funder/wallet creation inputs, and model
 fields consumed by PolySia. The `condition_id` field is explicitly covered
 while the deprecated `market` compatibility field remains accepted at the
-adapter boundary. The 0.6.0 migration preserves the existing transitive
-dependency set and does not adopt its new perps or combo RFQ capabilities.
+adapter boundary. The 0.7.1 migration does not adopt new perps, combo RFQ,
+scoped session-key, or rate-limit callback capabilities. Tiny Live approved
+runtime constants must match the exact pinned SDK version.
 
 Python 3.14 is the only CI target. Python 3.14 wheel installation, CLI smoke,
 complete repository validation, strict dependency audit, and SBOM generation

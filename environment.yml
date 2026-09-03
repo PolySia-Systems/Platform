@@ -2,7 +2,7 @@ name: PolySia
 channels:
   - defaults
 dependencies:
-  - python=3.14.6
+  - python=3.14.7
   - pip=26.1.2
   - setuptools=83.0.0
   - wheel=0.47.0

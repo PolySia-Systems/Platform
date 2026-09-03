@@ -3,7 +3,7 @@
 | ID | Risk | Likelihood | Impact | Control / owner-visible gate |
 |---|---|---:|---:|---|
 | RSK-001 | Rename breaks imports, CLI, or operator workflows. | Low | High | Migration tests, canonical naming checks, preserved legacy recovery. |
-| RSK-002 | Polymarket SDK drift changes signing or responses. | High | High | Exact `polymarket-client==0.6.0` pin, contract tests, upgrade/rollback runbook. |
+| RSK-002 | Polymarket SDK drift changes signing or responses. | High | High | Exact `polymarket-client==0.7.1` pin, contract tests, upgrade/rollback runbook. |
 | RSK-003 | Venue types leak into core. | Low | High | Architecture tests and adapter-boundary review. |
 | RSK-004 | Live action runs during ordinary validation. | Low | Critical | DATA_ONLY CI, explicit authorization, Risk, allowlist, cap, acknowledgement, geoblock, kill switch, and one-attempt gates. |
 | RSK-005 | Credential value reaches Git or an artifact. | Low | Critical | Ignore rules, redaction, secret scan, sanitized handoffs/exports. |
