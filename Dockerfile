@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG PYTHON_IMAGE=python:3.14.6-slim-trixie@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
+ARG PYTHON_IMAGE=python:3.14.7-slim-trixie@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 FROM ${PYTHON_IMAGE} AS builder
 
@@ -11,7 +11,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 WORKDIR /build
 
 COPY locks/pip-py314.lock locks/pip-py314.lock
-RUN python -m pip install --upgrade pip==26.1.2 \
+RUN python -m pip install --upgrade pip==26.2.1 \
     && python -m pip install --requirement locks/pip-py314.lock
 
 COPY pyproject.toml README.md ./
@@ -38,7 +38,7 @@ WORKDIR /opt/polysia
 
 COPY .env.example .gitignore Makefile README.md pyproject.toml ./
 COPY locks/pip-runtime-py314.lock locks/pip-runtime-py314.lock
-RUN python -m pip install --upgrade pip==26.1.2 \
+RUN python -m pip install --upgrade pip==26.2.1 \
     && python -m pip install --requirement locks/pip-runtime-py314.lock
 
 COPY --from=builder /wheels /wheels
