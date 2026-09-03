@@ -23,7 +23,7 @@ FIXTURE = Path(__file__).with_name("fixtures") / "polymarket_order_cancellation_
 
 
 def test_pinned_polymarket_sdk_version() -> None:
-    assert version("polymarket-client") == "0.6.0"
+    assert version("polymarket-client") == "0.7.1"
 
 
 def test_public_sdk_methods_used_by_adapter_exist() -> None:

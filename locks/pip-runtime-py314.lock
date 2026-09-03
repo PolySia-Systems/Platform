@@ -27,7 +27,7 @@ markdown-it-py==4.2.0
 mdurl==0.1.2
 msgpack==1.2.1
 parsimonious==0.10.0
-polymarket-client==0.6.0
+polymarket-client==0.7.1
 pycryptodome==3.23.0
 pydantic==2.13.5
 pydantic_core==2.46.5
