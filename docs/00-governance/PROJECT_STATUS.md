@@ -86,7 +86,7 @@ review; branch protection through a separate governance task.
 
 ## Audited runtime snapshot
 
-Audited as of 2026-09-04T11:07:43Z.
+Audited as of 2026-09-04.
 
 This snapshot is historical operational evidence copied from the Stage 4B
 data-lifecycle 24-hour closeout. It is not a claim about the host at read time.
