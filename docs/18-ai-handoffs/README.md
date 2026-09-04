@@ -11,10 +11,11 @@ because that exact path is an immutable compliance artifact.
 
 ## Current operational evidence
 
+- [`stage4b-data-lifecycle-v1.md`](stage4b-data-lifecycle-v1.md)
+  is the current Stage 4B storage-lifecycle evidence: schema v6, compact
+  cutover, T0, and 24-hour storage acceptance.
 - [`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md)
-  is the current Stage 4B operating and recovery evidence: standalone schema
-  v5, Helsinki cutover, verified three-store restore, legacy schema
-  retirement, and post-retirement smoke.
+  remains the preceding standalone schema-v5 ownership and recovery record.
 - [`polysia-finland-wallet-intelligence-deployment.md`](polysia-finland-wallet-intelligence-deployment.md)
   records the Helsinki DATA_ONLY Stages 1–4 deployment, backup/restore,
   rollback, and `3x-ui` preservation evidence.
