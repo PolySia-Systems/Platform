@@ -1,8 +1,8 @@
 # Stage 4B data lifecycle v1
 
 Status: CURRENT on `Hetzner-Finland-Helsinki-01` in `DATA_ONLY` / Shadow.
-This is the deployment and T0 record. It is not the 24-hour storage-acceptance
-record.
+This file is the deployment, T0, and 24-hour storage-acceptance record.
+Dated runtime rows are snapshots, not live host truth.
 
 ## Root cause and fix
 
@@ -166,7 +166,63 @@ bundles keep three verified copies; `pinned/` is never auto-pruned.
 At T0 the host was on merge SHA `6743f74`, schema v6, compact Stage 4B
 database, fresh fencing epoch, daily timer restored, `DATA_ONLY` /
 `LIVE_TRADING_ENABLED=false`, worker `NRestarts=0`, and about 6.2 GiB free.
-Do not treat this file as 24-hour storage acceptance.
+Do not treat earlier sections as 24-hour storage acceptance.
+
+## 24-hour storage acceptance
+
+Audited as of `2026-09-04T11:07:43Z` (T0 + 34.94 hours). Policy authority:
+`stage4b-data-lifecycle-v1` / `recovery-bundle-v1` (`30`-day history,
+`keep=3`, `4 GiB` disk floor, `3600 s` bundle skew). Verdict: **PASS**.
+
+The worker was still the T0 release `6743f7464f94d3fb76edc057834e8219ca7ebfe0`
+at `/opt/polysia-releases/6743f7464f94d3fb76edc057834e8219ca7ebfe0`, image
+`sha256:98df02069c471e5e71aabcd31448a9a4862510f9e735ad9a3fe62c073855d3ee`.
+`TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`, empty live token
+allowlist. No order or cancellation path was used. `3x-ui` identity remained
+`ab567d6d3f4ed7246e13459cfabd58387e413f900dcb693dc2a26a44dba76bb2`, started
+`2026-08-21T10:33:56Z`, `RestartCount=0`. Worker `NRestarts=0` since
+`2026-09-02T23:48:37Z`. Schema v6. Experiment
+`71e7622c8a6e472f847d212b78099903` remained `RUNNING`. Ledger health
+`ledger_balanced=true`. `duplicate_processing_count=0`.
+`missing_mark_count=0`.
+
+| Metric | Value |
+|---|---|
+| Open positions (`quantity != 0`) | 551 |
+| Marks at audit | 761,241 |
+| Marks with `marked_at < T0` | 637,439 |
+| Marks with `marked_at >= T0` | 123,802 |
+| Successful polls since T0 | 1,165 |
+| Failed polls since T0 | 158, all `source_unavailable__at__collect_events`; next polls succeeded |
+| Old per-poll forecast (`opens × successful polls`) | 641,915 |
+| Retained history ratio vs that path | 0.193 (80.7% fewer history rows) |
+| Normalized 24-hour mark inserts | 85,030 / day |
+| Live Stage 4B file | 742,735,872 bytes |
+| Compact cutover file | 620,560,384 bytes |
+| Last recorded live size after three post-cutover polls | 621,895,680 bytes |
+| Growth vs that live size | +120,840,192 bytes in 34.94 h → 82,995,582 bytes/day |
+| Pre-maintenance live file (2026-09-02) | 1,968,054,272 bytes (now 37.7% of that size) |
+| Disk free | 7,747,817,472 bytes (above 4 GiB floor) |
+| Oldest retained mark | `2026-08-25T01:32:35Z` (inside 30 days) |
+
+30/90/365-day mark projections at the observed insert rate are 2.55 M / 7.65 M /
+31.0 M if nothing is pruned. Policy caps history at 30 days; prune remains an
+explicit maintenance command, not the poll path. Linear 365-day file growth is
+therefore not the acceptance bound.
+
+Rotating recovery: exactly three `bundle-*` directories, each with Intelligence,
+Stage 4B, and latency files plus SHA-256 sidecars and `recovery-bundle.json`.
+Latest bundle `bundle-20260904T032309827736Z` hashes matched the manifest,
+skew 0 s, `integrity=ok` for all three after copy into `/var/tmp` and
+read-only SQLite checks (Stage 4B schema 6). Temporary copies were deleted.
+Pinned migration and compact-cutover directories were unchanged. Nested
+2026-09-01 unique backups and empty leftover `*-wal`/`*-shm` next to rotating
+files were left in place.
+
+Workstation `Documents/PolySia-backups/stage4b-data-lifecycle-v1-pre` still
+holds checksum sidecars and rehearsal scripts; the full SQLite copies were not
+present at this audit. Local keep-three plus pinned checkpoints remain the
+CURRENT recovery set. Manifest `release_sha` is still null.
 
 ## Limitations
 
@@ -179,5 +235,10 @@ Do not treat this file as 24-hour storage acceptance.
   place because they are unique checksums, not proven orphans.
 - One canary poll failed on an external source blip; it was not a lease or
   restart failure.
-- Growth reduction is measured from the canary and compact cutover. Final
-  storage acceptance requires the later 24-hour check.
+- Mark-history prune is maintenance-only. Schedule it before history older
+  than 30 days accumulates (oldest mark at this audit: 2026-08-25).
+- Operator health remained `warning` for unmarked/LKG current quotes
+  (`unmarked_position_count=439`) and a settlement backlog (64). Those are
+  freshness/settlement issues, not per-poll history amplification.
+- 158 classified source-unavailable poll failures occurred in the window;
+  the worker did not restart.

@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-03 |
+| Review date | 2026-09-04 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.7` |
@@ -86,10 +86,10 @@ review; branch protection through a separate governance task.
 
 ## Audited runtime snapshot
 
-Audited as of 2026-09-03.
+Audited as of 2026-09-04.
 
 This snapshot is historical operational evidence copied from the Stage 4B
-data-lifecycle T0 closeout. It is not a claim about the host at read time.
+data-lifecycle 24-hour closeout. It is not a claim about the host at read time.
 
 | Field | Audited value |
 |---|---|
@@ -103,11 +103,12 @@ data-lifecycle T0 closeout. It is not a claim about the host at read time.
 | 3x-ui identity (unrelated) | `ab567d6d...`, started `2026-08-21T10:33:56Z` |
 
 PR `#112` made change-driven mark history and bounded recovery CURRENT.
-Helsinki migrated v5→v6, retained history for a 10-poll canary, then
-deduplicated and compacted Stage 4B offline. This is not 24-hour storage
-acceptance.
+Helsinki 24-hour storage acceptance against `stage4b-data-lifecycle-v1` is
+recorded as PASS in the lifecycle handoff (80.7% fewer history rows than the
+old per-poll path in the T0 window; rotating keep-three restore-tested).
 
-Query the host for anything newer. Full delivery, checksums, canary, and T0:
+Query the host for anything newer. Full delivery, checksums, canary, T0, and
+24-hour evidence:
 [Stage 4B data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md).
 The preceding schema-v5 ownership closeout remains
 [Stage 4B ownership cutover](../18-ai-handoffs/stage4b-data-ownership-cutover.md).
@@ -121,7 +122,7 @@ Do not duplicate these records here.
 | LIVE-004 completed round trip | [live-004 handoff](../18-ai-handoffs/polysia-live-004-final-handoff.md) |
 | Tiny Live Copy 004 cancellation | [004 diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md) |
 | Helsinki Stages 1–4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
-| Stage 4B data lifecycle T0 | [data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md) |
+| Stage 4B data lifecycle T0 and 24h | [data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md) |
 | Python 3.14 / SDK upgrade | [UPGRADE-006](../18-ai-handoffs/polysia-upgrade-006-handoff.md) |
 | Architecture visual baseline | [architecture refresh](../18-ai-handoffs/architecture-truth-refresh-2026-08-18.md) |
 | Roadmap | [roadmap](../22-roadmap/roadmap.md) |
