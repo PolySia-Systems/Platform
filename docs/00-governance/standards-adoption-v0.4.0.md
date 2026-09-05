@@ -78,7 +78,7 @@ are not imported into `PRF-BASE` or `PRF-PYS`.
 | Public command-line interface | Present | `polysia=polysia.cli:app` | Entry point, command, or option change |
 | Python-owned serialized models | Present | Domain models and explicit JSON conversion boundaries | Schema or serialization change |
 | External-effect tests by default | Absent | Test defaults, fakes, and runtime safety policy | Network-test or test-mutation change |
-| Repeatable verification environment | Present | `locks/pip-py314.lock`, `environment.yml`, and CI | Dependency-resolution change |
+| Repeatable verification environment | Present | `locks/requirements-dev-py314.txt`, `environment.yml`, and CI | Dependency-resolution change |
 | Environment vocabulary | Present | `APP_ENV`, CI, deployment examples, and operating charter | Environment token or deployment-class change |
 
 ## Conditional Applicability
@@ -168,6 +168,7 @@ None. No baseline, grandfathered finding, or approved exception remains.
 - [`standards/adoption.toml`](../../standards/adoption.toml)
 - [`standards/conformance.toml`](../../standards/conformance.toml)
 - [Final conformance review](standards-conformance-v0.4.0.md)
+- [Historical v0.1.1 adoption](standards-adoption-v0.1.1.md)
 - [Project naming pack](naming-pack.md)
 - [Project status](PROJECT_STATUS.md)
 - [Remediation and rollback](../10-operations/standards-v0.1.1-remediation.md)

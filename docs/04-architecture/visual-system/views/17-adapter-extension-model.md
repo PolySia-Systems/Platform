@@ -5,7 +5,8 @@
 - **Scope:** Domain contracts, application ports, target registry/capability discovery, adapter responsibilities, Polymarket current implementation, and future adapter categories.
 - **Architecture status:** MIXED
 - **Audience:** Integration developers, architects, owner, risk reviewers, and roadmap planners.
-- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
+- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
+- **Reviewed:** 2026-09-05
 
 ## Mermaid diagram
 

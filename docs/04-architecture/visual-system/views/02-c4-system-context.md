@@ -5,7 +5,8 @@
 - **Scope:** C4 Person and Software System level only.
 - **Architecture status:** MIXED
 - **Audience:** Non-technical owner, developers, risk reviewers, and architecture reviewers.
-- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
+- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
+- **Reviewed:** 2026-09-05
 
 ## Mermaid diagram
 

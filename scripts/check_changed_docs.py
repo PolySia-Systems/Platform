@@ -31,6 +31,9 @@ VIEW_STATUS = re.compile(r"(?m)^- \*\*Architecture status:\*\* (?P<value>[A-Z]+)
 VIEW_SOURCE_COMMIT = re.compile(
     r"(?m)^- \*\*Source commit:\*\* `(?P<value>[0-9a-f]{40})`$"
 )
+VIEW_REVIEW_DATE = re.compile(
+    r"(?m)^- \*\*Reviewed:\*\* (?P<value>\d{4}-\d{2}-\d{2})$"
+)
 MERMAID_FENCE = re.compile(
     r"(?ms)^```mermaid[ \t]*\r?\n(?P<body>.*?)\r?\n```[ \t]*$"
 )
@@ -39,6 +42,15 @@ ARCHITECTURE_STATUS_MARKER = re.compile(
 )
 BACKTICK_PATH = re.compile(r"`(?P<value>[^`]+)`")
 README_PHASE_HISTORY = re.compile(r"\bPhase\s+\d+(?:\.\d+)?\b", re.IGNORECASE)
+ALL_WALLET_STAGES_EPHEMERAL = re.compile(
+    r"(?im)^.*ephemeral.*stages?\s+1[-–]4B.*$"
+)
+CURRENT_STATUS = re.compile(r"(?m)^Status:\s*CURRENT\b")
+ACTIVE_STANDARDS_ADOPTION = Path("docs/00-governance/standards-adoption-v0.4.0.md")
+SCHEMA_V5_OWNERSHIP_EVIDENCE = Path(
+    "docs/18-ai-handoffs/stage4b-data-ownership-cutover.md"
+)
+RETIRED_PIP_LOCK = "locks/pip-py314.lock"
 OBSOLETE_TRACKED_PATHS = frozenset(
     {
         Path("README_SECRETS.md"),
@@ -227,6 +239,23 @@ def _validate_repository_hygiene(
             errors.append(f"current documentation path is missing: {relative.as_posix()}")
         else:
             errors.extend(_validate_links(repository, markdown))
+
+    adoption = repository / ACTIVE_STANDARDS_ADOPTION
+    if adoption.exists() and RETIRED_PIP_LOCK in adoption.read_text(encoding="utf-8"):
+        errors.append(
+            f"{ACTIVE_STANDARDS_ADOPTION.as_posix()}: active adoption record "
+            f"references retired dependency lock {RETIRED_PIP_LOCK}"
+        )
+
+    schema_v5 = repository / SCHEMA_V5_OWNERSHIP_EVIDENCE
+    if schema_v5.exists() and CURRENT_STATUS.search(
+        schema_v5.read_text(encoding="utf-8")
+    ):
+        errors.append(
+            f"{SCHEMA_V5_OWNERSHIP_EVIDENCE.as_posix()}: schema-v5 evidence "
+            "must not claim CURRENT authority"
+        )
+
     errors.extend(_validate_project_status(repository))
     return errors
 
@@ -342,6 +371,15 @@ def _validate_traceability(repository: Path, register: Path) -> list[str]:
     return errors
 
 
+def _validate_current_deployment_topology(source_text: str) -> list[str]:
+    if ALL_WALLET_STAGES_EPHEMERAL.search(source_text):
+        return [
+            "Deployment View 13 must not describe Wallet Intelligence "
+            "Stages 1-4B as one ephemeral unit"
+        ]
+    return []
+
+
 def _validate_architecture_docs(repository: Path) -> list[str]:
     errors: list[str] = []
     root = repository / ARCHITECTURE_ROOT
@@ -419,6 +457,7 @@ def _validate_architecture_docs(repository: Path) -> list[str]:
         diagram_id = _match_value(VIEW_DIAGRAM_ID, view_text)
         status = _match_value(VIEW_STATUS, view_text)
         source_commit = _match_value(VIEW_SOURCE_COMMIT, view_text)
+        view_review_date = _match_value(VIEW_REVIEW_DATE, view_text)
         if diagram_id != expected_id:
             errors.append(f"{view.relative_to(repository)}: expected diagram ID {expected_id}")
         elif diagram_id in seen_ids:
@@ -431,6 +470,11 @@ def _validate_architecture_docs(repository: Path) -> list[str]:
             errors.append(
                 f"{view.relative_to(repository)}: source commit does not match baseline {baseline}"
             )
+        if review_date is not None and view_review_date != review_date:
+            errors.append(
+                f"{view.relative_to(repository)}: review date does not match corpus "
+                f"review date {review_date}"
+            )
         mermaid = MERMAID_FENCE.search(view_text)
         if mermaid is None:
             errors.append(f"{view.relative_to(repository)}: Mermaid diagram fence is missing")
@@ -440,6 +484,8 @@ def _validate_architecture_docs(repository: Path) -> list[str]:
             errors.append(
                 f"{source.relative_to(repository)}: architecture status marker is missing"
             )
+        if stem == "13-current-deployment-view":
+            errors.extend(_validate_current_deployment_topology(source_text))
 
         row = index_rows.get(expected_id)
         if row is None:

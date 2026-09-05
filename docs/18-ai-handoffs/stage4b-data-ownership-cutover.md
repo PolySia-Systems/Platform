@@ -1,8 +1,10 @@
 # Stage 4B data-ownership cutover and legacy retirement
 
-Status: CURRENT. Stage 4B schema v5 is deployed on
-`Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. This handoff supersedes the
-schema-v4 operating instructions; those documents remain historical evidence.
+Status: HISTORICAL. This is the preceding Stage 4B schema-v5 ownership and
+recovery record. The current schema-v6 storage-lifecycle evidence is
+[`stage4b-data-lifecycle-v1.md`](stage4b-data-lifecycle-v1.md). This handoff
+superseded the schema-v4 operating instructions; those documents remain
+historical evidence.
 
 ## Objective and result
 

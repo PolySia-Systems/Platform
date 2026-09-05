@@ -1,4 +1,6 @@
-.PHONY: install fast test lint typecheck standards security dependency-audit build sbom check health readiness runbook release-manifest deploy-check final-handoff dependency-locks-check dependency-locks
+.PHONY: install fast test lint typecheck standards security dependency-audit build sbom check coherence health readiness runbook release-manifest deploy-check final-handoff dependency-locks-check dependency-locks
+
+COHERENCE_BASE ?= HEAD^
 
 install:
 	python -m pip install -e ".[dev]"
@@ -39,6 +41,13 @@ dependency-locks:
 check: lint typecheck standards test security
 	python -m pip check
 	python scripts/dependency_locks.py check
+
+coherence:
+	python scripts/check_changed_docs.py --base "$(COHERENCE_BASE)" --head HEAD
+	python -m pytest -q tests/architecture tests/unit/scripts/test_check_changed_docs.py
+	python scripts/validate_standards.py --mode full
+	python scripts/dependency_locks.py check
+	python -m polysia.security.secret_scan
 
 health:
 	python -m polysia.cli system health

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.check_changed_docs import (
     _validate_architecture_docs,
+    _validate_current_deployment_topology,
     _validate_project_status,
     _validate_repository_hygiene,
 )
@@ -63,6 +64,7 @@ def _architecture_repository(tmp_path: Path) -> Path:
                 "- **Diagram ID:** PSA-ARCH-01",
                 "- **Architecture status:** CURRENT",
                 f"- **Source commit:** `{BASELINE}`",
+                "- **Reviewed:** 2026-08-18",
                 "",
                 "[Canonical source](../sources/01-example.mmd)",
                 "",
@@ -142,7 +144,9 @@ def test_architecture_validator_reports_source_view_and_baseline_drift(
     view = repository / "docs/04-architecture/visual-system/views/01-example.md"
     text = view.read_text(encoding="utf-8")
     view.write_text(
-        text.replace(BASELINE, "b" * 40).replace("Example [CURRENT]", "Stale [CURRENT]"),
+        text.replace(BASELINE, "b" * 40)
+        .replace("- **Reviewed:** 2026-08-18", "- **Reviewed:** 2026-08-19")
+        .replace("Example [CURRENT]", "Stale [CURRENT]"),
         encoding="utf-8",
     )
     svg = repository / "docs/04-architecture/visual-system/rendered/01-example.svg"
@@ -151,6 +155,7 @@ def test_architecture_validator_reports_source_view_and_baseline_drift(
     errors = _validate_architecture_docs(repository)
 
     assert any("source commit does not match baseline" in error for error in errors)
+    assert any("review date does not match corpus" in error for error in errors)
     assert any("Mermaid view is not synchronized" in error for error in errors)
     assert any("rendered SVG is malformed" in error for error in errors)
 
@@ -202,6 +207,32 @@ def test_repository_hygiene_reports_obsolete_phase_and_temporary_paths(
     assert any("temporary or generated path is tracked" in error for error in errors)
     assert any("numeric Phase-history language" in error for error in errors)
     assert any("lacks required current-document link" in error for error in errors)
+
+
+def test_repository_hygiene_rejects_proven_current_truth_drift(tmp_path: Path) -> None:
+    repository, tracked_paths = _current_docs_repository(tmp_path)
+    adoption = Path("docs/00-governance/standards-adoption-v0.4.0.md")
+    schema_v5 = Path("docs/18-ai-handoffs/stage4b-data-ownership-cutover.md")
+    _write(repository / adoption, "Use `locks/pip-py314.lock`.\n")
+    _write(repository / schema_v5, "Status: CURRENT. Schema v5.\n")
+    tracked_paths.update({adoption, schema_v5})
+
+    errors = _validate_repository_hygiene(
+        repository,
+        tracked_paths=tracked_paths,
+    )
+
+    assert any("references retired dependency lock" in error for error in errors)
+    assert any("schema-v5 evidence must not claim CURRENT" in error for error in errors)
+
+
+def test_current_deployment_topology_rejects_all_stages_as_ephemeral() -> None:
+    source = 'WalletJobs["Ephemeral jobs\\nStages 1-4B; DATA_ONLY"]'
+
+    assert _validate_current_deployment_topology(source) == [
+        "Deployment View 13 must not describe Wallet Intelligence "
+        "Stages 1-4B as one ephemeral unit"
+    ]
 
 
 def test_project_status_accepts_dated_audited_snapshot(tmp_path: Path) -> None:
