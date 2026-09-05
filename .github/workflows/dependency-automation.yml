@@ -108,7 +108,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: polysia-lock-sync
           path: ${{ runner.temp }}/lock-sync
@@ -171,7 +171,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - uses: dependabot/fetch-metadata@v2
+      - uses: dependabot/fetch-metadata@v3
         id: metadata
         with:
           github-token: ${{ github.token }}
@@ -261,7 +261,7 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: polysia-scheduled-locks
           path: ${{ runner.temp }}/scheduled-locks
