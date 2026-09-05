@@ -14,8 +14,6 @@ because that exact path is an immutable compliance artifact.
 - [`stage4b-data-lifecycle-v1.md`](stage4b-data-lifecycle-v1.md)
   is the current Stage 4B storage-lifecycle evidence: schema v6, compact
   cutover, T0, and 24-hour storage acceptance.
-- [`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md)
-  remains the preceding standalone schema-v5 ownership and recovery record.
 - [`polysia-finland-wallet-intelligence-deployment.md`](polysia-finland-wallet-intelligence-deployment.md)
   records the Helsinki DATA_ONLY Stages 1–4 deployment, backup/restore,
   rollback, and `3x-ui` preservation evidence.
@@ -27,6 +25,8 @@ These files do not authorize Live trading or another external mutation.
 Still retained for provenance. Do not treat them as current operating
 instructions.
 
+- [`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md)
+  is the preceding standalone schema-v5 ownership and recovery record.
 - [`cs-lease-recovery-telemetry-isolation.md`](cs-lease-recovery-telemetry-isolation.md)
 - [`wallet-intelligence-stage4b-v4-reliability.md`](wallet-intelligence-stage4b-v4-reliability.md)
 - [`wallet-intelligence-stage4b-continuous-shadow.md`](wallet-intelligence-stage4b-continuous-shadow.md)

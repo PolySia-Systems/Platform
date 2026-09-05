@@ -5,7 +5,8 @@
 - **Scope:** Target logical containers for multi-strategy, portfolio, OMS, adapter discovery, generalized state, and operator control.
 - **Architecture status:** TARGET
 - **Audience:** Owner, architects, senior developers, risk reviewers, and roadmap reviewers.
-- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
+- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
+- **Reviewed:** 2026-09-05
 
 ## Mermaid diagram
 

@@ -5,7 +5,8 @@
 - **Scope:** Risk context/limits, kill switch, reconciliation safety pause, approval, and guarded live execution controls.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, risk reviewers, execution developers, security reviewers, and operators.
-- **Source commit:** `ac104c708100bf9fff7e632acefd89bf90b8e509`
+- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
+- **Reviewed:** 2026-09-05
 
 ## Mermaid diagram
 

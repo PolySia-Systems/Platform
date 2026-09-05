@@ -1,9 +1,13 @@
 # Standards Adoption — PolySia Platform
 
+Status: HISTORICAL. This adoption was superseded by the current
+[Standards v0.4.0 adoption](standards-adoption-v0.4.0.md) and is retained as
+immutable-version provenance.
+
 | Field | Value |
 |---|---|
 | Record ID | `ADP-PLATFORM-001` |
-| Record status | Approved; active and fully enforced |
+| Record status | Superseded by v0.4.0; retained as historical evidence |
 | Authority | Conformant consumer adoption for the selected v0.1.1 profiles |
 | Consumer identity | `PolySia-Systems/Platform` |
 | Accountable Consumer Owner | PolySia Platform Owner |

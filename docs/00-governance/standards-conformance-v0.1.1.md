@@ -1,5 +1,9 @@
 # Standards v0.1.1 Final Conformance Review
 
+Status: HISTORICAL. This review remains evidence for the superseded v0.1.1
+adoption. Current conformance is recorded in
+[Standards v0.4.0 Final Conformance Review](standards-conformance-v0.4.0.md).
+
 ## Decision
 
 PolySia Platform conforms to the exact immutable

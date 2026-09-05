@@ -2,9 +2,11 @@
 
 ## Status
 
-HISTORICAL. This is the accepted schema-v4 reliability record; current
-operation and recovery use the standalone schema-v5 store documented in
-[`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md).
+HISTORICAL. This is the accepted schema-v4 reliability record. Its successor
+schema-v5 ownership record is
+[`stage4b-data-ownership-cutover.md`](stage4b-data-ownership-cutover.md); current
+schema-v6 lifecycle evidence is
+[`stage4b-data-lifecycle-v1.md`](stage4b-data-lifecycle-v1.md).
 PR `#101` merged as `41221e7edef56faeccfe5783a22415956c7ffddf` and was deployed on
 `Hetzner-Finland-Helsinki-01` in DATA_ONLY/Shadow. Reporting isolation from PR
 `#94`, the Compose lifecycle from PR `#96`, and contention hardening from PRs
