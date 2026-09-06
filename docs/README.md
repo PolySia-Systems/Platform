@@ -10,8 +10,10 @@ first venue adapter, not the product identity.
 
 **What exists today:** one Python modular monolith with independent Risk,
 paper/shadow execution, reconciliation, a SHADOW-only Control Kernel slice,
-and DATA_ONLY Wallet Intelligence Stages 1–4B. Live trading stays disabled
-by default. No new Live authorization exists.
+and DATA_ONLY Wallet Intelligence Stages 1–4B. Stage 4B accounting fails closed
+before publication; Live-capable paths require verified state and an exact
+Risk-approved request. Live trading stays disabled by default. No new Live
+authorization exists.
 
 **What is not implemented:** generalized OMS, capital allocation, execution
 router, adapter registry, extra venues, operator web UI, and production Live

@@ -5,8 +5,8 @@
 - **Scope:** Developer workstation, CI, controlled host, runtime safety, secrets, SQLite state, monitoring, local backup, target off-host recovery and alerts, and optional later HA.
 - **Architecture status:** MIXED
 - **Audience:** Owner, architects, operations engineers, security reviewers, and release planners.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 
 ## Mermaid diagram
 

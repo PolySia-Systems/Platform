@@ -11,6 +11,13 @@ flowchart LR
   Recover["Correct state, restore readability, or rollback\n[CURRENT operational action]"]:::current
   Audit["Reports, audit evidence, monitoring\n[CURRENT]"]:::observability
 
+  subgraph SHADOW["Stage 4B accounting publication [CURRENT]"]
+    Tentative["Tentative portfolio, positions, ledger\ninside one transaction"]:::portfolio
+    Invariants["Accounting + publication invariants"]:::risk
+    Published["COMMIT + success + watermark"]:::safe
+    AccountingBlocked["ROLLBACK + failed evidence\naccounting_blocked + controlled stop"]:::danger
+  end
+
   Internal --> Compare
   External --> Compare
   Compare --> Events
@@ -25,6 +32,13 @@ flowchart LR
   Ready --> Audit
   Warning --> Audit
   Blocked --> Audit
+  Tentative --> Invariants
+  Invariants -->|pass| Published
+  Invariants -->|fail| AccountingBlocked
+  Published --> Audit
+  AccountingBlocked --> Audit
+  AccountingBlocked --> Operator
+  Recover -->|explicit repair / verified restore| Invariants
 
   subgraph LEGEND["Legend"]
     L1["CURRENT"]:::current

@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-04 |
+| Review date | 2026-09-06 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.7` |
@@ -49,9 +49,12 @@ CURRENT capabilities:
 - Public Polymarket discovery, normalized market data, Decimal books, and a
   strategy framework with a versioned Strategy Registry.
 - Independent pre-trade Risk, paper/shadow execution, positions, P&L, SQLite
-  persistence, and fail-closed reconciliation.
+  persistence, and fail-closed reconciliation. Stage 4B accounting and
+  duplicate-publication invariants now block commit and watermark progression.
 - Guarded authenticated reads and bounded Live tooling that stays dry-run by
-  default.
+  default. Live submission requires fresh verified account evidence and the
+  exact immutable request approved by Risk; generic `live limit-order` is
+  preview-only.
 - A SHADOW-only Control Kernel slice for `stale-price@0.1.0`.
 - Wallet Intelligence Stages 1–4B as DATA_ONLY research/Shadow systems. They
   are not profitability evidence and do not authorize trading.
@@ -67,22 +70,25 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-**Next task:** observe the deployed DATA_ONLY/Shadow pipeline for data
-quality, stability, and copyability. Do not promote modeled P&L into Live
-authority.
+**Next task:** continue evidence-based DATA_ONLY/Shadow research and decide
+separately whether the disposable Helsinki test deployment should be updated or
+retired. Do not promote modeled P&L into Live authority.
 
 Blockers and limitations:
 
 - Encrypted off-host backups and external alert delivery are unfinished.
 - Branch-protection policy remains governance debt.
+- Risk/Execution and Stage 4B accounting hardening are merged in Git but were
+  not deployed to the older audited Helsinki runtime.
 - One bounded profitable LIVE-004 round trip is statistically meaningless.
 - Modeled Stage 4B P&L remains negative and is not a promotion decision.
 - The Helsinki host is suitable for DATA_ONLY, paper, and shadow validation.
   It is not production readiness.
 
-Next milestones: scheduled observation plus alerts and off-host backup;
-reproducible historical data and fee-aware backtests before any new Tiny-Live
-review; branch protection through a separate governance task.
+Next milestones: decide the test-host lifecycle; establish alerts and off-host
+backup where an operational host is retained; acquire reproducible historical
+data and run fee-aware backtests before any new Tiny-Live review; handle branch
+protection through a separate governance task.
 
 ## Audited runtime snapshot
 

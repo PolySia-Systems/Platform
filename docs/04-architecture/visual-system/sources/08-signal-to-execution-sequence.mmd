@@ -6,9 +6,10 @@ sequenceDiagram
   participant FP as Feature Pipeline [CURRENT]
   participant S as Strategy [CURRENT]
   participant PA as Portfolio / Allocator [TARGET]
+  participant VS as Verified Live State [CURRENT bounded]
   participant R as Risk Engine [CURRENT]
   participant OMS as OMS / Transaction Manager [TARGET]
-  participant EP as Execution Port [TARGET over CURRENT]
+  participant EP as Execution Boundary [CURRENT bounded]
   participant PM as Polymarket Adapter [CURRENT]
   participant V as Venue [EXTERNAL]
   participant LP as Ledger / Positions [CURRENT]
@@ -20,30 +21,36 @@ sequenceDiagram
   EB-->>OB: book snapshot or update
   OB-->>FP: Decimal book state
   FP-->>S: read-only features and context
-  S->>PA: pre-risk OrderIntent
-  alt duplicate, conflict, or no capital [TARGET]
-    PA-->>MON: declined intent with reason
-  else allocatable intent
-    PA->>R: intent plus portfolio context
-    alt risk rejects or kill switch active
-      R-->>S: rejection / reduction reason
-      R-->>MON: risk decision
-    else risk approves
-      R->>OMS: ApprovedOrderIntent
-      OMS->>EP: idempotent execution command
-      EP->>PM: venue-neutral request
-      PM->>V: guarded API request
-      alt venue rejects or times out
-        V-->>PM: rejection / uncertain state
-        PM-->>OMS: error or unknown response
-        OMS->>RC: reconciliation required
-      else venue accepts and fills
-        V-->>PM: order and fill events
-        PM-->>OMS: normalized execution result
-        OMS->>LP: order state and fill
-        LP->>RC: internal expected state
-        RC-->>MON: ready, warning, or blocked
-      end
+  S->>R: pre-risk intent or canonical request
+  opt portfolio allocation / conflict resolution [TARGET]
+    S->>PA: candidate intent
+    PA->>R: allocated intent plus portfolio context
+  end
+  opt guarded Live path [CURRENT bounded]
+    PM-->>VS: authenticated read-only account evidence
+    VS-->>R: fresh VerifiedLiveRiskSnapshot
+  end
+  alt risk rejects, state is unknown, or kill switch is active
+    R-->>S: rejection / reduction reason
+    R-->>MON: risk decision
+  else risk approves exact request
+    R->>EP: immutable ApprovedOrder / ApprovedOrderIntent
+    opt transaction management [TARGET]
+      EP->>OMS: idempotent execution command
+      OMS-->>EP: authorized dispatch
+    end
+    EP->>PM: exact approved venue request
+    PM->>V: guarded API request
+    alt venue rejects or times out
+      V-->>PM: rejection / uncertain state
+      PM-->>EP: error or unknown response
+      EP->>RC: reconciliation required
+    else venue accepts and fills
+      V-->>PM: order and fill events
+      PM-->>EP: normalized execution result
+      EP->>LP: order state and fill
+      LP->>RC: internal expected state
+      RC-->>MON: ready, warning, or blocked
     end
   end
   Note over S,V: No direct Strategy-to-Venue call is permitted

@@ -6,9 +6,9 @@ Mermaid for canonical diagrams-as-code.
 
 ## Authority and state
 
-- Baseline Git commit: `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
+- Baseline Git commit: `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
 - Original full-corpus generation baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
-- Review date: 2026-09-05
+- Review date: 2026-09-06
 - Architecture model: modular monolith with ports and adapters
 - First venue adapter: Polymarket
 

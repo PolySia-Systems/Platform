@@ -5,8 +5,8 @@
 - **Scope:** Logical containers inside one deployable Python package/process; these are not independently deployed services.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, owner, maintainers, and architecture reviewers.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 
 ## Mermaid diagram
 
