@@ -71,6 +71,29 @@ class FakeTinyAdapter:
         self.open_order_calls += 1
         return []
 
+    async def list_positions(
+        self,
+        *,
+        market: tuple[str, ...] | None = None,
+        size_threshold: float | None = None,
+    ) -> list[object]:
+        return []
+
+    async def list_account_trades(
+        self,
+        *,
+        token_id: str | None = None,
+        market: str | None = None,
+    ) -> list[object]:
+        return []
+
+    async def get_order_book(self, *, token_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            timestamp=datetime.now(UTC),
+            condition_id="condition-1",
+            market="condition-1",
+        )
+
     async def place_market_order(self, **kwargs: Any) -> dict[str, object]:
         self.submit_calls.append(kwargs)
         return self.response
@@ -129,6 +152,7 @@ def config(
         dry_run=dry_run,
         acknowledgement=acknowledgement,
         market_slug="btc-updown-5m-test",
+        condition_id="condition-1",
         project_root=tmp_path,
     )
 

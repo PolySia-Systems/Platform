@@ -19,10 +19,17 @@ from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapterError,
 )
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.canonical_order import canonicalize_market_order
 from polysia.execution.intents import OrderIntent
+from polysia.execution.live_broker import LiveBrokerError
+from polysia.execution.live_market_approval import approve_live_market_order
 from polysia.execution.manual_intervention_renderers import (
     render_manual_intervention_live_test,
     render_manual_intervention_live_test_markdown,
+)
+from polysia.execution.verified_live_state import (
+    account_source_id_from_identity,
+    collect_verified_live_risk_snapshot,
 )
 from polysia.reconciliation.manager import ReconciliationManager
 from polysia.reconciliation.models import (
@@ -35,7 +42,8 @@ from polysia.reconciliation.models import (
     ReconciliationStatus,
 )
 from polysia.reconciliation.safety_pause import KillSwitchSafetyPause
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskEngine
+from polysia.risk.evidence import LiveStateStaleError, LiveStateUnavailableError
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
 
@@ -108,6 +116,17 @@ class ManualInterventionAdapter(Protocol):
         size_threshold: float | None = None,
     ) -> list[Any]:
         """Read positions only."""
+
+    async def list_account_trades(
+        self,
+        *,
+        token_id: str | None = None,
+        market: str | None = None,
+    ) -> list[Any]:
+        """Read account trades for verified daily P&L."""
+
+    async def get_order_book(self, *, token_id: str) -> Any:
+        """Read the CLOB book used for market-data observation time."""
 
     async def place_market_order(
         self,
@@ -218,6 +237,8 @@ class ManualInterventionOrderPlan:
     risk_size: Decimal
     amount: Decimal | None
     shares: Decimal | None
+    max_price: Decimal | None
+    min_price: Decimal | None
 
 
 class OneManualInterventionOrderAttempt:
@@ -243,6 +264,8 @@ class OneManualInterventionOrderAttempt:
             side=cast(OrderSide, side),
             amount=plan.amount,
             shares=plan.shares,
+            max_price=plan.max_price,
+            min_price=plan.min_price,
             order_type=cast(MarketOrderType, order_type),
         )
 
@@ -296,38 +319,64 @@ async def run_manual_intervention_live_test(
             )
             status = await active_geoblock.check()
             _assert_geoblock_allows(status)
-            open_orders_count = len(await active_adapter.get_open_orders(token_id=config.token_id))
-            risk_decision = active_risk_engine.evaluate(
-                OrderIntent(
-                    strategy_id="operator-manual-intervention-live-test",
-                    token_id=config.token_id,
-                    side=config.side,
-                    price=plan.risk_price,
-                    size=plan.risk_size,
-                    reason="manual intervention live connectivity test",
-                    confidence=Decimal("1"),
-                ),
-                RiskContext(
-                    trading_mode=TradingMode.LIVE,
-                    live_trading_enabled=config.settings.live_trading_enabled,
-                    current_position=Decimal("0"),
-                    current_market_position=Decimal("0"),
-                    daily_pnl=Decimal("0"),
-                    open_orders_count=open_orders_count,
-                    market_data_age_ms=0,
-                ),
-            )
-            if not risk_decision.approved:
+            if not config.condition_id:
                 raise ManualInterventionLiveTestError(
-                    f"risk engine blocked order: {risk_decision.reason}"
+                    "verified live state requires market identity"
                 )
+            observed_at = clock()
+            order_book = await active_adapter.get_order_book(token_id=config.token_id)
+            verified_state = await collect_verified_live_risk_snapshot(
+                active_adapter,
+                token_id=config.token_id,
+                market_id=config.condition_id,
+                account_source_id=account_source_id_from_identity(active_adapter.identity()),
+                market_data_observed_at=_require_book_timestamp(order_book),
+                observed_at=observed_at,
+            )
+            live_context = verified_state.to_risk_context(
+                trading_mode=TradingMode.LIVE,
+                live_trading_enabled=config.settings.live_trading_enabled,
+                now=observed_at,
+                max_stale_data_age_ms=active_risk_engine.limits.max_stale_data_age_ms,
+            )
+            intent = OrderIntent(
+                strategy_id="operator-manual-intervention-live-test",
+                token_id=config.token_id,
+                side=config.side,
+                price=plan.risk_price,
+                size=plan.risk_size,
+                reason="manual intervention live connectivity test",
+                confidence=Decimal("1"),
+            )
+            canonical = canonicalize_market_order(
+                intent,
+                amount=plan.amount,
+                shares=plan.shares,
+                max_price=plan.max_price,
+                min_price=plan.min_price,
+                order_type=config.order_type,
+            )
+            approved = approve_live_market_order(
+                active_risk_engine,
+                intent,
+                canonical,
+                live_context,
+                approved_at=observed_at,
+            )
 
             response = await attempt_guard.submit_once(
                 active_adapter,
-                token_id=config.token_id,
-                side=config.side,
-                plan=plan,
-                order_type=config.order_type,
+                token_id=approved.request.token_id,
+                side=cast(ManualInterventionSide, approved.request.side),
+                plan=ManualInterventionOrderPlan(
+                    risk_price=plan.risk_price,
+                    risk_size=approved.approved_exposure,
+                    amount=approved.request.amount,
+                    shares=approved.request.shares,
+                    max_price=approved.request.max_price,
+                    min_price=approved.request.min_price,
+                ),
+                order_type=cast(ManualInterventionOrderType, approved.request.order_type),
             )
             submitted_at = clock()
             response_payload = _model_or_mapping_to_dict(response)
@@ -354,6 +403,9 @@ async def run_manual_intervention_live_test(
                 warnings.append("Manual intervention was not detected within the polling window.")
     except (
         ManualInterventionLiveTestError,
+        LiveBrokerError,
+        LiveStateUnavailableError,
+        LiveStateStaleError,
         PolymarketSecureAdapterError,
         OSError,
         subprocess.SubprocessError,
@@ -620,12 +672,32 @@ def _build_order_plan(
 ) -> ManualInterventionOrderPlan:
     risk_price = Decimal("1")
     risk_size = config.max_notional
+    if config.side == "BUY":
+        return ManualInterventionOrderPlan(
+            amount=config.max_notional,
+            risk_price=risk_price,
+            risk_size=risk_size,
+            shares=None,
+            max_price=risk_price,
+            min_price=None,
+        )
     return ManualInterventionOrderPlan(
-        amount=config.max_notional,
+        amount=None,
         risk_price=risk_price,
         risk_size=risk_size,
-        shares=None,
+        shares=risk_size,
+        max_price=None,
+        min_price=risk_price,
     )
+
+
+def _require_book_timestamp(order_book: Any) -> datetime:
+    raw = getattr(order_book, "timestamp", None)
+    if raw is None and isinstance(order_book, dict):
+        raw = order_book.get("timestamp")
+    if isinstance(raw, datetime) and raw.tzinfo is not None:
+        return raw
+    raise ManualInterventionLiveTestError("market-data observation time is unavailable")
 
 
 def _manual_intervention_risk_engine(

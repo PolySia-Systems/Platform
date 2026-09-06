@@ -1004,31 +1004,30 @@ async def test_order_manager_claim_is_written_before_adapter_submission(tmp_path
             market_id="market",
             clock=lambda: NOW,
         )
+        from polysia.execution.canonical_order import bind_approved_order, canonicalize_market_order
         from polysia.execution.intents import OrderIntent
 
-        await manager.submit_entry(
-            OrderIntent(
-                strategy_id="strategy",
-                token_id="token-up",
-                side="BUY",
-                price=Decimal("0.60"),
-                size=Decimal("1"),
-                reason="test",
-                confidence=Decimal("1"),
-            ),
-            all_in_cost=Decimal("0.60"),
+        intent = OrderIntent(
+            strategy_id="strategy",
+            token_id="token-up",
+            side="BUY",
+            price=Decimal("0.60"),
+            size=Decimal("1"),
+            reason="test",
+            confidence=Decimal("1"),
         )
+        approved = bind_approved_order(
+            canonicalize_market_order(
+                intent,
+                amount=Decimal("0.60"),
+                max_price=Decimal("0.60"),
+                order_type="FAK",
+            ),
+            adjusted_size=Decimal("1"),
+            risk_reason="approved",
+            approved_at=NOW,
+        )
+        await manager.submit_entry(approved)
         assert attempts.get("auth") is not None
         with pytest.raises(TinyLiveRoundTripError, match="one-entry-attempt"):
-            await manager.submit_entry(
-                OrderIntent(
-                    strategy_id="strategy",
-                    token_id="token-up",
-                    side="BUY",
-                    price=Decimal("0.60"),
-                    size=Decimal("1"),
-                    reason="test",
-                    confidence=Decimal("1"),
-                ),
-                all_in_cost=Decimal("0.60"),
-            )
+            await manager.submit_entry(approved)

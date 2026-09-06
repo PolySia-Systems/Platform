@@ -69,6 +69,7 @@ from polysia.monitoring.tiny_live_round_trip_report import write_tiny_live_round
 from polysia.risk.checks import (
     RiskContext,
     RiskEngine,
+    RiskEvidenceKind,
 )
 from polysia.risk.limits import RiskLimits
 
@@ -708,11 +709,20 @@ def live_limit_order(
         typer.Option("--i-understand-this-places-real-orders"),
     ] = False,
 ) -> None:
-    """Place or preview one tiny post-only live limit order; defaults to dry-run."""
+    """Preview one tiny post-only live limit order. Submission is not authorized.
+
+    Operator-provided position and P&L values are simulation assumptions and
+    cannot authorize a Live submission.
+    """
     settings = AppSettings()
     configure_logging(settings)
 
     try:
+        if not dry_run:
+            raise LiveBrokerError(
+                "generic live limit-order is preview-only; operator-provided "
+                "position and P&L values are assumptions and cannot authorize submission"
+            )
         payload = asyncio.run(
             _live_limit_order(
                 settings=settings,
@@ -879,6 +889,11 @@ async def _live_limit_order(
     market_data_age_ms: int,
     i_understand_this_places_real_orders: bool,
 ) -> dict[str, object]:
+    if not dry_run:
+        raise LiveBrokerError(
+            "generic live limit-order is preview-only; operator-provided "
+            "position and P&L values are assumptions and cannot authorize submission"
+        )
     cli_support.apply_secure_env_from_settings(settings)
     adapter = PolymarketSecureAdapter()
     broker = _build_tiny_live_order_broker(settings=settings, adapter=adapter)
@@ -900,6 +915,7 @@ async def _live_limit_order(
                 daily_pnl=daily_pnl,
                 open_orders_count=open_orders_count,
                 market_data_age_ms=market_data_age_ms,
+                evidence_kind=RiskEvidenceKind.ASSUMED,
             ),
             dry_run=dry_run,
             post_only=True,

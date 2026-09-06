@@ -429,49 +429,25 @@ async def test_live_limit_order_submit_uses_allowlisted_fake_adapter(monkeypatch
         POLYMARKET_LIVE_MAX_ORDER_NOTIONAL="1",
     )
 
-    payload = await _live_limit_order(
-        settings=settings,
-        token_id="token-1",
-        side="SELL",
-        price=Decimal("0.50"),
-        size=Decimal("1"),
-        dry_run=False,
-        strategy_id="operator-tiny-live",
-        reason="unit test",
-        current_position=Decimal("1"),
-        current_market_position=Decimal("1"),
-        daily_pnl=Decimal("0"),
-        open_orders_count=0,
-        market_data_age_ms=0,
-        i_understand_this_places_real_orders=True,
-    )
+    with pytest.raises(LiveBrokerError, match="preview-only"):
+        await _live_limit_order(
+            settings=settings,
+            token_id="token-1",
+            side="SELL",
+            price=Decimal("0.50"),
+            size=Decimal("1"),
+            dry_run=False,
+            strategy_id="operator-tiny-live",
+            reason="unit test",
+            current_position=Decimal("1"),
+            current_market_position=Decimal("1"),
+            daily_pnl=Decimal("0"),
+            open_orders_count=0,
+            market_data_age_ms=0,
+            i_understand_this_places_real_orders=True,
+        )
 
-    adapter = FakeSecureAdapter.instances[-1]
-    assert payload["submitted"] is True
-    assert payload["dry_run"] is False
-    assert payload["response"] == {
-        "ok": True,
-        "order_id": "order-1",
-        "status": "live",
-        "making_amount": "0.5",
-        "taking_amount": "1",
-        "trade_count": 0,
-        "transaction_count": 1,
-    }
-    assert "0xhash" not in str(payload)
-    assert adapter.connected is True
-    assert adapter.closed is True
-    assert adapter.limit_order_calls == [
-        {
-            "token_id": "token-1",
-            "side": "SELL",
-            "price": Decimal("0.50"),
-            "size": Decimal("1"),
-            "post_only": True,
-            "expiration": None,
-            "builder_code": None,
-        }
-    ]
+    assert FakeSecureAdapter.instances == []
 
 
 @pytest.mark.asyncio

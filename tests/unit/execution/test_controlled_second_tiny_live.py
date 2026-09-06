@@ -63,6 +63,29 @@ class FakeControlledTinyAdapter:
     ) -> list[object]:
         return []
 
+    async def list_positions(
+        self,
+        *,
+        market: tuple[str, ...] | None = None,
+        size_threshold: float | None = None,
+    ) -> list[object]:
+        return []
+
+    async def list_account_trades(
+        self,
+        *,
+        token_id: str | None = None,
+        market: str | None = None,
+    ) -> list[object]:
+        return []
+
+    async def get_order_book(self, *, token_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            timestamp=datetime.now(UTC),
+            condition_id="condition-controlled-second",
+            market="condition-controlled-second",
+        )
+
     async def place_market_order(self, **kwargs: Any) -> dict[str, object]:
         self.submit_calls.append(kwargs)
         return self.response

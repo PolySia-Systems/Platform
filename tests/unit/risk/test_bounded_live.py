@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -12,7 +13,7 @@ from polysia.portfolio.live_admission import (
     SingleStrategyPortfolioAdmission,
 )
 from polysia.risk.bounded_live import BoundedLiveRiskContext, BoundedLiveRiskEngine
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskContext, RiskEngine, RiskEvidenceKind
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
 
@@ -64,10 +65,15 @@ def bounded_context() -> BoundedLiveRiskContext:
 
 
 def risk_context() -> RiskContext:
+    now = datetime(2026, 9, 6, tzinfo=UTC)
     return RiskContext(
         trading_mode=TradingMode.LIVE,
         live_trading_enabled=True,
         market_data_age_ms=1,
+        evidence_kind=RiskEvidenceKind.VERIFIED,
+        observed_at=now,
+        account_source_id="test:funder",
+        market_data_observed_at=now,
     )
 
 

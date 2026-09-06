@@ -31,7 +31,17 @@ from polysia.config.settings import AppSettings, TradingMode
 from polysia.domain.ledger import LedgerEvent
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot, MarketSummary
 from polysia.domain.strategy import StrategyRun
-from polysia.execution.intents import OrderIntent
+from polysia.execution.canonical_order import (
+    ApprovedOrder,
+    CanonicalOrderError,
+    bind_approved_order,
+    canonicalize_market_order,
+    risk_intent_from_canonical,
+)
+from polysia.execution.verified_live_state import (
+    account_source_id_from_identity,
+    collect_verified_live_risk_snapshot,
+)
 from polysia.portfolio.live_admission import (
     PortfolioAdmissionContext,
     PortfolioAdmissionDecision,
@@ -48,7 +58,8 @@ from polysia.reconciliation import (
 )
 from polysia.reconciliation.safety_pause import KillSwitchSafetyPause
 from polysia.risk.bounded_live import BoundedLiveRiskContext, BoundedLiveRiskEngine
-from polysia.risk.checks import RiskContext, RiskDecision, RiskEngine
+from polysia.risk.checks import RiskDecision, RiskEngine
+from polysia.risk.evidence import LiveStateStaleError, LiveStateUnavailableError
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
 from polysia.storage.db import SQLiteDatabase
@@ -417,11 +428,14 @@ class RoundTripOrderManager:
         self.entry_attempts = 0
         self.exit_attempts = 0
 
-    async def submit_entry(self, intent: OrderIntent, *, all_in_cost: Decimal) -> Any:
+    async def submit_entry(self, approved: ApprovedOrder) -> Any:
         if self.entry_attempts != 0:
             raise TinyLiveRoundTripError("one-entry-attempt invariant violated")
-        requested_notional = intent.price * intent.size
-        if all_in_cost < requested_notional or all_in_cost > MAXIMUM_ENTRY_NOTIONAL:
+        request = approved.request
+        if request.side != "BUY" or request.order_type != "FAK":
+            raise TinyLiveRoundTripError("entry request is not the approved BUY FAK order")
+        spend = request.max_spend or request.amount
+        if spend is None or spend > MAXIMUM_ENTRY_NOTIONAL:
             raise TinyLiveRoundTripError("entry all-in cost violates the authorized cap")
         claimed = self._attempts.claim(
             authorization_id=self._authorization_id,
@@ -434,14 +448,7 @@ class RoundTripOrderManager:
             raise TinyLiveRoundTripError("owner authorization already has an entry attempt")
         self.entry_attempts = 1
         try:
-            response = await self._adapter.place_market_order(
-                token_id=intent.token_id,
-                side="BUY",
-                amount=requested_notional,
-                max_spend=all_in_cost,
-                max_price=intent.price,
-                order_type="FAK",
-            )
+            response = await self._adapter.place_market_order(**request.as_adapter_kwargs())
         except Exception as error:
             self._attempts.update_state(
                 self._authorization_id,
@@ -723,19 +730,42 @@ async def run_tiny_live_round_trip(
                 ),
             )
             risk_checked_at = _aware_datetime(clock())
-            risk_decision = BoundedLiveRiskEngine(base_risk).evaluate_entry(
-                intent,
-                RiskContext(
+            if not market.condition_id:
+                stop_reason = "verified live state requires market identity"
+                raise TinyLiveRoundTripError(stop_reason)
+            try:
+                verified_state = await collect_verified_live_risk_snapshot(
+                    active_execution_port,
+                    token_id=intent.token_id,
+                    market_id=market.condition_id,
+                    account_source_id=account_source_id_from_identity(account.identity),
+                    market_data_observed_at=_aware_datetime(selected_book.timestamp),
+                    observed_at=risk_checked_at,
+                )
+                live_risk_context = verified_state.to_risk_context(
                     trading_mode=TradingMode.LIVE,
                     live_trading_enabled=True,
-                    current_position=Decimal("0"),
-                    current_market_position=Decimal("0"),
-                    daily_pnl=Decimal("0"),
-                    open_orders_count=len(conflicting_orders),
-                    market_data_age_ms=max(
-                        _data_age_ms(quote.timestamp, risk_checked_at) for quote in decision.quotes
-                    ),
-                ),
+                    now=risk_checked_at,
+                    max_stale_data_age_ms=config.maximum_book_age_ms,
+                )
+                canonical_entry = canonicalize_market_order(
+                    intent,
+                    amount=intent.price * intent.size,
+                    max_spend=intended_all_in_cost,
+                    max_price=intent.price,
+                    order_type="FAK",
+                )
+            except (
+                CanonicalOrderError,
+                LiveStateStaleError,
+                LiveStateUnavailableError,
+            ) as error:
+                stop_reason = str(error)
+                raise TinyLiveRoundTripError(str(error)) from error
+            risk_intent = risk_intent_from_canonical(intent, canonical_entry)
+            risk_decision = BoundedLiveRiskEngine(base_risk).evaluate_entry(
+                risk_intent,
+                live_risk_context,
                 BoundedLiveRiskContext(
                     entry_attempt_count=(
                         1 if attempt_repository.get(AUTHORIZATION_ID) is not None else 0
@@ -807,10 +837,13 @@ async def run_tiny_live_round_trip(
                 )
                 try:
                     try:
-                        response = await manager.submit_entry(
-                            intent,
-                            all_in_cost=intended_all_in_cost,
+                        approved_entry = bind_approved_order(
+                            canonical_entry,
+                            adjusted_size=risk_decision.adjusted_size or risk_intent.size,
+                            risk_reason=risk_decision.reason,
+                            approved_at=risk_checked_at,
                         )
+                        response = await manager.submit_entry(approved_entry)
                     except TinyLiveRoundTripError as error:
                         reconciliation_result = await _reconcile_without_entry(
                             active_execution_port,
