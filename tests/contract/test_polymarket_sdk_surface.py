@@ -164,9 +164,19 @@ def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
     ).parameters
     post_parameters = inspect.signature(AsyncSecureClient.post_order).parameters
 
-    assert {"amount", "max_price", "max_spend", "order_type", "side", "token_id"} <= set(
-        market_parameters
-    )
+    assert {
+        "amount",
+        "max_price",
+        "max_spend",
+        "min_price",
+        "order_type",
+        "shares",
+        "side",
+        "token_id",
+    } <= set(market_parameters)
+    doc = AsyncSecureClient.place_market_order.__doc__ or ""
+    assert "BUY orders use ``amount`` as the spend amount" in doc
+    assert "SELL orders use ``shares`` as the" in doc
     assert {"post_only", "price", "side", "size", "token_id"} <= set(
         limit_parameters
     )

@@ -83,7 +83,12 @@ from polysia.execution.live_broker import (
     LiveOrderRejectedError,
     PreparedLimitOrder,
 )
+from polysia.execution.verified_live_state import (
+    account_source_id_from_identity,
+    collect_verified_live_risk_snapshot,
+)
 from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.evidence import LiveStateUnavailableError, VerifiedLiveRiskSnapshot
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
 from polysia.storage.copytrading import (
@@ -1467,6 +1472,7 @@ async def _attempt_entry(
         token_id=event.outcome_reference,
         maximum_position=quote.quantity,
         maximum_order_notional=MAXIMUM_ENTRY_DEBIT,
+        clock=clock,
     )
     risk_context = RiskContext(
         trading_mode=TradingMode.LIVE,
@@ -1731,6 +1737,14 @@ async def _attempt_entry(
             expiration=quote.venue_expiration,
             refresh_before_submit=refresh_before_submit,
             before_submit=persist_attempt,
+            refresh_verified_state=lambda: _verified_copy_snapshot(
+                execution_port,
+                token_id=event.outcome_reference,
+                market_id=event.market_reference,
+                book=book,
+                now=_aware(clock()),
+                submission=submission,
+            ),
         )
     except LocalPostOnlyCrossing as error:
         runtime.report.decisions.append(
@@ -2163,7 +2177,12 @@ async def _place_take_profit(
         token_id=runtime.active_token_id,
         maximum_position=runtime.active_fill_size,
         maximum_order_notional=runtime.active_fill_size,
+        clock=clock,
     )
+    if runtime.active_market is None or not runtime.active_market.condition_id:
+        raise TinyLiveCopyError("verified live state requires market identity")
+    take_profit_market_id = runtime.active_market.condition_id
+    take_profit_token_id = runtime.active_token_id
     result = await broker.place_limit_order(
         intent,
         RiskContext(
@@ -2176,6 +2195,13 @@ async def _place_take_profit(
         ),
         i_understand_this_places_real_orders=True,
         dry_run=False,
+        refresh_verified_state=lambda: _verified_copy_snapshot(
+            execution_port,
+            token_id=take_profit_token_id,
+            market_id=take_profit_market_id,
+            book=book,
+            now=_aware(clock()),
+        ),
     )
     order_id = _order_id(result.response)
     exit_fee = Btc15mFavoriteTakeProfitStrategy.expected_fee(
@@ -2286,7 +2312,12 @@ async def _handle_leader_close(
         token_id=snapshot.active_token_id,
         maximum_position=snapshot.position_size,
         maximum_order_notional=snapshot.position_size,
+        clock=clock,
     )
+    if snapshot.active_market_id is None or snapshot.active_token_id is None:
+        raise TinyLiveCopyError("verified live state requires market identity")
+    close_market_id = snapshot.active_market_id
+    close_token_id = snapshot.active_token_id
     result = await broker.place_market_order(
         intent,
         RiskContext(
@@ -2302,6 +2333,13 @@ async def _handle_leader_close(
         shares=snapshot.position_size,
         min_price=best_bid.price,
         order_type="FOK",
+        refresh_verified_state=lambda: _verified_copy_snapshot(
+            execution_port,
+            token_id=close_token_id,
+            market_id=close_market_id,
+            book=book,
+            now=_aware(clock()),
+        ),
     )
     order_id = _order_id(result.response)
     repository.record_exit_order(
@@ -3264,6 +3302,35 @@ async def _emergency_cancel_if_needed(
         raise TinyLiveCopyError("emergency cancellation failed or is ambiguous") from error
 
 
+async def _verified_copy_snapshot(
+    execution_port: CopyExecutionPort,
+    *,
+    token_id: str,
+    market_id: str,
+    book: MarketOrderBookSnapshot,
+    now: datetime,
+    submission: dict[str, object] | None = None,
+) -> VerifiedLiveRiskSnapshot:
+    if not market_id:
+        raise TinyLiveCopyError("verified live state requires market identity")
+    current_book = book
+    if submission is not None:
+        submitted_book = submission.get("book")
+        if isinstance(submitted_book, MarketOrderBookSnapshot):
+            current_book = submitted_book
+    try:
+        return await collect_verified_live_risk_snapshot(
+            execution_port,
+            token_id=token_id,
+            market_id=market_id,
+            account_source_id=account_source_id_from_identity(execution_port.identity()),
+            market_data_observed_at=_aware(current_book.timestamp),
+            observed_at=now,
+        )
+    except LiveStateUnavailableError as error:
+        raise TinyLiveCopyError(str(error)) from error
+
+
 def _broker_for(
     settings: AppSettings,
     execution_port: CopyExecutionPort,
@@ -3273,6 +3340,7 @@ def _broker_for(
     token_id: str,
     maximum_position: Decimal,
     maximum_order_notional: Decimal,
+    clock: Clock,
 ) -> LiveBroker:
     return LiveBroker(
         adapter=execution_port,  # type: ignore[arg-type]
@@ -3291,6 +3359,7 @@ def _broker_for(
         settings=settings,
         allowed_token_ids=(token_id,),
         geoblock_check=_BrokerGeoblock(geoblock_port),
+        clock=clock,
     )
 
 

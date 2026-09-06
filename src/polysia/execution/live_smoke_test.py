@@ -22,7 +22,17 @@ from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapterError,
 )
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.canonical_order import canonicalize_market_order
+from polysia.execution.intents import OrderIntent
+from polysia.execution.live_broker import LiveBrokerError
+from polysia.execution.live_market_approval import approve_live_market_order
+from polysia.execution.verified_live_state import (
+    account_source_id_from_identity,
+    collect_verified_live_risk_snapshot,
+)
 from polysia.risk.checks import RiskEngine
+from polysia.risk.evidence import LiveStateStaleError, LiveStateUnavailableError
+from polysia.risk.limits import RiskLimits
 
 SmokeOutcome = Literal["YES", "NO"]
 SmokeSide = Literal["BUY", "SELL"]
@@ -52,6 +62,9 @@ class LiveSmokeAdapter(Protocol):
 
     async def close(self) -> None:
         """Close authenticated resources."""
+
+    def identity(self) -> Any:
+        """Return sanitized signer/funder diagnostics."""
 
     async def get_balance_allowance(
         self,
@@ -246,7 +259,12 @@ async def run_live_smoke_test(
 
     active_adapter = adapter or PolymarketSecureAdapter()
     active_geoblock_check = geoblock_check or PreLiveOrderGeoblockCheck()
-    active_risk_engine = risk_engine or RiskEngine()
+    active_risk_engine = risk_engine or RiskEngine(
+        limits=RiskLimits(
+            allow_live_trading=True,
+            max_order_notional=MAX_SMOKE_NOTIONAL,
+        )
+    )
     errors: list[str] = []
     geoblock_status: dict[str, object] | None = None
     selected_market: dict[str, object] = {"slug": config.market_slug}
@@ -330,16 +348,64 @@ async def run_live_smoke_test(
             final_position = _safe_position_for_token(positions, config.token_id)
             final_result = "PASS"
         else:
-            guard = OneOrderAttemptGuard()
-            response = await guard.place_market_order_once(
+            observed_at = clock()
+            market_data_observed_at = _require_timestamp(order_book)
+            verified_state = await collect_verified_live_risk_snapshot(
                 active_adapter,
                 token_id=config.token_id,
+                market_id=config.condition_id,
+                account_source_id=account_source_id_from_identity(active_adapter.identity()),
+                market_data_observed_at=market_data_observed_at,
+                observed_at=observed_at,
+            )
+            live_context = verified_state.to_risk_context(
+                trading_mode=TradingMode.LIVE,
+                live_trading_enabled=config.settings.live_trading_enabled,
+                now=observed_at,
+                max_stale_data_age_ms=active_risk_engine.limits.max_stale_data_age_ms,
+            )
+            if config.side == "BUY":
+                intent_size = (
+                    plan.amount / plan.computed_limit_price
+                    if plan.amount is not None
+                    else Decimal("0")
+                )
+            else:
+                intent_size = plan.shares or Decimal("0")
+            intent = OrderIntent(
+                strategy_id="operator-live-smoke",
+                token_id=config.token_id,
                 side=config.side,
+                price=plan.computed_limit_price,
+                size=intent_size,
+                reason="live smoke connectivity test",
+                confidence=Decimal("1"),
+            )
+            canonical = canonicalize_market_order(
+                intent,
                 amount=plan.amount,
                 shares=plan.shares,
                 max_price=plan.computed_limit_price if config.side == "BUY" else None,
                 min_price=plan.computed_limit_price if config.side == "SELL" else None,
                 order_type=config.order_type,
+            )
+            approved = approve_live_market_order(
+                active_risk_engine,
+                intent,
+                canonical,
+                live_context,
+                approved_at=observed_at,
+            )
+            guard = OneOrderAttemptGuard()
+            response = await guard.place_market_order_once(
+                active_adapter,
+                token_id=approved.request.token_id,
+                side=cast(SmokeSide, approved.request.side),
+                amount=approved.request.amount,
+                shares=approved.request.shares,
+                max_price=approved.request.max_price,
+                min_price=approved.request.min_price,
+                order_type=cast(SmokeOrderType, approved.request.order_type),
             )
             order_submitted = True
             response_payload = _model_or_mapping_to_dict(response)
@@ -365,6 +431,9 @@ async def run_live_smoke_test(
             final_result = "PASS"
     except (
         LiveSmokeTestError,
+        LiveBrokerError,
+        LiveStateUnavailableError,
+        LiveStateStaleError,
         PolymarketSecureAdapterError,
         PreLiveOrderGeoblockError,
         OSError,
@@ -587,6 +656,20 @@ def _read_levels(order_book: Any, field_name: str) -> list[Any]:
 def _quantize_to_tick(price: Decimal, tick_size: Decimal, *, rounding: str) -> Decimal:
     ticks = (price / tick_size).to_integral_value(rounding=rounding)
     return ticks * tick_size
+
+
+def _require_timestamp(value: Any) -> datetime:
+    raw = _read_field(value, "timestamp")
+    if isinstance(raw, datetime):
+        if raw.tzinfo is None:
+            raise LiveSmokeTestError("market-data observation time is unavailable")
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise LiveSmokeTestError("market-data observation time is unavailable")
+        return parsed
+    raise LiveSmokeTestError("market-data observation time is unavailable")
 
 
 def _assert_response_not_rejected(response: dict[str, object]) -> None:

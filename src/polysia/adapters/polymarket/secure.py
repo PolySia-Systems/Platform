@@ -681,7 +681,14 @@ class PolymarketSecureAdapter:
     ) -> Any:
         """Submit a market order through the authenticated SDK client."""
         _validate_side(side)
-        _validate_market_order_inputs(amount=amount, shares=shares, max_spend=max_spend)
+        _validate_market_order_inputs(
+            side=side,
+            amount=amount,
+            shares=shares,
+            max_spend=max_spend,
+            max_price=max_price,
+            min_price=min_price,
+        )
         client = self._require_client()
         try:
             return await client.place_market_order(
@@ -763,12 +770,38 @@ def _validate_side(side: str) -> None:
 
 def _validate_market_order_inputs(
     *,
+    side: str,
     amount: Decimal | None,
     shares: Decimal | None,
     max_spend: Decimal | None,
+    max_price: Decimal | None,
+    min_price: Decimal | None,
 ) -> None:
-    if amount is None and shares is None and max_spend is None:
-        raise PolymarketSecureAdapterError("market order requires amount, shares, or max_spend.")
+    if side == "BUY":
+        if shares is not None:
+            raise PolymarketSecureAdapterError("BUY market order forbids shares.")
+        if amount is None and max_spend is None:
+            raise PolymarketSecureAdapterError(
+                "BUY market order requires amount or max_spend."
+            )
+        if min_price is not None:
+            raise PolymarketSecureAdapterError("BUY market order forbids min_price.")
+        if max_price is None:
+            raise PolymarketSecureAdapterError("BUY market order requires max_price.")
+        return
+    if side == "SELL":
+        if amount is not None or max_spend is not None:
+            raise PolymarketSecureAdapterError(
+                "SELL market order forbids amount and max_spend."
+            )
+        if shares is None:
+            raise PolymarketSecureAdapterError("SELL market order requires shares.")
+        if max_price is not None:
+            raise PolymarketSecureAdapterError("SELL market order forbids max_price.")
+        if min_price is None:
+            raise PolymarketSecureAdapterError("SELL market order requires min_price.")
+        return
+    raise PolymarketSecureAdapterError(f"unsupported order side {side!r}")
 
 
 def _non_empty_env_value(name: str) -> str | None:

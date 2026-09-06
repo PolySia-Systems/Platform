@@ -241,6 +241,7 @@ async def test_authenticated_methods_call_connected_client(
         token_id="token-1",
         side="SELL",
         shares=Decimal("3"),
+        min_price=Decimal("0.40"),
     )
 
     assert [order.id for order in orders] == ["order-1"]
@@ -277,7 +278,7 @@ async def test_authenticated_methods_call_connected_client(
         "shares": Decimal("3"),
         "max_spend": None,
         "max_price": None,
-        "min_price": None,
+        "min_price": Decimal("0.40"),
         "order_type": "FAK",
         "builder_code": None,
     }

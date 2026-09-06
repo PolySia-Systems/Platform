@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from polysia.config.settings import TradingMode
 from polysia.execution.intents import OrderIntent
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
+
+
+class RiskEvidenceKind(StrEnum):
+    """UNKNOWN != ZERO. ASSUMED != VERIFIED."""
+
+    UNKNOWN = "unknown"
+    ASSUMED = "assumed"
+    VERIFIED = "verified"
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +31,10 @@ class RiskContext:
     open_orders_count: int = 0
     market_data_age_ms: int = 0
     edge: Decimal | None = None
+    evidence_kind: RiskEvidenceKind = RiskEvidenceKind.UNKNOWN
+    observed_at: datetime | None = None
+    account_source_id: str | None = None
+    market_data_observed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +69,7 @@ class RiskEngine:
             self._check_kill_switch,
             self._check_trading_mode,
             self._check_live_trading,
+            self._check_live_state_authority,
             self._check_order_notional,
             self._check_token_position,
             self._check_market_position,
@@ -95,6 +110,35 @@ class RiskEngine:
             )
         if not self._limits.allow_live_trading:
             return RiskDecision(approved=False, reason="risk limits do not allow live trading")
+        return _approved()
+
+    def _check_live_state_authority(
+        self,
+        intent: OrderIntent,
+        context: RiskContext,
+    ) -> RiskDecision:
+        if context.trading_mode != TradingMode.LIVE:
+            return _approved()
+        if context.evidence_kind is RiskEvidenceKind.UNKNOWN:
+            return RiskDecision(
+                approved=False,
+                reason="unknown live state cannot authorize an order",
+            )
+        if context.evidence_kind is RiskEvidenceKind.ASSUMED:
+            return RiskDecision(
+                approved=False,
+                reason="assumed live state cannot authorize an order",
+            )
+        if context.evidence_kind is not RiskEvidenceKind.VERIFIED:
+            return RiskDecision(
+                approved=False,
+                reason=f"live state evidence {context.evidence_kind} cannot authorize an order",
+            )
+        if context.observed_at is None or context.account_source_id is None:
+            return RiskDecision(
+                approved=False,
+                reason="verified live state is missing observation identity",
+            )
         return _approved()
 
     def _check_order_notional(self, intent: OrderIntent, context: RiskContext) -> RiskDecision:

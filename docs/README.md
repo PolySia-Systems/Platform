@@ -43,6 +43,7 @@ to query the host.
 - [Current operational truth](10-operations/server-deployment.md#current-operational-truth)
 - [Risk register](00-governance/registers/risks.md)
 - [Live safety gates](04-architecture/adrs/ADR-0008-live-safety-gates.md)
+- [Verified Live state and approved orders](03-requirements/live-verified-state-and-approved-order.md)
 - [Delivery and rollback](10-operations/delivery-and-rollback.md)
 
 ## Standards and governance

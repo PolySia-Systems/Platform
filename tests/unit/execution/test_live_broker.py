@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.canonical_order import bind_approved_order, canonicalize_market_order
 from polysia.execution.intents import OrderIntent
 from polysia.execution.live_broker import (
     LiveBroker,
@@ -14,6 +16,7 @@ from polysia.execution.live_broker import (
     PreparedLimitOrder,
 )
 from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.evidence import MeasuredDecimal, MeasuredInt, VerifiedLiveRiskSnapshot
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
 
@@ -114,6 +117,19 @@ def live_risk_engine(*, kill_switch: KillSwitch | None = None) -> RiskEngine:
             allow_live_trading=True,
         ),
         kill_switch=kill_switch,
+    )
+
+
+def verified_snapshot(*, now: datetime | None = None) -> VerifiedLiveRiskSnapshot:
+    observed = now or datetime.now(UTC)
+    return VerifiedLiveRiskSnapshot(
+        current_position=MeasuredDecimal.verified(Decimal("0"), observed_at=observed),
+        current_market_position=MeasuredDecimal.verified(Decimal("0"), observed_at=observed),
+        daily_pnl=MeasuredDecimal.verified(Decimal("0"), observed_at=observed),
+        open_order_count=MeasuredInt.verified(0, observed_at=observed),
+        market_data_observed_at=observed,
+        account_source_id="test:funder",
+        observed_at=observed,
     )
 
 
@@ -267,6 +283,7 @@ async def test_actual_live_submit_requires_token_allowlist() -> None:
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            verified_state=verified_snapshot(),
         )
 
     assert adapter.limit_orders == []
@@ -290,6 +307,7 @@ async def test_live_submit_requires_all_gates_and_uses_adapter() -> None:
         RiskContext(),
         i_understand_this_places_real_orders=True,
         dry_run=False,
+        verified_state=verified_snapshot(),
     )
 
     assert result.submitted is True
@@ -328,6 +346,7 @@ async def test_before_submit_claim_runs_once_after_local_gates() -> None:
         RiskContext(),
         i_understand_this_places_real_orders=True,
         dry_run=False,
+        verified_state=verified_snapshot(),
         before_submit=lambda: claims.append("claimed"),
     )
 
@@ -374,6 +393,7 @@ async def test_async_final_refresh_is_reapproved_before_attempt_claim() -> None:
         RiskContext(),
         i_understand_this_places_real_orders=True,
         dry_run=False,
+        verified_state=verified_snapshot(),
         expiration=123,
         refresh_before_submit=refresh,
         before_submit=claim,
@@ -411,6 +431,7 @@ async def test_final_refresh_mismatch_is_rejected_before_claim_and_post() -> Non
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            verified_state=verified_snapshot(),
             refresh_before_submit=refresh,
             before_submit=lambda: claims.append("claimed"),
         )
@@ -446,6 +467,7 @@ async def test_live_submit_rejected_response_raises() -> None:
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            verified_state=verified_snapshot(),
             before_submit=lambda: claims.append("claimed"),
         )
 
@@ -479,6 +501,7 @@ async def test_ambiguous_venue_error_occurs_after_single_attempt_claim() -> None
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            verified_state=verified_snapshot(),
             before_submit=lambda: claims.append("claimed"),
         )
 
@@ -504,6 +527,7 @@ async def test_live_submit_aborts_when_geoblock_blocks() -> None:
             RiskContext(),
             i_understand_this_places_real_orders=True,
             dry_run=False,
+            verified_state=verified_snapshot(),
             before_submit=lambda: claims.append("claimed"),
         )
 
@@ -526,13 +550,16 @@ async def test_market_order_dry_run_defaults_to_approved_shares() -> None:
         make_intent(size="2"),
         RiskContext(),
         i_understand_this_places_real_orders=True,
+        amount=Decimal("1.00"),
+        max_price=Decimal("0.50"),
     )
 
     assert result.request == {
         "action": "place_market_order",
         "token_id": "token-1",
         "side": "BUY",
-        "shares": "2",
+        "amount": "1.00",
+        "max_price": "0.50",
         "order_type": "FAK",
     }
     assert adapter.market_orders == []
@@ -622,4 +649,239 @@ async def test_live_cancel_market_actual_requires_allowlisted_token() -> None:
         )
 
     assert adapter.cancel_market_calls == []
+    assert adapter.connected is False
+
+
+@pytest.mark.asyncio
+async def test_live_submit_without_verified_state_makes_no_mutating_call() -> None:
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(LiveBrokerError, match="verified live risk state"):
+        await broker.place_limit_order(
+            make_intent(),
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+        )
+
+    assert adapter.limit_orders == []
+    assert adapter.market_orders == []
+    assert adapter.connected is False
+
+
+@pytest.mark.asyncio
+async def test_stale_verified_state_blocks_before_mutating_adapter() -> None:
+    adapter = FakeLiveAdapter()
+    stale = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+        clock=lambda: stale + timedelta(seconds=6),
+    )
+
+    with pytest.raises(LiveBrokerError, match="exceeds max_stale_data_age_ms"):
+        await broker.place_limit_order(
+            make_intent(),
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            verified_state=verified_snapshot(now=stale),
+        )
+
+    assert adapter.limit_orders == []
+    assert adapter.connected is False
+
+
+@pytest.mark.asyncio
+async def test_market_order_submit_uses_exact_approved_request() -> None:
+    adapter = FakeLiveAdapter()
+    refresh_calls = 0
+
+    async def refresh() -> VerifiedLiveRiskSnapshot:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return verified_snapshot()
+
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+    intent = make_intent(size="2")
+
+    result = await broker.place_market_order(
+        intent,
+        RiskContext(),
+        i_understand_this_places_real_orders=True,
+        dry_run=False,
+        amount=Decimal("1.00"),
+        max_price=Decimal("0.50"),
+        refresh_verified_state=refresh,
+    )
+
+    assert refresh_calls >= 1
+    assert result.submitted is True
+    assert adapter.market_orders == [
+        {
+            "token_id": "token-1",
+            "side": "BUY",
+            "amount": Decimal("1.00"),
+            "shares": None,
+            "max_spend": None,
+            "max_price": Decimal("0.50"),
+            "min_price": None,
+            "order_type": "FAK",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_approved_one_share_then_requested_fifty_is_blocked() -> None:
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+    intent = OrderIntent(
+        strategy_id="strategy-1",
+        token_id="token-1",
+        side="SELL",
+        price=Decimal("0.50"),
+        size=Decimal("50"),
+        reason="unit test",
+        confidence=Decimal("0.80"),
+    )
+    one_share = OrderIntent(
+        strategy_id="strategy-1",
+        token_id="token-1",
+        side="SELL",
+        price=Decimal("0.50"),
+        size=Decimal("1"),
+        reason="unit test",
+        confidence=Decimal("0.80"),
+    )
+    approved = bind_approved_order(
+        canonicalize_market_order(
+            one_share,
+            shares=Decimal("1"),
+            min_price=Decimal("0.50"),
+            order_type="FAK",
+        ),
+        adjusted_size=Decimal("1"),
+        risk_reason="approved",
+        approved_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(LiveBrokerError, match="exactly match"):
+        await broker.place_market_order(
+            intent,
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            shares=Decimal("50"),
+            min_price=Decimal("0.50"),
+            approved=approved,
+            verified_state=verified_snapshot(),
+        )
+
+    assert adapter.market_orders == []
+    assert adapter.connected is False
+
+
+@pytest.mark.asyncio
+async def test_approved_market_order_still_requires_verified_live_state() -> None:
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+    intent = make_intent(size="2")
+    approved = bind_approved_order(
+        canonicalize_market_order(
+            intent,
+            amount=Decimal("1.00"),
+            max_price=Decimal("0.50"),
+            order_type="FAK",
+        ),
+        adjusted_size=Decimal("2"),
+        risk_reason="approved",
+        approved_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(LiveBrokerError, match="verified live risk state"):
+        await broker.place_market_order(
+            intent,
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            amount=Decimal("1.00"),
+            max_price=Decimal("0.50"),
+            approved=approved,
+        )
+
+    assert adapter.market_orders == []
+    assert adapter.connected is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_buy_sell_parameter_combinations_are_blocked() -> None:
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,  # type: ignore[arg-type]
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(LiveBrokerError, match="forbids shares"):
+        await broker.place_market_order(
+            make_intent(),
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            shares=Decimal("1"),
+            max_price=Decimal("0.50"),
+            verified_state=verified_snapshot(),
+        )
+
+    sell = OrderIntent(
+        strategy_id="strategy-1",
+        token_id="token-1",
+        side="SELL",
+        price=Decimal("0.50"),
+        size=Decimal("1"),
+        reason="unit test",
+        confidence=Decimal("0.80"),
+    )
+    with pytest.raises(LiveBrokerError, match="forbids amount"):
+        await broker.place_market_order(
+            sell,
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            amount=Decimal("1"),
+            min_price=Decimal("0.50"),
+            verified_state=verified_snapshot(),
+        )
+
+    assert adapter.market_orders == []
     assert adapter.connected is False

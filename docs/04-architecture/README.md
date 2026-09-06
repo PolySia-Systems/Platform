@@ -15,6 +15,7 @@ is authoritative; target and future elements are always labeled.
 - [Continuous Shadow portfolio decision](adrs/ADR-0013-continuous-shadow-portfolio.md)
 - [Continuous Shadow state ownership](adrs/ADR-0014-continuous-shadow-state-ownership.md)
 - [Stage 4B data lifecycle](adrs/ADR-0015-stage4b-data-lifecycle.md)
+- [Verified Live state and approved orders](adrs/ADR-0016-verified-live-state-approved-order.md)
 - [Architecture visualization system](visual-system/README.md)
 - [Diagram index](visual-system/architecture-visualization-index.md)
 

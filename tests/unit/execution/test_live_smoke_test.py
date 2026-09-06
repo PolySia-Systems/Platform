@@ -54,6 +54,14 @@ class FakeSmokeAdapter:
     async def close(self) -> None:
         self.closed = True
 
+    def identity(self) -> dict[str, object]:
+        return {
+            "active_wallet_source": "funder",
+            "funder_configured": True,
+            "signer_configured": True,
+            "wallet_type": "DEPOSIT_WALLET",
+        }
+
     async def get_balance_allowance(
         self,
         *,
@@ -139,6 +147,7 @@ def fake_order_book() -> Any:
         token_id="token-yes",
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
+        timestamp=datetime.now(UTC),
         bids=(SimpleNamespace(price=Decimal("0.48"), size=Decimal("10")),),
         asks=(SimpleNamespace(price=Decimal("0.50"), size=Decimal("10")),),
     )

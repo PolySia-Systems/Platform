@@ -325,6 +325,9 @@ class ExecutionPort:
                     }
                 ],
                 "price": "0.47",
+                "side": "BUY",
+                "size": "5",
+                "matched_at": NOW.isoformat(),
                 "status": "CONFIRMED",
                 "taker_order_id": "other",
             }

@@ -18,8 +18,22 @@ from polysia.adapters.polymarket.secure import (
 )
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.config.structured_logging import get_logger
+from polysia.execution.canonical_order import (
+    ApprovedOrder,
+    CanonicalMarketOrderRequest,
+    CanonicalOrderError,
+    assert_exact_approved_request,
+    bind_approved_order,
+    canonicalize_market_order,
+    risk_intent_from_canonical,
+)
 from polysia.execution.intents import ApprovedOrderIntent, OrderIntent
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskContext, RiskEngine, RiskEvidenceKind
+from polysia.risk.evidence import (
+    LiveStateStaleError,
+    LiveStateUnavailableError,
+    VerifiedLiveRiskSnapshot,
+)
 
 Clock = Callable[[], datetime]
 
@@ -219,11 +233,42 @@ class LiveBroker:
         builder_code: str | None = None,
         refresh_before_submit: Callable[[], Awaitable[PreparedLimitOrder]] | None = None,
         before_submit: Callable[[], None] | None = None,
+        verified_state: VerifiedLiveRiskSnapshot | None = None,
+        refresh_verified_state: Callable[[], Awaitable[VerifiedLiveRiskSnapshot]] | None = None,
     ) -> LiveBrokerResult:
         """Approve, preview, or submit a live limit order."""
+        if dry_run:
+            approved_intent = self._approve_intent(
+                intent,
+                self._preview_assumed_context(context),
+                i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+                overlay_runtime_mode=False,
+            )
+            request = sanitize_order_request(
+                action="place_limit_order",
+                token_id=approved_intent.token_id,
+                side=approved_intent.side,
+                price=approved_intent.price,
+                size=approved_intent.approved_size,
+                post_only=post_only,
+                expiration=expiration,
+            )
+            self._log_dry_run(request)
+            return LiveBrokerResult(
+                submitted=False,
+                dry_run=True,
+                request=request,
+                reason="dry run; no order submitted",
+            )
+
+        live_context = await self._live_submit_context(
+            context,
+            verified_state=verified_state,
+            refresh_verified_state=refresh_verified_state,
+        )
         approved_intent = self._approve_intent(
             intent,
-            context,
+            live_context,
             i_understand_this_places_real_orders=i_understand_this_places_real_orders,
         )
         request = sanitize_order_request(
@@ -235,15 +280,6 @@ class LiveBroker:
             post_only=post_only,
             expiration=expiration,
         )
-
-        if dry_run:
-            self._log_dry_run(request)
-            return LiveBrokerResult(
-                submitted=False,
-                dry_run=True,
-                request=request,
-                reason="dry run; no order submitted",
-            )
 
         self._assert_token_allowed(approved_intent.token_id)
         await self._assert_geoblock_allowed()
@@ -265,9 +301,14 @@ class LiveBroker:
                 builder_code=builder_code,
             )
             prepared = await refresh_before_submit()
+            refreshed_context = await self._live_submit_context(
+                prepared.context,
+                verified_state=verified_state,
+                refresh_verified_state=refresh_verified_state,
+            )
             approved_intent = self._approve_intent(
                 prepared.intent,
-                prepared.context,
+                refreshed_context,
                 i_understand_this_places_real_orders=i_understand_this_places_real_orders,
             )
             expiration = prepared.expiration
@@ -291,6 +332,27 @@ class LiveBroker:
                 post_only=post_only,
                 expiration=expiration,
             )
+        elif refresh_verified_state is not None:
+            live_context = await self._live_submit_context(
+                context,
+                verified_state=verified_state,
+                refresh_verified_state=refresh_verified_state,
+            )
+            refreshed_intent = self._approve_intent(
+                intent,
+                live_context,
+                i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+            )
+            if (
+                refreshed_intent.token_id != approved_intent.token_id
+                or refreshed_intent.side != approved_intent.side
+                or refreshed_intent.price != approved_intent.price
+                or refreshed_intent.approved_size != approved_intent.approved_size
+            ):
+                raise LiveBrokerError(
+                    "refreshed live state no longer matches the approved limit order"
+                )
+            approved_intent = refreshed_intent
         if before_submit is not None:
             before_submit()
         if prepared_venue_order is not None:
@@ -328,27 +390,45 @@ class LiveBroker:
         min_price: Decimal | None = None,
         order_type: MarketOrderType = "FAK",
         builder_code: str | None = None,
+        approved: ApprovedOrder | None = None,
+        verified_state: VerifiedLiveRiskSnapshot | None = None,
+        refresh_verified_state: Callable[[], Awaitable[VerifiedLiveRiskSnapshot]] | None = None,
     ) -> LiveBrokerResult:
         """Approve, preview, or submit a live market order."""
-        approved_intent = self._approve_intent(
-            intent,
-            context,
-            i_understand_this_places_real_orders=i_understand_this_places_real_orders,
-        )
-        shares = shares if shares is not None else approved_intent.approved_size
-        request = sanitize_order_request(
-            action="place_market_order",
-            token_id=approved_intent.token_id,
-            side=approved_intent.side,
-            amount=amount,
-            shares=shares,
-            max_spend=max_spend,
-            max_price=max_price,
-            min_price=min_price,
-            order_type=order_type,
-        )
+        try:
+            canonical = canonicalize_market_order(
+                intent,
+                amount=amount,
+                shares=shares,
+                max_spend=max_spend,
+                max_price=max_price,
+                min_price=min_price,
+                order_type=order_type,
+            )
+        except CanonicalOrderError as error:
+            raise LiveBrokerError(str(error)) from error
+        if approved is not None:
+            try:
+                assert_exact_approved_request(approved, canonical)
+            except CanonicalOrderError as error:
+                raise LiveBrokerError(str(error)) from error
 
         if dry_run:
+            bound = (
+                approved
+                if approved is not None
+                else self._approve_market_request(
+                    intent,
+                    canonical,
+                    self._preview_assumed_context(context),
+                    i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+                    overlay_runtime_mode=False,
+                )
+            )
+            request = sanitize_order_request(
+                action="place_market_order",
+                **bound.request.as_mapping(),
+            )
             self._log_dry_run(request)
             return LiveBrokerResult(
                 submitted=False,
@@ -357,23 +437,55 @@ class LiveBroker:
                 reason="dry run; no order submitted",
             )
 
-        self._assert_token_allowed(approved_intent.token_id)
+        live_context = await self._live_submit_context(
+            context,
+            verified_state=verified_state,
+            refresh_verified_state=refresh_verified_state,
+        )
+        bound = self._approve_market_request(
+            intent,
+            canonical,
+            live_context,
+            i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+        )
+        if approved is not None and bound.request != approved.request:
+            raise LiveBrokerError(
+                "live risk re-approval no longer matches the frozen approved request"
+            )
+        if approved is not None:
+            bound = approved
+        request = sanitize_order_request(
+            action="place_market_order",
+            **bound.request.as_mapping(),
+        )
+
+        self._assert_token_allowed(bound.request.token_id)
         await self._assert_geoblock_allowed()
 
         if not self._adapter.is_connected:
             await self._adapter.connect()
 
-        response = await self._adapter.place_market_order(
-            token_id=approved_intent.token_id,
-            side=approved_intent.side,
-            amount=amount,
-            shares=shares,
-            max_spend=max_spend,
-            max_price=max_price,
-            min_price=min_price,
-            order_type=order_type,
-            builder_code=builder_code,
-        )
+        if refresh_verified_state is not None:
+            live_context = await self._live_submit_context(
+                context,
+                verified_state=verified_state,
+                refresh_verified_state=refresh_verified_state,
+            )
+            refreshed = self._approve_market_request(
+                intent,
+                canonical,
+                live_context,
+                i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+            )
+            if refreshed.request != bound.request:
+                raise LiveBrokerError(
+                    "refreshed live state no longer matches the approved market request"
+                )
+
+        adapter_kwargs = bound.request.as_adapter_kwargs()
+        if builder_code is not None:
+            adapter_kwargs["builder_code"] = builder_code
+        response = await self._adapter.place_market_order(**adapter_kwargs)
         _assert_order_response_ok(response)
         return LiveBrokerResult(
             submitted=True,
@@ -383,21 +495,50 @@ class LiveBroker:
             response=response,
         )
 
+    def _approve_market_request(
+        self,
+        intent: OrderIntent,
+        canonical: CanonicalMarketOrderRequest,
+        context: RiskContext,
+        *,
+        i_understand_this_places_real_orders: bool,
+        overlay_runtime_mode: bool = True,
+    ) -> ApprovedOrder:
+        risk_intent = risk_intent_from_canonical(intent, canonical)
+        approved_intent = self._approve_intent(
+            risk_intent,
+            context,
+            i_understand_this_places_real_orders=i_understand_this_places_real_orders,
+            overlay_runtime_mode=overlay_runtime_mode,
+        )
+        try:
+            return bind_approved_order(
+                canonical,
+                adjusted_size=approved_intent.approved_size,
+                risk_reason=approved_intent.risk_reason,
+                approved_at=approved_intent.approved_at,
+            )
+        except CanonicalOrderError as error:
+            raise LiveBrokerError(str(error)) from error
+
     def _approve_intent(
         self,
         intent: OrderIntent,
         context: RiskContext,
         *,
         i_understand_this_places_real_orders: bool,
+        overlay_runtime_mode: bool = True,
     ) -> ApprovedOrderIntent:
         self._assert_live_start_allowed(
             i_understand_this_places_real_orders=i_understand_this_places_real_orders
         )
-        risk_context = replace(
-            context,
-            trading_mode=self._settings.trading_mode,
-            live_trading_enabled=self._settings.live_trading_enabled,
-        )
+        risk_context = context
+        if overlay_runtime_mode:
+            risk_context = replace(
+                context,
+                trading_mode=self._settings.trading_mode,
+                live_trading_enabled=self._settings.live_trading_enabled,
+            )
         decision = self._risk_engine.evaluate(intent, risk_context)
         if not decision.approved:
             raise LiveBrokerError(f"risk engine blocked live order: {decision.reason}")
@@ -408,6 +549,44 @@ class LiveBroker:
             risk_reason=decision.reason,
             approved_at=self._clock(),
         )
+
+    def _preview_assumed_context(self, context: RiskContext) -> RiskContext:
+        return replace(
+            context,
+            trading_mode=TradingMode.PAPER,
+            live_trading_enabled=False,
+            evidence_kind=RiskEvidenceKind.ASSUMED,
+        )
+
+    async def _live_submit_context(
+        self,
+        context: RiskContext,
+        *,
+        verified_state: VerifiedLiveRiskSnapshot | None,
+        refresh_verified_state: Callable[[], Awaitable[VerifiedLiveRiskSnapshot]] | None,
+    ) -> RiskContext:
+        try:
+            snapshot = (
+                await refresh_verified_state()
+                if refresh_verified_state is not None
+                else verified_state
+            )
+            if snapshot is None:
+                if context.evidence_kind is RiskEvidenceKind.VERIFIED:
+                    return replace(
+                        context,
+                        trading_mode=self._settings.trading_mode,
+                        live_trading_enabled=self._settings.live_trading_enabled,
+                    )
+                raise LiveBrokerError("live submit requires verified live risk state")
+            return snapshot.to_risk_context(
+                trading_mode=self._settings.trading_mode,
+                live_trading_enabled=self._settings.live_trading_enabled,
+                now=self._clock(),
+                max_stale_data_age_ms=self._risk_engine.limits.max_stale_data_age_ms,
+            )
+        except (LiveStateUnavailableError, LiveStateStaleError) as error:
+            raise LiveBrokerError(str(error)) from error
 
     def _assert_live_start_allowed(
         self,

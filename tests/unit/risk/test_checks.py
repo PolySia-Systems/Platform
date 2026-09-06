@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from polysia.config.settings import TradingMode
 from polysia.execution.intents import OrderIntent
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskContext, RiskEngine, RiskEvidenceKind
 from polysia.risk.kill_switch import KillSwitch
 from polysia.risk.limits import RiskLimits
 
@@ -31,6 +32,7 @@ def paper_context(**overrides: object) -> RiskContext:
         "open_orders_count": 0,
         "market_data_age_ms": 0,
         "edge": Decimal("0.05"),
+        "evidence_kind": RiskEvidenceKind.ASSUMED,
     }
     data.update(overrides)
     return RiskContext(**data)
@@ -68,7 +70,14 @@ def test_risk_engine_blocks_live_orders_unless_all_live_gates_are_open() -> None
     )
     approved = RiskEngine(limits=RiskLimits(allow_live_trading=True)).evaluate(
         intent,
-        RiskContext(trading_mode=TradingMode.LIVE, live_trading_enabled=True),
+        RiskContext(
+            trading_mode=TradingMode.LIVE,
+            live_trading_enabled=True,
+            evidence_kind=RiskEvidenceKind.VERIFIED,
+            observed_at=datetime(2026, 9, 6, tzinfo=UTC),
+            account_source_id="test:funder",
+            market_data_observed_at=datetime(2026, 9, 6, tzinfo=UTC),
+        ),
     )
 
     assert disabled_flag.approved is False
@@ -161,3 +170,42 @@ def test_risk_engine_blocks_missing_or_insufficient_edge_when_required() -> None
     assert small_edge.approved is False
     assert "min_edge_required" in small_edge.reason
     assert enough_negative_edge.approved is True
+
+
+def test_live_unknown_state_cannot_authorize_an_order() -> None:
+    engine = RiskEngine(limits=RiskLimits(allow_live_trading=True))
+    now = datetime(2026, 9, 6, tzinfo=UTC)
+
+    unknown = engine.evaluate(
+        make_intent(size="1"),
+        RiskContext(trading_mode=TradingMode.LIVE, live_trading_enabled=True),
+    )
+    assumed = engine.evaluate(
+        make_intent(size="1"),
+        RiskContext(
+            trading_mode=TradingMode.LIVE,
+            live_trading_enabled=True,
+            evidence_kind=RiskEvidenceKind.ASSUMED,
+        ),
+    )
+    verified_zero = engine.evaluate(
+        make_intent(size="1"),
+        RiskContext(
+            trading_mode=TradingMode.LIVE,
+            live_trading_enabled=True,
+            current_position=Decimal("0"),
+            current_market_position=Decimal("0"),
+            daily_pnl=Decimal("0"),
+            open_orders_count=0,
+            evidence_kind=RiskEvidenceKind.VERIFIED,
+            observed_at=now,
+            account_source_id="test:funder",
+            market_data_observed_at=now,
+        ),
+    )
+
+    assert unknown.approved is False
+    assert "unknown live state" in unknown.reason
+    assert assumed.approved is False
+    assert "assumed live state" in assumed.reason
+    assert verified_zero.approved is True

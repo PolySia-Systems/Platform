@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -22,8 +22,16 @@ from polysia.adapters.polymarket.secure import (
     PolymarketSecureAdapterError,
 )
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.canonical_order import CanonicalOrderError, canonicalize_market_order
 from polysia.execution.intents import OrderIntent
-from polysia.risk.checks import RiskContext, RiskDecision, RiskEngine
+from polysia.execution.live_broker import LiveBrokerError
+from polysia.execution.live_market_approval import approve_live_market_order
+from polysia.execution.verified_live_state import (
+    account_source_id_from_identity,
+    collect_verified_live_risk_snapshot,
+)
+from polysia.risk.checks import RiskContext, RiskDecision, RiskEngine, RiskEvidenceKind
+from polysia.risk.evidence import LiveStateStaleError, LiveStateUnavailableError
 from polysia.risk.limits import RiskLimits
 
 TinySide = Literal["BUY", "SELL"]
@@ -85,6 +93,25 @@ class TinyExecutionAdapter(Protocol):
         market: str | None = None,
     ) -> list[Any]:
         """Fetch open orders for risk context."""
+
+    async def list_positions(
+        self,
+        *,
+        market: tuple[str, ...] | None = None,
+        size_threshold: float | None = None,
+    ) -> list[Any]:
+        """Fetch account positions for verified Live state."""
+
+    async def list_account_trades(
+        self,
+        *,
+        token_id: str | None = None,
+        market: str | None = None,
+    ) -> list[Any]:
+        """Fetch account trades for verified daily P&L."""
+
+    async def get_order_book(self, *, token_id: str) -> Any:
+        """Fetch the CLOB book used for market-data observation time."""
 
     async def place_market_order(
         self,
@@ -279,45 +306,92 @@ async def run_tiny_live_execution(
             diagnostics["account_readable"] = False
             geoblock_status = {"status": "not_checked", "blocked": None}
 
-        risk_context = RiskContext(
-            trading_mode=TradingMode.PAPER if config.dry_run else TradingMode.LIVE,
-            live_trading_enabled=False if config.dry_run else config.settings.live_trading_enabled,
-            current_position=Decimal("0"),
-            current_market_position=Decimal("0"),
-            daily_pnl=Decimal("0"),
-            open_orders_count=open_orders_count,
-            market_data_age_ms=0,
+        intent = OrderIntent(
+            strategy_id="operator-tiny-live-execute",
+            token_id=config.token_id,
+            side=config.side,
+            price=plan.risk_price,
+            size=plan.risk_size,
+            reason="manual tiny live execution",
+            confidence=Decimal("1"),
         )
-        risk_decision = active_risk_engine.evaluate(
-            OrderIntent(
-                strategy_id="operator-tiny-live-execute",
-                token_id=config.token_id,
-                side=config.side,
-                price=plan.risk_price,
-                size=plan.risk_size,
-                reason="manual tiny live execution",
-                confidence=Decimal("1"),
-            ),
-            risk_context,
-        )
-        if not risk_decision.approved:
-            raise TinyLiveExecutionError(f"risk engine blocked order: {risk_decision.reason}")
-
         if config.dry_run:
+            risk_context = RiskContext(
+                trading_mode=TradingMode.PAPER,
+                live_trading_enabled=False,
+                current_position=Decimal("0"),
+                current_market_position=Decimal("0"),
+                daily_pnl=Decimal("0"),
+                open_orders_count=open_orders_count,
+                market_data_age_ms=0,
+                evidence_kind=RiskEvidenceKind.ASSUMED,
+            )
+            risk_decision = active_risk_engine.evaluate(intent, risk_context)
+            if not risk_decision.approved:
+                raise TinyLiveExecutionError(f"risk engine blocked order: {risk_decision.reason}")
             final_result = "DRY_RUN_PASS"
         else:
-            response = await attempt_guard.submit_once(
+            observed_at = clock()
+            order_book = await active_adapter.get_order_book(token_id=config.token_id)
+            market_data_observed_at = _require_book_timestamp(order_book)
+            market_id = _require_market_identity(config.condition_id, order_book)
+            verified_state = await collect_verified_live_risk_snapshot(
                 active_adapter,
                 token_id=config.token_id,
-                side=config.side,
-                plan=plan,
+                market_id=market_id,
+                account_source_id=account_source_id_from_identity(active_adapter.identity()),
+                market_data_observed_at=market_data_observed_at,
+                observed_at=observed_at,
+            )
+            risk_context = verified_state.to_risk_context(
+                trading_mode=TradingMode.LIVE,
+                live_trading_enabled=config.settings.live_trading_enabled,
+                now=observed_at,
+                max_stale_data_age_ms=active_risk_engine.limits.max_stale_data_age_ms,
+            )
+            canonical = canonicalize_market_order(
+                intent,
+                amount=plan.amount,
+                shares=plan.shares,
+                max_price=plan.max_price,
+                min_price=plan.min_price,
                 order_type=config.order_type,
+            )
+            approved = approve_live_market_order(
+                active_risk_engine,
+                intent,
+                canonical,
+                risk_context,
+                approved_at=observed_at,
+            )
+            risk_decision = RiskDecision(
+                approved=True,
+                reason=approved.risk_reason,
+                adjusted_size=approved.approved_exposure,
+            )
+            response = await attempt_guard.submit_once(
+                active_adapter,
+                token_id=approved.request.token_id,
+                side=cast(TinySide, approved.request.side),
+                plan=TinyOrderPlan(
+                    risk_price=plan.risk_price,
+                    risk_size=approved.approved_exposure,
+                    amount=approved.request.amount,
+                    shares=approved.request.shares,
+                    max_price=approved.request.max_price,
+                    min_price=approved.request.min_price,
+                ),
+                order_type=cast(TinyOrderType, approved.request.order_type),
             )
             order_submitted = True
             response_payload = _model_or_mapping_to_dict(response)
             final_result = _classify_live_response(response_payload)
     except (
         TinyLiveExecutionError,
+        LiveBrokerError,
+        LiveStateUnavailableError,
+        LiveStateStaleError,
+        CanonicalOrderError,
         PolymarketSecureAdapterError,
         OSError,
         subprocess.SubprocessError,
@@ -557,7 +631,7 @@ def _build_order_plan(config: TinyLiveExecutionConfig) -> TinyOrderPlan:
             risk_size=risk_size,
             amount=config.max_notional,
             shares=None,
-            max_price=config.price,
+            max_price=risk_price,
             min_price=None,
         )
     return TinyOrderPlan(
@@ -566,8 +640,41 @@ def _build_order_plan(config: TinyLiveExecutionConfig) -> TinyOrderPlan:
         amount=None,
         shares=risk_size,
         max_price=None,
-        min_price=config.price,
+        min_price=risk_price,
     )
+
+
+def _require_market_identity(condition_id: str | None, order_book: Any) -> str:
+    if condition_id and condition_id.strip():
+        return condition_id.strip()
+    raw: object
+    if isinstance(order_book, Mapping):
+        raw = order_book.get("condition_id") or order_book.get("market")
+    else:
+        raw = getattr(order_book, "condition_id", None) or getattr(order_book, "market", None)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    raise TinyLiveExecutionError("verified live state requires market identity")
+
+
+def _require_book_timestamp(order_book: Any) -> datetime:
+    raw: object
+    if isinstance(order_book, Mapping):
+        raw = order_book.get("timestamp")
+    else:
+        raw = getattr(order_book, "timestamp", None)
+    if raw is None:
+        raise TinyLiveExecutionError("market-data observation time is unavailable")
+    if isinstance(raw, datetime):
+        if raw.tzinfo is None:
+            raise TinyLiveExecutionError("market-data observation time is unavailable")
+        return raw
+    if isinstance(raw, str):
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise TinyLiveExecutionError("market-data observation time is unavailable")
+        return parsed
+    raise TinyLiveExecutionError("market-data observation time is unavailable")
 
 
 def _tiny_risk_engine(settings: AppSettings) -> RiskEngine:

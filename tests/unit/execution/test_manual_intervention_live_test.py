@@ -87,6 +87,17 @@ class FakeManualInterventionAdapter:
             return self.position_sequence.pop(0)
         return []
 
+    async def list_account_trades(
+        self,
+        *,
+        token_id: str | None = None,
+        market: str | None = None,
+    ) -> list[object]:
+        return []
+
+    async def get_order_book(self, *, token_id: str) -> SimpleNamespace:
+        return SimpleNamespace(timestamp=datetime.now(UTC))
+
     async def place_market_order(self, **kwargs: Any) -> dict[str, object]:
         self.submit_calls.append(kwargs)
         return self.response
@@ -270,8 +281,9 @@ async def test_manual_position_close_detected_and_no_retry(tmp_path: Path) -> No
         "status": "matched",
         "takingAmount": "1",
     }
-    adapter.open_order_sequence = [[], []]
+    adapter.open_order_sequence = [[], [], []]
     adapter.position_sequence = [
+        [],
         [SimpleNamespace(token_id="token-yes", size="1")],
         [],
     ]
