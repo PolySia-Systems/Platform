@@ -5,6 +5,7 @@ import sqlite3
 from polysia.application.ports.candidate_intelligence import CandidatePipelineBusyError
 from polysia.application.services.continuous_shadow import ContinuousShadowError
 from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
     FAILURE_CATEGORY_LEASE_FAILED,
     FAILURE_CATEGORY_MARKET_READ_FAILED,
     FAILURE_CATEGORY_PERSISTENCE_FAILED,
@@ -57,9 +58,19 @@ def test_classify_distinguishes_sanitized_failure_categories() -> None:
         classify_continuous_shadow_failure(lease, stage="renew_lease").category
         == FAILURE_CATEGORY_LEASE_FAILED
     )
+    assert classify_continuous_shadow_failure(
+        unexpected, stage=FAILURE_STAGE_PERSIST
+    ).category == FAILURE_CATEGORY_UNEXPECTED
+    accounting = ContinuousShadowError(
+        "accounting blocked",
+        error_code=FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
+        processing_stage=FAILURE_STAGE_PERSIST,
+    )
     assert (
-        classify_continuous_shadow_failure(unexpected, stage=FAILURE_STAGE_PERSIST).category
-        == FAILURE_CATEGORY_UNEXPECTED
+        classify_continuous_shadow_failure(
+            accounting, stage=FAILURE_STAGE_PERSIST
+        ).category
+        == FAILURE_CATEGORY_ACCOUNTING_BLOCKED
     )
 
 

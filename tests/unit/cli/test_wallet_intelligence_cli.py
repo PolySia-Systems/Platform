@@ -11,12 +11,14 @@ from typer.testing import CliRunner
 
 from polysia.application.services.continuous_shadow import ContinuousShadowError
 from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
     FAILURE_CATEGORY_MARKET_READ_FAILED,
     FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
     FAILURE_CATEGORY_SQLITE_BUSY,
 )
 from polysia.cli import app
 from polysia.cli_commands.wallet_intelligence import (
+    _ACCOUNTING_STOP_FAILURES,
     _RETRYABLE_PERSISTENT_SHADOW_FAILURES,
 )
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
@@ -30,6 +32,8 @@ def test_persistent_shadow_retries_only_expected_transient_failures() -> None:
         FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
         FAILURE_CATEGORY_SQLITE_BUSY,
     } == _RETRYABLE_PERSISTENT_SHADOW_FAILURES
+    assert FAILURE_CATEGORY_ACCOUNTING_BLOCKED in _ACCOUNTING_STOP_FAILURES
+    assert FAILURE_CATEGORY_ACCOUNTING_BLOCKED not in _RETRYABLE_PERSISTENT_SHADOW_FAILURES
 
 
 @pytest.mark.parametrize(
@@ -99,6 +103,58 @@ def test_persistent_shadow_keeps_running_after_transient_source_failure(
     payload = json.loads(result.stdout)
     assert payload["error_code"] == error_code
     assert payload["status"] == "skipped"
+
+
+def test_persistent_shadow_exits_zero_on_accounting_block(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    polls = 0
+
+    def emit_poll(*_args: object, **_kwargs: object) -> None:
+        nonlocal polls
+        polls += 1
+        raise ContinuousShadowError(
+            "accounting blocked",
+            error_code=FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
+            processing_stage="pre_poll",
+        )
+
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._require_continuous_shadow_safety",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._continuous_shadow_service",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._source",
+        lambda _source: SimpleNamespace(source_id="polycop"),
+    )
+    monkeypatch.setattr(
+        "polysia.cli_commands.wallet_intelligence._emit_portfolio_poll", emit_poll
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "wallet-intelligence",
+            "portfolio-sync",
+            "--database",
+            str(tmp_path / "wallet-intelligence.sqlite3"),
+            "--health-report",
+            str(tmp_path / "continuous-shadow.json"),
+            "--loop",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert polls == 1
+    payload = json.loads(result.stdout)
+    assert payload["error_code"] == FAILURE_CATEGORY_ACCOUNTING_BLOCKED
+    assert payload["status"] == "blocked"
+    assert payload["processing_stage"] == "pre_poll"
 
 
 def test_restore_check_reports_intelligence_evidence_only_without_shadow_backup(

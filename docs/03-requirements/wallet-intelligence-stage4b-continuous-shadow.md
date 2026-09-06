@@ -205,6 +205,13 @@ an incomplete valuation as reconciled.
 - Shared follower liquidity is consumed once and supports deterministic partial fills.
 - Fee provenance is market-specific or `UNKNOWN`; no flat 2% assumption is used.
 - Accounting identity and signed ledger reconstruction are Decimal-consistent.
+- Broken accounting or duplicate processing cannot commit a poll, advance the
+  checkpoint or watermark, or remain a running worker loop. The worker records
+  `accounting_blocked` or `duplicate_processing`, preserves last-known-good
+  financial state, writes health evidence, and exits 0 so `Restart=on-failure`
+  does not retry automatically. Resume requires verified restore or explicit
+  repair and revalidation. Missing, stale, or `LAST_KNOWN_GOOD` marks are not
+  accounting corruption.
 - A successful poll refreshes current valuation even when price is unchanged;
   unchanged observations create zero historical mark rows.
 - Health remains correct without a history row matching the latest poll.

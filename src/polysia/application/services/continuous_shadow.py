@@ -48,6 +48,7 @@ from polysia.application.services.continuous_shadow_failures import (
     FAILURE_STAGE_LOAD_STATE,
     FAILURE_STAGE_MARKET_READ,
     FAILURE_STAGE_PERSIST,
+    FAILURE_STAGE_PRE_POLL,
     FAILURE_STAGE_RELEASE_LEASE,
     FAILURE_STAGE_RENEW_LEASE,
     FAILURE_STAGE_UNEXPECTED,
@@ -325,6 +326,7 @@ class ContinuousShadowService:
             raise ContinuousShadowError(
                 "Continuous Shadow runtime config differs from the versioned experiment."
             )
+        self._guard_accounting(experiment)
         with self._latency_span(
             "application", "candidate_lookup", parent_span_id=root_span_id
         ):
@@ -549,6 +551,23 @@ class ContinuousShadowService:
                 error_code=classified.category,
                 processing_stage=classified.stage,
             ) from error
+
+    def _guard_accounting(self, experiment: ContinuousShadowExperiment) -> None:
+        report = self._store.invariant_report(experiment.experiment_id)
+        if report.passed:
+            return
+        code = report.block_code or "accounting_blocked"
+        self._store.record_invariant_block(
+            experiment.experiment_id,
+            failed_at=self._now(),
+            error_code=code,
+        )
+        raise ContinuousShadowError(
+            "Continuous Shadow accounting invariants blocked a new poll; "
+            "durable prior state was kept.",
+            error_code=code,
+            processing_stage=FAILURE_STAGE_PRE_POLL,
+        )
 
     def _begin_latency_trace(self, operation: str) -> None:
         recorder = self._latency

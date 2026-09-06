@@ -24,6 +24,7 @@ from polysia.application.ports.continuous_shadow import (
     ContinuousShadowExperiment,
     ContinuousShadowHealth,
     FollowerAttribution,
+    ShadowInvariantView,
 )
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.domain.copytrading import LeaderTradeAction
@@ -40,6 +41,14 @@ from polysia.domain.copytrading.continuous_shadow_experiments import (
     walk_forward_policy_report,
 )
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
+from polysia.storage.continuous_shadow_invariants import (
+    ACCOUNTING_BLOCKED,
+    DUPLICATE_PROCESSING,
+    ContinuousShadowInvariantError,
+    duplicate_processing_rows,
+    evaluate_shadow_invariants,
+    ledger_is_balanced,
+)
 from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
@@ -1037,6 +1046,13 @@ class ContinuousShadowRepository:
                         connection, experiment.experiment_id, poll_run_id, mark_row
                     )
 
+            _assert_publication_invariants(
+                connection,
+                experiment.experiment_id,
+                current_poll_run_id=poll_run_id,
+                processing_stage="persist",
+            )
+
             simulated = sum(
                 item.status.value == "SIMULATED" for item in completion.evaluations
             )
@@ -1108,6 +1124,19 @@ class ContinuousShadowRepository:
                 "SELECT * FROM continuous_shadow_experiments WHERE experiment_id = ?",
                 (experiment.experiment_id,),
             ).fetchone()
+        except ContinuousShadowInvariantError:
+            connection.rollback()
+            raise
+        except sqlite3.IntegrityError as error:
+            connection.rollback()
+            message = str(error).upper()
+            if "UNIQUE" in message or "PRIMARY KEY" in message:
+                raise ContinuousShadowInvariantError(
+                    "Continuous Shadow publication invariants blocked duplicate processing.",
+                    error_code=DUPLICATE_PROCESSING,
+                    processing_stage="persist",
+                ) from error
+            raise
         except Exception:
             connection.rollback()
             raise
@@ -1177,6 +1206,31 @@ class ContinuousShadowRepository:
         finally:
             connection.close()
 
+    def invariant_report(self, experiment_id: str) -> ShadowInvariantView:
+        connection = self._connect(read_only=True)
+        try:
+            return evaluate_shadow_invariants(connection, experiment_id)
+        finally:
+            connection.close()
+
+    def record_invariant_block(
+        self,
+        experiment_id: str,
+        *,
+        failed_at: datetime,
+        error_code: str,
+    ) -> None:
+        connection = self._connect()
+        try:
+            connection.execute(
+                "UPDATE continuous_shadow_experiments SET last_error_code = ? "
+                "WHERE experiment_id = ?",
+                (_safe_error_code(error_code), experiment_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
     def health(
         self,
         source_id: str,
@@ -1240,9 +1294,10 @@ class ContinuousShadowRepository:
                     (experiment.experiment_id,),
                 ).fetchone()[0]
             )
-            duplicate_processing_count = _duplicate_processing_count(
+            invariant_report = evaluate_shadow_invariants(
                 connection, experiment.experiment_id
             )
+            duplicate_processing_count = invariant_report.duplicate_processing_count
             unknown_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_evaluations "
@@ -1336,7 +1391,7 @@ class ContinuousShadowRepository:
             operator_summary = _operator_summary_from_connection(
                 connection, experiment.experiment_id
             )
-            ledger_balanced = _ledger_balanced(connection, experiment.experiment_id)
+            ledger_balanced = invariant_report.ledger_balanced
             initialization_unknown_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_evaluations "
@@ -1598,10 +1653,9 @@ class ContinuousShadowRepository:
                     (experiment_id,),
                 ).fetchone()[0]
             )
-            ledger_balanced = _ledger_balanced(connection, experiment_id)
-            duplicate_processing_count = _duplicate_processing_count(
-                connection, experiment_id
-            )
+            invariant_report = evaluate_shadow_invariants(connection, experiment_id)
+            ledger_balanced = invariant_report.ledger_balanced
+            duplicate_processing_count = invariant_report.duplicate_processing_count
             pnl_decomposition_rows = connection.execute(
                 "SELECT entry_type, realized_pnl_delta, fee_delta "
                 "FROM continuous_shadow_ledger WHERE experiment_id = ? "
@@ -2948,26 +3002,34 @@ def _rolling_health_windows(
     return windows
 
 
+def _assert_publication_invariants(
+    connection: sqlite3.Connection,
+    experiment_id: str,
+    *,
+    current_poll_run_id: str,
+    processing_stage: str,
+) -> None:
+    report = evaluate_shadow_invariants(
+        connection,
+        experiment_id,
+        current_poll_run_id=current_poll_run_id,
+    )
+    if report.passed:
+        return
+    code = report.block_code or ACCOUNTING_BLOCKED
+    raise ContinuousShadowInvariantError(
+        "Continuous Shadow invariants blocked publication; prior financial state was kept.",
+        error_code=code,
+        processing_stage=processing_stage,
+        violations=report.accounting_violations + report.publication_violations,
+    )
+
+
 def _duplicate_processing_count(
     connection: sqlite3.Connection,
     experiment_id: str,
 ) -> int:
-    journal = connection.execute(
-        "SELECT COALESCE(SUM(row_count - 1), 0) FROM ("
-        "SELECT j.event_id, COUNT(*) AS row_count "
-        "FROM continuous_shadow_event_journal j "
-        "JOIN continuous_shadow_poll_runs p ON p.poll_run_id = j.first_poll_run_id "
-        "WHERE p.experiment_id = ? GROUP BY j.event_id HAVING COUNT(*) > 1)",
-        (experiment_id,),
-    ).fetchone()
-    evaluations = connection.execute(
-        "SELECT COALESCE(SUM(row_count - 1), 0) FROM ("
-        "SELECT event_id, portfolio_id, COUNT(*) AS row_count "
-        "FROM continuous_shadow_evaluations WHERE experiment_id = ? "
-        "GROUP BY event_id, portfolio_id HAVING COUNT(*) > 1)",
-        (experiment_id,),
-    ).fetchone()
-    return int(journal[0]) + int(evaluations[0])
+    return duplicate_processing_rows(connection, experiment_id)
 
 
 def _validate_completion(completion: ContinuousPollCompletion) -> None:
@@ -3125,83 +3187,7 @@ def _write_mark(
 
 
 def _ledger_balanced(connection: sqlite3.Connection, experiment_id: str) -> bool:
-    portfolio_rows = connection.execute(
-        "SELECT portfolio_id, initial_cash, cash, realized_pnl, fees "
-        "FROM continuous_shadow_portfolios WHERE experiment_id = ?",
-        (experiment_id,),
-    ).fetchall()
-    ledger_rows = connection.execute(
-        "SELECT portfolio_id, market_reference, outcome_reference, quantity_delta, "
-        "cash_delta, cost_basis_delta, realized_pnl_delta, fee_delta "
-        "FROM continuous_shadow_ledger WHERE experiment_id = ?",
-        (experiment_id,),
-    ).fetchall()
-    portfolio_totals: dict[str, tuple[Decimal, Decimal, Decimal]] = {}
-    position_totals: dict[tuple[str, str, str], tuple[Decimal, Decimal]] = {}
-    for ledger_row in ledger_rows:
-        portfolio_id = str(ledger_row["portfolio_id"])
-        cash, realized, fees = portfolio_totals.get(
-            portfolio_id, (_ZERO, _ZERO, _ZERO)
-        )
-        portfolio_totals[portfolio_id] = (
-            cash + Decimal(str(ledger_row["cash_delta"])),
-            realized + Decimal(str(ledger_row["realized_pnl_delta"])),
-            fees + Decimal(str(ledger_row["fee_delta"])),
-        )
-        if (
-            ledger_row["market_reference"] is not None
-            and ledger_row["outcome_reference"] is not None
-        ):
-            key = (
-                portfolio_id,
-                str(ledger_row["market_reference"]),
-                str(ledger_row["outcome_reference"]),
-            )
-            quantity, cost_basis = position_totals.get(key, (_ZERO, _ZERO))
-            position_totals[key] = (
-                quantity + Decimal(str(ledger_row["quantity_delta"])),
-                cost_basis + Decimal(str(ledger_row["cost_basis_delta"])),
-            )
-    for row in portfolio_rows:
-        totals = portfolio_totals.get(str(row["portfolio_id"]), (_ZERO, _ZERO, _ZERO))
-        expected_cash = Decimal(str(row["initial_cash"])) + totals[0]
-        if abs(expected_cash - Decimal(str(row["cash"]))) > Decimal("0.000001"):
-            return False
-        if abs(totals[1] - Decimal(str(row["realized_pnl"]))) > Decimal(
-            "0.000001"
-        ):
-            return False
-        if abs(totals[2] - Decimal(str(row["fees"]))) > Decimal("0.000001"):
-            return False
-    position_rows = connection.execute(
-        "SELECT portfolio_id, market_reference, outcome_reference, quantity, cost_basis "
-        "FROM continuous_shadow_positions WHERE experiment_id = ?",
-        (experiment_id,),
-    ).fetchall()
-    current_position_keys: set[tuple[str, str, str]] = set()
-    for row in position_rows:
-        key = (
-            str(row["portfolio_id"]),
-            str(row["market_reference"]),
-            str(row["outcome_reference"]),
-        )
-        current_position_keys.add(key)
-        position_total = position_totals.get(key, (_ZERO, _ZERO))
-        if abs(position_total[0] - Decimal(str(row["quantity"]))) > Decimal(
-            "0.000001"
-        ):
-            return False
-        if abs(position_total[1] - Decimal(str(row["cost_basis"]))) > Decimal(
-            "0.000001"
-        ):
-            return False
-    for key, (quantity, cost_basis) in position_totals.items():
-        if key not in current_position_keys and (
-            abs(quantity) > Decimal("0.000001")
-            or abs(cost_basis) > Decimal("0.000001")
-        ):
-            return False
-    return True
+    return ledger_is_balanced(connection, experiment_id)
 
 
 def _experiment(row: sqlite3.Row) -> ContinuousShadowExperiment:
