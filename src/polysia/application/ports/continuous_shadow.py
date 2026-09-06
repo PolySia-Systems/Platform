@@ -348,6 +348,32 @@ class ContinuousShadowHealth:
         }
 
 
+class ShadowInvariantView(Protocol):
+    @property
+    def accounting_passed(self) -> bool: ...
+
+    @property
+    def publication_passed(self) -> bool: ...
+
+    @property
+    def ledger_balanced(self) -> bool: ...
+
+    @property
+    def duplicate_processing_count(self) -> int: ...
+
+    @property
+    def accounting_violations(self) -> tuple[str, ...]: ...
+
+    @property
+    def publication_violations(self) -> tuple[str, ...]: ...
+
+    @property
+    def passed(self) -> bool: ...
+
+    @property
+    def block_code(self) -> str | None: ...
+
+
 class ContinuousShadowStorePort(Protocol):
     def initialize(self) -> None: ...
 
@@ -437,6 +463,16 @@ class ContinuousShadowStorePort(Protocol):
         error_code: str,
     ) -> None: ...
 
+    def invariant_report(self, experiment_id: str) -> ShadowInvariantView: ...
+
+    def record_invariant_block(
+        self,
+        experiment_id: str,
+        *,
+        failed_at: datetime,
+        error_code: str,
+    ) -> None: ...
+
     def health(
         self,
         source_id: str,
@@ -475,4 +511,5 @@ __all__ = [
     "ContinuousShadowHealth",
     "ContinuousShadowStorePort",
     "FollowerAttribution",
+    "ShadowInvariantView",
 ]

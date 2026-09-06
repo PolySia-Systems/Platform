@@ -37,6 +37,8 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowService,
 )
 from polysia.application.services.continuous_shadow_failures import (
+    FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
+    FAILURE_CATEGORY_DUPLICATE_PROCESSING,
     FAILURE_CATEGORY_MARKET_READ_FAILED,
     FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
     FAILURE_CATEGORY_SQLITE_BUSY,
@@ -120,6 +122,12 @@ _RETRYABLE_PERSISTENT_SHADOW_FAILURES = frozenset(
         FAILURE_CATEGORY_MARKET_READ_FAILED,
         FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
         FAILURE_CATEGORY_SQLITE_BUSY,
+    }
+)
+_ACCOUNTING_STOP_FAILURES = frozenset(
+    {
+        FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
+        FAILURE_CATEGORY_DUPLICATE_PROCESSING,
     }
 )
 
@@ -857,6 +865,17 @@ def portfolio_sync(
                     error,
                     stage=getattr(error, "processing_stage", "unexpected"),
                 )
+                if classified.category in _ACCOUNTING_STOP_FAILURES:
+                    _emit_accounting_invariant_stop(
+                        error,
+                        classified,
+                        service=service,
+                        source_id=source_id,
+                        database=database,
+                        health_report=health_report,
+                        poll_interval_seconds=poll_interval_seconds,
+                    )
+                    return
                 if classified.category not in _RETRYABLE_PERSISTENT_SHADOW_FAILURES:
                     raise
                 typer.echo(
@@ -886,6 +905,22 @@ def portfolio_sync(
         CandidateStoreError,
         ValueError,
     ) as error:
+        if isinstance(error, ContinuousShadowError):
+            classified = classify_continuous_shadow_failure(
+                error,
+                stage=getattr(error, "processing_stage", "unexpected"),
+            )
+            if classified.category in _ACCOUNTING_STOP_FAILURES:
+                _emit_accounting_invariant_stop(
+                    error,
+                    classified,
+                    service=service,
+                    source_id=source_id,
+                    database=database,
+                    health_report=health_report,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+                return
         _emit_continuous_shadow_failure(error)
 
 
@@ -940,6 +975,59 @@ def _emit_portfolio_poll(
             payload["health"] = last_known_good
         else:
             refresh_failure["artifact_status"] = "unavailable"
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def _emit_accounting_invariant_stop(
+    error: ContinuousShadowError,
+    classified: object,
+    *,
+    service: ContinuousShadowService,
+    source_id: str,
+    database: Path,
+    health_report: Path,
+    poll_interval_seconds: int,
+) -> None:
+    _flush_latency_telemetry(service, database, health_report)
+    error_code = getattr(error, "error_code", None)
+    if not isinstance(error_code, str) or not error_code:
+        error_code = getattr(classified, "category", "accounting_blocked")
+    processing_stage = getattr(error, "processing_stage", None)
+    if not isinstance(processing_stage, str) or not processing_stage:
+        processing_stage = getattr(classified, "stage", "pre_poll")
+    payload: dict[str, object] = {
+        "error_code": error_code,
+        "message": (
+            "Continuous Shadow stopped after an accounting or publication "
+            "invariant failure; durable prior state was kept and no order was sent."
+        ),
+        "processing_stage": processing_stage,
+        "status": "blocked",
+    }
+    observed_at = datetime.now(UTC)
+    try:
+        report = ContinuousShadowRepository(database).health(
+            source_id,
+            now=observed_at,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        health_payload = report.to_dict()
+        health_payload["report_refresh"] = {
+            "observed_at": observed_at.isoformat(),
+            "status": "succeeded",
+        }
+        write_wallet_intelligence_health_payload(health_payload, health_report)
+        payload["health"] = health_payload
+    except (
+        sqlite3.DatabaseError,
+        ContinuousShadowStoreError,
+        WalletIntelligenceHealthReportError,
+        OSError,
+    ):
+        payload["health_refresh"] = {
+            "observed_at": observed_at.isoformat(),
+            "status": "failed",
+        }
     typer.echo(json.dumps(payload, sort_keys=True))
 
 

@@ -921,6 +921,23 @@ async def test_ledger_reconciliation_detects_a_missing_persisted_position(
     )
 
     assert results["accounting"]["ledger_balanced"] is False
+    last_success = results["experiment"]["last_successful_poll_at"]
+    watermark = results["processing"]["checkpoint"]["watermark"]
+    succeeded = results["polls"]["succeeded"]
+    clock.value = NOW + timedelta(minutes=3)
+    with pytest.raises(ContinuousShadowError) as blocked:
+        await service.poll("polycop")
+    assert blocked.value.error_code == "accounting_blocked"
+    assert blocked.value.processing_stage == "pre_poll"
+    after = ContinuousShadowRepository(_shadow_database(database)).results(
+        experiment.experiment_id,
+        limit=10,
+    )
+    assert after["accounting"]["ledger_balanced"] is False
+    assert after["experiment"]["last_successful_poll_at"] == last_success
+    assert after["processing"]["checkpoint"]["watermark"] == watermark
+    assert after["polls"]["succeeded"] == succeeded
+    assert after["experiment"]["last_error_code"] == "accounting_blocked"
 
 
 @pytest.mark.asyncio
@@ -1322,3 +1339,219 @@ async def test_injected_failures_record_distinct_sanitized_categories(
         assert health.last_failure_code == category
         assert health.last_failure_stage == stage
         monkeypatch.undo()
+
+
+@pytest.mark.asyncio
+async def test_publication_accounting_corruption_rolls_back_and_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "pub-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    from polysia.storage import continuous_shadow as store_mod
+
+    original = store_mod._write_ledger
+
+    def corrupt_cash(
+        connection: sqlite3.Connection,
+        experiment_id: str,
+        poll_run_id: str,
+        item: object,
+    ) -> None:
+        original(connection, experiment_id, poll_run_id, item)
+        connection.execute(
+            "UPDATE continuous_shadow_portfolios SET cash = '999999' "
+            "WHERE experiment_id = ?",
+            (experiment_id,),
+        )
+
+    monkeypatch.setattr(store_mod, "_write_ledger", corrupt_cash)
+    before = ContinuousShadowRepository(_shadow_database(database)).results(
+        experiment.experiment_id, limit=10
+    )
+    scenario.events[candidates[0].wallet_id].append(
+        _EventSpec(
+            "pub-buy-2",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=140),
+            Decimal("0.41"),
+        )
+    )
+    clock.value = NOW + timedelta(minutes=3)
+    with pytest.raises(ContinuousShadowError) as blocked:
+        await service.poll("polycop")
+    assert blocked.value.error_code == "accounting_blocked"
+    assert blocked.value.processing_stage == "persist"
+    after = ContinuousShadowRepository(_shadow_database(database)).results(
+        experiment.experiment_id, limit=10
+    )
+    assert after["follower"]["cash"] == before["follower"]["cash"]
+    assert after["polls"]["succeeded"] == before["polls"]["succeeded"]
+    assert after["processing"]["checkpoint"] == before["processing"]["checkpoint"]
+    assert after["experiment"]["last_successful_poll_at"] == before["experiment"][
+        "last_successful_poll_at"
+    ]
+    failed = sqlite3.connect(_shadow_database(database))
+    failed.row_factory = sqlite3.Row
+    poll = failed.execute(
+        "SELECT status, last_error_code FROM continuous_shadow_poll_runs "
+        "WHERE experiment_id = ? ORDER BY started_at DESC LIMIT 1",
+        (experiment.experiment_id,),
+    ).fetchone()
+    failed.close()
+    assert poll["status"] == "failed"
+    assert "accounting_blocked" in str(poll["last_error_code"])
+
+
+@pytest.mark.asyncio
+async def test_duplicate_processing_blocks_publication_independently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "dup-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    first = await service.poll("polycop")
+    monkeypatch.setattr(service._store, "seen_event_ids", lambda _ids: set())
+    clock.value = NOW + timedelta(minutes=3)
+    with pytest.raises(ContinuousShadowError) as blocked:
+        await service.poll("polycop")
+    assert blocked.value.error_code == "duplicate_processing"
+    after = ContinuousShadowRepository(_shadow_database(database)).results(
+        experiment.experiment_id, limit=10
+    )
+    assert after["polls"]["succeeded"] == 1
+    assert after["experiment"]["last_successful_poll_at"] == (
+        None
+        if first.experiment.last_successful_poll_at is None
+        else first.experiment.last_successful_poll_at.isoformat()
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_last_known_good_marks_are_not_accounting_corruption(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "lkg-mark-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    shadow = _shadow_database(database)
+    with sqlite3.connect(shadow) as connection:
+        connection.execute(
+            "UPDATE continuous_shadow_positions SET mark_status = 'LAST_KNOWN_GOOD', "
+            "freshness = 'STALE_LAST_KNOWN_GOOD' WHERE experiment_id = ?",
+            (experiment.experiment_id,),
+        )
+        connection.commit()
+    import time
+
+    started = time.perf_counter()
+    report = ContinuousShadowRepository(shadow).invariant_report(experiment.experiment_id)
+    elapsed = time.perf_counter() - started
+    assert report.ledger_balanced is True
+    assert report.passed is True
+    assert elapsed < 1.0
+    clock.value = NOW + timedelta(minutes=3)
+    outcome = await service.poll("polycop")
+    assert outcome.poll_run_id
+    health = ContinuousShadowRepository(shadow).health(
+        "polycop", now=clock.value, poll_interval_seconds=60
+    )
+    assert health.ledger_balanced is True
+    assert health.stale_last_known_good_mark_count >= 0
+
+
+@pytest.mark.asyncio
+async def test_verified_restore_allows_processing_after_accounting_block(
+    tmp_path: Path,
+) -> None:
+    import shutil
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec(
+            "restore-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    shadow = _shadow_database(database)
+    with sqlite3.connect(shadow) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    backup = tmp_path / "continuous-shadow-good.sqlite3"
+    shutil.copy2(shadow, backup)
+    with sqlite3.connect(shadow) as connection:
+        connection.execute(
+            "DELETE FROM continuous_shadow_positions WHERE experiment_id = ?",
+            (experiment.experiment_id,),
+        )
+        connection.commit()
+    clock.value = NOW + timedelta(minutes=3)
+    with pytest.raises(ContinuousShadowError) as blocked:
+        await service.poll("polycop")
+    assert blocked.value.error_code == "accounting_blocked"
+    source = sqlite3.connect(backup)
+    destination = sqlite3.connect(shadow)
+    try:
+        source.backup(destination)
+        destination.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        destination.commit()
+    finally:
+        destination.close()
+        source.close()
+    clock.value = NOW + timedelta(minutes=4)
+    recovered = await service.poll("polycop")
+    assert recovered.poll_run_id
+    results = ContinuousShadowRepository(shadow).results(experiment.experiment_id, limit=10)
+    assert results["accounting"]["ledger_balanced"] is True

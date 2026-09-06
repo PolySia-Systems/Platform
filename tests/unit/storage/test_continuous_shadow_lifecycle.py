@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from polysia.application.ports.continuous_shadow import (
+    ContinuousLedgerRecord,
     ContinuousPollCompletion,
     ContinuousPositionMark,
     ContinuousSelectionSnapshot,
@@ -103,16 +104,42 @@ def _mark(
     )
 
 
+def _opening_ledger(
+    portfolio: ContinuousPortfolio,
+    *,
+    created_at: datetime = NOW,
+) -> tuple[ContinuousLedgerRecord, ...]:
+    return tuple(
+        ContinuousLedgerRecord(
+            entry_id=f"open-{position.market_reference}-{position.outcome_reference}",
+            portfolio_id=portfolio.portfolio_id,
+            event_id=None,
+            entry_type="OPEN",
+            market_reference=position.market_reference,
+            outcome_reference=position.outcome_reference,
+            quantity_delta=position.quantity,
+            cash_delta=Decimal("0"),
+            cost_basis_delta=position.cost_basis,
+            realized_pnl_delta=Decimal("0"),
+            fee_delta=Decimal("0"),
+            created_at=created_at,
+        )
+        for position in portfolio.positions
+    )
+
+
 def _completion(
     marks: tuple[ContinuousPositionMark, ...],
     portfolio: ContinuousPortfolio,
+    *,
+    opening_ledger: bool = False,
 ) -> ContinuousPollCompletion:
     return ContinuousPollCompletion(
         events=(),
         evaluations=(),
         portfolios=(portfolio,),
         attributions=(),
-        ledger=(),
+        ledger=_opening_ledger(portfolio) if opening_ledger else (),
         marks=marks,
         raw_event_count=0,
         duplicate_count=0,
@@ -171,7 +198,9 @@ def test_unchanged_observation_updates_current_state_without_history(
         first_poll,
         experiment=repository.active_experiment("polycop"),
         selection=selection,
-        completion=_completion((_mark(price=price),), _portfolio(price)),
+        completion=_completion(
+            (_mark(price=price),), _portfolio(price), opening_ledger=True
+        ),
         completed_at=NOW + timedelta(seconds=1),
     )
     second_at = NOW + timedelta(minutes=1)
@@ -274,7 +303,9 @@ def test_unchanged_verified_price_does_not_append_history(tmp_path: Path) -> Non
         first_poll,
         experiment=repository.active_experiment("polycop"),
         selection=selection,
-        completion=_completion((_mark(price=price),), _portfolio(price)),
+        completion=_completion(
+            (_mark(price=price),), _portfolio(price), opening_ledger=True
+        ),
         completed_at=NOW + timedelta(seconds=1),
     )
     later = NOW + timedelta(minutes=1)
@@ -332,7 +363,9 @@ def test_price_change_appends_one_history_row(tmp_path: Path) -> None:
         experiment=repository.active_experiment("polycop"),
         selection=selection,
         completion=_completion(
-            (_mark(price=Decimal("0.40")),), _portfolio(Decimal("0.40"))
+            (_mark(price=Decimal("0.40")),),
+            _portfolio(Decimal("0.40")),
+            opening_ledger=True,
         ),
         completed_at=NOW + timedelta(seconds=1),
     )
@@ -384,7 +417,9 @@ def test_prune_preserves_current_state_and_uses_clock(tmp_path: Path) -> None:
         experiment=repository.active_experiment("polycop"),
         selection=selection,
         completion=_completion(
-            (_mark(price=Decimal("0.40")),), _portfolio(Decimal("0.40"))
+            (_mark(price=Decimal("0.40")),),
+            _portfolio(Decimal("0.40")),
+            opening_ledger=True,
         ),
         completed_at=NOW + timedelta(seconds=1),
     )
