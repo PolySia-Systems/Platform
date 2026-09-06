@@ -5,8 +5,8 @@
 - **Scope:** Risk context/limits, kill switch, reconciliation safety pause, approval, and guarded live execution controls.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, risk reviewers, execution developers, security reviewers, and operators.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 
 ## Mermaid diagram
 
@@ -14,13 +14,15 @@ Canonical source: [`10-risk-and-emergency-control.mmd`](../sources/10-risk-and-e
 
 ```mermaid
 flowchart LR
-  Intent["OrderIntent\n[CURRENT]"]:::strategy
-  Context["RiskContext\nmode, live flag, positions, P&L, open orders, data age, edge\n[CURRENT]"]:::portfolio
+  Intent["OrderIntent / canonical market request\n[CURRENT]"]:::strategy
+  Context["RiskContext\nPaper assumptions or verified Live evidence\n[CURRENT]"]:::portfolio
+  Verified["VerifiedLiveRiskSnapshot\nidentity, positions, P&L, open orders, observed time\n[CURRENT bounded]"]:::portfolio
+  Unknown["UNKNOWN / ASSUMED Live state\n[CURRENT: cannot authorize]"]:::danger
   Limits["RiskLimits\nnotional, token/market position, loss, open orders, staleness, edge\n[CURRENT]"]:::risk
   Kill["Independent Kill Switch\n[CURRENT]"]:::danger
   Recon["Reconciliation Safety Pause\n[CURRENT]"]:::danger
   Engine["RiskEngine\nordered fail-fast checks\n[CURRENT]"]:::risk
-  Approved["ApprovedOrderIntent\n[CURRENT]"]:::safe
+  Approved["Immutable ApprovedOrder / ApprovedOrderIntent\n[CURRENT]"]:::safe
   Rejected["Reject with reason\n[CURRENT]"]:::danger
 
   subgraph LIVE["Additional guarded live path [CURRENT]"]
@@ -31,10 +33,13 @@ flowchart LR
     Ack["Explicit operator acknowledgement"]:::risk
     Once["One-attempt constraint"]:::risk
     Broker["Guarded LiveBroker / tiny-live command"]:::execution
+    Adapter["Adapter receives exact approved request"]:::execution
   end
 
   Intent --> Engine
   Context --> Engine
+  Verified --> Context
+  Unknown --> Rejected
   Limits --> Engine
   Kill -->|active: emergency stop| Engine
   Recon -->|mismatch: pause| Kill
@@ -47,13 +52,14 @@ flowchart LR
   Geo --> Ack
   Ack --> Once
   Once --> Broker
+  Broker --> Adapter
   Mode -->|not LIVE| Rejected
   Flag -->|false| Rejected
   Allow -->|not allowed / over cap| Rejected
   Geo -->|blocked / unreadable| Rejected
   Ack -->|missing| Rejected
   Kill -->|active| Broker
-  Broker -->|no retry| Rejected
+  Broker -->|mismatch / no retry| Rejected
 
   subgraph LEGEND["Legend"]
     L1["CURRENT"]:::current
@@ -77,16 +83,21 @@ CURRENT is solid, TARGET is dashed, FUTURE is dotted, EXTERNAL is gray, safety i
 
 ## Main reading path
 
-Read intent/context/limits into `RiskEngine`; approved flow continues through every live gate, while any failed check reaches rejection. Kill switch and reconciliation can stop execution independently of strategy.
+Read the canonical request, verified context, and limits into `RiskEngine`;
+approved flow continues through every Live gate, while unknown/assumed state or
+any failed check reaches rejection. Kill switch and reconciliation can stop
+execution independently of strategy.
 
 ## Current implementation mapping
 
 `RiskEngine` checks kill switch, mode, live flag, notional, token/market
-position, daily loss, open orders, stale data, and edge. Live tools add canonical
-configuration validation, official server-time drift preflight, allowlist,
-minimum/maximum size and cost caps, geoblock, acknowledgement, and a persistent
-one-attempt authorization claim. Read retries are bounded; live mutations are
-never automatically retried.
+position, daily loss, open orders, stale data, and edge. Live submission also
+requires a fresh `VerifiedLiveRiskSnapshot`; assumed or unknown values cannot
+authorize it. Market requests are side-aware and frozen before approval, and
+LiveBroker forwards exactly that approved request. Live tools retain canonical
+configuration validation, server-time preflight, allowlist, size/cost caps,
+geoblock, acknowledgement, and a persistent one-attempt claim. Read retries are
+bounded; Live mutations are never automatically retried.
 
 ## Target/future elements
 
@@ -106,7 +117,7 @@ No broader live authority is proposed. Future risk controls must remain independ
 
 ## Related ADRs
 
-ADR-0007, ADR-0008, ADR-0009
+ADR-0007, ADR-0008, ADR-0009, ADR-0016
 
 ## Related capabilities/requirements
 

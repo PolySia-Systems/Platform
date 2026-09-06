@@ -15,6 +15,12 @@ The current executable-intent path is:
 
 `Strategy -> independent Risk -> Execution -> Polymarket Adapter -> Venue`
 
+Live-capable execution accepts only fresh, authenticated read-only state. It
+canonicalizes the side-aware economic request before Risk and freezes the
+approved request so Execution cannot substitute different token, side, amount,
+shares, price bounds, spend bound, or order type. Unknown or assumed state does
+not authorize submission; the generic limit-order command is preview-only.
+
 The bounded round-trip slice adds persistent authorization, one FAK entry,
 actual-fill reconciliation, one position-sized GTC exit, durable checkpoints,
 SQLite order/fill/position/ledger state, post-exit reconciliation, and bounded
@@ -33,6 +39,12 @@ idempotency, separate desired/observed state, and append-only audit evidence.
 The in-process intent boundary prevents new strategy intents while paused; it
 does not stop Risk, reconciliation, monitoring, or emergency controls and it
 cannot reach Live trading.
+
+Stage 4B publication is also fail-closed at its financial transaction boundary.
+Accounting and duplicate-publication invariants run before success, checkpoint,
+watermark, and commit. Failure rolls back tentative financial state, records
+sanitized failed evidence, and stops the persistent worker without an automatic
+restart loop. Stale or last-known-good marks are not accounting corruption.
 
 The owner-bounded Tiny Live Copy path is CURRENT only as an experimental,
 persistently capped exception. Its fourth run created one accepted unfilled

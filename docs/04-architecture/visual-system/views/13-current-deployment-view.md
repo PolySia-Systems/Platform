@@ -5,8 +5,8 @@
 - **Scope:** Owner workstation, controlled Helsinki host, verified release transfer, Docker monitor, scheduled Stages 1–4A, persistent Stage 4B worker, physically separate stores, secret boundaries, external data endpoints, and configured CI.
 - **Architecture status:** CURRENT
 - **Audience:** Owner, operators, developers, security reviewers, and deployment reviewers.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 - **Verified deployment source:** `6743f7464f94d3fb76edc057834e8219ca7ebfe0`
 
 ## Mermaid diagram

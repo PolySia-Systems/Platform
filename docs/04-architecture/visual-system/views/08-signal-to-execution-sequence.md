@@ -5,8 +5,8 @@
 - **Scope:** Current data, strategy, risk, adapter, state, reconciliation, and monitoring participants plus target allocator, OMS, and execution-port boundaries.
 - **Architecture status:** MIXED
 - **Audience:** Architects, execution developers, strategy developers, risk reviewers, and operators.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 
 ## Mermaid diagram
 
@@ -21,9 +21,10 @@ sequenceDiagram
   participant FP as Feature Pipeline [CURRENT]
   participant S as Strategy [CURRENT]
   participant PA as Portfolio / Allocator [TARGET]
+  participant VS as Verified Live State [CURRENT bounded]
   participant R as Risk Engine [CURRENT]
   participant OMS as OMS / Transaction Manager [TARGET]
-  participant EP as Execution Port [TARGET over CURRENT]
+  participant EP as Execution Boundary [CURRENT bounded]
   participant PM as Polymarket Adapter [CURRENT]
   participant V as Venue [EXTERNAL]
   participant LP as Ledger / Positions [CURRENT]
@@ -35,30 +36,36 @@ sequenceDiagram
   EB-->>OB: book snapshot or update
   OB-->>FP: Decimal book state
   FP-->>S: read-only features and context
-  S->>PA: pre-risk OrderIntent
-  alt duplicate, conflict, or no capital [TARGET]
-    PA-->>MON: declined intent with reason
-  else allocatable intent
-    PA->>R: intent plus portfolio context
-    alt risk rejects or kill switch active
-      R-->>S: rejection / reduction reason
-      R-->>MON: risk decision
-    else risk approves
-      R->>OMS: ApprovedOrderIntent
-      OMS->>EP: idempotent execution command
-      EP->>PM: venue-neutral request
-      PM->>V: guarded API request
-      alt venue rejects or times out
-        V-->>PM: rejection / uncertain state
-        PM-->>OMS: error or unknown response
-        OMS->>RC: reconciliation required
-      else venue accepts and fills
-        V-->>PM: order and fill events
-        PM-->>OMS: normalized execution result
-        OMS->>LP: order state and fill
-        LP->>RC: internal expected state
-        RC-->>MON: ready, warning, or blocked
-      end
+  S->>R: pre-risk intent or canonical request
+  opt portfolio allocation / conflict resolution [TARGET]
+    S->>PA: candidate intent
+    PA->>R: allocated intent plus portfolio context
+  end
+  opt guarded Live path [CURRENT bounded]
+    PM-->>VS: authenticated read-only account evidence
+    VS-->>R: fresh VerifiedLiveRiskSnapshot
+  end
+  alt risk rejects, state is unknown, or kill switch is active
+    R-->>S: rejection / reduction reason
+    R-->>MON: risk decision
+  else risk approves exact request
+    R->>EP: immutable ApprovedOrder / ApprovedOrderIntent
+    opt transaction management [TARGET]
+      EP->>OMS: idempotent execution command
+      OMS-->>EP: authorized dispatch
+    end
+    EP->>PM: exact approved venue request
+    PM->>V: guarded API request
+    alt venue rejects or times out
+      V-->>PM: rejection / uncertain state
+      PM-->>EP: error or unknown response
+      EP->>RC: reconciliation required
+    else venue accepts and fills
+      V-->>PM: order and fill events
+      PM-->>EP: normalized execution result
+      EP->>LP: order state and fill
+      LP->>RC: internal expected state
+      RC-->>MON: ready, warning, or blocked
     end
   end
   Note over S,V: No direct Strategy-to-Venue call is permitted
@@ -76,14 +83,18 @@ Read top to bottom. The alternatives show conflict/no-capital, risk rejection, v
 
 Market adapter, event bus, order book, features, strategies, independent risk,
 execution services, Polymarket adapter, positions, reconciliation, and
-monitoring exist. The CURRENT bounded live slice is Strategy -> Risk ->
-Execution -> Polymarket Adapter. It claims a persistent authorization, submits
-at most one minimum-valid FAK entry, sizes at most one GTC exit from confirmed
-fill/position state, and later reconciles delayed fills read-only.
+monitoring exist. The CURRENT bounded Live slice refreshes authenticated
+read-only state, rejects unknown or assumed state, canonicalizes the economic
+request before Risk, and freezes the approved request before Execution. It
+retains persistent authorization, one-attempt mutation, and read-only delayed
+fill reconciliation.
 
 ## Target/future elements
 
-Portfolio/Allocator, OMS/Transaction Manager, and generic Execution Port are TARGET. They formalize responsibilities currently spread across CLI, brokers, state models, and repositories.
+Portfolio/Allocator and OMS/Transaction Manager are TARGET. They formalize
+responsibilities currently spread across CLI, brokers, state models, and
+repositories; the bounded current Execution boundary is not a generalized
+execution router.
 
 ## Related repository files
 
@@ -95,7 +106,7 @@ Portfolio/Allocator, OMS/Transaction Manager, and generic Execution Port are TAR
 
 ## Related ADRs
 
-ADR-0002, ADR-0004, ADR-0008, ADR-0009
+ADR-0002, ADR-0004, ADR-0008, ADR-0009, ADR-0016
 
 ## Related capabilities/requirements
 

@@ -22,16 +22,17 @@ flowchart LR
     Evidence["Ignored reports and operational evidence"]:::storage
   end
 
-  Operator -->|commands / approvals| CLI
+  Operator -->|commands / approvals; assumptions are preview-only| CLI
   CLI --> Core
   CLI --> Control
   Control -.->|gates new stale-price Shadow intents| Core
   Env -->|runtime-only configuration| Adapter
-  Core --> Adapter
+  Core -->|exact immutable Risk-approved request| Adapter
   Adapter --> Public
   Adapter --> AuthVenue
   Public -.->|validate and normalize| Adapter
   AuthVenue -.->|sanitize and reconcile| Adapter
+  AuthVenue -.->|authenticated read-only evidence| Core
   Core ==>|state| DB
   Core ==>|sanitized evidence| Evidence
   Scan -->|blocks unsafe tracked output| CLI

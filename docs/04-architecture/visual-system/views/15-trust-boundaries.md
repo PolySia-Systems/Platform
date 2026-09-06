@@ -5,8 +5,8 @@
 - **Scope:** Security-relevant data and command crossings without any real identifiers or account data.
 - **Architecture status:** MIXED
 - **Audience:** Security reviewers, owner, operators, architects, and execution developers.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 
 ## Mermaid diagram
 
@@ -37,16 +37,17 @@ flowchart LR
     Evidence["Ignored reports and operational evidence"]:::storage
   end
 
-  Operator -->|commands / approvals| CLI
+  Operator -->|commands / approvals; assumptions are preview-only| CLI
   CLI --> Core
   CLI --> Control
   Control -.->|gates new stale-price Shadow intents| Core
   Env -->|runtime-only configuration| Adapter
-  Core --> Adapter
+  Core -->|exact immutable Risk-approved request| Adapter
   Adapter --> Public
   Adapter --> AuthVenue
   Public -.->|validate and normalize| Adapter
   AuthVenue -.->|sanitize and reconcile| Adapter
+  AuthVenue -.->|authenticated read-only evidence| Core
   Core ==>|state| DB
   Core ==>|sanitized evidence| Evidence
   Scan -->|blocks unsafe tracked output| CLI
@@ -75,14 +76,20 @@ CURRENT is solid, TARGET is dashed, FUTURE is dotted, EXTERNAL is gray, safety i
 
 ## Main reading path
 
-Read from external actors/services into the trusted local runtime, then inspect separate secrets and persistent-data boundaries.
+Read from external actors and services into the trusted local runtime, then
+inspect separate secrets and persistent-data boundaries. Operator assumptions
+are preview-only; authenticated read-only venue evidence may inform Risk, while
+the adapter receives only the exact immutable Risk-approved request.
 
 ## Current implementation mapping
 
 Current controls include ignored `.env`, safe settings output, SDK confinement,
 redaction, tracked-file secret scan, local SQLite, and ignored evidence. The
 Control Kernel is inside the trusted process but is bounded to Shadow intent
-gating; it has no Live or credential authority.
+gating; it has no Live or credential authority. Live account state crosses the
+authenticated venue boundary through read-only calls into a verified evidence
+carrier. Assumed operator values cannot authorize submission, and Execution may
+not reshape the request after Risk approval.
 
 ## Target/future elements
 
@@ -100,7 +107,7 @@ security scanner tests, redaction tests, `tests/architecture/test_boundaries.py`
 
 ## Related ADRs
 
-ADR-0004, ADR-0007, ADR-0008, ADR-0009, ADR-0012
+ADR-0004, ADR-0007, ADR-0008, ADR-0009, ADR-0012, ADR-0016
 
 ## Related capabilities/requirements
 

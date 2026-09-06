@@ -21,9 +21,11 @@ and conservative operating defaults.
 - Strategy Registry records with versioned definitions, lifecycle state, run
   evidence, and explicitly unrated performance summaries.
 - Independent pre-trade Risk decisions, a conservative paper broker, position
-  and P&L accounting, SQLite persistence, and fail-closed reconciliation.
+  and P&L accounting, SQLite persistence, and fail-closed reconciliation. Stage
+  4B also rejects accounting-invalid publication before commit or progression.
 - Guarded authenticated reads and bounded Live tooling that remains dry-run by
-  default and requires all safety gates for any external mutation.
+  default. Live-capable submission requires fresh verified state and sends only
+  the immutable economic request approved by Risk.
 - Deterministic replay backtesting, paper/shadow reporting, deployment checks,
   sanitized operator reports, and a single-host read-only deployment profile.
 - A SHADOW-only Control Kernel slice with immutable desired-state revisions,

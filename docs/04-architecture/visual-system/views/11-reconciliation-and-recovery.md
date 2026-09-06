@@ -1,12 +1,12 @@
 # Reconciliation and Recovery
 
 - **Diagram ID:** PSA-ARCH-11
-- **Purpose:** Show comparison of internal expectations with external account state and the resulting recovery controls.
-- **Scope:** Expected/actual snapshots, detectors, event severity, status classification, safety pause, operator review, recovery, and audit output.
+- **Purpose:** Show external reconciliation and fail-closed Stage 4B accounting publication with their recovery controls.
+- **Scope:** Expected/actual snapshots, Stage 4B tentative publication, invariant failures, safety pause, operator review, recovery, and audit output.
 - **Architecture status:** CURRENT
 - **Audience:** Operators, reconciliation developers, risk reviewers, and incident reviewers.
-- **Source commit:** `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
-- **Reviewed:** 2026-09-05
+- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- **Reviewed:** 2026-09-06
 
 ## Mermaid diagram
 
@@ -26,6 +26,13 @@ flowchart LR
   Recover["Correct state, restore readability, or rollback\n[CURRENT operational action]"]:::current
   Audit["Reports, audit evidence, monitoring\n[CURRENT]"]:::observability
 
+  subgraph SHADOW["Stage 4B accounting publication [CURRENT]"]
+    Tentative["Tentative portfolio, positions, ledger\ninside one transaction"]:::portfolio
+    Invariants["Accounting + publication invariants"]:::risk
+    Published["COMMIT + success + watermark"]:::safe
+    AccountingBlocked["ROLLBACK + failed evidence\naccounting_blocked + controlled stop"]:::danger
+  end
+
   Internal --> Compare
   External --> Compare
   Compare --> Events
@@ -40,6 +47,13 @@ flowchart LR
   Ready --> Audit
   Warning --> Audit
   Blocked --> Audit
+  Tentative --> Invariants
+  Invariants -->|pass| Published
+  Invariants -->|fail| AccountingBlocked
+  Published --> Audit
+  AccountingBlocked --> Audit
+  AccountingBlocked --> Operator
+  Recover -->|explicit repair / verified restore| Invariants
 
   subgraph LEGEND["Legend"]
     L1["CURRENT"]:::current
@@ -64,7 +78,10 @@ CURRENT is solid, TARGET is dashed, FUTURE is dotted, EXTERNAL is gray, safety i
 
 ## Main reading path
 
-Feed internal and external state into reconciliation, classify events, then follow ready, warning, or blocked paths. Blocked paths activate safety pause before review and recovery.
+Feed internal and external state into reconciliation, classify events, then follow
+ready, warning, or blocked paths. In parallel, publish tentative Stage 4B state
+only when accounting and publication invariants pass; otherwise roll back,
+record `accounting_blocked`, and require explicit verified recovery.
 
 ## Current implementation mapping
 
@@ -74,7 +91,11 @@ pause, and manual acknowledgement. The bounded round-trip service loads durable
 checkpoints, matches durable venue identifiers, ingests delayed exit fills once,
 updates order/position/ledger/P&L state transactionally, and persists a stable
 classification. The lifecycle monitor adds idempotent `INFO`, `WARNING`, and
-`CRITICAL` alerts without any order-submit/cancel capability.
+`CRITICAL` alerts without any order-submit/cancel capability. Stage 4B evaluates
+the same accounting and duplicate-publication invariants before marking a poll
+successful, advancing its watermark, checkpointing, or committing. Failure
+rolls back tentative state, preserves failed evidence, and stops the worker in a
+controlled way without creating an automatic restart loop.
 
 ## Target/future elements
 
@@ -86,16 +107,19 @@ No target element is needed for the current recovery logic. A future generalized
 `src/polysia/adapters/polymarket/round_trip_reconciliation.py`,
 `src/polysia/monitoring/live_round_trip.py`,
 `src/polysia/adapters/polymarket/lifecycle_monitoring.py`,
-`src/polysia/storage/schemas.sql`, `src/polysia/risk/kill_switch.py`
+`src/polysia/storage/schemas.sql`, `src/polysia/storage/continuous_shadow.py`,
+`src/polysia/storage/continuous_shadow_invariants.py`,
+`src/polysia/risk/kill_switch.py`
 
 ## Related tests
 
-round-trip reconciliation/monitor unit and adapter contract tests, storage
-transaction/idempotency tests, property tests, and the bounded vertical slice
+round-trip reconciliation/monitor unit and adapter contract tests, Stage 4B
+accounting-blocked integration tests, storage transaction/idempotency tests,
+property tests, and the bounded vertical slice
 
 ## Related ADRs
 
-ADR-0008, ADR-0009
+ADR-0008, ADR-0009, ADR-0014, ADR-0015
 
 ## Related capabilities/requirements
 

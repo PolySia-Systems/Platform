@@ -22,14 +22,21 @@
 - Cancellation safety closure: a durable venue-neutral finality gate with one
   possible cancel send, restart-safe no-resend behavior, fully paginated open
   orders, explicit outcomes, consecutive clean observations, and independent
-  order-detail, linked-trade, and position evidence. SDK 0.6.0 wire fixtures
-  cover order aliases, Decimal fields, and mixed cancel results.
+  order-detail, linked-trade, and position evidence. Pinned SDK 0.7.1 contract
+  fixtures cover order aliases, Decimal fields, and mixed cancel results.
 - Data-only Wallet Intelligence: protected PolyCop ingestion plus canonical
   multi-source wallet identity, source-derived time-safe features, independent
   readiness, versioned candidate policy, deterministic ranking, persistent
   lease fencing, atomic address-free publication, copyability Alpha/Stress
   selection, dynamic official Polymarket trade evidence, versioned Historical
   cost modeling, current-book Forward Shadow, and last-known-good recovery.
+- Stage 4B accounting hardening: one authoritative invariant evaluator, an
+  in-transaction publication gate, failed evidence, unchanged watermark on
+  failure, and controlled `accounting_blocked` shutdown without restart loops.
+- Live boundary hardening: unknown is distinct from measured zero, verified
+  state is distinct from assumptions, generic limit-order submission is
+  preview-only, and market execution sends exactly the immutable request
+  approved by Risk.
 
 ## Completed safety maintenance gate
 
@@ -49,8 +56,9 @@ remain separate promotion stages.
 
 ## Immediate next cycle: research and validation
 
-1. Observe multiple scheduled DATA_ONLY/Shadow cycles, establish external alert
-   delivery and encrypted off-host backup, and quantify source/data stability.
+1. Decide whether to update or retire the disposable Helsinki test host. If an
+   operational host is retained, establish external alert delivery and
+   encrypted off-host backup and quantify source/data stability.
 2. Acquire and validate reproducible BTC Up/Down 15-minute historical data,
    including market metadata, outcomes, book/liquidity snapshots, fee schedules,
    and timestamps.

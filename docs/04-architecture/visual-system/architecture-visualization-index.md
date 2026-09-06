@@ -1,8 +1,8 @@
 # Architecture Visualization Index
 
-Baseline: `8d64bb7bd5182bde5ed3a95c6ac26f7c859737a6`
+Baseline: `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
 Original full-corpus generation baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
-Reviewed: 2026-09-05
+Reviewed: 2026-09-06
 Owner: PolySia project owner
 
 | ID | View | Status | Canonical Mermaid | Documentation | SVG |
