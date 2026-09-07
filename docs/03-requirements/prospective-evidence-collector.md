@@ -1,6 +1,6 @@
 # Prospective Research Evidence Collector
 
-- **Status:** IMPLEMENTED as DATA_ONLY research capability; not deployed
+- **Status:** IMPLEMENTED as DATA_ONLY research capability; persistent collector is CURRENT for Compose profile `research`
 - **Mode:** public read-only collection and local replay
 - **External mutation:** none
 - **No authority:** no Live, Risk, Execution, wallet, or order path
@@ -8,8 +8,8 @@
 ## Goal
 
 Benchmark public real-time sources, collect a typed canonical observation
-stream, and prove restart-safe replay against Target Exposure v1 before any
-exact-SHA DATA_ONLY deployment.
+stream, and run a restart-safe persistent collector that produces rolling
+ten-minute `OPEN → VALID | INVALID` windows for later DATA_ONLY acceptance.
 
 This requirement does not prove profitability, Alpha, or Live readiness.
 
@@ -50,19 +50,43 @@ Classifications: `ACCEPTED`, `DUPLICATE`, `LATE`, `CONFLICTING`, `REVERTED`,
 
 The collector is provider-neutral. Venue translation stays in adapters.
 
-- Single-writer isolated SQLite (`research-evidence.sqlite3`)
+- Single-writer isolated SQLite (`research-evidence.sqlite3`) with WAL and a
+  5 second busy timeout
+- Exclusive local writer lock; a second writer is rejected
 - Dedup across retries and restarts
-- Initial snapshot, reconnect, and explicit gap/backfill recovery
-- Bounded queue; overload invalidates the experiment interval
-- Missing decision evidence invalidates the interval instead of inventing a
-  favorable value
+- Rolling ten-minute windows: `OPEN` until complete closure, then `VALID` or
+  `INVALID_*`
+- Source connections stay alive across window rotation
+- Orphaned `OPEN` windows become `INVALID_SHUTDOWN` on restart
+- Bounded queue; overload invalidates the current window
+- Missing decision evidence, drain failure, persistence/disk failure, or
+  incomplete shutdown prevent `VALID`
+- Empty windows keep an independent identity and may be `VALID` when collection
+  completed with quiet sources
+- A quiet wallet is not a failed source
 - Decisions record evidence IDs, code SHA, configuration digest, and policy
   version
-- Diagnostic transport errors may fail open as incomplete control events
+- Health is a sanitized atomic JSON file and does not scan event tables
+- Consistent readers use the SQLite Backup API
+- Periodic maintenance bounds market-state retention, duplicate metadata, and
+  WAL growth
 - Reports are sanitized; wallet addresses never appear
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
+
+## CLI
+
+```text
+python -m polysia.cli research source-benchmark --duration-seconds 600
+python -m polysia.cli research prospective-replay --database artifacts/research-evidence.sqlite3 --run-id <id>
+python -m polysia.cli research prospective-collect --window-seconds 600
+python -m polysia.cli research prospective-health --health-report <path>
+```
+
+Raw databases stay under `artifacts/` or `/var/lib/polysia/data/` and are not
+committed. The Compose `research` profile runs `research-collector`. Official
+comparison windows are 10–20 minutes. Ordinary pytest does not use the network.
 
 ## Replay
 
@@ -87,17 +111,6 @@ Wallet+Market research needs accepted wallet-attributable trades plus
 event-time market snapshots at decision and markout horizons. Market-only
 research needs market-state evidence without using wallet fills as labels.
 Neither is implemented as an Alpha contest here.
-
-## CLI
-
-```text
-python -m polysia.cli research source-benchmark --duration-seconds 600
-python -m polysia.cli research prospective-replay --database artifacts/research-evidence.sqlite3 --run-id <id>
-```
-
-Raw benchmark databases stay under `artifacts/` and are not committed.
-Official comparison windows are 10–20 minutes. The command is public
-read-only and opt-in; ordinary pytest does not use the network.
 
 Sanitized measurement evidence:
 [prospective-source-benchmark-v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).

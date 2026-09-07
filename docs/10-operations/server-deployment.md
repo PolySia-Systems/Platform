@@ -36,11 +36,47 @@ The container runs as UID/GID `10001`, has a read-only root filesystem, drops
 all Linux capabilities, gains no new privileges, exposes no network port, and
 uses bounded CPU, memory, processes, and rotating local Docker logs.
 
-The default monitor process does not start the prospective collector. If an
-operator runs `research source-benchmark` or `research prospective-replay` on
-the host, the research-evidence database must stay isolated from Stage 4B
-financial SQLite and `wallet-intelligence-latency.sqlite3`. Raw benchmark
-files stay out of Git.
+The default monitor process does not start the prospective collector. Start the
+persistent collector explicitly:
+
+```bash
+docker compose --profile research up --detach research-collector
+```
+
+The research-evidence database must stay isolated from Stage 4B financial
+SQLite and `wallet-intelligence-latency.sqlite3`. Raw files stay out of Git.
+Windows are `OPEN` until complete closure. Interrupted windows are
+`INVALID_SHUTDOWN`, never `VALID`. Backup the research store with:
+
+```bash
+docker compose --profile operations run --rm research-evidence-backup
+```
+
+### Persistent collector restart proof and T0
+
+After deploying an approved SHA, start the monitor and the research collector
+without enabling Live or changing the token allowlist:
+
+```bash
+export POLYSIA_IMAGE_TAG=<exact-merged-main-sha>
+docker compose build --pull monitor
+docker compose up --detach monitor
+docker compose --profile research up --detach research-collector
+```
+
+Perform one controlled collector restart before recording final T0:
+
+```bash
+docker compose --profile research restart research-collector
+```
+
+Confirm the interrupted window is `INVALID_SHUTDOWN` (never `VALID`), the
+restarted service owns the writer lock, and accepted evidence is not duplicated.
+Then record T0 from UTC wall time and allow one complete ten-minute window.
+Verify health JSON, a Backup-API snapshot, schema `research-evidence-v2`,
+integrity, foreign keys, bounded WAL/logs, and zero real orders. Do not wait
+for T0+3h in the deployment task; that observation is an independent read-only
+acceptance.
 
 ## Initial installation
 
@@ -182,12 +218,18 @@ With a verified release archive, transfer and verify the new exact-commit
 artifact, extract it into a new immutable release directory, build the tagged
 image, and atomically switch `/opt/polysia`. Keep the previous release archive,
 image, and symlink target until post-deployment health and restore rehearsal
-pass.
+pass. After an application update that includes the research collector, also
+rebuild and start `research-collector` with the same image tag. Keep the
+previous `/opt/polysia-releases/<sha>` directory for rollback.
 
 Rollback the application by checking out the previously recorded Git commit,
-rebuilding, and starting the monitor. Do not run `docker compose down --volumes`
-and do not delete `/var/lib/polysia`. If a schema or state change is involved,
-restore only from a verified backup after stopping the service.
+rebuilding, and starting the monitor and, when it was running, the research
+collector. Do not run `docker compose down --volumes` and do not delete
+`/var/lib/polysia`. If a schema or state change is involved, restore only from
+a verified backup after stopping the service. Research-evidence restore uses
+`research-evidence-backup` and an isolated file; verify schema v2, integrity,
+foreign keys, window lifecycle, and collector continuation before replacing
+the active store.
 
 ## Stop conditions
 
