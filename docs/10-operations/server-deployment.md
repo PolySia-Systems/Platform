@@ -28,12 +28,19 @@ safety gate.
 | `/opt/polysia-releases/<commit>` | Verified operator-uploaded Git archive when repository Deploy Keys are disabled | `root:polysia`, read-only release tree |
 | `/etc/polysia/polysia.env` | Runtime configuration and credentials | `root:root`, `0600` |
 | `/var/lib/polysia/data` | SQLite runtime state | UID/GID `10001`, private |
+| `/var/lib/polysia/data/research-evidence.sqlite3` | Optional isolated prospective research-evidence store | UID/GID `10001`, private; never the Stage 4B financial DB or latency sidecar |
 | `/var/lib/polysia/reports` | Sanitized monitoring snapshots | UID/GID `10001`, private |
 | `/var/lib/polysia/backups` | Checksummed SQLite backups | UID/GID `10001`, private |
 
 The container runs as UID/GID `10001`, has a read-only root filesystem, drops
 all Linux capabilities, gains no new privileges, exposes no network port, and
 uses bounded CPU, memory, processes, and rotating local Docker logs.
+
+The default monitor process does not start the prospective collector. If an
+operator runs `research source-benchmark` or `research prospective-replay` on
+the host, the research-evidence database must stay isolated from Stage 4B
+financial SQLite and `wallet-intelligence-latency.sqlite3`. Raw benchmark
+files stay out of Git.
 
 ## Initial installation
 

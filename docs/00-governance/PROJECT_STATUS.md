@@ -64,6 +64,10 @@ CURRENT capabilities:
   Current Control with Target Exposure v1 without Live, Risk, or Execution
   authority. See
   [Target Exposure Replay](../03-requirements/shadow-target-exposure-replay.md).
+- A provider-neutral prospective collector and public source benchmark persist
+  canonical research evidence in an isolated SQLite store. They do not write
+  into Stage 4B financial state or the latency sidecar. See
+  [Prospective Research Evidence Collector](../03-requirements/prospective-evidence-collector.md).
 - Combined backups validate staged snapshots before publishing and rotating a
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
@@ -77,9 +81,9 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-**Next task:** continue evidence-based DATA_ONLY/Shadow research from the
-immutable local backup. The previous Helsinki test host is retired; do not
-access it. Do not promote modeled P&L into Live authority.
+**Next task:** finish an exact-SHA DATA_ONLY deployment of current `main` after
+the prospective collector lands, then observe. Do not access the retired
+Helsinki host. Do not promote modeled P&L into Live authority.
 
 Blockers and limitations:
 
@@ -94,9 +98,9 @@ Blockers and limitations:
 - No production host is currently authorized.
 
 Next milestones: keep the immutable local backup as the historical source of
-truth; run fee-aware research Replay before any new Tiny-Live review; handle
-branch protection through a separate governance task. Do not access the
-retired Helsinki host.
+truth; deploy the merged exact SHA as DATA_ONLY after this collector lands;
+observe public collection without claiming Alpha; handle branch protection
+through a separate governance task. Do not access the retired Helsinki host.
 
 ## Audited runtime snapshot
 

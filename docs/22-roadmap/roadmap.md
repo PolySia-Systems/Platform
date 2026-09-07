@@ -61,8 +61,9 @@ remain separate promotion stages.
 2. Keep Target Exposure v1 as the only primary Challenger until its PARTIAL
    coverage and UNKNOWN marks are honestly classified. Do not add exploratory
    strategy contests.
-3. Next research stages, separately: real-time source benchmark, prospective
-   collector, and only then Structural Scanner / Placebo work.
+3. Public source benchmark and prospective collector are implemented as
+   DATA_ONLY research. Next: exact-SHA DATA_ONLY deploy and observe, then
+   Structural Scanner / Placebo work only if evidence supports it.
 4. Acquire additional reproducible BTC Up/Down historical data only when a new
    question cannot be answered from the frozen backup.
 5. Consider a separately authorized Tiny-Live sample only after safety and

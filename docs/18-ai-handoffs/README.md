@@ -18,6 +18,10 @@ because that exact path is an immutable compliance artifact.
   is the frozen immutable-backup inventory, data-sufficiency matrix, Current
   Control parity, and Target Exposure v1 primary comparison. It is not a
   profitability or Live-readiness claim.
+- [`prospective-source-benchmark-v1.md`](prospective-source-benchmark-v1.md)
+  is the sanitized public source-benchmark and collector evidence. Raw
+  databases stay out of Git. It is not a profitability or Live-readiness
+  claim.
 - [`polysia-finland-wallet-intelligence-deployment.md`](polysia-finland-wallet-intelligence-deployment.md)
   records the Helsinki DATA_ONLY Stages 1–4 deployment, backup/restore,
   rollback, and `3x-ui` preservation evidence. The host itself is retired.

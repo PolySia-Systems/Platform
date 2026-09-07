@@ -312,7 +312,53 @@ def test_shadow_run_real_data_command_writes_sanitized_reports(
     assert "token-secret" not in combined
 
 
-def test_shadow_historical_replay_requires_an_existing_backup(tmp_path: Path) -> None:
+def test_source_benchmark_command_writes_sanitized_report(monkeypatch, tmp_path: Path) -> None:
+    async def fake_benchmark(**kwargs):
+        del kwargs
+        return {
+            "run_id": "run-1",
+            "wallet": "0x1111111111111111111111111111111111111111",
+            "selection": {"qualified": False, "reason": "fixture"},
+        }
+
+    monkeypatch.setattr(
+        "polysia.cli_commands.research_evidence_cli.build_public_benchmark",
+        fake_benchmark,
+    )
+    output = tmp_path / "bench.json"
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "source-benchmark",
+            "--duration-seconds",
+            "1",
+            "--database",
+            str(tmp_path / "research.sqlite3"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert "0x1111111111111111111111111111111111111111" not in result.stdout
+    assert payload["wallet"] == "0xREDACTED"
+    assert "0x1111111111111111111111111111111111111111" not in output.read_text(encoding="utf-8")
+
+
+def test_prospective_replay_requires_recorded_run(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-replay",
+            "--database",
+            str(tmp_path / "missing.sqlite3"),
+            "--run-id",
+            "missing",
+        ],
+    )
+    assert result.exit_code == 1
     result = runner.invoke(
         app,
         ["research", "shadow-replay", "--backup-dir", str(tmp_path / "missing")],

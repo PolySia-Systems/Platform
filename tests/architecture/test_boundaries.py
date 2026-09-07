@@ -104,8 +104,15 @@ def test_dynamic_shadow_core_has_no_trading_authority_dependency() -> None:
         PACKAGE / "application" / "services" / "continuous_shadow.py",
         PACKAGE / "application" / "services" / "continuous_shadow_failures.py",
         PACKAGE / "domain" / "copytrading" / "target_exposure.py",
+        PACKAGE / "domain" / "research_evidence" / "models.py",
+        PACKAGE / "domain" / "research_evidence" / "collector.py",
+        PACKAGE / "domain" / "research_evidence" / "replay.py",
+        PACKAGE / "application" / "ports" / "research_evidence.py",
+        PACKAGE / "application" / "services" / "prospective_collector.py",
+        PACKAGE / "application" / "services" / "source_benchmark.py",
         PACKAGE / "backtesting" / "shadow_stateful_replay.py",
         PACKAGE / "backtesting" / "shadow_historical_baseline.py",
+        PACKAGE / "backtesting" / "prospective_replay.py",
         PACKAGE / "storage" / "immutable_sqlite.py",
     )
     forbidden_prefixes = (
@@ -133,6 +140,7 @@ def test_continuous_shadow_service_does_not_import_monitoring() -> None:
 def test_target_exposure_replay_has_no_live_or_sqlite_authority() -> None:
     files = (
         PACKAGE / "domain" / "copytrading" / "target_exposure.py",
+        PACKAGE / "domain" / "research_evidence" / "replay.py",
         PACKAGE / "backtesting" / "shadow_stateful_replay.py",
     )
     forbidden_prefixes = (

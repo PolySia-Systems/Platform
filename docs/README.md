@@ -48,6 +48,7 @@ evidence is the read-only local backup recorded in
 - [Live safety gates](04-architecture/adrs/ADR-0008-live-safety-gates.md)
 - [Verified Live state and approved orders](03-requirements/live-verified-state-and-approved-order.md)
 - [Shadow Target Exposure Replay v1](03-requirements/shadow-target-exposure-replay.md)
+- [Prospective research evidence collector](03-requirements/prospective-evidence-collector.md)
 - [Delivery and rollback](10-operations/delivery-and-rollback.md)
 
 ## Standards and governance
