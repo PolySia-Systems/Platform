@@ -26,6 +26,30 @@ from polysia.domain.wallet_intelligence import CandidateWalletDataset, Candidate
 runner = CliRunner()
 
 
+def test_capacity_counts_nested_bundles_and_legacy_files_but_not_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRADING_MODE", "DATA_ONLY")
+    monkeypatch.setenv("LIVE_TRADING_ENABLED", "false")
+    root = tmp_path / "backups"
+    for relative in (
+        "legacy.sqlite3", "bundle-new/shadow.sqlite3", "pinned/cutover/state.sqlite3",
+        ".bundle-staging-in-progress/partial.sqlite3",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"capacity-only-fixture")
+    result = runner.invoke(app, [
+        "wallet-intelligence", "capacity", "--backup-dir", str(root),
+        "--database", str(tmp_path / "absent-shadow.sqlite3"),
+        "--intelligence-database", str(tmp_path / "absent-intelligence.sqlite3"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["backup_count"] == 3
+    assert payload["backup_bytes"] == 3 * len(b"capacity-only-fixture")
+
+
 def test_persistent_shadow_retries_only_expected_transient_failures() -> None:
     assert {
         FAILURE_CATEGORY_MARKET_READ_FAILED,

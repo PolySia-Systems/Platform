@@ -1479,7 +1479,12 @@ def capacity(
         databases = {"continuous-shadow": shadow.capacity_report()}
     else:
         databases = {}
-    backup_files = list(backup_dir.glob("*.sqlite3")) if backup_dir.is_dir() else []
+    backup_files = [
+        path for path in backup_dir.rglob("*.sqlite3")
+        if path.is_file() and not any(
+            part.startswith(".bundle-staging-") for part in path.relative_to(backup_dir).parts
+        )
+    ] if backup_dir.is_dir() else []
     payload = capacity_payload(
         databases=databases,
         backup_count=len(backup_files),

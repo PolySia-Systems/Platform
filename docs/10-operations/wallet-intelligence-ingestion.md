@@ -593,6 +593,9 @@ optional store absent at preflight is omitted and reported as absent; this is
 not a complete three-store operational recovery bundle. Once a store is present
 at preflight it is required for that generation, even if it disappears during
 the copy. Operational acceptance must verify all expected roles in the manifest.
+`capacity` includes nested bundles, pinned copies and legacy root files, excluding
+active staging. Its backup count is database-file count, not generation count;
+bytes are logical file sizes (old hardlinks can overstate physical disk usage).
 
 Preflight requires space for the source files plus the policy's 4 GiB safety
 floor. Each online SQLite copy checks that floor while progressing in 256-page
