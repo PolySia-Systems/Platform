@@ -59,6 +59,8 @@ research_app.command("evaluate")(research.strategy_evaluation)
 research_app.command("evaluate-extended")(research.strategy_evaluation_extended)
 research_app.command("fill-audit")(research.fill_simulation_audit)
 research_app.command("shadow-replay")(research.shadow_historical_replay)
+research_app.command("source-benchmark")(research.source_benchmark)
+research_app.command("prospective-replay")(research.prospective_replay)
 
 wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
 wallet_intelligence_app.command("ensure")(wallet_intelligence.ensure)

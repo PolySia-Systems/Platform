@@ -1,0 +1,90 @@
+"""CLI helpers for public research-source benchmarking.
+
+Keeps research.py free of venue wiring. Reports are sanitized before print.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
+from pathlib import Path
+from typing import Any
+
+from polysia.adapters.polymarket.copytrading_source import UrllibJsonGetTransport
+from polysia.adapters.polymarket.research_sources import (
+    ACTIVITY_SOURCE_ID,
+    REST_ACTIVITY_CANDIDATE,
+    REST_TRADES_CANDIDATE,
+    TRADES_SOURCE_ID,
+    USER_CHANNEL_CANDIDATE,
+    DataApiWalletPollSource,
+    OfficialMarketStreamSource,
+    discover_public_follow_set,
+)
+from polysia.application.ports.research_evidence import ResearchObservationSource
+from polysia.application.services.source_benchmark import SourceBenchmarkReport
+from polysia.storage.research_evidence import ResearchEvidenceStore
+
+_WALLET_RE = re.compile(r"0x[a-fA-F0-9]{40}")
+BenchmarkRunner = Callable[..., Awaitable[SourceBenchmarkReport]]
+
+
+def sanitize_report(payload: dict[str, Any]) -> dict[str, Any]:
+    text = json.dumps(payload, sort_keys=True, default=str)
+    redacted = json.loads(_WALLET_RE.sub("0xREDACTED", text))
+    if not isinstance(redacted, dict):
+        raise ValueError("sanitized report must be an object")
+    return redacted
+
+
+async def build_public_benchmark(
+    *,
+    duration_seconds: int,
+    database: Path,
+    code_sha: str | None,
+    runner: BenchmarkRunner,
+) -> dict[str, Any]:
+    transport = UrllibJsonGetTransport()
+    aliases, token_ids = await discover_public_follow_set(transport)
+    store = ResearchEvidenceStore(database)
+    sources: list[ResearchObservationSource] = []
+    if aliases:
+        sources.append(
+            DataApiWalletPollSource(
+                REST_ACTIVITY_CANDIDATE,
+                path="/activity",
+                source_id=ACTIVITY_SOURCE_ID,
+                aliases=aliases,
+                transport=transport,
+            )
+        )
+        sources.append(
+            DataApiWalletPollSource(
+                REST_TRADES_CANDIDATE,
+                path="/trades",
+                source_id=TRADES_SOURCE_ID,
+                aliases=aliases,
+                transport=transport,
+            )
+        )
+    sources.append(OfficialMarketStreamSource(token_ids=token_ids))
+    report = await runner(
+        tuple(sources),
+        store=store,
+        duration=timedelta(seconds=duration_seconds),
+        code_sha=code_sha,
+        configuration={
+            "duration_seconds": duration_seconds,
+            "followed_alias_count": len(aliases),
+            "market_token_count": len(token_ids),
+        },
+        unavailable=(USER_CHANNEL_CANDIDATE,),
+    )
+    return {
+        **report.payload,
+        "followed_alias_count": len(aliases),
+        "market_token_count": len(token_ids),
+        "discovery_status": "measured" if aliases else "insufficient_public_wallets",
+    }

@@ -29,6 +29,8 @@ EXPECTED_COMMANDS = {
         "shadow",
         "shadow-public",
         "shadow-replay",
+        "source-benchmark",
+        "prospective-replay",
     },
     "ops": {
         "acceptance-audit",

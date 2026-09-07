@@ -47,10 +47,11 @@ Missing evidence stays `UNKNOWN` / `INSUFFICIENT_DATA`. Order books, prices,
 timestamps, liquidity, and outcomes are never interpolated. Fields created
 after a decision time must not leak into that decision.
 
-Unsupported future work stays in the matrix only: real-time source benchmark,
-prospective collector, alpha-research database, Structural Scanner, Placebo
-suite, sub-second latency, leader/follower markouts, true Market-only, and
-deployment.
+Unsupported future work stays in the matrix only: alpha-research database,
+Structural Scanner, Placebo suite, sub-second authenticated wallet streaming,
+true Market-only Alpha contests, and deployment. The public source benchmark
+and prospective collector are specified in
+[Prospective Research Evidence Collector](prospective-evidence-collector.md).
 
 ## Target Exposure v1
 

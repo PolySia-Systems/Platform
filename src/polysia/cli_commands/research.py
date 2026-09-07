@@ -420,3 +420,96 @@ def shadow_historical_replay(
         payload = {**payload, "output": str(output)}
         text = json.dumps(payload, sort_keys=True)
     typer.echo(text)
+
+
+def source_benchmark(
+    duration_seconds: Annotated[
+        int,
+        typer.Option("--duration-seconds", min=1, max=1200),
+    ] = 600,
+    database: Annotated[
+        Path,
+        typer.Option(
+            "--database",
+            help="Isolated research-evidence SQLite path. Never the Stage 4B financial DB.",
+        ),
+    ] = Path("artifacts/research-evidence.sqlite3"),
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Optional sanitized JSON path under artifacts/."),
+    ] = None,
+    code_sha: Annotated[
+        str | None,
+        typer.Option("--code-sha", help="Optional deploy SHA recorded with evidence."),
+    ] = None,
+) -> None:
+    """Benchmark public wallet REST sources and official market-state streaming."""
+
+    from polysia.application.services.source_benchmark import run_source_benchmark
+    from polysia.cli_commands.research_evidence_cli import (
+        build_public_benchmark,
+        sanitize_report,
+    )
+
+    try:
+        payload = asyncio.run(
+            build_public_benchmark(
+                duration_seconds=duration_seconds,
+                database=database,
+                code_sha=code_sha,
+                runner=run_source_benchmark,
+            )
+        )
+    except (OSError, ValueError, RuntimeError) as error:
+        print_error_and_exit(error)
+    payload = sanitize_report(payload)
+    text = json.dumps(payload, sort_keys=True)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"{text}\n", encoding="utf-8")
+        payload = {**payload, "output": str(output)}
+        text = json.dumps(payload, sort_keys=True)
+    typer.echo(text)
+
+
+def prospective_replay(
+    database: Annotated[
+        Path,
+        typer.Option("--database"),
+    ],
+    run_id: Annotated[str, typer.Option("--run-id")],
+) -> None:
+    """Replay Current Control vs Target Exposure v1 from recorded research evidence."""
+
+    from polysia.backtesting.prospective_replay import replay_recorded_run
+    from polysia.cli_commands.research_evidence_cli import sanitize_report
+    from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
+
+    try:
+        store = ResearchEvidenceStore(database)
+        store.initialize()
+        interval = store.load_interval_for_run(run_id)
+        if interval is None:
+            raise ValueError("no recorded research evidence for run_id")
+        result = replay_recorded_run(store, run_id=run_id, interval=interval)
+        payload = sanitize_report(
+            {
+                "control_digest": result.control_digest,
+                "invalidated": result.invalidated,
+                "interval_validity": interval.validity.value,
+                "run_id": run_id,
+                "target_digest": result.target_digest,
+                "unknown_count": result.unknown_count,
+                "control_decisions": [
+                    {"evidence_id": evidence_id, "decision": decision.value}
+                    for evidence_id, decision in result.control_decisions
+                ],
+                "target_decisions": [
+                    {"evidence_id": evidence_id, "decision": str(decision)}
+                    for evidence_id, decision in result.target_decisions
+                ],
+            }
+        )
+    except (OSError, ValueError, ResearchEvidenceStoreError) as error:
+        print_error_and_exit(error)
+    typer.echo(json.dumps(payload, sort_keys=True))
