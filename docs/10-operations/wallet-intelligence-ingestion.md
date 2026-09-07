@@ -588,6 +588,12 @@ the previous generation and removes its own partial staging files. Pinned and
 legacy root-level copies are not automatically deleted; review them separately
 against a verified recovery bundle and off-host copy before any removal.
 
+Initial bootstrap may precede creation of Shadow or telemetry. As before, an
+optional store absent at preflight is omitted and reported as absent; this is
+not a complete three-store operational recovery bundle. Once a store is present
+at preflight it is required for that generation, even if it disappears during
+the copy. Operational acceptance must verify all expected roles in the manifest.
+
 Preflight requires space for the source files plus the policy's 4 GiB safety
 floor. Each online SQLite copy checks that floor while progressing in 256-page
 steps and has a 300-second copy deadline. This bounds contention-induced copy

@@ -147,13 +147,16 @@ def backup_wallet_intelligence_state(
         raise ValueError("keep must be at least 1")
     latency_path = default_latency_telemetry_path(database_path)
     expected_latency = latency_path if latency_path.is_file() else None
+    expected_shadow = (
+        continuous_shadow_path
+        if continuous_shadow_path is not None and continuous_shadow_path.is_file()
+        else None
+    )
     sources = [database_path]
     if expected_latency is not None:
         sources.append(expected_latency)
-    if continuous_shadow_path is not None:
-        if not continuous_shadow_path.is_file():
-            raise WalletBackupError("backup_shadow_missing")
-        sources.append(continuous_shadow_path)
+    if expected_shadow is not None:
+        sources.append(expected_shadow)
     backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     required = sum(path.stat().st_size for path in sources if path.is_file())
     required += DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY.disk_safety_floor_bytes
@@ -164,7 +167,7 @@ def backup_wallet_intelligence_state(
         with TemporaryDirectory(prefix=".bundle-staging-", dir=backup_dir) as scratch:
             stage = Path(scratch)
             results = _backup_state_staged(
-                database_path, stage, continuous_shadow_path=continuous_shadow_path,
+                database_path, stage, continuous_shadow_path=expected_shadow,
                 latency_path=expected_latency, now=now,
             )
             bundle = next(stage.glob("bundle-*"))

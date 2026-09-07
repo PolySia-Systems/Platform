@@ -337,6 +337,25 @@ def test_incomplete_bundle_preserves_previous_generation_and_cleans_staging(
     assert len(verify_bundle_checksums(first[0].backup_path.parent).databases) == 3
 
 
+def test_first_install_can_back_up_intelligence_before_optional_stores_exist(
+    tmp_path: Path,
+) -> None:
+    from polysia.deployment.recovery_bundle import verify_bundle_checksums
+    from polysia.deployment.wallet_intelligence_backup import backup_wallet_intelligence_state
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    financial, shadow, latency = backup_wallet_intelligence_state(
+        database, tmp_path / "backups",
+        continuous_shadow_path=tmp_path / "not-started-yet.sqlite3",
+    )
+    assert shadow is None
+    assert latency is None
+    assert {r.role for r in verify_bundle_checksums(financial.backup_path.parent).databases} == {
+        "wallet-intelligence",
+    }
+
+
 def test_requested_shadow_disappearing_mid_backup_cannot_publish_partial_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
