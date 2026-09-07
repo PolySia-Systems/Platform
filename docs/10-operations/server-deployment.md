@@ -78,6 +78,15 @@ integrity, foreign keys, bounded WAL/logs, and zero real orders. Do not wait
 for T0+3h in the deployment task; that observation is an independent read-only
 acceptance.
 
+Routine collector health may report maintenance as `degraded` after transient
+checkpoint contention while committed evidence continues. It must recover on a
+later `PASSIVE` checkpoint. A fatal evidence write, full-disk, I/O, or corruption
+error remains fail-closed. Do not require WAL size zero: require continuing
+checkpoint progress, bounded aggregate database/WAL growth, and uninterrupted
+window closure. Before recording T0 after a storage change, exercise the prior
+WAL threshold in an isolated fixture and observe at least two complete runtime
+windows.
+
 ## Initial installation
 
 1. Create the dedicated non-root `polysia` account with UID/GID `10001` if

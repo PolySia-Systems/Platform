@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -43,6 +44,26 @@ class ResearchEvidenceStoreError(RuntimeError):
 
 class ResearchWriterLockError(ResearchEvidenceStoreError):
     """A second writer attempted to own the same research-evidence database."""
+
+
+class ResearchEvidenceMaintenanceError(ResearchEvidenceStoreError):
+    """A post-commit retention or checkpoint operation failed."""
+
+    def __init__(self, stage: str, error: sqlite3.Error) -> None:
+        super().__init__(f"research evidence {stage} maintenance failed")
+        self.stage = stage
+        self.sqlite_errorcode = getattr(error, "sqlite_errorcode", None)
+        self.sqlite_errorname = getattr(error, "sqlite_errorname", "SQLITE_UNKNOWN")
+
+
+@dataclass(frozen=True, slots=True)
+class WalCheckpointResult:
+    """Sanitized outcome of a non-blocking WAL checkpoint attempt."""
+
+    attempted: bool
+    busy: bool
+    log_frames: int
+    checkpointed_frames: int
 
 
 class ExclusiveWriterLock:
@@ -112,6 +133,10 @@ class ResearchEvidenceStore:
     @property
     def path(self) -> Path:
         return self._path
+
+    @property
+    def maintenance_due(self) -> bool:
+        return self._events_since_maintain >= 64
 
     def initialize(self) -> None:
         connection = self._connect()
@@ -282,8 +307,6 @@ class ResearchEvidenceStore:
         finally:
             connection.close()
         self._events_since_maintain += 1
-        if self._events_since_maintain >= 64:
-            self.maintain(now=self._clock())
         return classification_result
 
     def record_reconnect(self, source_id: str, *, observed_at: datetime) -> int:
@@ -544,7 +567,9 @@ class ResearchEvidenceStore:
         finally:
             connection.close()
 
-    def maintain(self, *, now: datetime | None = None) -> None:
+    def maintain(self, *, now: datetime | None = None) -> WalCheckpointResult:
+        """Prune in one transaction, then checkpoint outside every transaction."""
+
         observed = now or self._clock()
         connection = self._connect()
         try:
@@ -559,16 +584,33 @@ class ResearchEvidenceStore:
                 "SELECT evidence_id FROM research_events"
                 ")"
             )
-            wal_path = Path(f"{self._path}-wal")
-            if _file_size(wal_path) >= WAL_CHECKPOINT_BYTES:
-                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             connection.commit()
             self._events_since_maintain = 0
         except sqlite3.Error as error:
             connection.rollback()
-            raise ResearchEvidenceStoreError("research evidence maintenance failed") from error
+            raise ResearchEvidenceMaintenanceError("prune", error) from error
         finally:
             connection.close()
+
+        wal_path = Path(f"{self._path}-wal")
+        if _file_size(wal_path) < WAL_CHECKPOINT_BYTES:
+            return WalCheckpointResult(False, False, 0, 0)
+
+        checkpoint = self._connect()
+        try:
+            row = checkpoint.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+            if row is None:
+                raise sqlite3.OperationalError("checkpoint returned no status")
+            return WalCheckpointResult(
+                attempted=True,
+                busy=bool(row[0]),
+                log_frames=int(row[1]),
+                checkpointed_frames=int(row[2]),
+            )
+        except sqlite3.Error as error:
+            raise ResearchEvidenceMaintenanceError("checkpoint", error) from error
+        finally:
+            checkpoint.close()
 
     def _prune_unlocked(self, connection: sqlite3.Connection, *, now: datetime) -> None:
         cutoff = now - self._policy.market_state_retention

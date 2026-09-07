@@ -30,10 +30,15 @@ from polysia.domain.research_evidence.models import (
     payload_digest,
     stable_evidence_id,
 )
-from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
+from polysia.storage.research_evidence import (
+    ResearchEvidenceMaintenanceError,
+    ResearchEvidenceStore,
+    ResearchEvidenceStoreError,
+)
 
 Clock = Callable[[], datetime]
 MonotonicNs = Callable[[], int]
+MAX_CONSECUTIVE_PRUNE_FAILURES = 3
 
 
 class ProspectiveCollector:
@@ -67,6 +72,12 @@ class ProspectiveCollector:
         )
         self._write_lock = asyncio.Lock()
         self._reconnect_pending: dict[str, bool] = {}
+        self._maintenance_status = "healthy"
+        self._maintenance_stage: str | None = None
+        self._maintenance_error_code: str | None = None
+        self._maintenance_failures = 0
+        self._checkpoint_log_frames = 0
+        self._checkpointed_frames = 0
         self._store.initialize()
         if recover_orphans:
             self._store.invalidate_open_intervals(reason="orphan_open_after_restart")
@@ -91,6 +102,17 @@ class ProspectiveCollector:
     @property
     def last_persist_at(self) -> datetime | None:
         return self._last_persist_at
+
+    @property
+    def maintenance_health(self) -> dict[str, object]:
+        return {
+            "status": self._maintenance_status,
+            "stage": self._maintenance_stage,
+            "sqlite_error_code": self._maintenance_error_code,
+            "consecutive_failures": self._maintenance_failures,
+            "checkpoint_log_frames": self._checkpoint_log_frames,
+            "checkpointed_frames": self._checkpointed_frames,
+        }
 
     @property
     def queue_depth(self) -> int:
@@ -184,7 +206,7 @@ class ProspectiveCollector:
         )
         self._interval = closed
         self._store.persist_interval(closed)
-        self._store.maintain(now=self._clock())
+        self._maintain_if_due(force=True)
         return closed
 
     def start_window(self) -> ResearchInterval:
@@ -232,6 +254,7 @@ class ProspectiveCollector:
         try:
             self._store.persist_event(event, interval_id=self._interval.interval_id)
             self._last_persist_at = self._clock()
+            self._maintain_if_due()
         except (ResearchEvidenceStoreError, OSError):
             self._invalidate(IntervalValidity.INVALID_DISK, "persistence_failure")
             raise
@@ -264,9 +287,33 @@ class ProspectiveCollector:
         )
         self._store.persist_event(classified, interval_id=self._interval.interval_id)
         self._last_persist_at = self._clock()
+        self._maintain_if_due()
         if classified.classification is EvidenceClassification.ACCEPTED:
             self._reconnect_pending[candidate.source_id] = False
         return classified
+
+    def _maintain_if_due(self, *, force: bool = False) -> None:
+        if not force and not self._store.maintenance_due:
+            return
+        try:
+            result = self._store.maintain(now=self._clock())
+        except ResearchEvidenceMaintenanceError as error:
+            self._maintenance_status = "degraded"
+            self._maintenance_stage = error.stage
+            self._maintenance_error_code = error.sqlite_errorname
+            self._maintenance_failures += 1
+            if _maintenance_failure_is_fatal(error.sqlite_errorname) or (
+                error.stage == "prune"
+                and self._maintenance_failures >= MAX_CONSECUTIVE_PRUNE_FAILURES
+            ):
+                raise
+            return
+        self._maintenance_status = "degraded" if result.busy else "healthy"
+        self._maintenance_stage = "checkpoint" if result.busy else None
+        self._maintenance_error_code = "SQLITE_BUSY" if result.busy else None
+        self._maintenance_failures = 0
+        self._checkpoint_log_frames = result.log_frames
+        self._checkpointed_frames = result.checkpointed_frames
 
     def _invalidate(self, validity: IntervalValidity, reason: str) -> None:
         if self._interval.validity in INVALID_INTERVAL_STATES:
@@ -347,3 +394,14 @@ def _perf_ns() -> int:
     import time
 
     return time.perf_counter_ns()
+
+
+def _maintenance_failure_is_fatal(error_name: str) -> bool:
+    fatal_prefixes = (
+        "SQLITE_CORRUPT",
+        "SQLITE_FULL",
+        "SQLITE_IOERR",
+        "SQLITE_NOTADB",
+        "SQLITE_READONLY",
+    )
+    return error_name.startswith(fatal_prefixes)

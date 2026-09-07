@@ -59,17 +59,28 @@ The collector is provider-neutral. Venue translation stays in adapters.
 - Source connections stay alive across window rotation
 - Orphaned `OPEN` windows become `INVALID_SHUTDOWN` on restart
 - Bounded queue; overload invalidates the current window
-- Missing decision evidence, drain failure, persistence/disk failure, or
+- Missing decision evidence, drain failure, evidence-write/storage failure, or
   incomplete shutdown prevent `VALID`
 - Empty windows keep an independent identity and may be `VALID` when collection
   completed with quiet sources
 - A quiet wallet is not a failed source
 - Decisions record evidence IDs, code SHA, configuration digest, and policy
   version
-- Health is a sanitized atomic JSON file and does not scan event tables
+- Health is a sanitized atomic JSON file, refreshes at most every 30 seconds
+  during an open window, and does not scan event tables
 - Consistent readers use the SQLite Backup API
-- Periodic maintenance bounds market-state retention, duplicate metadata, and
-  WAL growth
+- Event persistence commits independently from maintenance. A post-commit
+  retention or checkpoint failure must never be reported as an event-write
+  failure.
+- Retention pruning uses its own short transaction. Routine WAL checkpoints
+  are non-blocking `PASSIVE` operations outside write transactions; the hot
+  ingest path never requests `TRUNCATE`.
+- Transient maintenance contention is health degradation, not lost evidence.
+  Three consecutive pruning failures stop collection before retention can fail
+  indefinitely. Real write, full-disk, I/O, or corruption failures remain
+  immediately fail-closed.
+- Event persistence and window rotation share one lifecycle ordering boundary,
+  so a committed event cannot cross a summary/close/start boundary ambiguously.
 - Reports are sanitized; wallet addresses never appear
 
 Do not write research evidence into the Stage 4B financial database or the
