@@ -222,3 +222,6 @@ an incomplete valuation as reconciled.
   retained historical and rollback artifact.
 - No Stage 4B domain or application module imports Risk, Execution, strategy,
   wallet, signing, cancellation, or trading-authority code.
+- Report-time fill filters remain descriptive/non-stateful. Full portfolio
+  Replay is the separate Target Exposure research path in
+  [`shadow-target-exposure-replay.md`](shadow-target-exposure-replay.md).

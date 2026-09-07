@@ -19,13 +19,14 @@ authorization exists.
 router, adapter registry, extra venues, operator web UI, and production Live
 automation.
 
-**Current focus:** observe the deployed DATA_ONLY/Shadow pipeline. Do not
-promote modeled P&L into Live authority.
+**Current focus:** continue DATA_ONLY/Shadow research from the immutable
+local historical baseline. Do not promote modeled P&L into Live authority.
 
 **Where to go next:** [project status](00-governance/PROJECT_STATUS.md) for
-durable state, [architecture](04-architecture/README.md) to go deeper, and
-the [server deployment runbook](10-operations/server-deployment.md#current-operational-truth)
-to query the host.
+durable state and [architecture](04-architecture/README.md) to go deeper.
+The previous Helsinki host is retired; do not query it. Historical Stage 4B
+evidence is the read-only local backup recorded in
+[Target Exposure v1 baseline](18-ai-handoffs/shadow-target-exposure-v1-baseline.md).
 
 ## Durable project truth
 
@@ -46,6 +47,7 @@ to query the host.
 - [Risk register](00-governance/registers/risks.md)
 - [Live safety gates](04-architecture/adrs/ADR-0008-live-safety-gates.md)
 - [Verified Live state and approved orders](03-requirements/live-verified-state-and-approved-order.md)
+- [Shadow Target Exposure Replay v1](03-requirements/shadow-target-exposure-replay.md)
 - [Delivery and rollback](10-operations/delivery-and-rollback.md)
 
 ## Standards and governance

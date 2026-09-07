@@ -103,6 +103,10 @@ def test_dynamic_shadow_core_has_no_trading_authority_dependency() -> None:
         PACKAGE / "application" / "ports" / "continuous_shadow.py",
         PACKAGE / "application" / "services" / "continuous_shadow.py",
         PACKAGE / "application" / "services" / "continuous_shadow_failures.py",
+        PACKAGE / "domain" / "copytrading" / "target_exposure.py",
+        PACKAGE / "backtesting" / "shadow_stateful_replay.py",
+        PACKAGE / "backtesting" / "shadow_historical_baseline.py",
+        PACKAGE / "storage" / "immutable_sqlite.py",
     )
     forbidden_prefixes = (
         "polysia.execution",
@@ -124,3 +128,24 @@ def test_continuous_shadow_service_does_not_import_monitoring() -> None:
     imports = _imports(PACKAGE / "application" / "services" / "continuous_shadow.py")
     forbidden = sorted(name for name in imports if name.startswith("polysia.monitoring"))
     assert forbidden == []
+
+
+def test_target_exposure_replay_has_no_live_or_sqlite_authority() -> None:
+    files = (
+        PACKAGE / "domain" / "copytrading" / "target_exposure.py",
+        PACKAGE / "backtesting" / "shadow_stateful_replay.py",
+    )
+    forbidden_prefixes = (
+        "sqlite3",
+        "polysia.storage",
+        "polysia.execution",
+        "polysia.risk",
+        "polysia.adapters",
+    )
+    findings = {
+        path.relative_to(ROOT).as_posix(): sorted(
+            name for name in _imports(path) if name.startswith(forbidden_prefixes)
+        )
+        for path in files
+    }
+    assert {path: imports for path, imports in findings.items() if imports} == {}

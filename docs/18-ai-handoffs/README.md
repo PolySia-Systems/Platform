@@ -14,9 +14,13 @@ because that exact path is an immutable compliance artifact.
 - [`stage4b-data-lifecycle-v1.md`](stage4b-data-lifecycle-v1.md)
   is the current Stage 4B storage-lifecycle evidence: schema v6, compact
   cutover, T0, and 24-hour storage acceptance.
+- [`shadow-target-exposure-v1-baseline.md`](shadow-target-exposure-v1-baseline.md)
+  is the frozen immutable-backup inventory, data-sufficiency matrix, Current
+  Control parity, and Target Exposure v1 primary comparison. It is not a
+  profitability or Live-readiness claim.
 - [`polysia-finland-wallet-intelligence-deployment.md`](polysia-finland-wallet-intelligence-deployment.md)
   records the Helsinki DATA_ONLY Stages 1–4 deployment, backup/restore,
-  rollback, and `3x-ui` preservation evidence.
+  rollback, and `3x-ui` preservation evidence. The host itself is retired.
 
 These files do not authorize Live trading or another external mutation.
 

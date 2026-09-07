@@ -181,5 +181,6 @@ def test_walk_forward_does_not_use_future_fills_for_wallet_evidence() -> None:
 
     assert report["look_ahead"] is False
     assert report["claim"] == "not_a_profitability_or_live_promotion_result"
+    assert report["replay_class"] == "descriptive_non_stateful_fill_filter"
     assert wallet_policy["in_sample"]["buy_count"] == 0
     assert wallet_policy["out_of_sample"]["buy_count"] == 3

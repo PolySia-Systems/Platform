@@ -167,8 +167,9 @@ def walk_forward_policy_report(
     """Score versioned filters on already-recorded fills without look-ahead.
 
     In-sample fills before ``split_at`` are reported only as context. The
-    out-of-sample window is the decision-relevant result. This is not a full
-    book resimulation and is not a profitability claim.
+    out-of-sample window is the decision-relevant result. This is a
+    descriptive/non-stateful fill filter, not a full portfolio replay, and is
+    not a profitability claim.
     """
 
     ordered = tuple(sorted(fills, key=lambda item: (item.evaluated_at, item.wallet_id)))
@@ -206,10 +207,12 @@ def walk_forward_policy_report(
         "claim": "not_a_profitability_or_live_promotion_result",
         "look_ahead": False,
         "policies": policies,
+        "replay_class": "descriptive_non_stateful_fill_filter",
         "semantics": (
             "Walk-forward fill filters on recorded SIMULATED evaluations. "
             "In-sample fills never update out-of-sample selection. Close P&L is "
-            "the recorded evaluation value, not a resimulated inventory path."
+            "the recorded evaluation value, not a resimulated inventory path. "
+            "This report is descriptive/non-stateful and is not full portfolio replay."
         ),
         "split_at": None if not simulated else split_at.isoformat(),
         "source_fill_count": len(simulated),

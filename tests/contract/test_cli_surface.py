@@ -28,6 +28,7 @@ EXPECTED_COMMANDS = {
         "paper-trade",
         "shadow",
         "shadow-public",
+        "shadow-replay",
     },
     "ops": {
         "acceptance-audit",

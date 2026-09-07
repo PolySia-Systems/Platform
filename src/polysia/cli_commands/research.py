@@ -382,3 +382,41 @@ def fill_simulation_audit(
         "status": "ok",
     }
     typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def shadow_historical_replay(
+    backup_dir: Annotated[
+        Path,
+        typer.Option(
+            "--backup-dir",
+            help="Read-only Helsinki-final backup directory. Never written.",
+        ),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            help="Optional JSON path under artifacts/; not committed to Git.",
+        ),
+    ] = None,
+) -> None:
+    """Replay Current Control vs Target Exposure v1 from an immutable backup."""
+
+    from polysia.backtesting.shadow_historical_baseline import (
+        HistoricalBaselineError,
+        run_backup_research,
+    )
+    from polysia.storage.immutable_sqlite import ImmutableSqliteError
+
+    try:
+        payload = run_backup_research(backup_dir)
+    except (HistoricalBaselineError, ImmutableSqliteError, OSError, ValueError) as error:
+        print_error_and_exit(error)
+
+    text = json.dumps(payload, sort_keys=True)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"{text}\n", encoding="utf-8")
+        payload = {**payload, "output": str(output)}
+        text = json.dumps(payload, sort_keys=True)
+    typer.echo(text)

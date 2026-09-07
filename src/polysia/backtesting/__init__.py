@@ -21,12 +21,38 @@ from polysia.backtesting.replay import (
     load_market_data_events_jsonl,
     market_data_event_from_dict,
 )
+from polysia.backtesting.shadow_historical_baseline import (
+    AUTHORITATIVE_ALPHA_SIMULATED_FILLS,
+    HELSINKI_FINAL_BACKUP_ID,
+    SufficiencyClass,
+    classify_data_sufficiency,
+    run_backup_research,
+)
+from polysia.backtesting.shadow_stateful_replay import (
+    CutoffMark,
+    ReplaySnapshot,
+    ShadowReplayError,
+    ShadowReplayEvent,
+    ShadowReplayKind,
+    replay_shadow_events,
+)
 
 __all__ = [
+    "AUTHORITATIVE_ALPHA_SIMULATED_FILLS",
     "BacktestConfig",
     "BacktestEngine",
     "BacktestResult",
     "CopySignalArbiterReplay",
+    "CutoffMark",
+    "HELSINKI_FINAL_BACKUP_ID",
+    "ReplaySnapshot",
+    "ShadowReplayError",
+    "ShadowReplayEvent",
+    "ShadowReplayKind",
+    "SufficiencyClass",
+    "classify_data_sufficiency",
+    "replay_shadow_events",
+    "run_backup_research",
     "CopySignalModeResult",
     "CopySignalReplayConfig",
     "CopySignalReplayDataset",

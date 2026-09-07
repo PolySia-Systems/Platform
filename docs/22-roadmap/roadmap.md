@@ -56,24 +56,17 @@ remain separate promotion stages.
 
 ## Immediate next cycle: research and validation
 
-1. Decide whether to update or retire the disposable Helsinki test host. If an
-   operational host is retained, establish external alert delivery and
-   encrypted off-host backup and quantify source/data stability.
-2. Acquire and validate reproducible BTC Up/Down 15-minute historical data,
-   including market metadata, outcomes, book/liquidity snapshots, fee schedules,
-   and timestamps.
-   Any external research-data provider must remain read-only, pass a bounded
-   preflight, use outcome-token identifiers for books, and classify
-   incomplete order-book data as non-promotable research evidence.
-3. Define naive and market-aware benchmarks plus data-quality, leakage,
-   slippage, liquidity, and fee assumptions before strategy evaluation.
-4. Run realistic out-of-sample backtests and report net P&L, drawdown,
-   calibration, turnover, execution feasibility, and regime sensitivity.
-5. Run a large Paper/Shadow sample using the same accounting and promotion
-   metrics.
-6. Consider a separately authorized Tiny-Live sample only after the safety
-   maintenance gate and evidence-based promotion gates pass. Do not scale
-   capital from the single profitable LIVE-004 result.
+1. Treat the immutable local Helsinki-final backup as the historical source of
+   truth. Do not access the retired host.
+2. Keep Target Exposure v1 as the only primary Challenger until its PARTIAL
+   coverage and UNKNOWN marks are honestly classified. Do not add exploratory
+   strategy contests.
+3. Next research stages, separately: real-time source benchmark, prospective
+   collector, and only then Structural Scanner / Placebo work.
+4. Acquire additional reproducible BTC Up/Down historical data only when a new
+   question cannot be answered from the frozen backup.
+5. Consider a separately authorized Tiny-Live sample only after safety and
+   evidence-based promotion gates pass. Do not scale capital from LIVE-004.
 
 ## Parallel maintenance gates
 
