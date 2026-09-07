@@ -8,6 +8,6 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/polysia
-ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm wallet-intelligence-shadow
+ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm --no-deps wallet-intelligence-shadow
 TimeoutStartSec=9min
 NoNewPrivileges=true

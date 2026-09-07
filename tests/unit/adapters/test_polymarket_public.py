@@ -33,6 +33,36 @@ class FakeClientContext:
         return None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returned", [("a", "b"), ("a",), ("a", "a"), ("wrong",)])
+async def test_batch_books_preserve_identity_freshness_and_missing_evidence(
+    returned: tuple[str, ...],
+) -> None:
+    class Client:
+        calls = 0
+
+        async def get_order_books(self, *, token_ids: tuple[str, ...]) -> tuple[Any, ...]:
+            self.calls += 1
+            assert token_ids == ("a", "b")
+            return tuple(SimpleNamespace(
+                token_id=token, market="condition", timestamp="1783771200000",
+                bids=(SimpleNamespace(price="0.48", size="5"),),
+                asks=(SimpleNamespace(price="0.50", size="4"),),
+                min_order_size="1", tick_size="0.01", neg_risk=False, hash="hash",
+            ) for token in returned)
+
+    client = Client()
+    adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
+    if returned in (("a", "a"), ("wrong",)):
+        with pytest.raises(PolymarketPublicAdapterError):
+            await adapter.get_order_books(("a", "b"))
+    else:
+        books = await adapter.get_order_books(("a", "b"))
+        assert set(books) == set(returned)
+        assert all(book.timestamp is not None for book in books.values())
+    assert client.calls == 1
+
+
 class FakeClient:
     def __init__(
         self,

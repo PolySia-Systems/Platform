@@ -4,7 +4,9 @@ import argparse
 import hashlib
 import os
 import re
+import shutil
 import sqlite3
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -43,10 +45,14 @@ def backup_sqlite_database(
     keep: int = 14,
     now: datetime | None = None,
     prefix: str = BACKUP_PREFIX,
+    minimum_free_bytes: int = 0,
+    timeout_seconds: float = 300,
 ) -> BackupResult:
     """Create an online, integrity-checked, checksummed SQLite backup."""
     if keep < 1:
         raise ValueError("keep must be at least 1")
+    if minimum_free_bytes < 0 or timeout_seconds <= 0:
+        raise ValueError("backup capacity and timeout must be positive")
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}-", prefix) is None:
         raise ValueError("backup prefix is invalid")
     if not database_path.is_file():
@@ -59,11 +65,24 @@ def backup_sqlite_database(
     backup_path = backup_dir / f"{prefix}{timestamp}{BACKUP_SUFFIX}"
 
     temporary_path = _temporary_path(backup_dir)
+    deadline = time.monotonic() + timeout_seconds
+    capacity_check_at = 0.0
+
+    def progress(status: int, remaining: int, total: int) -> None:
+        nonlocal capacity_check_at
+        del status, remaining, total
+        now = time.monotonic()
+        if now >= deadline:
+            raise TimeoutError("SQLite backup exceeded its bounded copy window")
+        if minimum_free_bytes and now >= capacity_check_at:
+            if shutil.disk_usage(backup_dir).free < minimum_free_bytes:
+                raise OSError("SQLite backup reached its disk safety floor")
+            capacity_check_at = now + 0.25
     try:
         source = sqlite3.connect(_read_only_uri(database_path), uri=True)
         destination = sqlite3.connect(temporary_path)
         try:
-            source.backup(destination)
+            source.backup(destination, pages=256, progress=progress, sleep=0.05)
             _require_integrity(destination)
         finally:
             destination.close()

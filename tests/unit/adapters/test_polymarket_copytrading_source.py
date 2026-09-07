@@ -127,6 +127,27 @@ def trades() -> list[dict[str, Any]]:
     return json.loads((FIXTURES / "polymarket_trades_page.json").read_text(encoding="utf-8"))
 
 
+@pytest.mark.asyncio
+async def test_subsecond_window_filters_boundary_without_losing_pagination(
+    trades: list[dict[str, Any]], event: list[dict[str, Any]],
+) -> None:
+    row = deepcopy(trades[0])
+    boundary = datetime.fromtimestamp(row["timestamp"], tz=UTC)
+    transport = FakeTransport([row, row], event)
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET}, transport=transport, clock=lambda: OBSERVED_AT,
+    )
+    page = await source.read_page(
+        "leader-001", start_at=boundary + timedelta(microseconds=1),
+        end_at=boundary + timedelta(seconds=30), page_size=1,
+    )
+    assert page.events == ()
+    assert page.filtered_count == 1
+    assert page.rejected_count == 0
+    assert page.next_checkpoint is not None
+    assert len(transport.calls) == 1  # No Gamma lookup for out-of-window evidence.
+
+
 @pytest.fixture
 def event() -> list[dict[str, Any]]:
     return json.loads((FIXTURES / "polymarket_btc15_event.json").read_text(encoding="utf-8"))

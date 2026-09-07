@@ -196,6 +196,29 @@ class PolymarketPublicAdapter:
                 token_id=token_id,
             ) from error
 
+    async def get_order_books(
+        self, token_ids: tuple[str, ...]
+    ) -> dict[str, MarketOrderBookSnapshot]:
+        """Read up to 50 public books with the pinned SDK's read-only POST /books."""
+        if not 1 <= len(token_ids) <= 50 or len(set(token_ids)) != len(token_ids):
+            raise ValueError("book batch requires 1 to 50 distinct tokens")
+
+        async def read() -> dict[str, MarketOrderBookSnapshot]:
+            async with self._client_factory() as client:
+                raw = await client.get_order_books(token_ids=token_ids)
+                books = [self._mapper.to_order_book(item) for item in raw]
+                mapped = {book.token_id: book for book in books}
+                if len(mapped) != len(books) or not set(mapped) <= set(token_ids):
+                    raise ValueError("book batch returned duplicate or unrequested tokens")
+                return mapped
+
+        try:
+            return await self._read_retry_policy.run("get_order_books", read)
+        except (PolymarketError, ValueError) as error:
+            raise self._adapter_error(
+                "get_order_books", "Could not fetch valid Polymarket order books.", error
+            ) from error
+
     def _adapter_error(
         self,
         operation: str,

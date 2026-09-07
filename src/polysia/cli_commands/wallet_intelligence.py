@@ -57,6 +57,7 @@ from polysia.deployment.continuous_shadow_migration import (
     migrate_continuous_shadow_database,
 )
 from polysia.deployment.wallet_intelligence_backup import (
+    WalletBackupError,
     backup_wallet_intelligence_database,
     backup_wallet_intelligence_state,
     rehearse_continuous_shadow_restore,
@@ -355,14 +356,15 @@ def ensure(
             health_report,
             error,
         )
-    except Exception:
+    except Exception as error:
         _emit_failed_pipeline(
             source_adapter,
             source_store,
             intelligence_store,
             health_report,
             CandidateIntelligenceError(
-                "wallet_intelligence_pipeline_failed",
+                error.error_code if isinstance(error, WalletBackupError)
+                else "wallet_intelligence_pipeline_failed",
                 "Wallet-intelligence pipeline failed safely.",
             ),
         )
@@ -1276,7 +1278,8 @@ def backup(
         typer.echo(
             json.dumps(
                 {
-                    "error_code": "backup_failed",
+                    "error_code": error.error_code if isinstance(error, WalletBackupError)
+                    else "backup_failed",
                     "message": "Wallet-intelligence backup failed.",
                     "status": "failed",
                 },
