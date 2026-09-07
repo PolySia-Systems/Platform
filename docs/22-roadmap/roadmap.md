@@ -56,13 +56,14 @@ remain separate promotion stages.
 
 ## Immediate next cycle: research and validation
 
-1. Treat the immutable local Helsinki-final backup as the historical source of
-   truth. Do not access the retired host.
+1. Operate the persistent prospective collector on the authorized Helsinki
+   DATA_ONLY host. Do not access Nuremberg. The immutable local Helsinki-final
+   backup remains the historical source of truth for Replay.
 2. Keep Target Exposure v1 as the only primary Challenger until its PARTIAL
    coverage and UNKNOWN marks are honestly classified. Do not add exploratory
    strategy contests.
-3. Public source benchmark and prospective collector are implemented as
-   DATA_ONLY research. Next: exact-SHA DATA_ONLY deploy and observe, then
+3. Public source benchmark and persistent prospective collector are implemented
+   as DATA_ONLY research. Next: observe the rolling ten-minute windows, then
    Structural Scanner / Placebo work only if evidence supports it.
 4. Acquire additional reproducible BTC Up/Down historical data only when a new
    question cannot be answered from the frozen backup.

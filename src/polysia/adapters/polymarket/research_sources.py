@@ -126,6 +126,7 @@ class DataApiWalletPollSource:
         run_id: str,
         deadline: datetime,
     ) -> AsyncIterator[CanonicalResearchEvent]:
+        backoff = 1.0
         while self._clock() < deadline:
             window_end = self._clock()
             window_start = window_end - timedelta(minutes=30)
@@ -156,6 +157,11 @@ class DataApiWalletPollSource:
                         normalize_ns=self._monotonic_ns(),
                         reason="transport_error",
                     )
+                    remaining = (deadline - self._clock()).total_seconds()
+                    if remaining <= 0:
+                        return
+                    await self._sleep(min(backoff, remaining))
+                    backoff = min(backoff * 2, 30.0)
                     continue
                 observed = self._clock()
                 normalize_ns = self._monotonic_ns()
@@ -178,6 +184,7 @@ class DataApiWalletPollSource:
             if remaining <= 0:
                 break
             await self._sleep(min(self._poll_interval_seconds, remaining))
+            backoff = 1.0
 
     def _params(
         self,
@@ -322,7 +329,14 @@ class OfficialMarketStreamSource:
     ) -> CanonicalResearchEvent:
         receive = receive_ns if receive_ns is not None else self._monotonic_ns()
         normalize = normalize_ns if normalize_ns is not None else receive
-        price = _optional_price(event.payload)
+        payload = event.payload if isinstance(event.payload, Mapping) else {}
+        bid = _optional_decimal(payload.get("best_bid"))
+        ask = _optional_decimal(payload.get("best_ask"))
+        bid_size = _optional_decimal(payload.get("bid_size") or payload.get("best_bid_size"))
+        ask_size = _optional_decimal(payload.get("ask_size") or payload.get("best_ask_size"))
+        depth_present = _payload_has_depth(payload)
+        executable = _optional_price(payload)
+        price = executable
         identity: dict[str, object] = {
             "event_type": event.event_type,
             "received_at": event.received_at.isoformat(),
@@ -332,6 +346,13 @@ class OfficialMarketStreamSource:
             "event_type": event.event_type,
             "wallet_attribution": "not_applicable",
             "source": event.source,
+            "best_bid": None if bid is None else format(bid, "f"),
+            "best_ask": None if ask is None else format(ask, "f"),
+            "bid_size": None if bid_size is None else format(bid_size, "f"),
+            "ask_size": None if ask_size is None else format(ask_size, "f"),
+            "quote_status": "present" if bid is not None and ask is not None else "UNKNOWN",
+            "depth_status": "present" if depth_present else "UNKNOWN",
+            "executable_price": None if executable is None else format(executable, "f"),
         }
         return CanonicalResearchEvent(
             evidence_id=stable_evidence_id(
@@ -399,6 +420,38 @@ async def discover_public_follow_set(
             if len(tokens) >= 8:
                 break
     return aliases, tuple(tokens)
+
+
+async def discover_followed_token_ids(
+    transport: JsonGetTransport,
+    aliases: Mapping[str, str],
+    *,
+    page_limit: int = 50,
+    token_limit: int = 32,
+) -> tuple[str, ...]:
+    """Public tokens traded by followed wallets. Missing overlap stays empty."""
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for wallet in aliases.values():
+        payload = await transport.get_json(
+            DATA_API_BASE_URL,
+            "/trades",
+            {"user": wallet, "limit": page_limit, "offset": 0, "takerOnly": False},
+            purpose=LeaderReadPurpose.DISCOVERY,
+        )
+        if not isinstance(payload, list):
+            continue
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            token = row.get("asset")
+            if isinstance(token, str) and token and token not in seen:
+                seen.add(token)
+                tokens.append(token)
+                if len(tokens) >= token_limit:
+                    return tuple(tokens)
+    return tuple(tokens)
 
 
 def _normalize_wallet_row(
@@ -529,6 +582,14 @@ def _row_timestamp(row: Mapping[str, Any]) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return 0
     return value
+
+
+def _payload_has_depth(payload: Mapping[str, Any]) -> bool:
+    for key in ("bids", "asks", "depth", "levels"):
+        value = payload.get(key)
+        if isinstance(value, list) and value:
+            return True
+    return False
 
 
 def _optional_str(row: Mapping[str, Any], name: str) -> str | None:

@@ -55,10 +55,28 @@ class ConfirmationStatus(StrEnum):
 
 
 class IntervalValidity(StrEnum):
+    OPEN = "OPEN"
     VALID = "VALID"
     INVALID_OVERLOAD = "INVALID_OVERLOAD"
     INVALID_GAP = "INVALID_GAP"
     INVALID_MISSING_EVIDENCE = "INVALID_MISSING_EVIDENCE"
+    INVALID_DRAIN = "INVALID_DRAIN"
+    INVALID_PERSISTENCE = "INVALID_PERSISTENCE"
+    INVALID_SHUTDOWN = "INVALID_SHUTDOWN"
+    INVALID_DISK = "INVALID_DISK"
+
+
+INVALID_INTERVAL_STATES = frozenset(
+    {
+        IntervalValidity.INVALID_OVERLOAD,
+        IntervalValidity.INVALID_GAP,
+        IntervalValidity.INVALID_MISSING_EVIDENCE,
+        IntervalValidity.INVALID_DRAIN,
+        IntervalValidity.INVALID_PERSISTENCE,
+        IntervalValidity.INVALID_SHUTDOWN,
+        IntervalValidity.INVALID_DISK,
+    }
+)
 
 
 class SourceCandidateStatus(StrEnum):
@@ -192,6 +210,7 @@ class ResearchInterval:
     code_sha: str | None
     configuration_digest: str | None
     policy_version: str
+    summary: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if (

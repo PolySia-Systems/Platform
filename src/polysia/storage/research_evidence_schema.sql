@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS research_intervals (
     reason TEXT NOT NULL,
     code_sha TEXT,
     configuration_digest TEXT,
-    policy_version TEXT NOT NULL
+    policy_version TEXT NOT NULL,
+    summary_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS research_events (

@@ -29,9 +29,13 @@ observations. Observation identity includes the sanitized leader alias while
 additive, preserves the original per-row schema label, and cannot reconstruct
 wallet observations missing from legacy evidence.
 
-The store is RESEARCH CURRENT. It is not Live state, not Stage 4B accounting,
-and not required for the default DATA_ONLY monitor process. Operators may
-create it beside runtime data as `research-evidence.sqlite3`.
+The store is RESEARCH CURRENT. The persistent collector is a dedicated Compose
+`research` service with rolling ten-minute windows (`OPEN → VALID | INVALID`),
+WAL, a 5 second busy timeout, and an exclusive local writer lock. It is not
+Live state, not Stage 4B accounting, and not started by the default monitor.
+Operators start it with `docker compose --profile research up --detach research-collector`.
+Health is an atomic JSON file. Readers use the SQLite Backup API. Backups reuse
+`polysia.deployment.sqlite_backup` with prefix `research-evidence-`.
 
 ## Consequences
 

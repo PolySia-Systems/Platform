@@ -17,6 +17,7 @@ from polysia.domain.research_evidence.collector import (
     gap_detected,
 )
 from polysia.domain.research_evidence.models import (
+    INVALID_INTERVAL_STATES,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
     CanonicalResearchEvent,
@@ -48,6 +49,7 @@ class ProspectiveCollector:
         code_sha: str | None = None,
         configuration_digest: str | None = None,
         run_id: str | None = None,
+        recover_orphans: bool = False,
     ) -> None:
         self._store = store
         self._policy = policy or CollectorPolicy()
@@ -56,22 +58,18 @@ class ProspectiveCollector:
         self._code_sha = code_sha
         self._configuration_digest = configuration_digest
         self._run_id = run_id or uuid4().hex
-        self._interval = ResearchInterval(
-            interval_id=uuid4().hex,
-            started_at=self._clock(),
-            ended_at=None,
-            validity=IntervalValidity.VALID,
-            reason="open",
-            code_sha=code_sha,
-            configuration_digest=configuration_digest,
-            policy_version=self._policy.policy_version,
-        )
+        self._window_failed = False
+        self._drain_failed = False
+        self._last_persist_at: datetime | None = None
+        self._interval = self._new_open_interval()
         self._queue: asyncio.Queue[CanonicalResearchEvent] = asyncio.Queue(
             maxsize=self._policy.max_queue_depth
         )
         self._write_lock = asyncio.Lock()
         self._reconnect_pending: dict[str, bool] = {}
         self._store.initialize()
+        if recover_orphans:
+            self._store.invalidate_open_intervals(reason="orphan_open_after_restart")
         self._store.persist_interval(self._interval)
 
     @property
@@ -86,6 +84,21 @@ class ProspectiveCollector:
     def valid(self) -> bool:
         return self._interval.validity is IntervalValidity.VALID
 
+    @property
+    def open(self) -> bool:
+        return self._interval.validity is IntervalValidity.OPEN
+
+    @property
+    def last_persist_at(self) -> datetime | None:
+        return self._last_persist_at
+
+    @property
+    def queue_depth(self) -> int:
+        return self._queue.qsize()
+
+    def recover_orphans(self) -> int:
+        return self._store.invalidate_open_intervals(reason="orphan_open_after_restart")
+
     def ingest(self, candidate: CanonicalResearchEvent) -> CanonicalResearchEvent:
         """Classify and persist one observation. Overload invalidates the interval."""
 
@@ -95,10 +108,13 @@ class ProspectiveCollector:
         except asyncio.QueueFull:
             classified = apply_classification(stamped, EvidenceClassification.OVERLOAD)
             self._invalidate(IntervalValidity.INVALID_OVERLOAD, "queue_overload")
-            self._store.persist_event(classified, interval_id=self._interval.interval_id)
+            self._persist_or_invalidate(classified)
             return classified
         try:
             return self._persist_classified(stamped)
+        except (ResearchEvidenceStoreError, OSError):
+            self._invalidate(IntervalValidity.INVALID_DISK, "persistence_failure")
+            raise
         finally:
             self._queue.get_nowait()
             self._queue.task_done()
@@ -129,24 +145,54 @@ class ProspectiveCollector:
             )
             raise
 
+    def mark_drain_failed(self, reason: str = "source_drain_failure") -> None:
+        self._drain_failed = True
+        self._invalidate(IntervalValidity.INVALID_DRAIN, reason)
+
     def close(self) -> ResearchInterval:
+        return self.close_window(complete=not self._window_failed and not self._drain_failed)
+
+    def close_window(
+        self,
+        *,
+        complete: bool,
+        summary: dict[str, object] | None = None,
+    ) -> ResearchInterval:
+        if self._interval.validity is IntervalValidity.OPEN:
+            if complete and not self._drain_failed:
+                validity = IntervalValidity.VALID
+                reason = "closed"
+            elif self._drain_failed:
+                validity = IntervalValidity.INVALID_DRAIN
+                reason = "source_drain_failure"
+            else:
+                validity = IntervalValidity.INVALID_SHUTDOWN
+                reason = "incomplete_window"
+        else:
+            validity = self._interval.validity
+            reason = self._interval.reason
         closed = ResearchInterval(
             interval_id=self._interval.interval_id,
             started_at=self._interval.started_at,
             ended_at=self._clock(),
-            validity=self._interval.validity,
-            reason=(
-                self._interval.reason
-                if self._interval.validity is not IntervalValidity.VALID
-                else "closed"
-            ),
+            validity=validity,
+            reason=reason,
             code_sha=self._code_sha,
             configuration_digest=self._configuration_digest,
             policy_version=self._policy.policy_version,
+            summary=summary if summary is not None else self._interval.summary,
         )
         self._interval = closed
         self._store.persist_interval(closed)
+        self._store.maintain(now=self._clock())
         return closed
+
+    def start_window(self) -> ResearchInterval:
+        self._window_failed = False
+        self._drain_failed = False
+        self._interval = self._new_open_interval()
+        self._store.persist_interval(self._interval)
+        return self._interval
 
     async def collect_from(
         self,
@@ -163,6 +209,9 @@ class ProspectiveCollector:
         ]
         try:
             await asyncio.gather(*tasks)
+        except Exception:
+            self.mark_drain_failed()
+            raise
         finally:
             for task in tasks:
                 if not task.done():
@@ -178,6 +227,14 @@ class ProspectiveCollector:
     ) -> None:
         async for event in source.run(run_id=self._run_id, deadline=deadline):
             await self.ingest_async(event)
+
+    def _persist_or_invalidate(self, event: CanonicalResearchEvent) -> None:
+        try:
+            self._store.persist_event(event, interval_id=self._interval.interval_id)
+            self._last_persist_at = self._clock()
+        except (ResearchEvidenceStoreError, OSError):
+            self._invalidate(IntervalValidity.INVALID_DISK, "persistence_failure")
+            raise
 
     def _persist_classified(self, candidate: CanonicalResearchEvent) -> CanonicalResearchEvent:
         last_source_time, _, _ = self._store.watermark(candidate.source_id)
@@ -206,13 +263,15 @@ class ProspectiveCollector:
             reconnect_pending=reconnect_pending,
         )
         self._store.persist_event(classified, interval_id=self._interval.interval_id)
+        self._last_persist_at = self._clock()
         if classified.classification is EvidenceClassification.ACCEPTED:
             self._reconnect_pending[candidate.source_id] = False
         return classified
 
     def _invalidate(self, validity: IntervalValidity, reason: str) -> None:
-        if self._interval.validity is not IntervalValidity.VALID:
+        if self._interval.validity in INVALID_INTERVAL_STATES:
             return
+        self._window_failed = True
         self._interval = ResearchInterval(
             interval_id=self._interval.interval_id,
             started_at=self._interval.started_at,
@@ -222,8 +281,21 @@ class ProspectiveCollector:
             code_sha=self._code_sha,
             configuration_digest=self._configuration_digest,
             policy_version=self._policy.policy_version,
+            summary=self._interval.summary,
         )
         self._store.persist_interval(self._interval)
+
+    def _new_open_interval(self) -> ResearchInterval:
+        return ResearchInterval(
+            interval_id=uuid4().hex,
+            started_at=self._clock(),
+            ended_at=None,
+            validity=IntervalValidity.OPEN,
+            reason="open",
+            code_sha=self._code_sha,
+            configuration_digest=self._configuration_digest,
+            policy_version=self._policy.policy_version,
+        )
 
     def _control_event(
         self,

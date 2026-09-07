@@ -219,6 +219,7 @@ def test_gap_reconnect_and_retention(tmp_path: Path) -> None:
         run_id="run-1",
     )
     collector.ingest(old_market)
+    store.maintain(now=OBSERVED)
     ids = {item.evidence_id for item in store.load_events()}
     assert "old-mkt" not in ids
     assert "t1" in ids

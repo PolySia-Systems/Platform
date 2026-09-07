@@ -83,9 +83,9 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-**Next task:** finish an exact-SHA DATA_ONLY deployment of current `main` after
-the prospective collector lands, then observe. Do not access the retired
-Helsinki host. Do not promote modeled P&L into Live authority.
+**Next task:** operate the persistent prospective collector on the authorized
+Helsinki DATA_ONLY host and complete the independent T0+3h observation.
+Do not access Nuremberg. Do not promote modeled P&L into Live authority.
 
 Blockers and limitations:
 
@@ -97,12 +97,13 @@ Blockers and limitations:
 - Modeled Stage 4B P&L remains negative on Current Control and is not a
   promotion decision. Target Exposure v1 is a PARTIAL research Replay with
   UNKNOWN marks, not Alpha and not Live readiness.
-- No production host is currently authorized.
+- No production Live host is currently authorized. Helsinki DATA_ONLY monitor
+  plus the Compose `research` collector are the authorized research runtime.
 
 Next milestones: keep the immutable local backup as the historical source of
-truth; deploy the merged exact SHA as DATA_ONLY after this collector lands;
-observe public collection without claiming Alpha; handle branch protection
-through a separate governance task. Do not access the retired Helsinki host.
+truth; run the persistent collector on Helsinki DATA_ONLY; observe public
+collection without claiming Alpha; handle branch protection through a
+separate governance task. Do not access Nuremberg.
 
 ## Audited runtime snapshot
 

@@ -9,6 +9,7 @@ from polysia.domain.research_evidence.collector import (
     percentile_nearest_rank,
 )
 from polysia.domain.research_evidence.models import (
+    INVALID_INTERVAL_STATES,
     LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     SUPPORTED_RESEARCH_EVIDENCE_SCHEMA_VERSIONS,
@@ -56,6 +57,7 @@ __all__ = [
     "MARKOUT_HORIZONS",
     "MarkoutLookup",
     "MarkoutTimeBasis",
+    "INVALID_INTERVAL_STATES",
     "ObservationKind",
     "ProspectiveObservation",
     "ResearchInterval",
