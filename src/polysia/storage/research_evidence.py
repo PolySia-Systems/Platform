@@ -7,11 +7,13 @@ No cross-database transactions.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import IO
 
 from polysia.domain.research_evidence.collector import CollectorPolicy
 from polysia.domain.research_evidence.models import (
@@ -27,16 +29,85 @@ from polysia.domain.research_evidence.models import (
     ResearchInterval,
 )
 
+Clock = Callable[[], datetime]
+
 RESEARCH_EVIDENCE_SCHEMA_PATH = Path(__file__).with_name("research_evidence_schema.sql")
 RESEARCH_EVIDENCE_FILENAME = "research-evidence.sqlite3"
+WRITER_BUSY_TIMEOUT_MS = 5_000
+WAL_CHECKPOINT_BYTES = 8 * 1024 * 1024
+
+
 class ResearchEvidenceStoreError(RuntimeError):
     """Sanitized research-evidence persistence failure."""
 
 
+class ResearchWriterLockError(ResearchEvidenceStoreError):
+    """A second writer attempted to own the same research-evidence database."""
+
+
+class ExclusiveWriterLock:
+    """Smallest local exclusive lock. Rejects a second writer deterministically."""
+
+    def __init__(self, database_path: Path) -> None:
+        self._path = database_path.with_name(f"{database_path.name}.lock")
+        self._handle: IO[bytes] | None = None
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def acquire(self) -> None:
+        if self._handle is not None:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(self._path, "a+b")  # noqa: SIM115 — lock must outlive this method
+        try:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            _lock_exclusive_nonblocking(handle)
+        except OSError as error:
+            handle.close()
+            raise ResearchWriterLockError(
+                "second writer rejected for research-evidence database"
+            ) from error
+        self._handle = handle
+        _restrict_file_permissions(self._path)
+
+    def release(self) -> None:
+        handle = self._handle
+        self._handle = None
+        if handle is None:
+            return
+        try:
+            _unlock_exclusive(handle)
+        finally:
+            handle.close()
+
+    def __enter__(self) -> ExclusiveWriterLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        del args
+        self.release()
+
+
 class ResearchEvidenceStore:
-    def __init__(self, path: str | Path, *, policy: CollectorPolicy | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        policy: CollectorPolicy | None = None,
+        clock: Clock | None = None,
+    ) -> None:
         self._path = Path(path)
         self._policy = policy or CollectorPolicy()
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._events_since_maintain = 0
+        self._writer_lock = ExclusiveWriterLock(self._path)
 
     @property
     def path(self) -> Path:
@@ -52,6 +123,13 @@ class ResearchEvidenceStore:
             connection.commit()
         finally:
             connection.close()
+        _restrict_store_files(self._path)
+
+    def acquire_writer(self) -> None:
+        self._writer_lock.acquire()
+
+    def release_writer(self) -> None:
+        self._writer_lock.release()
 
     def persist_interval(self, interval: ResearchInterval) -> None:
         connection = self._connect()
@@ -64,12 +142,13 @@ class ResearchEvidenceStore:
             connection.execute(
                 "INSERT INTO research_intervals ("
                 "interval_id, started_at_utc, ended_at_utc, validity, reason, "
-                "code_sha, configuration_digest, policy_version"
-                ") VALUES (?,?,?,?,?,?,?,?) "
+                "code_sha, configuration_digest, policy_version, summary_json"
+                ") VALUES (?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(interval_id) DO UPDATE SET "
                 "ended_at_utc=excluded.ended_at_utc, "
                 "validity=excluded.validity, "
-                "reason=excluded.reason",
+                "reason=excluded.reason, "
+                "summary_json=excluded.summary_json",
                 (
                     interval.interval_id,
                     _utc_text(interval.started_at),
@@ -79,6 +158,9 @@ class ResearchEvidenceStore:
                     interval.code_sha,
                     interval.configuration_digest,
                     interval.policy_version,
+                    None if interval.summary is None else json.dumps(
+                        interval.summary, sort_keys=True, separators=(",", ":"), default=str
+                    ),
                 ),
             )
             connection.commit()
@@ -192,14 +274,17 @@ class ResearchEvidenceStore:
                                 _utc_text(event.observed_time),
                             ),
                         )
-            self._prune_unlocked(connection, now=datetime.now(UTC))
             connection.commit()
-            return classification
+            classification_result = classification
         except sqlite3.Error as error:
             connection.rollback()
             raise ResearchEvidenceStoreError("research event persist failed") from error
         finally:
             connection.close()
+        self._events_since_maintain += 1
+        if self._events_since_maintain >= 64:
+            self.maintain(now=self._clock())
+        return classification_result
 
     def record_reconnect(self, source_id: str, *, observed_at: datetime) -> int:
         connection = self._connect()
@@ -298,12 +383,24 @@ class ResearchEvidenceStore:
             if row["configuration_digest"] is None
             else str(row["configuration_digest"]),
             policy_version=str(row["policy_version"]),
+            summary=_summary_from_row(row),
         )
 
-    def load_events(self, *, run_id: str | None = None) -> tuple[CanonicalResearchEvent, ...]:
+    def load_events(
+        self,
+        *,
+        run_id: str | None = None,
+        interval_id: str | None = None,
+    ) -> tuple[CanonicalResearchEvent, ...]:
         connection = self._connect()
         try:
-            if run_id is None:
+            if interval_id is not None:
+                rows = connection.execute(
+                    "SELECT * FROM research_events WHERE interval_id = ? "
+                    "ORDER BY observed_time_utc, evidence_id",
+                    (interval_id,),
+                ).fetchall()
+            elif run_id is None:
                 rows = connection.execute(
                     "SELECT * FROM research_events ORDER BY observed_time_utc, evidence_id"
                 ).fetchall()
@@ -350,6 +447,129 @@ class ResearchEvidenceStore:
             connection.close()
         return 0 if row is None else int(row[0])
 
+    def invalidate_open_intervals(self, *, reason: str) -> int:
+        """Close leftover OPEN windows as INVALID after restart."""
+
+        connection = self._connect()
+        try:
+            ensure_research_evidence_schema(
+                connection,
+                policy_version=self._policy.policy_version,
+            )
+            connection.execute("BEGIN IMMEDIATE")
+            ended = _utc_text(self._clock())
+            cursor = connection.execute(
+                "UPDATE research_intervals SET validity = ?, reason = ?, ended_at_utc = ? "
+                "WHERE validity = ? AND ended_at_utc IS NULL",
+                (
+                    IntervalValidity.INVALID_SHUTDOWN.value,
+                    reason,
+                    ended,
+                    IntervalValidity.OPEN.value,
+                ),
+            )
+            connection.commit()
+            return int(cursor.rowcount)
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise ResearchEvidenceStoreError("open interval recovery failed") from error
+        finally:
+            connection.close()
+
+    def latest_closed_interval(self) -> ResearchInterval | None:
+        connection = self._connect(timeout_seconds=WRITER_BUSY_TIMEOUT_MS / 1000)
+        try:
+            row = connection.execute(
+                "SELECT * FROM research_intervals WHERE ended_at_utc IS NOT NULL "
+                "ORDER BY ended_at_utc DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        return self.load_interval(str(row["interval_id"]))
+
+    def snapshot(self, destination: Path) -> Path:
+        """Consistent reader snapshot via the SQLite Backup API."""
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.snapshot-tmp")
+        try:
+            source = sqlite3.connect(
+                _read_only_uri(self._path),
+                uri=True,
+                timeout=WRITER_BUSY_TIMEOUT_MS / 1000,
+            )
+            target = sqlite3.connect(str(temporary), timeout=WRITER_BUSY_TIMEOUT_MS / 1000)
+            try:
+                source.execute(f"PRAGMA busy_timeout = {WRITER_BUSY_TIMEOUT_MS}")
+                target.execute(f"PRAGMA busy_timeout = {WRITER_BUSY_TIMEOUT_MS}")
+                source.backup(target)
+                if target.execute("PRAGMA foreign_key_check").fetchall():
+                    raise ResearchEvidenceStoreError("snapshot foreign-key check failed")
+            finally:
+                target.close()
+                source.close()
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        _restrict_file_permissions(destination)
+        return destination
+
+    def storage_file_stats(self) -> dict[str, int]:
+        """File sizes only. Health must not scan event tables."""
+
+        stats = {"database_bytes": _file_size(self._path)}
+        stats["wal_bytes"] = _file_size(Path(f"{self._path}-wal"))
+        stats["shm_bytes"] = _file_size(Path(f"{self._path}-shm"))
+        stats["lock_bytes"] = _file_size(self._writer_lock.path)
+        stats["total_bytes"] = (
+            stats["database_bytes"] + stats["wal_bytes"] + stats["shm_bytes"]
+        )
+        return stats
+
+    def verify_integrity(self) -> None:
+        connection = self._connect(timeout_seconds=WRITER_BUSY_TIMEOUT_MS / 1000)
+        try:
+            row = connection.execute("PRAGMA integrity_check").fetchone()
+            if row is None or str(row[0]) != "ok":
+                raise ResearchEvidenceStoreError("research evidence integrity check failed")
+            if connection.execute("PRAGMA foreign_key_check").fetchall():
+                raise ResearchEvidenceStoreError("research evidence foreign-key check failed")
+            version = connection.execute(
+                "SELECT schema_version FROM research_evidence_metadata WHERE singleton = 1"
+            ).fetchone()
+            if version is None or str(version[0]) != RESEARCH_EVIDENCE_SCHEMA_VERSION:
+                raise ResearchEvidenceStoreError("research evidence schema version mismatch")
+        finally:
+            connection.close()
+
+    def maintain(self, *, now: datetime | None = None) -> None:
+        observed = now or self._clock()
+        connection = self._connect()
+        try:
+            ensure_research_evidence_schema(
+                connection,
+                policy_version=self._policy.policy_version,
+            )
+            connection.execute("BEGIN IMMEDIATE")
+            self._prune_unlocked(connection, now=observed)
+            connection.execute(
+                "DELETE FROM research_duplicate_counts WHERE evidence_id NOT IN ("
+                "SELECT evidence_id FROM research_events"
+                ")"
+            )
+            wal_path = Path(f"{self._path}-wal")
+            if _file_size(wal_path) >= WAL_CHECKPOINT_BYTES:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.commit()
+            self._events_since_maintain = 0
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise ResearchEvidenceStoreError("research evidence maintenance failed") from error
+        finally:
+            connection.close()
+
     def _prune_unlocked(self, connection: sqlite3.Connection, *, now: datetime) -> None:
         cutoff = now - self._policy.market_state_retention
         connection.execute(
@@ -375,11 +595,17 @@ class ResearchEvidenceStore:
             (ObservationKind.MARKET_STATE.value, overflow),
         )
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self, *, timeout_seconds: float | None = None) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self._path, timeout=0)
+        timeout = (
+            WRITER_BUSY_TIMEOUT_MS / 1000 if timeout_seconds is None else timeout_seconds
+        )
+        connection = sqlite3.connect(self._path, timeout=timeout)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute(f"PRAGMA busy_timeout = {WRITER_BUSY_TIMEOUT_MS}")
+        connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
 
@@ -395,6 +621,11 @@ def ensure_research_evidence_schema(
     }
     if "source_event_id" not in columns:
         connection.execute("ALTER TABLE research_events ADD COLUMN source_event_id TEXT")
+    interval_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(research_intervals)")
+    }
+    if "summary_json" not in interval_columns:
+        connection.execute("ALTER TABLE research_intervals ADD COLUMN summary_json TEXT")
     connection.execute(
         "INSERT OR IGNORE INTO research_evidence_metadata ("
         "singleton, schema_version, policy_version, created_at_utc"
@@ -503,3 +734,61 @@ def _parse_utc(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _summary_from_row(row: Mapping[str, object]) -> dict[str, object] | None:
+    try:
+        raw = row["summary_json"]
+    except (KeyError, IndexError):
+        return None
+    if raw is None:
+        return None
+    parsed = json.loads(str(raw))
+    if not isinstance(parsed, dict):
+        raise ResearchEvidenceStoreError("stored interval summary is invalid")
+    return parsed
+
+
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _read_only_uri(path: Path) -> str:
+    return f"{path.resolve().as_uri()}?mode=ro"
+
+
+def _restrict_file_permissions(path: Path) -> None:
+    if os.name != "nt":
+        path.chmod(0o600)
+
+
+def _restrict_store_files(database: Path) -> None:
+    for path in (database, Path(f"{database}-wal"), Path(f"{database}-shm")):
+        if path.exists():
+            _restrict_file_permissions(path)
+
+
+def _lock_exclusive_nonblocking(handle: IO[bytes]) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+
+
+def _unlock_exclusive(handle: IO[bytes]) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]

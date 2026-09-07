@@ -88,3 +88,54 @@ async def build_public_benchmark(
         "market_token_count": len(token_ids),
         "discovery_status": "measured" if aliases else "insufficient_public_wallets",
     }
+
+
+async def build_persistent_public_sources() -> tuple[
+    tuple[ResearchObservationSource, ...],
+    dict[str, object],
+]:
+    transport = UrllibJsonGetTransport()
+    aliases, discovered_tokens = await discover_public_follow_set(transport)
+    from polysia.adapters.polymarket.research_sources import (
+        MARKET_STREAM_CANDIDATE,
+        discover_followed_token_ids,
+    )
+
+    followed_tokens = (
+        await discover_followed_token_ids(transport, aliases) if aliases else ()
+    )
+    token_ids = followed_tokens or discovered_tokens
+    sources: list[ResearchObservationSource] = []
+    if aliases:
+        sources.append(
+            DataApiWalletPollSource(
+                REST_TRADES_CANDIDATE,
+                path="/trades",
+                source_id=TRADES_SOURCE_ID,
+                aliases=aliases,
+                transport=transport,
+            )
+        )
+        sources.append(
+            DataApiWalletPollSource(
+                REST_ACTIVITY_CANDIDATE,
+                path="/activity",
+                source_id=ACTIVITY_SOURCE_ID,
+                aliases=aliases,
+                transport=transport,
+            )
+        )
+    sources.append(OfficialMarketStreamSource(token_ids=token_ids))
+    return tuple(sources), {
+        "followed_alias_count": len(aliases),
+        "market_token_count": len(token_ids),
+        "required_source_ids": [REST_TRADES_CANDIDATE.candidate_id]
+        if aliases
+        else [],
+        "optional_source_ids": [
+            REST_ACTIVITY_CANDIDATE.candidate_id,
+            MARKET_STREAM_CANDIDATE.candidate_id,
+        ],
+        "unavailable": [USER_CHANNEL_CANDIDATE.candidate_id],
+        "discovery_status": "measured" if aliases else "insufficient_public_wallets",
+    }

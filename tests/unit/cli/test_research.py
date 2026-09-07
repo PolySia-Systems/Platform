@@ -367,3 +367,63 @@ def test_prospective_replay_requires_recorded_run(tmp_path: Path) -> None:
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
     assert payload["status"] == "error"
+
+
+def test_prospective_health_reads_sanitized_file(tmp_path: Path) -> None:
+    health = tmp_path / "health.json"
+    health.write_text(
+        json.dumps(
+            {
+                "fatal": None,
+                "stale": False,
+                "wallet": "0x1111111111111111111111111111111111111111",
+                "lifecycle": "OPEN",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["research", "prospective-health", "--health-report", str(health)],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["lifecycle"] == "OPEN"
+    assert "0x1111111111111111111111111111111111111111" not in result.stdout
+    assert payload["wallet"] == "0xREDACTED"
+
+
+def test_prospective_health_rejects_stale_file(tmp_path: Path) -> None:
+    import os
+    import time
+
+    health = tmp_path / "health.json"
+    health.write_text(
+        json.dumps({"fatal": None, "stale": False, "lifecycle": "OPEN"}),
+        encoding="utf-8",
+    )
+    fresh = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-health",
+            "--health-report",
+            str(health),
+            "--require-fresh-seconds",
+            "30",
+        ],
+    )
+    assert fresh.exit_code == 0, fresh.output
+    os.utime(health, (time.time() - 10, time.time() - 10))
+    stale = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-health",
+            "--health-report",
+            str(health),
+            "--require-fresh-seconds",
+            "1",
+        ],
+    )
+    assert stale.exit_code == 1

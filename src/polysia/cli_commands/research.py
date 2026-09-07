@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import (
     Annotated,
@@ -513,3 +514,95 @@ def prospective_replay(
     except (OSError, ValueError, ResearchEvidenceStoreError) as error:
         print_error_and_exit(error)
     typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def prospective_collect(
+    database: Annotated[
+        Path,
+        typer.Option("--database"),
+    ] = Path("/var/lib/polysia/data/research-evidence.sqlite3"),
+    health_report: Annotated[
+        Path,
+        typer.Option("--health-report"),
+    ] = Path("/var/lib/polysia/reports/research-evidence-health.json"),
+    report_dir: Annotated[
+        Path,
+        typer.Option("--report-dir"),
+    ] = Path("/var/lib/polysia/reports/research-evidence"),
+    window_seconds: Annotated[
+        int,
+        typer.Option("--window-seconds", min=1, max=1200),
+    ] = 600,
+    code_sha: Annotated[str | None, typer.Option("--code-sha")] = None,
+    cycles: Annotated[int | None, typer.Option("--cycles", min=1)] = None,
+) -> None:
+    """Run the persistent DATA_ONLY prospective collector."""
+
+    settings = AppSettings()
+    configure_logging(settings)
+    from datetime import timedelta
+
+    from polysia.application.services.persistent_prospective_collector import (
+        PersistentCollectorConfig,
+        PersistentProspectiveCollector,
+        install_signal_handlers,
+    )
+    from polysia.cli_commands.research_evidence_cli import build_persistent_public_sources
+    from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchWriterLockError
+
+    async def _run() -> None:
+        sources, discovery = await build_persistent_public_sources()
+        store = ResearchEvidenceStore(database)
+        required = discovery["required_source_ids"]
+        optional = discovery["optional_source_ids"]
+        if not isinstance(required, list) or not isinstance(optional, list):
+            raise ValueError("source discovery payload is invalid")
+        collector = PersistentProspectiveCollector(
+            store,
+            sources,
+            config=PersistentCollectorConfig(
+                window=timedelta(seconds=window_seconds),
+                health_path=health_report,
+                report_dir=report_dir,
+                required_source_ids=tuple(str(item) for item in required),
+                optional_source_ids=tuple(str(item) for item in optional),
+                code_sha=code_sha,
+            ),
+        )
+        install_signal_handlers(collector)
+        await collector.run(cycles=cycles)
+
+    try:
+        asyncio.run(_run())
+    except ResearchWriterLockError as error:
+        print_error_and_exit(error)
+    except (OSError, ValueError, RuntimeError) as error:
+        print_error_and_exit(error)
+
+
+def prospective_health(
+    health_report: Annotated[
+        Path,
+        typer.Option("--health-report"),
+    ] = Path("/var/lib/polysia/reports/research-evidence-health.json"),
+    require_fresh_seconds: Annotated[
+        int,
+        typer.Option("--require-fresh-seconds", min=1),
+    ] = 120,
+) -> None:
+    """Read the sanitized collector health file without querying the writer database."""
+
+    try:
+        age_seconds = time.time() - health_report.stat().st_mtime
+        payload = json.loads(health_report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print_error_and_exit(error)
+    if age_seconds > require_fresh_seconds:
+        raise typer.Exit(code=1)
+    if not isinstance(payload, dict):
+        print_error_and_exit(ValueError("health payload is invalid"))
+    if payload.get("fatal") or payload.get("stale") is True:
+        raise typer.Exit(code=1)
+    from polysia.cli_commands.research_evidence_cli import sanitize_report
+
+    typer.echo(json.dumps(sanitize_report(payload), sort_keys=True))

@@ -109,6 +109,7 @@ def test_dynamic_shadow_core_has_no_trading_authority_dependency() -> None:
         PACKAGE / "domain" / "research_evidence" / "replay.py",
         PACKAGE / "application" / "ports" / "research_evidence.py",
         PACKAGE / "application" / "services" / "prospective_collector.py",
+        PACKAGE / "application" / "services" / "persistent_prospective_collector.py",
         PACKAGE / "application" / "services" / "source_benchmark.py",
         PACKAGE / "backtesting" / "shadow_stateful_replay.py",
         PACKAGE / "backtesting" / "shadow_historical_baseline.py",
