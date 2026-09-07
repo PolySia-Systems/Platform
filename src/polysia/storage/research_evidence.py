@@ -775,11 +775,11 @@ def _lock_exclusive_nonblocking(handle: IO[bytes]) -> None:
     if os.name == "nt":
         import msvcrt
 
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined,unused-ignore]
         return
     import fcntl
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined,unused-ignore]
 
 
 def _unlock_exclusive(handle: IO[bytes]) -> None:
@@ -787,8 +787,8 @@ def _unlock_exclusive(handle: IO[bytes]) -> None:
         import msvcrt
 
         handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined,unused-ignore]
         return
     import fcntl
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined,unused-ignore]
