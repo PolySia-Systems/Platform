@@ -310,3 +310,14 @@ def test_shadow_run_real_data_command_writes_sanitized_reports(
     assert "0xfunder" not in combined
     assert "0xwallet" not in combined
     assert "token-secret" not in combined
+
+
+def test_shadow_historical_replay_requires_an_existing_backup(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["research", "shadow-replay", "--backup-dir", str(tmp_path / "missing")],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stderr)
+    assert payload["status"] == "error"

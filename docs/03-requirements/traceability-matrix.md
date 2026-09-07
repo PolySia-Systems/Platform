@@ -9,4 +9,5 @@
 | REQ-005 Keep credentials confidential | CAP-008-012 | Config/logging/export | Ignore, redaction, staged scan | Redaction and source-export tests |
 | REQ-006 Venue-neutral core | CAP-001-010 | Domain and application ports | Dependency direction | Architecture-boundary tests |
 | REQ-007 Reproducible runtime | All | Packaging and locks | Exact baseline, upgrade gates | Clean-environment install and `pip check` |
+| REQ-008 Stateful shadow research Replay | CAP-002-007 | Target Exposure v1, immutable SQLite Replay | No Live/Risk/Execution authority | Unit, architecture, and CLI tests |
 

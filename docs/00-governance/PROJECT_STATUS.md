@@ -60,6 +60,10 @@ CURRENT capabilities:
   are not profitability evidence and do not authorize trading.
 - Stage 4B Continuous Shadow is a bounded experimental portfolio and ledger
   on its own store. It is not the TARGET OMS, allocator, or execution router.
+- Research Replay can reconstruct the frozen Helsinki-final backup and compare
+  Current Control with Target Exposure v1 without Live, Risk, or Execution
+  authority. See
+  [Target Exposure Replay](../03-requirements/shadow-target-exposure-replay.md).
 - Combined backups validate staged snapshots before publishing and rotating a
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
@@ -73,28 +77,26 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-**Next task:** continue evidence-based DATA_ONLY/Shadow research and decide
-separately whether the disposable Helsinki test deployment should be updated or
-retired. Do not promote modeled P&L into Live authority.
+**Next task:** continue evidence-based DATA_ONLY/Shadow research from the
+immutable local backup. The previous Helsinki test host is retired; do not
+access it. Do not promote modeled P&L into Live authority.
 
 Blockers and limitations:
 
 - Encrypted off-host backups and external alert delivery are unfinished.
 - Branch-protection policy remains governance debt.
-- Risk/Execution and Stage 4B accounting hardening are merged in Git but were
-  not deployed to the older audited Helsinki runtime.
-- Backup staging, exact historical-window filtering and batch-book reads need
-  a separately authorized deployment and operational verification. Older generic
-  job errors do not establish one root cause for every historical failure.
+- Risk/Execution and Stage 4B accounting hardening are merged in Git. They
+  were not a live Helsinki dependency after host retirement.
 - One bounded profitable LIVE-004 round trip is statistically meaningless.
-- Modeled Stage 4B P&L remains negative and is not a promotion decision.
-- The Helsinki host is suitable for DATA_ONLY, paper, and shadow validation.
-  It is not production readiness.
+- Modeled Stage 4B P&L remains negative on Current Control and is not a
+  promotion decision. Target Exposure v1 is a PARTIAL research Replay with
+  UNKNOWN marks, not Alpha and not Live readiness.
+- No production host is currently authorized.
 
-Next milestones: decide the test-host lifecycle; establish alerts and off-host
-backup where an operational host is retained; acquire reproducible historical
-data and run fee-aware backtests before any new Tiny-Live review; handle branch
-protection through a separate governance task.
+Next milestones: keep the immutable local backup as the historical source of
+truth; run fee-aware research Replay before any new Tiny-Live review; handle
+branch protection through a separate governance task. Do not access the
+retired Helsinki host.
 
 ## Audited runtime snapshot
 
@@ -135,6 +137,7 @@ Do not duplicate these records here.
 | Tiny Live Copy 004 cancellation | [004 diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md) |
 | Helsinki Stages 1–4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
 | Stage 4B data lifecycle T0 and 24h | [data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md) |
+| Frozen Target Exposure v1 baseline | [Target Exposure v1](../18-ai-handoffs/shadow-target-exposure-v1-baseline.md) |
 | Python 3.14 / SDK upgrade | [UPGRADE-006](../18-ai-handoffs/polysia-upgrade-006-handoff.md) |
 | Architecture visual baseline | [architecture refresh](../18-ai-handoffs/architecture-truth-refresh-2026-08-18.md) |
 | Roadmap | [roadmap](../22-roadmap/roadmap.md) |
