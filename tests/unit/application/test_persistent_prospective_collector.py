@@ -31,6 +31,7 @@ from polysia.domain.research_evidence.models import (
 from polysia.domain.research_evidence.replay import replay_same_observations
 from polysia.storage.research_evidence import (
     ExclusiveWriterLock,
+    ResearchEvidenceMaintenanceError,
     ResearchEvidenceStore,
     ResearchWriterLockError,
 )
@@ -189,6 +190,40 @@ def test_empty_window_closes_valid(tmp_path: Path) -> None:
     assert closed.summary is not None
     assert closed.summary["empty"] is True
     assert closed.reason == "closed"
+
+
+def test_health_heartbeat_stays_fresh_inside_long_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    writes: list[datetime] = []
+
+    def _capture(path: Path, payload: object) -> None:
+        del path, payload
+        writes.append(clock.now)
+
+    monkeypatch.setattr(
+        "polysia.application.services.persistent_prospective_collector._atomic_json",
+        _capture,
+    )
+    collector = PersistentProspectiveCollector(
+        ResearchEvidenceStore(tmp_path / "research.sqlite3", clock=clock),
+        (SequenceSource(_candidate("rest_trades"), hang=True),),
+        config=PersistentCollectorConfig(
+            window=timedelta(seconds=65),
+            required_source_ids=("rest_trades",),
+            health_path=tmp_path / "health.json",
+        ),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    asyncio.run(collector.run(cycles=1))
+    assert len(writes) >= 4
+    assert all(
+        later - earlier <= timedelta(seconds=30)
+        for earlier, later in zip(writes, writes[1:], strict=False)
+    )
 
 
 def test_drain_failure_cannot_produce_valid(tmp_path: Path) -> None:
@@ -509,6 +544,122 @@ def test_busy_timeout_and_wal_files(tmp_path: Path) -> None:
     assert str(journal[0]).lower() == "wal"
     collector.close_window(complete=True)
     assert wal.exists() or stats["wal_bytes"] >= 0
+
+
+def test_checkpoint_runs_after_prune_transaction_with_active_reader(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    collector = ProspectiveCollector(store)
+    collector.ingest(_wallet("before-reader"))
+    reader = sqlite3.connect(database)
+    writer = sqlite3.connect(database)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM research_events").fetchone()
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("CREATE TABLE wal_pressure(payload BLOB NOT NULL)")
+        writer.execute(
+            "INSERT INTO wal_pressure(payload) VALUES (zeroblob(?))",
+            (9 * 1024 * 1024,),
+        )
+        writer.commit()
+        assert Path(f"{database}-wal").stat().st_size > 8 * 1024 * 1024
+        result = store.maintain()
+    finally:
+        writer.close()
+        reader.close()
+    assert result.attempted is True
+    assert result.checkpointed_frames <= result.log_frames
+    assert store.event_count() == 1
+
+
+def test_post_commit_maintenance_lock_is_degraded_not_event_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
+    collector = ProspectiveCollector(store)
+    monkeypatch.setattr(
+        ResearchEvidenceStore,
+        "maintenance_due",
+        property(lambda self: True),
+    )
+
+    def _locked(*, now: datetime | None = None) -> None:
+        del now
+        raise ResearchEvidenceMaintenanceError(
+            "checkpoint",
+            sqlite3.OperationalError("database table is locked"),
+        )
+
+    monkeypatch.setattr(store, "maintain", _locked)
+    persisted = collector.ingest(_wallet("committed-before-maintenance"))
+    assert persisted.classification is EvidenceClassification.ACCEPTED
+    assert store.event_count() == 1
+    assert collector.maintenance_health == {
+        "status": "degraded",
+        "stage": "checkpoint",
+        "sqlite_error_code": "SQLITE_UNKNOWN",
+        "consecutive_failures": 1,
+        "checkpoint_log_frames": 0,
+        "checkpointed_frames": 0,
+    }
+
+
+def test_fatal_maintenance_failure_still_invalidates_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SqliteFull(sqlite3.OperationalError):
+        sqlite_errorname = "SQLITE_FULL"
+
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
+    collector = ProspectiveCollector(store)
+    monkeypatch.setattr(
+        ResearchEvidenceStore,
+        "maintenance_due",
+        property(lambda self: True),
+    )
+
+    def _full(*, now: datetime | None = None) -> None:
+        del now
+        raise ResearchEvidenceMaintenanceError("prune", SqliteFull("database full"))
+
+    monkeypatch.setattr(store, "maintain", _full)
+    with pytest.raises(ResearchEvidenceMaintenanceError, match="prune maintenance"):
+        collector.ingest(_wallet("committed-before-full"))
+    assert store.event_count() == 1
+    assert collector.interval.validity is IntervalValidity.INVALID_DISK
+
+
+def test_repeated_prune_contention_stops_unbounded_retention_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
+    collector = ProspectiveCollector(store)
+    monkeypatch.setattr(
+        ResearchEvidenceStore,
+        "maintenance_due",
+        property(lambda self: True),
+    )
+
+    def _locked(*, now: datetime | None = None) -> None:
+        del now
+        raise ResearchEvidenceMaintenanceError(
+            "prune",
+            sqlite3.OperationalError("database table is locked"),
+        )
+
+    monkeypatch.setattr(store, "maintain", _locked)
+    collector.ingest(_wallet("prune-one"))
+    collector.ingest(_wallet("prune-two"))
+    with pytest.raises(ResearchEvidenceMaintenanceError, match="prune maintenance"):
+        collector.ingest(_wallet("prune-three"))
+    assert store.event_count() == 3
+    assert collector.interval.validity is IntervalValidity.INVALID_DISK
 
 
 def test_persistence_failure_prevents_valid(

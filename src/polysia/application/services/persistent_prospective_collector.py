@@ -26,6 +26,7 @@ from polysia.domain.research_evidence.models import (
     payload_digest,
 )
 from polysia.storage.research_evidence import (
+    ResearchEvidenceMaintenanceError,
     ResearchEvidenceStore,
     ResearchEvidenceStoreError,
     ResearchWriterLockError,
@@ -35,6 +36,7 @@ Clock = Callable[[], datetime]
 SERVICE_POLICY_VERSION = "persistent-prospective-collector-v1"
 DEFAULT_WINDOW = timedelta(minutes=10)
 STALE_AFTER = timedelta(seconds=120)
+HEALTH_WRITE_INTERVAL = timedelta(seconds=30)
 MAX_WINDOW_REPORTS = 36
 QUIET_SOURCE_STATUSES = frozenset({"healthy", "quiet", "unavailable", "insufficient"})
 
@@ -72,7 +74,11 @@ class PersistentProspectiveCollector:
         self._sleep = sleep
         self._service_id = uuid4().hex
         self._stop = asyncio.Event()
+        self._lifecycle_lock = asyncio.Lock()
         self._fatal_reason: str | None = None
+        self._fatal_stage: str | None = None
+        self._fatal_error_code: str | None = None
+        self._last_health_write: datetime | None = None
         self._source_status: dict[str, str] = {
             source.candidate.candidate_id: _initial_status(source) for source in sources
         }
@@ -128,14 +134,14 @@ class PersistentProspectiveCollector:
             self._store.acquire_writer()
         except ResearchWriterLockError:
             self._fatal_reason = "second_writer_rejected"
-            self._write_health()
+            self._write_health(force=True)
             if self._config.fatal_idle:
                 await self._wait_until_stop()
                 return
             raise
         try:
             self._bind_collector()
-            self._write_health()
+            self._write_health(force=True)
             tasks = [
                 asyncio.create_task(
                     self._drain_source(source),
@@ -158,7 +164,7 @@ class PersistentProspectiveCollector:
                     )
                     self._latest_closed = closed
                     self._write_window_report(closed)
-                self._write_health()
+                self._write_health(force=True)
         finally:
             self._store.release_writer()
 
@@ -188,6 +194,9 @@ class PersistentProspectiveCollector:
                 "latest_closed_reason": None if latest is None else latest.reason,
                 "stale": False,
                 "fatal": self._fatal_reason,
+                "fatal_stage": self._fatal_stage,
+                "fatal_error_code": self._fatal_error_code,
+                "maintenance": None,
                 "windows_closed": self._windows_closed,
                 "trading_mode": "DATA_ONLY",
                 "live_trading_enabled": False,
@@ -218,6 +227,9 @@ class PersistentProspectiveCollector:
             "latest_closed_reason": None if latest is None else latest.reason,
             "stale": stale,
             "fatal": self._fatal_reason,
+            "fatal_stage": self._fatal_stage,
+            "fatal_error_code": self._fatal_error_code,
+            "maintenance": collector.maintenance_health,
             "windows_closed": self._windows_closed,
             "trading_mode": "DATA_ONLY",
             "live_trading_enabled": False,
@@ -237,12 +249,19 @@ class PersistentProspectiveCollector:
                 return
             required_missing = self._required_sources_missing()
             complete = not required_missing and self._fatal_reason is None
-            if required_missing:
-                self._active().mark_drain_failed("required_source_unavailable")
-            closed = self._active().close_window(
-                complete=complete,
-                summary=self._window_summary(),
-            )
+            try:
+                async with self._lifecycle_lock:
+                    if required_missing:
+                        self._active().mark_drain_failed("required_source_unavailable")
+                    closed = self._active().close_window(
+                        complete=complete,
+                        summary=self._window_summary(),
+                    )
+                    if cycles is None or completed + 1 < cycles:
+                        self._active().start_window()
+            except (ResearchEvidenceStoreError, OSError) as error:
+                self._fatal_from_storage(error)
+                return
             self._latest_closed = closed
             self._windows_closed += 1
             self._write_window_report(closed)
@@ -250,8 +269,7 @@ class PersistentProspectiveCollector:
             if cycles is not None and completed >= cycles:
                 self._stop.set()
                 return
-            self._active().start_window()
-            self._write_health()
+            self._write_health(force=True)
 
     async def _drain_source(self, source: ResearchObservationSource) -> None:
         candidate_id = source.candidate.candidate_id
@@ -267,7 +285,8 @@ class PersistentProspectiveCollector:
                     return
                 self._queue_depth = self._active().queue_depth
                 try:
-                    persisted = await self._active().ingest_async(event)
+                    async with self._lifecycle_lock:
+                        persisted = await self._active().ingest_async(event)
                 except (ResearchEvidenceStoreError, OSError) as error:
                     self._fatal_from_storage(error)
                     return
@@ -359,28 +378,43 @@ class PersistentProspectiveCollector:
         }
 
     def _fatal_from_storage(self, error: BaseException) -> None:
-        del error
-        self._fatal_reason = "storage_failure"
+        if isinstance(error, ResearchEvidenceMaintenanceError):
+            self._fatal_reason = "maintenance_failure"
+            self._fatal_stage = error.stage
+            self._fatal_error_code = error.sqlite_errorname
+        else:
+            self._fatal_reason = "storage_failure"
+            self._fatal_stage = "persist"
+            self._fatal_error_code = getattr(error, "sqlite_errorname", None)
         try:
-            self._active()._invalidate(IntervalValidity.INVALID_DISK, "storage_failure")
+            self._active()._invalidate(IntervalValidity.INVALID_DISK, self._fatal_reason)
         except Exception:
-            self._active().mark_drain_failed("storage_failure")
-        self._write_health()
+            self._active().mark_drain_failed(self._fatal_reason)
+        self._write_health(force=True)
 
     async def _wait_until(self, deadline: datetime) -> None:
         while not self._stop.is_set() and self._clock() < deadline:
             remaining = (deadline - self._clock()).total_seconds()
             await self._sleep(max(0.01, min(1.0, remaining)))
+            self._write_health()
 
     async def _wait_until_stop(self) -> None:
         while not self._stop.is_set():
             await self._sleep(1.0)
 
-    def _write_health(self) -> None:
+    def _write_health(self, *, force: bool = False) -> None:
         path = self._config.health_path
         if path is None:
             return
+        now = self._clock()
+        if (
+            not force
+            and self._last_health_write is not None
+            and now < self._last_health_write + HEALTH_WRITE_INTERVAL
+        ):
+            return
         _atomic_json(path, self.health_payload())
+        self._last_health_write = now
 
     def _write_window_report(self, interval: ResearchInterval) -> None:
         directory = self._config.report_dir

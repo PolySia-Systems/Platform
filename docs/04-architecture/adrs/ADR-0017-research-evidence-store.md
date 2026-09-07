@@ -35,7 +35,17 @@ WAL, a 5 second busy timeout, and an exclusive local writer lock. It is not
 Live state, not Stage 4B accounting, and not started by the default monitor.
 Operators start it with `docker compose --profile research up --detach research-collector`.
 Health is an atomic JSON file. Readers use the SQLite Backup API. Backups reuse
-`polysia.deployment.sqlite_backup` with prefix `research-evidence-`.
+`polysia.deployment.sqlite_backup` in a dedicated research-evidence directory;
+the current generic backup CLI retains its `polysia-` filename prefix.
+
+Evidence writes, retention pruning, and WAL checkpointing have distinct success
+boundaries. Evidence commits in a short transaction. Pruning commits in a
+separate transaction. Routine checkpoints are `PASSIVE` and run only after all
+write transactions have ended; `TRUNCATE` is not part of hot ingestion.
+Maintenance contention after an evidence commit is reported as degraded health,
+not as a failed event write. Full-disk, I/O, corruption, and actual evidence-write
+failures remain fail-closed. Persistent ingestion and window rotation use one
+ordered lifecycle boundary.
 
 ## Consequences
 
@@ -43,6 +53,10 @@ Prospective collection and replay can proceed without mutating financial
 invariants. Retention may prune unreferenced market-state snapshots. Accepted
 wallet evidence referenced by a decision is not silently deleted; missing
 decision evidence invalidates the interval.
+
+The WAL file is allowed to retain bounded reusable allocation. Acceptance is
+based on checkpoint progress, bounded growth, and uninterrupted evidence—not a
+requirement that the WAL file always be zero bytes.
 
 This does not authorize Live trading, claim Alpha, or select a faster-than-REST
 wallet source when none qualifies.
