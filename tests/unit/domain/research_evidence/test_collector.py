@@ -62,6 +62,7 @@ def _event(
         confirmation=confirmation,
         payload_digest=payload_digest(identity),
         provenance={"test": True},
+        source_event_id=evidence_id,
         run_id="run-1",
     )
 

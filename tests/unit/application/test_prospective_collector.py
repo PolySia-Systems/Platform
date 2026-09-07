@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -9,6 +11,7 @@ import pytest
 from polysia.application.services.prospective_collector import ProspectiveCollector
 from polysia.domain.research_evidence.collector import CollectorPolicy
 from polysia.domain.research_evidence.models import (
+    LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
     CanonicalResearchEvent,
@@ -19,8 +22,10 @@ from polysia.domain.research_evidence.models import (
     payload_digest,
 )
 from polysia.storage.research_evidence import (
+    RESEARCH_EVIDENCE_SCHEMA_PATH,
     ResearchEvidenceStore,
     ResearchEvidenceStoreError,
+    ensure_research_evidence_schema,
 )
 
 OBSERVED = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
@@ -56,6 +61,7 @@ def _event(
         confirmation=ConfirmationStatus.CONFIRMED,
         payload_digest=digest or payload_digest({"id": evidence_id}),
         provenance=provenance or {},
+        source_event_id=evidence_id,
         run_id="run-1",
     )
 
@@ -79,6 +85,52 @@ def test_restart_does_not_duplicate_accepted_events(tmp_path: Path) -> None:
     ]
     assert len(accepted) == 1
     assert store.duplicate_count("same") == 1
+
+
+def test_v1_store_migrates_additive_field_and_metadata(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    legacy_script = RESEARCH_EVIDENCE_SCHEMA_PATH.read_text(encoding="utf-8").replace(
+        "    source_event_id TEXT,\n",
+        "",
+    )
+    connection = sqlite3.connect(database)
+    try:
+        connection.executescript(legacy_script)
+        connection.execute(
+            "INSERT INTO research_evidence_metadata "
+            "(singleton, schema_version, policy_version, created_at_utc) "
+            "VALUES (1, ?, 'prospective-collector-v1', ?)",
+            (LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION, OBSERVED.isoformat()),
+        )
+        ensure_research_evidence_schema(
+            connection,
+            policy_version="prospective-collector-v1",
+        )
+        version = connection.execute(
+            "SELECT schema_version FROM research_evidence_metadata WHERE singleton = 1"
+        ).fetchone()
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(research_events)")
+        }
+    finally:
+        connection.close()
+    assert version == (RESEARCH_EVIDENCE_SCHEMA_VERSION,)
+    assert "source_event_id" in columns
+
+
+def test_v1_events_are_accepted_for_read_but_rejected_for_new_writes(
+    tmp_path: Path,
+) -> None:
+    legacy = replace(
+        _event("legacy"),
+        schema_version=LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        source_event_id=None,
+    )
+    assert legacy.schema_version == LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
+    store.initialize()
+    with pytest.raises(ResearchEvidenceStoreError, match="read-only"):
+        store.persist_event(legacy, interval_id="unused")
 
 
 def test_missing_decision_evidence_fails_closed(tmp_path: Path) -> None:

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS research_events (
     leader_alias TEXT,
     confirmation TEXT NOT NULL,
     payload_digest TEXT NOT NULL,
+    source_event_id TEXT,
     provenance_json TEXT NOT NULL,
     related_evidence_id TEXT,
     run_id TEXT NOT NULL,

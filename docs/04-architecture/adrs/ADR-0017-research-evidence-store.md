@@ -18,10 +18,16 @@ runtime is one Python modular monolith with SQLite.
 ## Decision
 
 Add one isolated SQLite research-evidence store with a single writer,
-versioned schema `research-evidence-v1`, and bounded retention. Domain
+versioned schema `research-evidence-v2`, and bounded retention. Domain
 contracts stay venue-neutral. Polymarket adapters translate public REST and
 the official market WebSocket. The authenticated user channel is recorded as
 `UNAVAILABLE` without credential lookup.
+
+Schema v2 distinguishes one source trade from its wallet-attributed
+observations. Observation identity includes the sanitized leader alias while
+`source_event_id` retains the common source identity. The v1-to-v2 migration is
+additive, preserves the original per-row schema label, and cannot reconstruct
+wallet observations missing from legacy evidence.
 
 The store is RESEARCH CURRENT. It is not Live state, not Stage 4B accounting,
 and not required for the default DATA_ONLY monitor process. Operators may

@@ -60,6 +60,7 @@ def _wallet_event(evidence_id: str, source_id: str) -> CanonicalResearchEvent:
         confirmation=ConfirmationStatus.CONFIRMED,
         payload_digest=payload_digest({"id": evidence_id}),
         provenance={"has_transaction": True},
+        source_event_id=evidence_id,
         run_id="pending",
     )
 

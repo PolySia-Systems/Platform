@@ -32,10 +32,16 @@ sources stay `UNAVAILABLE`.
 
 ## Canonical event
 
-Schema `research-evidence-v1` preserves stable evidence identity, market and
-outcome references, side, price, size, source time, observed time, hashed
-leader alias, confirmation/reversion, classification, and sanitized
-provenance. UTC wall clocks are persisted. Durations use monotonic clocks.
+Schema `research-evidence-v2` separates the source trade identity from each
+wallet-attributed observation identity. Two wallets observing the same source
+trade therefore remain distinct evidence while retaining a shared
+`source_event_id`. The schema also preserves market and outcome references,
+side, price, size, source time, observed time, hashed leader alias,
+confirmation/reversion, classification, and sanitized provenance. UTC wall
+clocks are persisted. Durations use monotonic clocks. Existing v1 stores are
+migrated additively; no research evidence is deleted or relabeled. Legacy v1
+rows remain readable but cannot recover wallet observations that were already
+collapsed before migration, so new comparative research must use v2 capture.
 
 Classifications: `ACCEPTED`, `DUPLICATE`, `LATE`, `CONFLICTING`, `REVERTED`,
 `UNATTRIBUTABLE`, `INCOMPLETE`, `GAP`, `OVERLOAD`.
@@ -60,11 +66,17 @@ latency sidecar. No cross-database transactions.
 
 ## Replay
 
-Current Control and Target Exposure v1 consume the same accepted
-observations. Replay is chronological by observed time. Missing attribution,
-books, prices, marks, or gaps remain `UNKNOWN`. Event-time market snapshots
-support later 5s / 30s / 5m markouts only when a stored snapshot exists in
-the horizon window; prices are never interpolated.
+Current Control and Target Exposure v1 consume the same accepted observations.
+Replay is chronological by observed time and keeps independent episode state
+for each Portfolio x Market x Outcome. Admission requires an explicit,
+side-aware executable quote observed no later than the wallet observation,
+with available quantity and recorded fee. A leader trade price is never
+substituted for follower execution evidence. Missing attribution, books,
+prices, fees, marks, or gaps remain `UNKNOWN`.
+
+Leader markouts use source event time. Follower-actionable markouts use local
+observed time. Both use stored 5s / 30s / 5m snapshots, select the earliest
+qualifying snapshot deterministically, and never interpolate prices.
 
 This is not a second accounting engine. Stage 4B ledger semantics remain in
 the historical replay path.
