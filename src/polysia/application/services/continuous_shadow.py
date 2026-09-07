@@ -13,6 +13,7 @@ from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineLeaseLostError,
 )
 from polysia.application.ports.continuous_shadow import (
+    BatchOrderBookReadPort,
     ContinuousCandidatePort,
     ContinuousEvaluationRecord,
     ContinuousLedgerRecord,
@@ -767,7 +768,31 @@ class ContinuousShadowService:
                 return token_id, None
 
         try:
-            fetched = dict(await asyncio.gather(*(read(value) for value in sorted(pending))))
+            if isinstance(self._market_port, BatchOrderBookReadPort):
+                batch_port = self._market_port
+
+                async def batch(
+                    tokens: tuple[str, ...],
+                ) -> dict[str, MarketOrderBookSnapshot | None]:
+                    try:
+                        async with semaphore:
+                            result = await batch_port.get_order_books(tokens)
+                        return {
+                            token: book for token, book in result.items()
+                            if token in tokens and book.token_id == token
+                        }
+                    except Exception:
+                        # A terminal/missing book must not hide other valid books.
+                        return dict(await asyncio.gather(*(read(token) for token in tokens)))
+
+                ordered = sorted(pending)
+                batches = await asyncio.gather(*(
+                    batch(tuple(ordered[index:index + 50]))
+                    for index in range(0, len(ordered), 50)
+                ))
+                fetched = {token: book for group in batches for token, book in group.items()}
+            else:
+                fetched = dict(await asyncio.gather(*(read(value) for value in sorted(pending))))
         except ContinuousShadowError:
             raise
         except Exception as error:

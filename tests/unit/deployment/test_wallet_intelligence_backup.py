@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from polysia.application.services.candidate_intelligence import (
     PIPELINE_LEASE_RESOURCE,
@@ -300,3 +303,113 @@ def test_continuous_shadow_backup_restores_independently(tmp_path: Path) -> None
     assert restored.validation.schema_version == 6
     assert restored.validation.experiment_count == 0
     assert restored.validation.ledger_balanced is True
+
+
+def test_incomplete_bundle_preserves_previous_generation_and_cleans_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.deployment import wallet_intelligence_backup as module
+    from polysia.deployment.recovery_bundle import verify_bundle_checksums
+    from polysia.storage.latency_telemetry import LatencyTelemetryStore
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    shadow = tmp_path / "continuous-shadow.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    ContinuousShadowRepository(shadow).initialize()
+    LatencyTelemetryStore(tmp_path / "wallet-intelligence-latency.sqlite3").initialize()
+    root = tmp_path / "backups"
+    first = module.backup_wallet_intelligence_state(
+        database, root, continuous_shadow_path=shadow, keep=1,
+    )
+    before = set(root.iterdir())
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("private path must not leak")
+
+    monkeypatch.setattr(module, "backup_latency_telemetry_database", fail)
+    with pytest.raises(module.WalletBackupError) as raised:
+        module.backup_wallet_intelligence_state(
+            database, root, continuous_shadow_path=shadow, keep=1,
+        )
+    assert raised.value.error_code == "backup_io_failed"
+    assert "private" not in str(raised.value)
+    assert set(root.iterdir()) == before
+    assert len(verify_bundle_checksums(first[0].backup_path.parent).databases) == 3
+
+
+def test_first_install_can_back_up_intelligence_before_optional_stores_exist(
+    tmp_path: Path,
+) -> None:
+    from polysia.deployment.recovery_bundle import verify_bundle_checksums
+    from polysia.deployment.wallet_intelligence_backup import backup_wallet_intelligence_state
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    financial, shadow, latency = backup_wallet_intelligence_state(
+        database, tmp_path / "backups",
+        continuous_shadow_path=tmp_path / "not-started-yet.sqlite3",
+    )
+    assert shadow is None
+    assert latency is None
+    assert {r.role for r in verify_bundle_checksums(financial.backup_path.parent).databases} == {
+        "wallet-intelligence",
+    }
+
+
+def test_requested_shadow_disappearing_mid_backup_cannot_publish_partial_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.deployment import wallet_intelligence_backup as module
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    shadow = tmp_path / "continuous-shadow.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    ContinuousShadowRepository(shadow).initialize()
+    copy = module.backup_wallet_intelligence_database
+
+    def remove_shadow(*args: object, **kwargs: object) -> object:
+        result = copy(*args, **kwargs)
+        shadow.unlink()
+        return result
+
+    monkeypatch.setattr(module, "backup_wallet_intelligence_database", remove_shadow)
+    root = tmp_path / "backups"
+    with pytest.raises(module.WalletBackupError):
+        module.backup_wallet_intelligence_state(database, root, continuous_shadow_path=shadow)
+    assert list(root.iterdir()) == []
+
+
+def test_backup_capacity_rejection_writes_no_partial_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.deployment import wallet_intelligence_backup as module
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    WalletIntelligenceRepository(database).initialize()
+    usage = shutil.disk_usage(tmp_path)
+    monkeypatch.setattr(module.shutil, "disk_usage", lambda _: usage._replace(free=0))
+    root = tmp_path / "backups"
+    with pytest.raises(module.WalletBackupError) as raised:
+        module.backup_wallet_intelligence_state(database, root)
+    assert raised.value.error_code == "backup_capacity_insufficient"
+    assert list(root.iterdir()) == []
+
+
+def test_backup_validates_snapshot_not_live_financial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.deployment import wallet_intelligence_backup as module
+
+    database = tmp_path / "continuous-shadow.sqlite3"
+    ContinuousShadowRepository(database).initialize()
+    validate = module._validate_continuous_shadow_database
+    checked: list[Path] = []
+
+    def guard(path: Path) -> object:
+        assert path != database
+        checked.append(path)
+        return validate(path)
+
+    monkeypatch.setattr(module, "_validate_continuous_shadow_database", guard)
+    result = module.backup_continuous_shadow_database(database, tmp_path / "backups")
+    assert checked == [result.backup_path]

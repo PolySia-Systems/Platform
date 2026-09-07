@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.domain.copytrading import LeaderTradeEvent
@@ -490,6 +490,15 @@ class ContinuousMarketReadPort(Protocol):
     async def get_market_by_condition_id(self, condition_id: str) -> MarketDetails: ...
 
 
+@runtime_checkable
+class BatchOrderBookReadPort(Protocol):
+    """Optional bounded public batch read; absent tokens remain unknown."""
+
+    async def get_order_books(
+        self, token_ids: tuple[str, ...]
+    ) -> dict[str, MarketOrderBookSnapshot]: ...
+
+
 class ContinuousCandidatePort(Protocol):
     def current_snapshot(
         self,
@@ -498,6 +507,7 @@ class ContinuousCandidatePort(Protocol):
 
 
 __all__ = [
+    "BatchOrderBookReadPort",
     "ContinuousCandidatePort",
     "ContinuousSelectionSnapshot",
     "ContinuousSelectionUnavailableError",

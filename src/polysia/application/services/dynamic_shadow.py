@@ -20,6 +20,9 @@ from polysia.application.ports.dynamic_shadow import (
     ProtectedShadowCandidate,
     ShadowQuotePort,
 )
+from polysia.application.services.continuous_shadow_failures import (
+    classify_continuous_shadow_failure,
+)
 from polysia.domain.copytrading import LeaderTradeEvent
 from polysia.domain.copytrading.dynamic_shadow import (
     DynamicShadowConfig,
@@ -38,6 +41,10 @@ PIPELINE_LEASE_RESOURCE = "wallet-intelligence-pipeline"
 
 class DynamicShadowError(RuntimeError):
     error_code = "dynamic_shadow_failed"
+
+    def __init__(self, message: str, *, error_code: str = "dynamic_shadow_failed") -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class DynamicShadowService:
@@ -138,6 +145,7 @@ class DynamicShadowService:
             candidate_count=len(candidates),
         )
         source: LeaderTradeSourcePort | None = None
+        stage = "collect_events"
         try:
             source = self._source_factory({item.wallet_id: item.address for item in candidates})
             events_by_wallet = await self._collect_events(
@@ -148,6 +156,7 @@ class DynamicShadowService:
                 mode=mode,
             )
             quote_requested_at = _utc(self._clock())
+            stage = "market_read"
             quotes = await self._quotes(
                 events_by_wallet,
                 mode=mode,
@@ -157,6 +166,7 @@ class DynamicShadowService:
                 window_end if mode is DynamicShadowMode.HISTORICAL else _utc(self._clock())
             )
             evaluations: list[ShadowEventEvaluation] = []
+            stage = "apply_events"
             summaries: list[ShadowWalletSummary] = []
             for candidate in candidates:
                 wallet_evaluations, summary = evaluate_shadow_events(
@@ -169,11 +179,13 @@ class DynamicShadowService:
                 )
                 evaluations.extend(wallet_evaluations)
                 summaries.append(summary)
+            stage = "renew_lease"
             self._lease_store.renew_lease(
                 lease,
                 renewed_at=_utc(self._clock()),
                 lease_duration=timedelta(minutes=30),
             )
+            stage = "persist"
             completed = self._store.complete_run(
                 run_id,
                 candidates=candidates,
@@ -182,13 +194,19 @@ class DynamicShadowService:
                 completed_at=_utc(self._clock()),
             )
         except Exception as error:
+            failure = classify_continuous_shadow_failure(error, stage=stage)
+            code = (
+                error.error_code
+                if isinstance(error, DynamicShadowError)
+                else failure.persistence_code
+            )
             self._store.fail_run(
                 run_id,
                 failed_at=_utc(self._clock()),
-                error_code=getattr(error, "error_code", "dynamic_shadow_failed"),
+                error_code=code,
             )
             raise DynamicShadowError(
-                "Dynamic Shadow failed safely; prior evidence was kept."
+                "Dynamic Shadow failed safely; prior evidence was kept.", error_code=code,
             ) from error
         assert source is not None
         telemetry = _safe_mapping(source, "request_telemetry")
@@ -235,7 +253,8 @@ class DynamicShadowService:
                 for _ in range(20):
                     if page_count >= self._maximum_pages:
                         raise DynamicShadowError(
-                            "Leader history exceeded the bounded total page limit."
+                            "Leader history exceeded the bounded total page limit.",
+                            error_code="history_page_budget_exceeded",
                         )
                     page = await source.read_page(
                         candidate.wallet_id,
@@ -253,7 +272,8 @@ class DynamicShadowService:
                         for event in page.events
                     ):
                         raise DynamicShadowError(
-                            "Leader source returned event evidence outside its requested scope."
+                            "Leader source returned event evidence outside its requested scope.",
+                            error_code="source_scope_mismatch",
                         )
                     events.extend(page.events)
                     checkpoint = page.next_checkpoint
@@ -261,7 +281,8 @@ class DynamicShadowService:
                         return events
                 if split_depth >= 8 or end_at - start_at <= timedelta(seconds=2):
                     raise DynamicShadowError(
-                        "Leader history remained dense after bounded window splitting."
+                        "Leader history remained dense after bounded window splitting.",
+                        error_code="history_window_too_dense",
                     )
                 midpoint = start_at + (end_at - start_at) / 2
                 left = await collect_window(start_at, midpoint, split_depth=split_depth + 1)
@@ -275,7 +296,14 @@ class DynamicShadowService:
                 sorted(unique.values(), key=lambda item: (item.executed_at, item.event_id))
             )
 
-        rows = await asyncio.gather(*(collect(candidate) for candidate in candidates))
+        tasks = [asyncio.create_task(collect(candidate)) for candidate in candidates]
+        try:
+            rows = await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         return dict(rows)
 
     async def _quotes(

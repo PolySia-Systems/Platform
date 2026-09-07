@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -111,3 +113,26 @@ def test_backup_retention_prunes_oldest_copy_and_checksum(tmp_path: Path) -> Non
     assert not first.checksum_path.exists()
     assert second.backup_path.exists()
     assert third.backup_path.exists()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "capacity"])
+def test_interrupted_copy_cleans_temporary_files_without_pruning_good_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    database = tmp_path / "polysia.sqlite3"
+    initialize_sqlite_database(database)
+    backup_dir = tmp_path / "backups"
+    good = backup_sqlite_database(database, backup_dir, keep=1)
+    existing = {path.name for path in backup_dir.iterdir()}
+    if failure == "timeout":
+        ticks = iter((0.0, 301.0))
+        monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+        expected_error: type[OSError] = TimeoutError
+    else:
+        usage = shutil.disk_usage(backup_dir)
+        monkeypatch.setattr(shutil, "disk_usage", lambda _path: usage._replace(free=0))
+        expected_error = OSError
+    with pytest.raises(expected_error):
+        backup_sqlite_database(database, backup_dir, keep=1, minimum_free_bytes=1)
+    assert {path.name for path in backup_dir.iterdir()} == existing
+    assert verify_sqlite_backup(good.backup_path) == good.sha256

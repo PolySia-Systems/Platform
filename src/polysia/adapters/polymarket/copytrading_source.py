@@ -278,6 +278,15 @@ class PolymarketCopyTradingSource:
 
         for row in rows:
             try:
+                timestamp = row.get("timestamp")
+                if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+                    raise ValueError("timestamp must be epoch seconds")
+                executed_at = datetime.fromtimestamp(timestamp, tz=UTC)
+                if not start_at <= executed_at <= end_at:
+                    # The endpoint uses whole seconds; enforce the precise caller window
+                    # before metadata reads. Pagination still uses the raw row count.
+                    filtered_count += 1
+                    continue
                 slug = _required_string(row, "eventSlug")
                 if (
                     self._market_scope is PolymarketMarketScope.BTC_15M

@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-06 |
+| Review date | 2026-09-07 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.7` |
@@ -60,6 +60,9 @@ CURRENT capabilities:
   are not profitability evidence and do not authorize trading.
 - Stage 4B Continuous Shadow is a bounded experimental portfolio and ledger
   on its own store. It is not the TARGET OMS, allocator, or execution router.
+- Combined backups validate staged snapshots before publishing and rotating a
+  recovery bundle. Public book reads support bounded batches; historical reads
+  enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
 
 ## What is not yet implemented
 
@@ -80,6 +83,9 @@ Blockers and limitations:
 - Branch-protection policy remains governance debt.
 - Risk/Execution and Stage 4B accounting hardening are merged in Git but were
   not deployed to the older audited Helsinki runtime.
+- Backup staging, exact historical-window filtering and batch-book reads need
+  a separately authorized deployment and operational verification. Older generic
+  job errors do not establish one root cause for every historical failure.
 - One bounded profitable LIVE-004 round trip is statistically meaningless.
 - Modeled Stage 4B P&L remains negative and is not a promotion decision.
 - The Helsinki host is suitable for DATA_ONLY, paper, and shadow validation.

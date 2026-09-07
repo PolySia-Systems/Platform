@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -440,6 +441,53 @@ async def test_source_event_outside_requested_window_fails_closed(tmp_path: Path
     assert health.current_run is None
     assert health.last_run is not None
     assert health.last_run.status == "failed"
+    assert health.last_run.last_error_code == "source_scope_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_history_failure_drains_concurrent_reads_and_records_sqlite_category(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    repository = DynamicShadowRepository(database)
+    other_started = asyncio.Event()
+    other_cancelled = False
+
+    class FailingSource(_Source):
+        async def read_page(self, leader_id: str, **kwargs: Any) -> LeaderTradeReadPage:
+            nonlocal other_cancelled
+            if leader_id == next(iter(self.leaders)):
+                await other_started.wait()
+                raise sqlite3.OperationalError("database is locked")
+            other_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                other_cancelled = True
+            return await super().read_page(leader_id, **kwargs)
+
+    service = DynamicShadowService(
+        repository, CandidateIntelligenceRepository(database),
+        lambda leaders: FailingSource(dict(leaders)), clock=lambda: NOW,
+    )
+    with pytest.raises(DynamicShadowError) as caught:
+        await asyncio.wait_for(service.run(
+            "polycop", mode=DynamicShadowMode.HISTORICAL,
+            lookback=timedelta(hours=1), as_of=NOW,
+        ), timeout=5)
+    assert other_cancelled
+    assert caught.value.error_code == "sqlite_busy__at__collect_events"
+    health = repository.health("polycop", now=NOW)
+    assert health.current_run is None
+    assert health.last_run is not None
+    assert health.last_run.last_error_code == caught.value.error_code
+    lease_store = CandidateIntelligenceRepository(database)
+    lease = lease_store.acquire_lease(
+        PIPELINE_LEASE_RESOURCE, owner_id="next-owner", acquired_at=NOW,
+        lease_duration=timedelta(minutes=30),
+    )
+    lease_store.release_lease(lease)
 
 
 @pytest.mark.asyncio

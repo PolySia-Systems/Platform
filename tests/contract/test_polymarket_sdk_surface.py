@@ -29,6 +29,7 @@ def test_pinned_polymarket_sdk_version() -> None:
 def test_public_sdk_methods_used_by_adapter_exist() -> None:
     required = {
         "get_market",
+        "get_order_books",
         "list_activity",
         "list_closed_positions",
         "list_markets",
@@ -39,6 +40,7 @@ def test_public_sdk_methods_used_by_adapter_exist() -> None:
     }
 
     assert required <= set(dir(AsyncPublicClient))
+    assert "token_ids" in inspect.signature(AsyncPublicClient.get_order_books).parameters
 
 
 def test_secure_sdk_methods_used_by_adapter_exist() -> None:

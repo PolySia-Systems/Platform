@@ -229,6 +229,16 @@ scoring and eligibility contract is frozen in
 
 ## Dynamic Historical and Forward Shadow
 
+Trade windows use exact UTC bounds even though the public API accepts whole
+epoch seconds. The adapter filters boundary rows before metadata lookups;
+pagination still uses the raw page size. Historical collection retains its
+page/depth limits and fails closed rather than publishing incomplete history.
+Failure codes distinguish `source_scope_mismatch`, `history_page_budget_exceeded`,
+`history_window_too_dense`, and classified category/stage failures (for example,
+`sqlite_busy__at__persist`). Concurrent reads are cancelled and awaited before
+releasing the pipeline lease after a failed collection. The Forward oneshot uses
+`--no-deps`, like Historical, and cannot start Compose dependencies incidentally.
+
 Run one bounded 30-day Historical cost-model backfill after Stages 1–3 exist:
 
 ```bash
@@ -406,6 +416,16 @@ The interval log reports `health_refresh.status=failed` with a sanitized categor
 and `report_health` stage; the next normal interval retries. Backlog age is the
 age of the current uninterrupted nonzero-backlog episode.
 
+When the public adapter offers batch reads, Stage 4B requests at most 50 books
+per call under its existing concurrency/retry limits. The pinned SDK's public
+`get_order_books` reads market data; it does not submit orders. Missing or
+mismatched tokens are never substituted. Batch failure falls back to bounded
+single reads, preserving terminal-404 caching. Venue timestamps and all quote
+freshness, source-delay, liquidity and fee gates remain unchanged. Faster reads
+can reduce self-inflicted stale quotes, not prove source completeness or turn
+genuinely unavailable evidence into a valid fill. Measure the actual effect
+from comparable post-deployment intervals, not from request-count reduction.
+
 Run detailed historical analytics only against a verified snapshot or backup
 file, never against the active SQLite file. Use `docker run --network none`
 with a read-only backup mount so the one-shot does not join or tear down the
@@ -559,6 +579,38 @@ sudo systemctl disable --now polysia-wallet-intelligence.timer
 
 ## Backup and real restore rehearsal
 
+The combined backup command stages one complete generation under
+`.bundle-staging-*`, validates the destination snapshots, then publishes the
+`bundle-<timestamp>/` directory by a same-filesystem rename. CLI paths point
+inside that bundle, not to additional root-level copies. Only after publication
+are old rotating bundles pruned (`keep=3` by default). A failed member preserves
+the previous generation and removes its own partial staging files. Pinned and
+legacy root-level copies are not automatically deleted; review them separately
+against a verified recovery bundle and off-host copy before any removal.
+
+Initial bootstrap may precede creation of Shadow or telemetry. As before, an
+optional store absent at preflight is omitted and reported as absent; this is
+not a complete three-store operational recovery bundle. Once a store is present
+at preflight it is required for that generation, even if it disappears during
+the copy. Operational acceptance must verify all expected roles in the manifest.
+`capacity` includes nested bundles, pinned copies and legacy root files, excluding
+active staging. Its backup count is database-file count, not generation count;
+bytes are logical file sizes (old hardlinks can overstate physical disk usage).
+
+Preflight requires space for the source files plus the policy's 4 GiB safety
+floor. Each online SQLite copy checks that floor while progressing in 256-page
+steps and has a 300-second copy deadline. This bounds contention-induced copy
+retries; it is not a promise that integrity checks or hashing finish in 300
+seconds. Insufficient capacity fails as `backup_capacity_insufficient`, not as
+an incomplete successful backup. Copy timeout, SQLite contention, I/O and
+validation failures have separate sanitized codes. Do not reduce the floor to
+force a backup through: provision space or perform approved legacy cleanup.
+
+Integrity, foreign keys, schema and accounting validation run on the completed
+snapshots, not the live writer. Schema-v6 Shadow validation uses the canonical
+Decimal invariant evaluator without constructing a full historical report.
+The stores are sequential consistent snapshots, not a cross-database transaction.
+
 Every successful Stage 1–3 `wallet-intelligence ensure` invocation creates and
 verifies an online backup unless `--no-backup` is explicitly used. A repeated
 idempotent invocation does not duplicate the database snapshot, but it refreshes
@@ -571,7 +623,7 @@ At least weekly, select one exact backup name and run a disposable restore:
 ```bash
 docker compose --profile wallet-intelligence run --rm \
   wallet-intelligence-sync wallet-intelligence restore-check \
-  --backup /var/lib/polysia/backups/wallet-intelligence/<exact-name>.sqlite3
+  --backup /var/lib/polysia/backups/wallet-intelligence/<bundle-name>/<exact-name>.sqlite3
 ```
 
 `restore-check` verifies the SHA-256 sidecar, restores into a temporary database,

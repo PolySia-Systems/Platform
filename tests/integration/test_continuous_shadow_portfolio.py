@@ -323,6 +323,76 @@ def _shadow_database(source_database: Path) -> Path:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fail_batch", [False, True])
+async def test_batch_books_bound_requests_and_preserve_single_read_fallback(
+    tmp_path: Path, fail_batch: bool,
+) -> None:
+    clock = _Clock(NOW)
+
+    class BatchMarket(_MarketPort):
+        batch_sizes: list[int] = []
+
+        async def get_order_books(
+            self, token_ids: tuple[str, ...],
+        ) -> dict[str, MarketOrderBookSnapshot]:
+            self.batch_sizes.append(len(token_ids))
+            if fail_batch:
+                raise ValueError("batch unavailable")
+            book = await super().get_order_book("token-yes")
+            return {token: book.model_copy(update={"token_id": token}) for token in token_ids}
+
+        async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
+            book = await super().get_order_book("token-yes")
+            return book.model_copy(update={"token_id": token_id})
+
+    market = BatchMarket(clock)
+    service = _service(tmp_path / "intelligence.sqlite3", _Scenario(), market, clock)
+    tokens = {f"token-{i}" for i in range(501)}
+    books = await service._books(tokens, markets_by_id={})
+    assert set(books) == tokens
+    assert all(book is not None and book.token_id == token for token, book in books.items())
+    assert max(market.batch_sizes) == 50
+    assert len(market.batch_sizes) == 11
+    assert market.book_requests == (501 if fail_batch else 11)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [False, True])
+async def test_batch_missing_or_stale_books_cannot_create_a_fill(
+    tmp_path: Path, missing: bool,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+
+    class BatchMarket(_MarketPort):
+        async def get_order_books(
+            self, token_ids: tuple[str, ...],
+        ) -> dict[str, MarketOrderBookSnapshot]:
+            if missing:
+                return {}
+            return {
+                token: (await super().get_order_book(token)).model_copy(
+                    update={"timestamp": self.clock.value - timedelta(minutes=5)}
+                ) for token in token_ids
+            }
+
+    scenario = _Scenario()
+    service = _service(database, scenario, BatchMarket(clock), clock)
+    service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [_EventSpec(
+        "batch-unknown-buy", LeaderTradeAction.BUY, NOW + timedelta(seconds=100),
+        Decimal("0.40"),
+    )]
+    clock.value = NOW + timedelta(minutes=2)
+    outcome = await service.poll("polycop")
+    assert outcome.simulated_count == 0
+    assert outcome.unknown_count > 0
+    assert outcome.follower_exposure == 0
+
+
+@pytest.mark.asyncio
 async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_restart(
     tmp_path: Path,
 ) -> None:

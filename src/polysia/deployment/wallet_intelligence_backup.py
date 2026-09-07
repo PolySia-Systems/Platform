@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
 
 from polysia.deployment.recovery_bundle import (
     RecoveryDatabaseRecord,
     assemble_recovery_bundle,
+    prune_rotating_bundles,
 )
 from polysia.deployment.sqlite_backup import (
     BackupResult,
@@ -19,13 +21,14 @@ from polysia.deployment.sqlite_backup import (
 )
 from polysia.storage.continuous_shadow import (
     CONTINUOUS_SHADOW_SCHEMA_VERSION,
-    ContinuousShadowRepository,
     ContinuousShadowStoreError,
 )
+from polysia.storage.continuous_shadow_invariants import evaluate_shadow_invariants
 from polysia.storage.latency_telemetry import (
     LatencyTelemetryStore,
     default_latency_telemetry_path,
 )
+from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY
 from polysia.storage.wallet_intelligence import (
     WalletIntelligenceDatabaseValidation,
     WalletIntelligenceRepository,
@@ -34,6 +37,14 @@ from polysia.storage.wallet_intelligence import (
 WALLET_INTELLIGENCE_BACKUP_PREFIX = "wallet-intelligence-"
 LATENCY_TELEMETRY_BACKUP_PREFIX = "wallet-intelligence-latency-"
 CONTINUOUS_SHADOW_BACKUP_PREFIX = "continuous-shadow-"
+
+
+class WalletBackupError(RuntimeError):
+    """Sanitized backup failure; never includes protected paths or data."""
+
+    def __init__(self, error_code: str) -> None:
+        super().__init__("Wallet-intelligence backup failed safely.")
+        self.error_code = error_code
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,15 +77,16 @@ def backup_wallet_intelligence_database(
     now: datetime | None = None,
 ) -> BackupResult:
     """Validate and back up the protected wallet-intelligence database."""
-    WalletIntelligenceRepository(database_path).validate_integrity()
     result = backup_sqlite_database(
         database_path,
         backup_dir,
         keep=keep,
         now=now,
         prefix=WALLET_INTELLIGENCE_BACKUP_PREFIX,
+        minimum_free_bytes=DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY.disk_safety_floor_bytes,
     )
     verify_sqlite_backup(result.backup_path)
+    WalletIntelligenceRepository(result.backup_path).validate_integrity()
     return result
 
 
@@ -93,6 +105,7 @@ def backup_latency_telemetry_database(
         keep=keep,
         now=now,
         prefix=LATENCY_TELEMETRY_BACKUP_PREFIX,
+        minimum_free_bytes=DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY.disk_safety_floor_bytes,
     )
     verify_sqlite_backup(result.backup_path)
     return result
@@ -107,13 +120,13 @@ def backup_continuous_shadow_database(
 ) -> BackupResult:
     """Validate and back up the Stage 4B single-writer financial database."""
 
-    _validate_continuous_shadow_database(database_path)
     result = backup_sqlite_database(
         database_path,
         backup_dir,
         keep=keep,
         now=now,
         prefix=CONTINUOUS_SHADOW_BACKUP_PREFIX,
+        minimum_free_bytes=DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY.disk_safety_floor_bytes,
     )
     verify_sqlite_backup(result.backup_path)
     _validate_continuous_shadow_database(result.backup_path)
@@ -130,6 +143,74 @@ def backup_wallet_intelligence_state(
 ) -> tuple[BackupResult, BackupResult | None, BackupResult | None]:
     """Back up intelligence, Stage 4B state, and optional telemetry sidecar."""
 
+    if keep < 1:
+        raise ValueError("keep must be at least 1")
+    latency_path = default_latency_telemetry_path(database_path)
+    expected_latency = latency_path if latency_path.is_file() else None
+    expected_shadow = (
+        continuous_shadow_path
+        if continuous_shadow_path is not None and continuous_shadow_path.is_file()
+        else None
+    )
+    sources = [database_path]
+    if expected_latency is not None:
+        sources.append(expected_latency)
+    if expected_shadow is not None:
+        sources.append(expected_shadow)
+    backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    required = sum(path.stat().st_size for path in sources if path.is_file())
+    required += DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY.disk_safety_floor_bytes
+    if shutil.disk_usage(backup_dir).free < required:
+        raise WalletBackupError("backup_capacity_insufficient")
+    # Stage the entire generation. A failed member never prunes a good generation.
+    try:
+        with TemporaryDirectory(prefix=".bundle-staging-", dir=backup_dir) as scratch:
+            stage = Path(scratch)
+            results = _backup_state_staged(
+                database_path, stage, continuous_shadow_path=expected_shadow,
+                latency_path=expected_latency, now=now,
+            )
+            bundle = next(stage.glob("bundle-*"))
+            if shutil.disk_usage(backup_dir).free < (
+                DEFAULT_STAGE4B_DATA_LIFECYCLE_POLICY.disk_safety_floor_bytes
+            ):
+                raise WalletBackupError("backup_capacity_insufficient")
+            destination = backup_dir / bundle.name
+            bundle.rename(destination)
+            published = tuple(
+                None if result is None else BackupResult(
+                    backup_path=destination / result.backup_path.name,
+                    checksum_path=destination / result.checksum_path.name,
+                    sha256=result.sha256,
+                ) for result in results
+            )
+        prune_rotating_bundles(backup_dir, keep=keep)
+        financial, shadow, latency = published
+        assert financial is not None
+        return financial, shadow, latency
+    except WalletBackupError:
+        raise
+    except TimeoutError as error:
+        raise WalletBackupError("backup_copy_timeout") from error
+    except sqlite3.OperationalError as error:
+        code = getattr(error, "sqlite_errorcode", 0) & 255
+        category = "backup_sqlite_busy" if code in (5, 6) else "backup_sqlite_failed"
+        raise WalletBackupError(category) from error
+    except OSError as error:
+        raise WalletBackupError("backup_io_failed") from error
+    except Exception as error:
+        raise WalletBackupError("backup_validation_failed") from error
+
+
+def _backup_state_staged(
+    database_path: Path,
+    backup_dir: Path,
+    *,
+    continuous_shadow_path: Path | None,
+    latency_path: Path | None,
+    now: datetime | None,
+) -> tuple[BackupResult, BackupResult | None, BackupResult | None]:
+    keep = 3
     financial = backup_wallet_intelligence_database(
         database_path,
         backup_dir,
@@ -137,15 +218,14 @@ def backup_wallet_intelligence_state(
         now=now,
     )
     shadow = None
-    if continuous_shadow_path is not None and continuous_shadow_path.is_file():
+    if continuous_shadow_path is not None:
         shadow = backup_continuous_shadow_database(
             continuous_shadow_path,
             backup_dir,
             keep=keep,
             now=now,
         )
-    latency_path = default_latency_telemetry_path(database_path)
-    if not latency_path.is_file():
+    if latency_path is None:
         _write_recovery_bundle(
             backup_dir,
             created_at=now,
@@ -362,13 +442,13 @@ def _validate_continuous_shadow_database(
         connection.close()
     ledger_balanced = True
     if schema_version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
-        repository = ContinuousShadowRepository(database_path)
-        for experiment_id in experiments:
-            accounting = cast(
-                dict[str, object],
-                repository.results(experiment_id, limit=1)["accounting"],
-            )
-            ledger_balanced = ledger_balanced and bool(accounting["ledger_balanced"])
+        with closing(sqlite3.connect(
+            f"{database_path.resolve().as_uri()}?mode=ro", uri=True
+        )) as check:
+            check.row_factory = sqlite3.Row
+            for experiment_id in experiments:
+                report = evaluate_shadow_invariants(check, experiment_id)
+                ledger_balanced = ledger_balanced and report.passed
     else:
         legacy = sqlite3.connect(
             f"{database_path.resolve().as_uri()}?mode=ro",
