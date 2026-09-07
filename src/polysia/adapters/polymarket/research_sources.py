@@ -432,9 +432,20 @@ def _normalize_wallet_row(
     identity: dict[str, object] = {
         "asset": outcome,
         "condition_id": None if market is None else market.casefold(),
+        "price": None if price is None else format(price, "f"),
         "side": side,
+        "size": None if size is None else format(size, "f"),
         "timestamp": None if source_time is None else int(source_time.timestamp()),
+        "trade_id": _optional_str(row, "id") or _optional_str(row, "tradeId"),
         "transaction_hash": None if tx_hash is None else tx_hash.casefold(),
+    }
+    source_event_id = stable_evidence_id(
+        source_id="polymarket_public_trade",
+        identity_fields=identity,
+    )
+    observation_identity = {
+        "leader_alias": alias,
+        "source_event_id": source_event_id,
     }
     provenance: dict[str, object] = {
         "endpoint": source_id,
@@ -442,7 +453,10 @@ def _normalize_wallet_row(
         "has_transaction": tx_hash is not None,
     }
     return CanonicalResearchEvent(
-        evidence_id=stable_evidence_id(source_id=source_id, identity_fields=identity),
+        evidence_id=stable_evidence_id(
+            source_id=source_id,
+            identity_fields=observation_identity,
+        ),
         schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
         source_id=source_id,
         event_kind=ObservationKind.WALLET_TRADE,
@@ -462,11 +476,11 @@ def _normalize_wallet_row(
         payload_digest=payload_digest(
             {
                 **identity,
-                "price": None if price is None else format(price, "f"),
-                "size": None if size is None else format(size, "f"),
+                **observation_identity,
             }
         ),
         provenance=provenance,
+        source_event_id=source_event_id,
         run_id=run_id,
     )
 

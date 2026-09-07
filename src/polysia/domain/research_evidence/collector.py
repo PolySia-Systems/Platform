@@ -177,6 +177,7 @@ def apply_classification(
         confirmation=candidate.confirmation,
         payload_digest=candidate.payload_digest,
         provenance=candidate.provenance,
+        source_event_id=candidate.source_event_id,
         related_evidence_id=related,
         run_id=candidate.run_id,
     )

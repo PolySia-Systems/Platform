@@ -15,6 +15,7 @@ from pathlib import Path
 
 from polysia.domain.research_evidence.collector import CollectorPolicy
 from polysia.domain.research_evidence.models import (
+    LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
     CanonicalResearchEvent,
@@ -28,8 +29,6 @@ from polysia.domain.research_evidence.models import (
 
 RESEARCH_EVIDENCE_SCHEMA_PATH = Path(__file__).with_name("research_evidence_schema.sql")
 RESEARCH_EVIDENCE_FILENAME = "research-evidence.sqlite3"
-
-
 class ResearchEvidenceStoreError(RuntimeError):
     """Sanitized research-evidence persistence failure."""
 
@@ -126,6 +125,8 @@ class ResearchEvidenceStore:
     ) -> EvidenceClassification:
         """Insert one event. Identical retries increment a duplicate counter."""
 
+        if event.schema_version != RESEARCH_EVIDENCE_SCHEMA_VERSION:
+            raise ResearchEvidenceStoreError("legacy research evidence is read-only")
         connection = self._connect()
         try:
             ensure_research_evidence_schema(
@@ -152,9 +153,9 @@ class ResearchEvidenceStore:
                         "market_reference, outcome_reference, side, price, size, "
                         "source_time_utc, observed_time_utc, receive_monotonic_ns, "
                         "normalize_monotonic_ns, attribution_status, leader_alias, "
-                        "confirmation, payload_digest, provenance_json, related_evidence_id, "
-                        "run_id, interval_id"
-                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "confirmation, payload_digest, source_event_id, provenance_json, "
+                        "related_evidence_id, run_id, interval_id"
+                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         _event_params(event, interval_id=interval_id),
                     )
                 except sqlite3.IntegrityError:
@@ -389,6 +390,11 @@ def ensure_research_evidence_schema(
 ) -> None:
     script = RESEARCH_EVIDENCE_SCHEMA_PATH.read_text(encoding="utf-8")
     connection.executescript(script)
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(research_events)")
+    }
+    if "source_event_id" not in columns:
+        connection.execute("ALTER TABLE research_events ADD COLUMN source_event_id TEXT")
     connection.execute(
         "INSERT OR IGNORE INTO research_evidence_metadata ("
         "singleton, schema_version, policy_version, created_at_utc"
@@ -402,6 +408,12 @@ def ensure_research_evidence_schema(
     row = connection.execute(
         "SELECT schema_version FROM research_evidence_metadata WHERE singleton = 1"
     ).fetchone()
+    if row is not None and str(row[0]) == LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION:
+        connection.execute(
+            "UPDATE research_evidence_metadata SET schema_version = ? WHERE singleton = 1",
+            (RESEARCH_EVIDENCE_SCHEMA_VERSION,),
+        )
+        row = (RESEARCH_EVIDENCE_SCHEMA_VERSION,)
     if row is None or str(row[0]) != RESEARCH_EVIDENCE_SCHEMA_VERSION:
         raise ResearchEvidenceStoreError("research evidence schema version mismatch")
     connection.commit()
@@ -431,6 +443,7 @@ def _event_params(event: CanonicalResearchEvent, *, interval_id: str) -> tuple[o
         event.leader_alias,
         event.confirmation.value,
         event.payload_digest,
+        event.source_event_id,
         json.dumps(event.provenance, sort_keys=True, separators=(",", ":"), default=str),
         event.related_evidence_id,
         event.run_id,
@@ -468,6 +481,9 @@ def _event_from_row(row: Mapping[str, object]) -> CanonicalResearchEvent:
         confirmation=ConfirmationStatus(str(row["confirmation"])),
         payload_digest=str(row["payload_digest"]),
         provenance=provenance,
+        source_event_id=None
+        if row["source_event_id"] is None
+        else str(row["source_event_id"]),
         related_evidence_id=None
         if row["related_evidence_id"] is None
         else str(row["related_evidence_id"]),

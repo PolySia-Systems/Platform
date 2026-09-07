@@ -16,7 +16,11 @@ from decimal import Decimal
 from enum import StrEnum
 
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
-RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v1"
+RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v2"
+LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v1"
+SUPPORTED_RESEARCH_EVIDENCE_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION, RESEARCH_EVIDENCE_SCHEMA_VERSION}
+)
 
 
 class ObservationKind(StrEnum):
@@ -102,6 +106,7 @@ class CanonicalResearchEvent:
     confirmation: ConfirmationStatus
     payload_digest: str
     provenance: dict[str, object]
+    source_event_id: str | None = None
     related_evidence_id: str | None = None
     run_id: str = ""
 
@@ -109,8 +114,8 @@ class CanonicalResearchEvent:
         for name in ("evidence_id", "schema_version", "source_id", "payload_digest"):
             if not getattr(self, name).strip():
                 raise ValueError(f"{name} must not be empty")
-        if self.schema_version != RESEARCH_EVIDENCE_SCHEMA_VERSION:
-            raise ValueError("schema_version must be the frozen research-evidence version")
+        if self.schema_version not in SUPPORTED_RESEARCH_EVIDENCE_SCHEMA_VERSIONS:
+            raise ValueError("schema_version is not a supported research-evidence version")
         _require_utc("observed_time", self.observed_time)
         if self.source_time is not None:
             _require_utc("source_time", self.source_time)
@@ -123,6 +128,16 @@ class CanonicalResearchEvent:
                 raise ValueError("leader_alias must not be empty when provided")
             if _WALLET_PATTERN.fullmatch(self.leader_alias):
                 raise ValueError("leader_alias must not be a wallet address")
+        if self.source_event_id is not None and not self.source_event_id.strip():
+            raise ValueError("source_event_id must not be empty when provided")
+        if (
+            self.schema_version == RESEARCH_EVIDENCE_SCHEMA_VERSION
+            and self.event_kind is ObservationKind.WALLET_TRADE
+            and self.classification is EvidenceClassification.ACCEPTED
+            and self.attribution_status is AttributionStatus.WALLET_ALIASED
+            and self.source_event_id is None
+        ):
+            raise ValueError("accepted v2 wallet evidence requires source_event_id")
         if self.price is not None and (
             not self.price.is_finite() or self.price <= Decimal("0")
         ):
@@ -159,6 +174,7 @@ class CanonicalResearchEvent:
             "price": None if self.price is None else format(self.price, "f"),
             "side": self.side,
             "size": None if self.size is None else format(self.size, "f"),
+            "source_event_id": self.source_event_id,
             "source_id": self.source_id,
             "source_time": None
             if self.source_time is None

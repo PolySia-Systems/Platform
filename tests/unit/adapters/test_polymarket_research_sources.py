@@ -10,6 +10,7 @@ from polysia.adapters.polymarket.research_sources import (
     USER_CHANNEL_CANDIDATE,
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
+    _normalize_wallet_row,
     discover_public_follow_set,
     public_wallet_alias,
 )
@@ -118,6 +119,42 @@ async def test_market_stream_is_not_wallet_attributable() -> None:
     assert events[0].attribution_status is AttributionStatus.NOT_APPLICABLE
     assert events[0].leader_alias is None
     assert source.candidate.wallet_attributable is False
+
+
+def test_wallet_observation_identity_preserves_distinct_wallet_attribution() -> None:
+    second_wallet = "0x2222222222222222222222222222222222222222"
+    shared = {
+        "side": "BUY",
+        "price": "0.51",
+        "size": "2",
+        "timestamp": int(OBSERVED.timestamp()) - 3,
+        "conditionId": "0x" + "a" * 64,
+        "asset": "token-1",
+        "transactionHash": "0x" + "b" * 64,
+    }
+    first = _normalize_wallet_row(
+        {**shared, "proxyWallet": WALLET},
+        source_id=ACTIVITY_SOURCE_ID,
+        alias=public_wallet_alias(WALLET),
+        expected_wallet=WALLET,
+        run_id="r1",
+        observed_time=OBSERVED,
+        receive_ns=1,
+        normalize_ns=2,
+    )
+    second = _normalize_wallet_row(
+        {**shared, "proxyWallet": second_wallet},
+        source_id=ACTIVITY_SOURCE_ID,
+        alias=public_wallet_alias(second_wallet),
+        expected_wallet=second_wallet,
+        run_id="r1",
+        observed_time=OBSERVED,
+        receive_ns=1,
+        normalize_ns=2,
+    )
+    assert first.source_event_id == second.source_event_id
+    assert first.evidence_id != second.evidence_id
+    assert first.leader_alias != second.leader_alias
 
 
 @pytest.mark.asyncio

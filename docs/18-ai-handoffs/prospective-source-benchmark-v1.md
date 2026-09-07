@@ -63,9 +63,13 @@ supply wallet identity.
   `UNAVAILABLE`.
 - Lowest market-stream latency must not be compared with wallet attribution.
 
-Same-observation replay digests (Current Control vs Target Exposure v1) differ
-as required: Control may accumulate; Target Exposure v1 does not.
-`unknown_count=0` in this recorded accepted set. This is not Alpha.
+The source and latency measurements above remain valid dated evidence. The
+replay digests and `unknown_count=0` produced by the original implementation
+are superseded: that implementation reused leader price as executable price,
+shared episode state across markets, and did not separate wallet-observation
+identity from source-trade identity. Schema v2 replay now fails closed without
+explicit side-aware execution evidence and reports leader and follower
+markouts on separate clocks. No Alpha conclusion can be drawn from this run.
 
 ## Confidence
 

@@ -65,8 +65,10 @@ CURRENT capabilities:
   authority. See
   [Target Exposure Replay](../03-requirements/shadow-target-exposure-replay.md).
 - A provider-neutral prospective collector and public source benchmark persist
-  canonical research evidence in an isolated SQLite store. They do not write
-  into Stage 4B financial state or the latency sidecar. See
+  canonical research evidence in an isolated SQLite store. Schema v2 preserves
+  distinct wallet observations of a shared source trade; replay isolates each
+  Market/Outcome episode and requires explicit follower-execution evidence.
+  They do not write into Stage 4B financial state or the latency sidecar. See
   [Prospective Research Evidence Collector](../03-requirements/prospective-evidence-collector.md).
 - Combined backups validate staged snapshots before publishing and rotating a
   recovery bundle. Public book reads support bounded batches; historical reads
