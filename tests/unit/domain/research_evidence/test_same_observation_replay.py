@@ -135,6 +135,44 @@ def test_same_observations_control_accumulates_target_does_not() -> None:
     assert again.target_digest == replay.target_digest
 
 
+def test_replay_indexes_snapshot_stream_once() -> None:
+    class CountingSnapshots(tuple[CanonicalResearchEvent, ...]):
+        iterations: int
+
+        def __new__(
+            cls,
+            values: tuple[CanonicalResearchEvent, ...],
+        ) -> CountingSnapshots:
+            instance = super().__new__(cls, values)
+            instance.iterations = 0
+            return instance
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            self.iterations += 1
+            return super().__iter__()
+
+    snapshots = CountingSnapshots(
+        (
+            _quote("quote", observed_time=OBSERVED - timedelta(seconds=1)),
+            _snapshot(
+                "markout",
+                source_time=OBSERVED + timedelta(seconds=5),
+                price=Decimal("0.51"),
+            ),
+        )
+    )
+    replay = replay_same_observations(
+        (
+            _trade("first", observed=OBSERVED),
+            _trade("second", observed=OBSERVED + timedelta(seconds=1)),
+        ),
+        snapshots=snapshots,
+    )
+
+    assert replay.control_decisions[0][1] is ControlAdmission.ADMIT
+    assert snapshots.iterations == 1
+
+
 def test_future_information_does_not_change_earlier_decision_order() -> None:
     early = _trade("early", observed=OBSERVED)
     late = _trade("late", observed=OBSERVED + timedelta(seconds=5), price=Decimal("0.20"))
