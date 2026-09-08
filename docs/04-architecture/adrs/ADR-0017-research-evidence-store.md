@@ -47,12 +47,29 @@ not as a failed event write. Full-disk, I/O, corruption, and actual evidence-wri
 failures remain fail-closed. Persistent ingestion and window rotation use one
 ordered lifecycle boundary.
 
+The public `/trades` cooldown circuit is route-local and uses a single
+post-cooldown recovery probe. Collector health separates process health,
+source availability, and research eligibility; a retrying required source is
+not silently treated as complete collection.
+
+One durable `research_experiments` record declares the active capture's time,
+event-count, and storage bounds. Ordinary retention does not prune an active
+experiment. Finalization is a separate operator action that creates one
+SQLite Backup-API snapshot, restores and verifies it, reproduces replay, and
+only then marks the experiment finalized. This adds no database service and
+does not turn rotating recovery backups into a continuous archive.
+
 ## Consequences
 
 Prospective collection and replay can proceed without mutating financial
 invariants. Retention may prune unreferenced market-state snapshots. Accepted
 wallet evidence referenced by a decision is not silently deleted; missing
 decision evidence invalidates the interval.
+
+Active experiment evidence may temporarily exceed ordinary rolling event
+retention, but cannot exceed its separately declared hard bounds. After
+finalization, normal retention applies and the immutable bundle owns the
+experiment input.
 
 The WAL file is allowed to retain bounded reusable allocation. Acceptance is
 based on checkpoint progress, bounded growth, and uninterrupted evidence—not a

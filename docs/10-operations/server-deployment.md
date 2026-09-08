@@ -78,6 +78,40 @@ integrity, foreign keys, bounded WAL/logs, and zero real orders. Do not wait
 for T0+3h in the deployment task; that observation is an independent read-only
 acceptance.
 
+Before treating a window as wallet-research eligible, run:
+
+```bash
+docker compose --profile research exec -T research-collector \
+  python -m polysia.cli research prospective-health \
+  --health-report /var/lib/polysia/reports/research-evidence-health.json \
+  --require-research-eligible
+```
+
+The ordinary container healthcheck proves service health only. The stricter
+command additionally requires a successful required-source request in the
+active window. A quiet successful request is eligible; `retrying`, an
+unresolved transport failure, or an ended required source is not.
+
+The Compose collector declares a four-hour / 750,000-event / 768-MiB active
+experiment. Stop the collector before finalization, then create the one-time
+verified evidence bundle:
+
+```bash
+docker compose --profile research stop research-collector
+docker compose --profile research run --rm research-collector \
+  research prospective-finalize \
+  --database /var/lib/polysia/data/research-evidence.sqlite3 \
+  --run-id <health-run-id> \
+  --bundle-root /var/lib/polysia/backups/research-experiments
+```
+
+The command refuses a second writer and marks the run finalized only after
+snapshot, checksum, isolated restore, integrity/foreign-key checks, and
+deterministic replay pass. Restarting the collector then starts the next
+bounded experiment. Do not treat rotating backups as the experiment archive.
+Finalize an active experiment before deploying collector code or configuration
+that would change its recorded SHA or configuration digest.
+
 Routine collector health may report maintenance as `degraded` after transient
 checkpoint contention while committed evidence continues. It must recover on a
 later `PASSIVE` checkpoint. A fatal evidence write, full-disk, I/O, or corruption

@@ -68,6 +68,8 @@ CURRENT capabilities:
   canonical research evidence in an isolated SQLite store. Schema v2 preserves
   distinct wallet observations of a shared source trade; replay isolates each
   Market/Outcome episode and requires explicit follower-execution evidence.
+  Required-source recovery and research eligibility fail closed, and bounded
+  active experiment evidence is retained until verified bundle finalization.
   They do not write into Stage 4B financial state or the latency sidecar. See
   [Prospective Research Evidence Collector](../03-requirements/prospective-evidence-collector.md).
 - Combined backups validate staged snapshots before publishing and rotating a
@@ -83,15 +85,17 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-The persistent prospective collector completed its independent Helsinki
-DATA_ONLY durability observation. The dated deployment, restart, backup,
-restore, storage, and deterministic replay evidence is in
-[Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
+The first persistent prospective-collector observation proved service and WAL
+durability but also exposed required Wallet-source recovery and evidence-
+retention gaps. The durable correction is implemented in current code; host
+deployment and a fresh bounded experiment must be verified by runtime query.
+Earlier dated deployment, restart, backup, restore, storage, and replay evidence
+remains in [Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
 
-**Next task:** evaluate the accepted prospective evidence against predefined
-research hypotheses. Preserve `UNKNOWN`, require supported execution evidence,
-and do not promote modeled P&L into Alpha or Live authority. Do not access
-Nuremberg without a separately authorized operational task.
+**Next task:** deploy the exact green current SHA to Helsinki in DATA_ONLY,
+confirm required Wallet-source recovery and eligibility, record a fresh T0,
+and finish one bounded experiment bundle before economic evaluation. Preserve
+`UNKNOWN`; do not access Nuremberg without separate authorization.
 
 Blockers and limitations:
 

@@ -62,8 +62,17 @@ The collector is provider-neutral. Venue translation stays in adapters.
 - Missing decision evidence, drain failure, evidence-write/storage failure, or
   incomplete shutdown prevent `VALID`
 - Empty windows keep an independent identity and may be `VALID` when collection
-  completed with quiet sources
+  completed with a successful, quiet required-source request
 - A quiet wallet is not a failed source
+- Service health, source availability, and research-data eligibility are
+  independent. An unresolved required-source failure makes the affected
+  window ineligible and therefore not `VALID`; evidence from healthy optional
+  sources remains usable.
+- The `/trades` circuit is route-local. After cooldown it permits exactly one
+  `RECOVERY` probe; a successful probe returns later reads to `DISCOVERY`.
+  Sanitized health and window evidence preserve failure class, retry time,
+  last successful request/event, and recovery count. Error control events are
+  not source progress.
 - Decisions record evidence IDs, code SHA, configuration digest, and policy
   version
 - Health is a sanitized atomic JSON file, refreshes at most every 30 seconds
@@ -82,6 +91,15 @@ The collector is provider-neutral. Venue translation stays in adapters.
 - Event persistence and window rotation share one lifecycle ordering boundary,
   so a committed event cannot cross a summary/close/start boundary ambiguously.
 - Reports are sanitized; wallet addresses never appear
+- Window reports retain the newest 36 by authoritative window time, not UUID
+  filename order.
+- Each persistent run is a bounded experiment: four hours, 750,000 events, and
+  768 MiB by default. Its events are protected from ordinary pruning until
+  verified finalization. Reaching any bound stops new evidence fail-closed.
+- Finalization creates one immutable checksummed SQLite bundle, restores it in
+  isolation, verifies integrity and foreign keys, and reproduces replay before
+  marking the experiment `FINALIZED`. Backups are recovery points, not a
+  substitute for continuous experiment evidence.
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
@@ -93,6 +111,8 @@ python -m polysia.cli research source-benchmark --duration-seconds 600
 python -m polysia.cli research prospective-replay --database artifacts/research-evidence.sqlite3 --run-id <id>
 python -m polysia.cli research prospective-collect --window-seconds 600
 python -m polysia.cli research prospective-health --health-report <path>
+python -m polysia.cli research prospective-health --health-report <path> --require-research-eligible
+python -m polysia.cli research prospective-finalize --database <stopped-db> --run-id <id> --bundle-root <dir>
 ```
 
 Raw databases stay under `artifacts/` or `/var/lib/polysia/data/` and are not
