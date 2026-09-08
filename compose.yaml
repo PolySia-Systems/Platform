@@ -101,6 +101,12 @@ services:
       - "600"
       - --code-sha
       - ${POLYSIA_IMAGE_TAG:-unknown}
+      - --experiment-duration-seconds
+      - "14400"
+      - --experiment-max-events
+      - "750000"
+      - --experiment-max-bytes
+      - "805306368"
     user: "10001:10001"
     init: true
     read_only: true

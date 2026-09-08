@@ -427,3 +427,31 @@ def test_prospective_health_rejects_stale_file(tmp_path: Path) -> None:
         ],
     )
     assert stale.exit_code == 1
+
+
+def test_prospective_health_can_require_research_eligibility(tmp_path: Path) -> None:
+    health = tmp_path / "health.json"
+    health.write_text(
+        json.dumps(
+            {
+                "fatal": None,
+                "stale": False,
+                "lifecycle": "OPEN",
+                "research_data_eligible": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-health",
+            "--health-report",
+            str(health),
+            "--require-research-eligible",
+        ],
+    )
+
+    assert result.exit_code == 1

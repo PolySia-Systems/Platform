@@ -33,6 +33,7 @@ EXPECTED_COMMANDS = {
         "prospective-replay",
         "prospective-collect",
         "prospective-health",
+        "prospective-finalize",
     },
     "ops": {
         "acceptance-audit",

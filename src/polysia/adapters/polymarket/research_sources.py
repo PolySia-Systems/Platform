@@ -119,6 +119,15 @@ class DataApiWalletPollSource:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic_ns = monotonic_ns or _perf_ns
         self._sleep = sleep
+        self._availability = "not_started"
+        self._last_request_outcome = "not_started"
+        self._last_successful_request_at: datetime | None = None
+        self._last_successful_event_at: datetime | None = None
+        self._last_failure_at: datetime | None = None
+        self._failure_class: str | None = None
+        self._retry_at: datetime | None = None
+        self._recovery_required = False
+        self._recovery_count = 0
 
     async def run(
         self,
@@ -132,13 +141,22 @@ class DataApiWalletPollSource:
             window_start = window_end - timedelta(minutes=30)
             for alias, wallet in self._aliases.items():
                 receive_ns = self._monotonic_ns()
+                purpose = (
+                    LeaderReadPurpose.RECOVERY
+                    if self._recovery_required and self._path == "/trades"
+                    else LeaderReadPurpose.DISCOVERY
+                )
                 try:
                     payload = await self._transport.get_json(
                         DATA_API_BASE_URL,
                         self._path,
                         self._params(wallet, start=window_start, end=window_end),
-                        purpose=LeaderReadPurpose.DISCOVERY,
+                        purpose=purpose,
                     )
+                    if not isinstance(payload, list) or any(
+                        not isinstance(row, dict) for row in payload
+                    ):
+                        raise TypeError("wallet source response is not a list of objects")
                 except (
                     PolymarketCopyTradingSourceError,
                     TradesSourceUnavailableError,
@@ -148,14 +166,30 @@ class DataApiWalletPollSource:
                     TimeoutError,
                     ValueError,
                     TypeError,
-                ):
+                ) as error:
+                    observed = self._clock()
+                    failure_class, retry_at = _sanitized_source_failure(
+                        error,
+                        observed_at=observed,
+                        fallback_seconds=backoff,
+                    )
+                    self._availability = "unavailable"
+                    self._last_request_outcome = "transient_error"
+                    self._last_failure_at = observed
+                    self._failure_class = failure_class
+                    self._retry_at = retry_at
+                    if isinstance(error, TradesSourceUnavailableError):
+                        self._recovery_required = True
                     yield _error_event(
                         source_id=self._source_id,
                         run_id=run_id,
-                        observed_time=self._clock(),
+                        observed_time=observed,
                         receive_ns=receive_ns,
                         normalize_ns=self._monotonic_ns(),
                         reason="transport_error",
+                        failure_class=failure_class,
+                        retry_at=retry_at,
+                        request_purpose=purpose,
                     )
                     remaining = (deadline - self._clock()).total_seconds()
                     if remaining <= 0:
@@ -165,9 +199,20 @@ class DataApiWalletPollSource:
                     continue
                 observed = self._clock()
                 normalize_ns = self._monotonic_ns()
-                if not isinstance(payload, list):
-                    continue
-                rows = [row for row in payload if isinstance(row, dict)]
+                recovered = purpose is LeaderReadPurpose.RECOVERY
+                if recovered:
+                    self._recovery_count += 1
+                self._recovery_required = False
+                self._availability = "available"
+                self._last_successful_request_at = observed
+                self._failure_class = None
+                self._retry_at = None
+                rows = payload
+                self._last_request_outcome = (
+                    "recovered" if recovered else ("success_events" if rows else "success_empty")
+                )
+                if rows:
+                    self._last_successful_event_at = observed
                 rows.sort(key=_row_timestamp)
                 for row in rows:
                     yield _normalize_wallet_row(
@@ -185,6 +230,18 @@ class DataApiWalletPollSource:
                 break
             await self._sleep(min(self._poll_interval_seconds, remaining))
             backoff = 1.0
+
+    def health_snapshot(self) -> Mapping[str, object]:
+        return {
+            "availability": self._availability,
+            "last_request_outcome": self._last_request_outcome,
+            "last_successful_request_at": _optional_time(self._last_successful_request_at),
+            "last_successful_event_at": _optional_time(self._last_successful_event_at),
+            "last_failure_at": _optional_time(self._last_failure_at),
+            "failure_class": self._failure_class,
+            "retry_at": _optional_time(self._retry_at),
+            "recovery_count": self._recovery_count,
+        }
 
     def _params(
         self,
@@ -239,6 +296,14 @@ class OfficialMarketStreamSource:
         self._sleep = sleep
         self._stale_after = stale_after
         self.reconnect_count = 0
+        self._availability = (
+            "not_started"
+            if self.candidate.status is SourceCandidateStatus.MEASURED
+            else self.candidate.status.value.lower()
+        )
+        self._last_event_at: datetime | None = None
+        self._last_failure_at: datetime | None = None
+        self._failure_class: str | None = None
 
     async def run(
         self,
@@ -252,6 +317,9 @@ class OfficialMarketStreamSource:
             async for event in self._event_factory():
                 if self._clock() >= deadline:
                     return
+                self._availability = "available"
+                self._last_event_at = event.received_at
+                self._failure_class = None
                 yield self._from_market_event(event, run_id=run_id)
             return
         async for item in self._run_official_stream(run_id=run_id, deadline=deadline):
@@ -294,6 +362,9 @@ class OfficialMarketStreamSource:
                     if next_event in done:
                         market_event = next_event.result()
                         receive_ns = self._monotonic_ns()
+                        self._availability = "available"
+                        self._last_event_at = market_event.received_at
+                        self._failure_class = None
                         yield self._from_market_event(
                             market_event,
                             run_id=run_id,
@@ -303,6 +374,9 @@ class OfficialMarketStreamSource:
                     if runner in done:
                         self.reconnect_count += 1
                         if runner.exception() is not None:
+                            self._availability = "unavailable"
+                            self._last_failure_at = self._clock()
+                            self._failure_class = "stream_disconnected"
                             yield _error_event(
                                 source_id=MARKET_STREAM_SOURCE_ID,
                                 run_id=run_id,
@@ -318,6 +392,20 @@ class OfficialMarketStreamSource:
                 with suppress(asyncio.CancelledError):
                     await runner
             await subscription.close()
+
+    def health_snapshot(self) -> Mapping[str, object]:
+        return {
+            "availability": self._availability,
+            "last_request_outcome": "stream_event"
+            if self._last_event_at is not None
+            else "not_started",
+            "last_successful_request_at": _optional_time(self._last_event_at),
+            "last_successful_event_at": _optional_time(self._last_event_at),
+            "last_failure_at": _optional_time(self._last_failure_at),
+            "failure_class": self._failure_class,
+            "retry_at": None,
+            "recovery_count": self.reconnect_count,
+        }
 
     def _from_market_event(
         self,
@@ -546,13 +634,22 @@ def _error_event(
     receive_ns: int,
     normalize_ns: int,
     reason: str,
+    failure_class: str | None = None,
+    retry_at: datetime | None = None,
+    request_purpose: LeaderReadPurpose | None = None,
 ) -> CanonicalResearchEvent:
     identity: dict[str, object] = {
         "reason": reason,
         "observed_time": observed_time.isoformat(),
         "run_id": run_id,
     }
-    provenance: dict[str, object] = {"reason": reason, "diagnostic": True}
+    provenance: dict[str, object] = {
+        "reason": reason,
+        "diagnostic": True,
+        "failure_class": failure_class or reason,
+        "retry_at": _optional_time(retry_at),
+        "request_purpose": None if request_purpose is None else request_purpose.value,
+    }
     return CanonicalResearchEvent(
         evidence_id=stable_evidence_id(source_id=source_id, identity_fields=identity),
         schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
@@ -575,6 +672,27 @@ def _error_event(
         provenance=provenance,
         run_id=run_id,
     )
+
+
+def _sanitized_source_failure(
+    error: BaseException,
+    *,
+    observed_at: datetime,
+    fallback_seconds: float,
+) -> tuple[str, datetime]:
+    if isinstance(error, TradesSourceUnavailableError):
+        return "trades_circuit_open", error.retry_at
+    if isinstance(error, HTTPError):
+        return f"http_{error.code}", observed_at + timedelta(seconds=fallback_seconds)
+    if isinstance(error, (TimeoutError, URLError, OSError)):
+        return "network_transport", observed_at + timedelta(seconds=fallback_seconds)
+    if isinstance(error, (ValueError, TypeError)):
+        return "invalid_response", observed_at + timedelta(seconds=fallback_seconds)
+    return "source_transport", observed_at + timedelta(seconds=fallback_seconds)
+
+
+def _optional_time(value: datetime | None) -> str | None:
+    return None if value is None else value.astimezone(UTC).isoformat()
 
 
 def _row_timestamp(row: Mapping[str, Any]) -> int:

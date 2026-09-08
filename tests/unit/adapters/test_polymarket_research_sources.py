@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from polysia.adapters.polymarket.request_scheduling import TradesSourceUnavailableError
 from polysia.adapters.polymarket.research_sources import (
     ACTIVITY_SOURCE_ID,
     REST_ACTIVITY_CANDIDATE,
@@ -53,6 +54,41 @@ class FakeTransport:
         del purpose
         self.calls.append((base_url, path))
         return self.payload
+
+
+class RecoveryTransport:
+    def __init__(self, clock: AdvancingClock) -> None:
+        self._clock = clock
+        self.purposes: list[LeaderReadPurpose] = []
+
+    async def get_json(
+        self,
+        base_url: str,
+        path: str,
+        params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+    ) -> object:
+        del base_url, path, params
+        self.purposes.append(purpose)
+        if len(self.purposes) == 1:
+            raise TradesSourceUnavailableError(
+                outage_started_at=self._clock(),
+                retry_at=self._clock() + timedelta(seconds=1),
+                reason="cooldown",
+            )
+        return []
+
+
+class AdvancingClock:
+    def __init__(self) -> None:
+        self.now = OBSERVED
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
 
 
 @pytest.mark.asyncio
@@ -173,6 +209,41 @@ async def test_public_discovery_and_unavailable_user_channel() -> None:
     assert tokens == ("token-1",)
     assert USER_CHANNEL_CANDIDATE.status is SourceCandidateStatus.UNAVAILABLE
     assert USER_CHANNEL_CANDIDATE.unavailable_reason is not None
+
+
+@pytest.mark.asyncio
+async def test_wallet_source_uses_recovery_probe_then_resumes_discovery() -> None:
+    clock = AdvancingClock()
+    transport = RecoveryTransport(clock)
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path="/trades",
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=transport,
+        clock=clock,
+        monotonic_ns=lambda: 10,
+        sleep=clock.sleep,
+        poll_interval_seconds=1,
+    )
+
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=4),
+        )
+    ]
+
+    assert transport.purposes[:3] == [
+        LeaderReadPurpose.DISCOVERY,
+        LeaderReadPurpose.RECOVERY,
+        LeaderReadPurpose.DISCOVERY,
+    ]
+    assert events[0].provenance["failure_class"] == "trades_circuit_open"
+    health = source.health_snapshot()
+    assert health["availability"] == "available"
+    assert health["recovery_count"] == 1
 
 
 async def _noop_sleep(delay: float) -> None:

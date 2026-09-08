@@ -197,6 +197,23 @@ async def test_shared_circuit_allows_exactly_one_recovery_probe() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trades_circuit_does_not_block_unrelated_routes() -> None:
+    clock = RecordingClock()
+    scheduler = _scheduler(clock)
+    await scheduler.record_rate_limit("30")
+
+    await _request_once(
+        scheduler,
+        LeaderReadPurpose.BASELINE,
+        route="data:/positions",
+    )
+    with pytest.raises(TradesSourceUnavailableError):
+        await _request_once(scheduler, LeaderReadPurpose.DISCOVERY)
+
+    assert scheduler.telemetry_snapshot()["routes"]["positions"]["attempts"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
 async def test_missing_retry_after_uses_bounded_deterministic_fallback() -> None:
     clock = RecordingClock()
     scheduler = _scheduler(clock)
