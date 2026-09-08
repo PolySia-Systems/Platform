@@ -77,3 +77,51 @@ markouts on separate clocks. No Alpha conclusion can be drawn from this run.
 public window, three discovered wallets, one in-window wallet lag sample, and
 no wallet-token overlap with the streamed market set. Do not invent a fast
 wallet winner.
+
+## Persistent collector operational acceptance
+
+**PASS**, audited on the authorized Helsinki host from
+`2026-09-07T22:28:52.230583Z` (T0) through
+`2026-09-08T04:16:03Z`. This is DATA_ONLY durability evidence, not Alpha,
+profitability, source superiority, or Live authorization.
+
+- Deployed release and image:
+  `a90fb1a8a295912265359f4d089665e6ece8e952`; rollback release
+  `e1e238c381da77c0a9166db3b5f3143f9ec241a8` remained available.
+- `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false`, empty Live token
+  allowlist, `open_order_count=0`, and `order_submitted=null`. No mutating
+  order log entry was present.
+- A pre-T0 controlled restart converted the interrupted window
+  `2830a78c18f74e3fbf32139de2adff74` to `INVALID_SHUTDOWN`; it was never
+  relabeled `VALID`. The new run was
+  `ed0a116f53164d53adcdc9763ea02ff3`.
+- A consistent Backup-API snapshot at `2026-09-08T04:08:28Z` contained 33
+  consecutive post-T0 `VALID` windows, one current `OPEN` window, 96,601 run
+  events, and no post-T0 invalid window. Later live health reported 34 closed
+  windows, `fatal=null`, `stale=false`, healthy maintenance, fresh source and
+  persistence progress, and zero unexpected restarts.
+- The snapshot was schema `research-evidence-v2`; checksum, isolated restore,
+  `PRAGMA integrity_check`, and foreign-key validation passed. Backup SHA-256:
+  `c5c3f714fadad8a890e695be24efbf63ff9f23ae072f27a636003f6c6d23c7fb`.
+- Replay of the restored snapshot was byte-stable across two executions:
+  report SHA-256
+  `f219b32851dc067fe4360d11f9c728576f78f5fef2a715211602ba770e9738cc`,
+  Control digest
+  `5de74a37e1d4139e90192799b437ad0ad8d866061d102dcfabe27a66fd024724`,
+  Target digest
+  `dbf124a94f83a4c9a784cb665b048ec93dc4ce3feb5261c79aa8b75b1f29ebe3`,
+  and 160 honestly retained `UNKNOWN` results.
+- From the first post-restart snapshot (50,122,752 bytes) to the acceptance
+  snapshot (104,169,472 bytes), growth was 54,046,720 bytes in 20,376 seconds:
+  approximately 218.6 MiB/day. A linear seven-day pre-retention projection is
+  approximately 1.54 GiB. At final audit the WAL was 0 bytes, logs remained
+  under configured rotation, and 26,238,967,808 bytes of disk were available.
+- `polysia-monitor-1` and `polysia-research-collector-1` were healthy with
+  `RestartCount=0`. Unrelated `3x-ui` remained on its existing image, start
+  time `2026-09-07T12:30:29Z`, and restart count zero. Nuremberg was not used.
+
+The earlier `INVALID_DISK` window remains preserved as historical failure
+evidence. The corrected release separates committed evidence writes from
+retention/checkpoint maintenance, uses non-blocking `PASSIVE` checkpoints
+outside transactions, and refreshes health during open windows. Temporary
+restore and deployment-transfer artifacts were removed after verification.

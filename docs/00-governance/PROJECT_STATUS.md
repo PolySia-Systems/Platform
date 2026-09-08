@@ -83,9 +83,15 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-**Next task:** operate the persistent prospective collector on the authorized
-Helsinki DATA_ONLY host and complete the independent T0+3h observation.
-Do not access Nuremberg. Do not promote modeled P&L into Live authority.
+The persistent prospective collector completed its independent Helsinki
+DATA_ONLY durability observation. The dated deployment, restart, backup,
+restore, storage, and deterministic replay evidence is in
+[Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
+
+**Next task:** evaluate the accepted prospective evidence against predefined
+research hypotheses. Preserve `UNKNOWN`, require supported execution evidence,
+and do not promote modeled P&L into Alpha or Live authority. Do not access
+Nuremberg without a separately authorized operational task.
 
 Blockers and limitations:
 
