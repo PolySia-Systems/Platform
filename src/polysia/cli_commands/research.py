@@ -535,6 +535,18 @@ def prospective_collect(
     ] = 600,
     code_sha: Annotated[str | None, typer.Option("--code-sha")] = None,
     cycles: Annotated[int | None, typer.Option("--cycles", min=1)] = None,
+    experiment_duration_seconds: Annotated[
+        int,
+        typer.Option("--experiment-duration-seconds", min=600, max=604800),
+    ] = 14_400,
+    experiment_max_events: Annotated[
+        int,
+        typer.Option("--experiment-max-events", min=1),
+    ] = 750_000,
+    experiment_max_bytes: Annotated[
+        int,
+        typer.Option("--experiment-max-bytes", min=1_048_576),
+    ] = 805_306_368,
 ) -> None:
     """Run the persistent DATA_ONLY prospective collector."""
 
@@ -567,6 +579,9 @@ def prospective_collect(
                 required_source_ids=tuple(str(item) for item in required),
                 optional_source_ids=tuple(str(item) for item in optional),
                 code_sha=code_sha,
+                experiment_duration=timedelta(seconds=experiment_duration_seconds),
+                experiment_max_events=experiment_max_events,
+                experiment_max_bytes=experiment_max_bytes,
             ),
         )
         install_signal_handlers(collector)
@@ -589,6 +604,10 @@ def prospective_health(
         int,
         typer.Option("--require-fresh-seconds", min=1),
     ] = 120,
+    require_research_eligible: Annotated[
+        bool,
+        typer.Option("--require-research-eligible"),
+    ] = False,
 ) -> None:
     """Read the sanitized collector health file without querying the writer database."""
 
@@ -603,6 +622,35 @@ def prospective_health(
         print_error_and_exit(ValueError("health payload is invalid"))
     if payload.get("fatal") or payload.get("stale") is True:
         raise typer.Exit(code=1)
+    if require_research_eligible and payload.get("research_data_eligible") is not True:
+        raise typer.Exit(code=1)
     from polysia.cli_commands.research_evidence_cli import sanitize_report
 
     typer.echo(json.dumps(sanitize_report(payload), sort_keys=True))
+
+
+def prospective_finalize(
+    database: Annotated[Path, typer.Option("--database")],
+    run_id: Annotated[str, typer.Option("--run-id")],
+    bundle_root: Annotated[Path, typer.Option("--bundle-root")],
+) -> None:
+    """Finalize a stopped bounded experiment into verified replayable evidence."""
+
+    from polysia.deployment.research_experiment_bundle import finalize_research_experiment
+    from polysia.storage.research_evidence import ResearchEvidenceStoreError
+
+    try:
+        bundle = finalize_research_experiment(database, bundle_root, run_id=run_id)
+    except (OSError, ValueError, ResearchEvidenceStoreError) as error:
+        print_error_and_exit(error)
+    typer.echo(
+        json.dumps(
+            {
+                "bundle": str(bundle.path),
+                "manifest": str(bundle.manifest_path),
+                "run_id": run_id,
+                "sha256": bundle.sha256,
+            },
+            sort_keys=True,
+        )
+    )

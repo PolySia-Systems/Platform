@@ -130,7 +130,7 @@ class EndpointRequestScheduler:
     ) -> AsyncIterator[None]:
         route_name = _route_name(route)
         state = self._routes[route_name]
-        await self._assert_circuit_allows(purpose, claim_probe=False)
+        await self._assert_circuit_allows(route_name, purpose, claim_probe=False)
         delay = await self._reserve_slot(
             route_name,
             state,
@@ -139,7 +139,7 @@ class EndpointRequestScheduler:
         await self._sleeper(delay)
         await state.semaphore.acquire()
         try:
-            await self._assert_circuit_allows(purpose, claim_probe=True)
+            await self._assert_circuit_allows(route_name, purpose, claim_probe=True)
         except Exception:
             state.semaphore.release()
             raise
@@ -336,10 +336,13 @@ class EndpointRequestScheduler:
 
     async def _assert_circuit_allows(
         self,
+        route_name: str,
         purpose: LeaderReadPurpose,
         *,
         claim_probe: bool,
     ) -> None:
+        if route_name != "trades":
+            return
         async with self._circuit_lock:
             if self._outage_started_at is None:
                 return

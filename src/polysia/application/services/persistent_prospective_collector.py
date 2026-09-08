@@ -29,16 +29,21 @@ from polysia.storage.research_evidence import (
     ResearchEvidenceMaintenanceError,
     ResearchEvidenceStore,
     ResearchEvidenceStoreError,
+    ResearchExperiment,
+    ResearchExperimentBudgetError,
     ResearchWriterLockError,
 )
 
 Clock = Callable[[], datetime]
-SERVICE_POLICY_VERSION = "persistent-prospective-collector-v1"
+SERVICE_POLICY_VERSION = "persistent-prospective-collector-v2"
 DEFAULT_WINDOW = timedelta(minutes=10)
+DEFAULT_EXPERIMENT_DURATION = timedelta(hours=4)
+DEFAULT_EXPERIMENT_MAX_EVENTS = 750_000
+DEFAULT_EXPERIMENT_MAX_BYTES = 768 * 1024 * 1024
 STALE_AFTER = timedelta(seconds=120)
 HEALTH_WRITE_INTERVAL = timedelta(seconds=30)
 MAX_WINDOW_REPORTS = 36
-QUIET_SOURCE_STATUSES = frozenset({"healthy", "quiet", "unavailable", "insufficient"})
+QUIET_SOURCE_STATUSES = frozenset({"healthy", "quiet"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +56,19 @@ class PersistentCollectorConfig:
     code_sha: str | None = None
     stale_after: timedelta = STALE_AFTER
     fatal_idle: bool = True
+    experiment_duration: timedelta = DEFAULT_EXPERIMENT_DURATION
+    experiment_max_events: int = DEFAULT_EXPERIMENT_MAX_EVENTS
+    experiment_max_bytes: int = DEFAULT_EXPERIMENT_MAX_BYTES
+
+    def __post_init__(self) -> None:
+        if self.window.total_seconds() <= 0 or self.stale_after.total_seconds() <= 0:
+            raise ValueError("collector time bounds must be positive")
+        if (
+            self.experiment_duration.total_seconds() <= 0
+            or self.experiment_max_events < 1
+            or self.experiment_max_bytes < 1
+        ):
+            raise ValueError("experiment bounds must be positive")
 
 
 class PersistentProspectiveCollector:
@@ -95,10 +113,48 @@ class PersistentProspectiveCollector:
                 "window_seconds": int(self._config.window.total_seconds()),
                 "required_source_ids": list(self._config.required_source_ids),
                 "optional_source_ids": list(self._config.optional_source_ids),
+                "experiment_duration_seconds": int(
+                    self._config.experiment_duration.total_seconds()
+                ),
+                "experiment_max_events": self._config.experiment_max_events,
+                "experiment_max_bytes": self._config.experiment_max_bytes,
             }
         )
         self._collector: ProspectiveCollector | None = None
         self._latest_closed: ResearchInterval | None = None
+        self._experiment: ResearchExperiment | None = None
+
+    def _source_health(self) -> dict[str, dict[str, object]]:
+        health: dict[str, dict[str, object]] = {}
+        for source in self._sources:
+            candidate_id = source.candidate.candidate_id
+            snapshot = getattr(source, "health_snapshot", None)
+            if callable(snapshot):
+                health[candidate_id] = dict(snapshot())
+            else:
+                health[candidate_id] = {
+                    "availability": self._source_status.get(candidate_id, "missing"),
+                    "last_request_outcome": "unreported",
+                    "last_successful_request_at": self._source_progress.get(candidate_id),
+                    "last_successful_event_at": self._source_progress.get(candidate_id),
+                    "last_failure_at": None,
+                    "failure_class": None,
+                    "retry_at": None,
+                    "recovery_count": 0,
+                }
+        return health
+
+    def _source_status_payload(self) -> dict[str, str]:
+        statuses = dict(self._source_status)
+        for source_id, details in self._source_health().items():
+            availability = details.get("availability")
+            if availability == "available":
+                statuses[source_id] = (
+                    "healthy" if details.get("last_successful_event_at") else "quiet"
+                )
+            elif availability in {"not_started", "recovering", "unavailable"}:
+                statuses[source_id] = "retrying"
+        return statuses
 
     @property
     def run_id(self) -> str:
@@ -117,13 +173,22 @@ class PersistentProspectiveCollector:
         return collector
 
     def _bind_collector(self) -> ProspectiveCollector:
+        experiment = self._store.start_or_resume_experiment(
+            requested_run_id=self._run_id_override or self._service_id,
+            duration=self._config.experiment_duration,
+            max_events=self._config.experiment_max_events,
+            max_bytes=self._config.experiment_max_bytes,
+            code_sha=self._config.code_sha,
+            configuration_digest=self._configuration_digest,
+        )
+        self._experiment = experiment
         collector = ProspectiveCollector(
             self._store,
             policy=self._policy,
             clock=self._clock,
             code_sha=self._config.code_sha,
             configuration_digest=self._configuration_digest,
-            run_id=self._run_id_override,
+            run_id=experiment.run_id,
             recover_orphans=True,
         )
         self._collector = collector
@@ -186,7 +251,14 @@ class PersistentProspectiveCollector:
                 "code_sha": self._config.code_sha,
                 "last_source_progress": dict(self._source_progress),
                 "last_successful_persistence": None,
-                "source_status": dict(self._source_status),
+                "source_status": self._source_status_payload(),
+                "source_health": self._source_health(),
+                "research_data_eligible": False,
+                "research_data_eligibility": {
+                    "eligible": False,
+                    "ineligible_required_sources": list(self._config.required_source_ids),
+                },
+                "service_health": "fatal" if self._fatal_reason else "stopped",
                 "queue_depth": self._queue_depth,
                 "storage": self._store.storage_file_stats(),
                 "latest_closed_window_id": None if latest is None else latest.interval_id,
@@ -198,6 +270,7 @@ class PersistentProspectiveCollector:
                 "fatal_error_code": self._fatal_error_code,
                 "maintenance": None,
                 "windows_closed": self._windows_closed,
+                "experiment": self._experiment_payload(),
                 "trading_mode": "DATA_ONLY",
                 "live_trading_enabled": False,
             }
@@ -207,6 +280,20 @@ class PersistentProspectiveCollector:
             stale = interval.started_at + self._config.stale_after < now
         else:
             stale = last_persist + self._config.stale_after < now
+        ineligible_sources = self._ineligible_required_sources()
+        service_health = (
+            "fatal"
+            if self._fatal_reason
+            else (
+                "stale"
+                if stale
+                else (
+                    "degraded"
+                    if collector.maintenance_health["status"] == "degraded"
+                    else "healthy"
+                )
+            )
+        )
         return {
             "service_id": self._service_id,
             "run_id": collector.run_id,
@@ -219,7 +306,14 @@ class PersistentProspectiveCollector:
             "last_successful_persistence": None
             if last_persist is None
             else last_persist.isoformat(),
-            "source_status": dict(self._source_status),
+            "source_status": self._source_status_payload(),
+            "source_health": self._source_health(),
+            "research_data_eligible": not ineligible_sources,
+            "research_data_eligibility": {
+                "eligible": not ineligible_sources,
+                "ineligible_required_sources": ineligible_sources,
+            },
+            "service_health": service_health,
             "queue_depth": self._queue_depth,
             "storage": self._store.storage_file_stats(),
             "latest_closed_window_id": None if latest is None else latest.interval_id,
@@ -231,6 +325,7 @@ class PersistentProspectiveCollector:
             "fatal_error_code": self._fatal_error_code,
             "maintenance": collector.maintenance_health,
             "windows_closed": self._windows_closed,
+            "experiment": self._experiment_payload(),
             "trading_mode": "DATA_ONLY",
             "live_trading_enabled": False,
         }
@@ -242,6 +337,14 @@ class PersistentProspectiveCollector:
             if self._fatal_reason is not None:
                 if self._config.fatal_idle:
                     await self._wait_until_stop()
+                return
+            try:
+                self._store.require_experiment_within_bounds(self._active().run_id)
+            except ResearchExperimentBudgetError as error:
+                self._fatal_reason = "experiment_budget_reached"
+                self._fatal_stage = error.limit
+                self._active().mark_drain_failed(self._fatal_reason)
+                self._write_health(force=True)
                 return
             deadline = self._clock() + self._config.window
             await self._wait_until(deadline)
@@ -287,11 +390,17 @@ class PersistentProspectiveCollector:
                 try:
                     async with self._lifecycle_lock:
                         persisted = await self._active().ingest_async(event)
+                except ResearchExperimentBudgetError as error:
+                    self._fatal_reason = "experiment_budget_reached"
+                    self._fatal_stage = error.limit
+                    self._fatal_error_code = None
+                    self._active().mark_drain_failed(self._fatal_reason)
+                    self._write_health(force=True)
+                    return
                 except (ResearchEvidenceStoreError, OSError) as error:
                     self._fatal_from_storage(error)
                     return
                 self._queue_depth = self._active().queue_depth
-                self._source_progress[candidate_id] = persisted.observed_time.isoformat()
                 if (
                     persisted.classification is EvidenceClassification.INCOMPLETE
                     and persisted.event_kind is ObservationKind.CONTROL
@@ -305,6 +414,7 @@ class PersistentProspectiveCollector:
                     ObservationKind.WALLET_TRADE,
                     ObservationKind.MARKET_STATE,
                 }:
+                    self._source_progress[candidate_id] = persisted.observed_time.isoformat()
                     self._source_status[candidate_id] = "healthy"
                 else:
                     self._source_status.setdefault(candidate_id, "quiet")
@@ -321,11 +431,34 @@ class PersistentProspectiveCollector:
             self._active().mark_drain_failed(f"required_source_ended:{candidate_id}")
 
     def _required_sources_missing(self) -> bool:
+        return bool(self._ineligible_required_sources())
+
+    def _ineligible_required_sources(self) -> list[str]:
+        source_health = self._source_health()
+        window_started = None if self._collector is None else self._active().interval.started_at
+        missing: list[str] = []
         for source_id in self._config.required_source_ids:
+            details = source_health.get(source_id, {})
+            last_request = details.get("last_successful_request_at")
+            if details.get("last_request_outcome") != "unreported" and not isinstance(
+                last_request, str
+            ):
+                missing.append(source_id)
+                continue
+            if isinstance(last_request, str) and window_started is not None:
+                try:
+                    observed = datetime.fromisoformat(last_request.replace("Z", "+00:00"))
+                except ValueError:
+                    missing.append(source_id)
+                    continue
+                if observed >= window_started and details.get("availability") == "available":
+                    continue
+                missing.append(source_id)
+                continue
             status = self._source_status.get(source_id, "missing")
-            if status not in QUIET_SOURCE_STATUSES and status != "retrying":
-                return True
-        return False
+            if status not in QUIET_SOURCE_STATUSES or status == "retrying":
+                missing.append(source_id)
+        return missing
 
     def _window_summary(self) -> dict[str, object]:
         events = self._store.load_events(interval_id=self._active().interval.interval_id)
@@ -357,6 +490,7 @@ class PersistentProspectiveCollector:
                 quote_present += 1
             if event.provenance.get("depth_status") == "present":
                 depth_present += 1
+        source_health = self._source_health()
         return {
             "accepted_wallet_events": sum(
                 1
@@ -375,6 +509,8 @@ class PersistentProspectiveCollector:
             "executable_price_inputs": quote_present,
             "required_depth_present": depth_present,
             "empty": len(events) == 0,
+            "source_health": source_health,
+            "research_data_eligible": not self._required_sources_missing(),
         }
 
     def _fatal_from_storage(self, error: BaseException) -> None:
@@ -391,6 +527,20 @@ class PersistentProspectiveCollector:
         except Exception:
             self._active().mark_drain_failed(self._fatal_reason)
         self._write_health(force=True)
+
+    def _experiment_payload(self) -> dict[str, object] | None:
+        experiment = self._experiment
+        if experiment is None:
+            return None
+        return {
+            "run_id": experiment.run_id,
+            "status": experiment.status,
+            "started_at": experiment.started_at.isoformat(),
+            "collection_ends_at": experiment.collection_ends_at.isoformat(),
+            "max_events": experiment.max_events,
+            "max_bytes": experiment.max_bytes,
+            "event_count": self._store.experiment_event_count(experiment.run_id),
+        }
 
     async def _wait_until(self, deadline: datetime) -> None:
         while not self._stop.is_set() and self._clock() < deadline:
@@ -433,7 +583,7 @@ class PersistentProspectiveCollector:
         }
         path = directory / f"research-window-{interval.interval_id}.json"
         _atomic_json(path, payload)
-        reports = sorted(directory.glob("research-window-*.json"), key=lambda item: item.name)
+        reports = sorted(directory.glob("research-window-*.json"), key=_report_time)
         for stale in reports[:-MAX_WINDOW_REPORTS]:
             stale.unlink(missing_ok=True)
 
@@ -457,6 +607,19 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     os.replace(temporary, path)
     if os.name != "nt":
         path.chmod(0o600)
+
+
+def _report_time(path: Path) -> tuple[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            ended = payload.get("ended_at")
+            started = payload.get("started_at")
+            if isinstance(ended, str) or isinstance(started, str):
+                return (str(ended or started), path.name)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return ("", path.name)
 
 
 def install_signal_handlers(collector: PersistentProspectiveCollector) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -34,3 +34,5 @@ class ResearchObservationSource(Protocol):
         run_id: str,
         deadline: datetime,
     ) -> AsyncIterator[CanonicalResearchEvent]: ...
+
+    def health_snapshot(self) -> Mapping[str, object]: ...

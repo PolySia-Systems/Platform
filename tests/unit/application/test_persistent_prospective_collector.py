@@ -33,6 +33,7 @@ from polysia.storage.research_evidence import (
     ExclusiveWriterLock,
     ResearchEvidenceMaintenanceError,
     ResearchEvidenceStore,
+    ResearchExperimentBudgetError,
     ResearchWriterLockError,
 )
 
@@ -66,6 +67,18 @@ class SequenceSource:
         self._fail = fail
         self._hang = hang
 
+    def health_snapshot(self) -> dict[str, object]:
+        return {
+            "availability": "available",
+            "last_request_outcome": "success_events" if self._events else "success_empty",
+            "last_successful_request_at": OBSERVED.isoformat(),
+            "last_successful_event_at": OBSERVED.isoformat() if self._events else None,
+            "last_failure_at": None,
+            "failure_class": None,
+            "retry_at": None,
+            "recovery_count": 0,
+        }
+
     async def run(
         self,
         *,
@@ -81,6 +94,19 @@ class SequenceSource:
             while True:
                 await asyncio.sleep(0.01)
 
+
+class UnavailableSource(SequenceSource):
+    def health_snapshot(self) -> dict[str, object]:
+        return {
+            "availability": "unavailable",
+            "last_request_outcome": "transient_error",
+            "last_successful_request_at": None,
+            "last_successful_event_at": None,
+            "last_failure_at": OBSERVED.isoformat(),
+            "failure_class": "network_transport",
+            "retry_at": (OBSERVED + timedelta(seconds=10)).isoformat(),
+            "recovery_count": 0,
+        }
 
 def _candidate(candidate_id: str, *, wallet: bool = True) -> SourceCandidate:
     return SourceCandidate(
@@ -99,6 +125,7 @@ def _wallet(
     market: str = "m1",
     outcome: str = "o1",
     observed: datetime = OBSERVED,
+    run_id: str = "run",
 ) -> CanonicalResearchEvent:
     return CanonicalResearchEvent(
         evidence_id=evidence_id,
@@ -121,7 +148,7 @@ def _wallet(
         payload_digest=payload_digest({"id": evidence_id, "alias": alias}),
         provenance={},
         source_event_id=f"src-{evidence_id}",
-        run_id="run",
+        run_id=run_id,
     )
 
 
@@ -131,6 +158,7 @@ def _market(
     outcome: str = "o1",
     observed: datetime = OBSERVED,
     quote: bool = True,
+    run_id: str = "run",
 ) -> CanonicalResearchEvent:
     return CanonicalResearchEvent(
         evidence_id=evidence_id,
@@ -157,7 +185,7 @@ def _market(
             "best_bid": "0.40" if quote else None,
             "best_ask": "0.42" if quote else None,
         },
-        run_id="run",
+        run_id=run_id,
     )
 
 
@@ -248,6 +276,29 @@ def test_drain_failure_cannot_produce_valid(tmp_path: Path) -> None:
         IntervalValidity.INVALID_DRAIN,
         IntervalValidity.INVALID_SHUTDOWN,
     }
+
+
+def test_unresolved_required_source_cannot_produce_valid(tmp_path: Path) -> None:
+    clock = FakeClock()
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3", clock=clock)
+    collector = PersistentProspectiveCollector(
+        store,
+        (UnavailableSource(_candidate("rest_trades"), hang=True),),
+        config=PersistentCollectorConfig(
+            window=timedelta(seconds=2),
+            required_source_ids=("rest_trades",),
+        ),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+
+    asyncio.run(collector.run(cycles=1))
+
+    closed = store.latest_closed_interval()
+    assert closed is not None
+    assert closed.validity is IntervalValidity.INVALID_DRAIN
+    assert closed.summary is not None
+    assert closed.summary["research_data_eligible"] is False
 
 
 def test_persistent_stop_does_not_mark_open_window_valid(tmp_path: Path) -> None:
@@ -418,6 +469,154 @@ def test_fake_clock_retention_and_duplicate_cleanup(tmp_path: Path) -> None:
     assert store.duplicate_count("live") == 1
 
 
+def test_active_experiment_survives_normal_retention_until_finalized(tmp_path: Path) -> None:
+    clock = FakeClock()
+    policy = CollectorPolicy(
+        max_persisted_events=1,
+        market_state_retention=timedelta(seconds=1),
+    )
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3", policy=policy, clock=clock)
+    store.start_or_resume_experiment(
+        requested_run_id="bounded-run",
+        duration=timedelta(hours=1),
+        max_events=10,
+        max_bytes=10_000_000,
+        code_sha="a" * 40,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(
+        store,
+        policy=policy,
+        clock=clock,
+        run_id="bounded-run",
+    )
+    collector.ingest(
+        _market("protected-a", observed=clock.now - timedelta(days=1), run_id="bounded-run")
+    )
+    collector.ingest(
+        _market("protected-b", observed=clock.now - timedelta(days=1), run_id="bounded-run")
+    )
+
+    store.maintain(now=clock.now)
+
+    assert {event.evidence_id for event in store.load_events(run_id="bounded-run")} == {
+        "protected-a",
+        "protected-b",
+    }
+
+
+def test_active_experiment_fails_before_event_budget_is_exceeded(tmp_path: Path) -> None:
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
+    store.start_or_resume_experiment(
+        requested_run_id="one-event",
+        duration=timedelta(hours=1),
+        max_events=1,
+        max_bytes=10_000_000,
+        code_sha=None,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(store, run_id="one-event")
+    collector.ingest(_wallet("first", run_id="one-event"))
+
+    with pytest.raises(ResearchExperimentBudgetError, match="event limit"):
+        collector.ingest(_wallet("second", run_id="one-event"))
+    assert store.experiment_event_count("one-event") == 1
+
+
+def test_active_experiment_resumes_same_run_after_restart(tmp_path: Path) -> None:
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
+    first = store.start_or_resume_experiment(
+        requested_run_id="original-run",
+        duration=timedelta(hours=1),
+        max_events=10,
+        max_bytes=10_000_000,
+        code_sha="c" * 40,
+        configuration_digest="config",
+    )
+    resumed = store.start_or_resume_experiment(
+        requested_run_id="new-process-id",
+        duration=timedelta(hours=1),
+        max_events=10,
+        max_bytes=10_000_000,
+        code_sha="c" * 40,
+        configuration_digest="config",
+    )
+
+    assert resumed.run_id == first.run_id == "original-run"
+
+
+def test_finalize_experiment_requires_verified_restore_and_replay(tmp_path: Path) -> None:
+    from polysia.deployment.research_experiment_bundle import finalize_research_experiment
+
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.start_or_resume_experiment(
+        requested_run_id="final-run",
+        duration=timedelta(hours=1),
+        max_events=10,
+        max_bytes=10_000_000,
+        code_sha="b" * 40,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(store, run_id="final-run")
+    collector.ingest(_wallet("final-wallet", run_id="final-run"))
+    collector.ingest(_market("final-market", run_id="final-run"))
+    collector.close_window(complete=True)
+
+    result = finalize_research_experiment(
+        database,
+        tmp_path / "bundles",
+        run_id="final-run",
+    )
+
+    assert result.database_path.is_file()
+    assert result.manifest_path.is_file()
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["database_sha256"] == result.sha256
+    assert manifest["event_count"] == 2
+    assert store.load_experiment("final-run").status == "FINALIZED"  # type: ignore[union-attr]
+    bundled = ResearchEvidenceStore(result.database_path)
+    assert bundled.load_experiment("final-run").status == "FINALIZED"  # type: ignore[union-attr]
+
+
+def test_failed_bundle_verification_does_not_finalize_experiment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.deployment import research_experiment_bundle
+
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.start_or_resume_experiment(
+        requested_run_id="failed-finalize",
+        duration=timedelta(hours=1),
+        max_events=10,
+        max_bytes=10_000_000,
+        code_sha=None,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(store, run_id="failed-finalize")
+    collector.ingest(_wallet("wallet", run_id="failed-finalize"))
+    collector.close_window(complete=True)
+
+    def _fail_restore(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        raise ValueError("restore failed")
+
+    monkeypatch.setattr(research_experiment_bundle, "restore_sqlite_backup", _fail_restore)
+    with pytest.raises(ValueError, match="restore failed"):
+        research_experiment_bundle.finalize_research_experiment(
+            database,
+            tmp_path / "bundles",
+            run_id="failed-finalize",
+        )
+
+    experiment = store.load_experiment("failed-finalize")
+    assert experiment is not None
+    assert experiment.status == "ACTIVE"
+    assert not (tmp_path / "bundles" / "research-experiment-failed-finalize").exists()
+
+
 def test_multiple_wallets_markets_and_unknown_quotes(tmp_path: Path) -> None:
     store = ResearchEvidenceStore(tmp_path / "research.sqlite3")
     clock = FakeClock()
@@ -482,6 +681,11 @@ def test_window_reports_are_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     asyncio.run(collector.run(cycles=3))
     files = list(reports.glob("research-window-*.json"))
     assert len(files) == 2
+    retained = [json.loads(path.read_text(encoding="utf-8")) for path in files]
+    assert sorted(item["ended_at"] for item in retained) == [
+        (OBSERVED + timedelta(seconds=2)).isoformat(),
+        (OBSERVED + timedelta(seconds=3)).isoformat(),
+    ]
 
 
 def test_overload_prevents_valid_on_close(tmp_path: Path) -> None:

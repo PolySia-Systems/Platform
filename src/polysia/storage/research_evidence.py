@@ -11,7 +11,7 @@ import os
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import IO
@@ -36,6 +36,7 @@ RESEARCH_EVIDENCE_SCHEMA_PATH = Path(__file__).with_name("research_evidence_sche
 RESEARCH_EVIDENCE_FILENAME = "research-evidence.sqlite3"
 WRITER_BUSY_TIMEOUT_MS = 5_000
 WAL_CHECKPOINT_BYTES = 8 * 1024 * 1024
+EXPERIMENT_WRITE_RESERVE_BYTES = 1024 * 1024
 
 
 class ResearchEvidenceStoreError(RuntimeError):
@@ -54,6 +55,31 @@ class ResearchEvidenceMaintenanceError(ResearchEvidenceStoreError):
         self.stage = stage
         self.sqlite_errorcode = getattr(error, "sqlite_errorcode", None)
         self.sqlite_errorname = getattr(error, "sqlite_errorname", "SQLITE_UNKNOWN")
+
+
+class ResearchExperimentBudgetError(ResearchEvidenceStoreError):
+    """The active experiment reached a declared time, event, or byte bound."""
+
+    def __init__(self, limit: str) -> None:
+        super().__init__(f"research experiment reached its {limit} limit")
+        self.limit = limit
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchExperiment:
+    run_id: str
+    started_at: datetime
+    collection_ends_at: datetime
+    max_events: int
+    max_bytes: int
+    status: str
+    code_sha: str | None
+    configuration_digest: str
+    policy_version: str
+    finalized_at: datetime | None = None
+    bundle_path: str | None = None
+    bundle_sha256: str | None = None
+    event_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +268,12 @@ class ResearchEvidenceStore:
             )
             connection.execute("BEGIN IMMEDIATE")
             classification = event.classification
+            self._require_experiment_capacity_unlocked(
+                connection,
+                event.run_id,
+                will_insert=classification is not EvidenceClassification.DUPLICATE,
+            )
+            inserted = False
             if classification is EvidenceClassification.DUPLICATE:
                 connection.execute(
                     "INSERT INTO research_duplicate_counts("
@@ -277,6 +309,7 @@ class ResearchEvidenceStore:
                     )
                     classification = EvidenceClassification.DUPLICATE
                 else:
+                    inserted = True
                     if (
                         event.classification is EvidenceClassification.ACCEPTED
                         and event.event_kind is not ObservationKind.CONTROL
@@ -299,6 +332,12 @@ class ResearchEvidenceStore:
                                 _utc_text(event.observed_time),
                             ),
                         )
+            if inserted:
+                connection.execute(
+                    "UPDATE research_experiments SET event_count = event_count + 1 "
+                    "WHERE run_id = ? AND status = 'ACTIVE'",
+                    (event.run_id,),
+                )
             connection.commit()
             classification_result = classification
         except sqlite3.Error as error:
@@ -308,6 +347,135 @@ class ResearchEvidenceStore:
             connection.close()
         self._events_since_maintain += 1
         return classification_result
+
+    def start_or_resume_experiment(
+        self,
+        *,
+        requested_run_id: str,
+        duration: timedelta,
+        max_events: int,
+        max_bytes: int,
+        code_sha: str | None,
+        configuration_digest: str,
+    ) -> ResearchExperiment:
+        if (
+            duration.total_seconds() <= 0
+            or max_events < 1
+            or max_bytes < EXPERIMENT_WRITE_RESERVE_BYTES
+        ):
+            raise ValueError("experiment bounds must be positive")
+        self.initialize()
+        connection = self._connect()
+        try:
+            active_rows = connection.execute(
+                "SELECT * FROM research_experiments WHERE status = 'ACTIVE' "
+                "ORDER BY started_at_utc DESC"
+            ).fetchall()
+            if len(active_rows) > 1:
+                raise ResearchEvidenceStoreError("multiple active research experiments")
+            if active_rows:
+                active = _experiment_from_row(active_rows[0])
+                if (
+                    active.configuration_digest != configuration_digest
+                    or active.code_sha != code_sha
+                ):
+                    raise ResearchEvidenceStoreError(
+                        "active research experiment code or configuration changed"
+                    )
+                return active
+            started = self._clock()
+            ends = started + duration
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO research_experiments ("
+                "run_id, started_at_utc, collection_ends_at_utc, max_events, max_bytes, "
+                "status, code_sha, configuration_digest, policy_version"
+                ") VALUES (?,?,?,?,?,'ACTIVE',?,?,?)",
+                (
+                    requested_run_id,
+                    _utc_text(started),
+                    _utc_text(ends),
+                    max_events,
+                    max_bytes,
+                    code_sha,
+                    configuration_digest,
+                    self._policy.policy_version,
+                ),
+            )
+            connection.commit()
+            return ResearchExperiment(
+                run_id=requested_run_id,
+                started_at=started,
+                collection_ends_at=ends,
+                max_events=max_events,
+                max_bytes=max_bytes,
+                status="ACTIVE",
+                code_sha=code_sha,
+                configuration_digest=configuration_digest,
+                policy_version=self._policy.policy_version,
+            )
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise ResearchEvidenceStoreError("research experiment persist failed") from error
+        finally:
+            connection.close()
+
+    def load_experiment(self, run_id: str) -> ResearchExperiment | None:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM research_experiments WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        finally:
+            connection.close()
+        return None if row is None else _experiment_from_row(row)
+
+    def experiment_event_count(self, run_id: str) -> int:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT event_count FROM research_experiments WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        finally:
+            connection.close()
+        return 0 if row is None else int(row[0])
+
+    def finalize_experiment_record(
+        self,
+        run_id: str,
+        *,
+        bundle_path: Path,
+        bundle_sha256: str,
+        finalized_at: datetime,
+    ) -> None:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE research_experiments SET status='FINALIZED', finalized_at_utc=?, "
+                "bundle_path=?, bundle_sha256=? WHERE run_id=? AND status='ACTIVE'",
+                (
+                    _utc_text(finalized_at),
+                    str(bundle_path),
+                    bundle_sha256,
+                    run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ResearchEvidenceStoreError("active research experiment not found")
+            connection.commit()
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise ResearchEvidenceStoreError("research experiment finalization failed") from error
+        finally:
+            connection.close()
+
+    def require_experiment_within_bounds(self, run_id: str) -> None:
+        connection = self._connect()
+        try:
+            self._require_experiment_capacity_unlocked(connection, run_id)
+        finally:
+            connection.close()
 
     def record_reconnect(self, source_id: str, *, observed_at: datetime) -> int:
         connection = self._connect()
@@ -618,6 +786,8 @@ class ResearchEvidenceStore:
             "DELETE FROM research_events WHERE event_kind = ? AND observed_time_utc < ? "
             "AND evidence_id NOT IN ("
             "SELECT json_each.value FROM research_decisions, json_each(evidence_ids_json)"
+            ") AND run_id NOT IN ("
+            "SELECT run_id FROM research_experiments WHERE status = 'ACTIVE'"
             ")",
             (ObservationKind.MARKET_STATE.value, _utc_text(cutoff)),
         )
@@ -632,10 +802,36 @@ class ResearchEvidenceStore:
             "SELECT evidence_id FROM research_events "
             "WHERE event_kind = ? AND evidence_id NOT IN ("
             "SELECT json_each.value FROM research_decisions, json_each(evidence_ids_json)"
+            ") AND run_id NOT IN ("
+            "SELECT run_id FROM research_experiments WHERE status = 'ACTIVE'"
             ") ORDER BY observed_time_utc ASC LIMIT ?"
             ")",
             (ObservationKind.MARKET_STATE.value, overflow),
         )
+
+    def _require_experiment_capacity_unlocked(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        *,
+        will_insert: bool = True,
+    ) -> None:
+        row = connection.execute(
+            "SELECT * FROM research_experiments WHERE run_id = ? AND status = 'ACTIVE'",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return
+        experiment = _experiment_from_row(row)
+        if self._clock() >= experiment.collection_ends_at:
+            raise ResearchExperimentBudgetError("duration")
+        if will_insert and experiment.event_count >= experiment.max_events:
+            raise ResearchExperimentBudgetError("event")
+        if will_insert and (
+            self.storage_file_stats()["total_bytes"] + EXPERIMENT_WRITE_RESERVE_BYTES
+            > experiment.max_bytes
+        ):
+            raise ResearchExperimentBudgetError("storage")
 
     def _connect(self, *, timeout_seconds: float | None = None) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -668,6 +864,13 @@ def ensure_research_evidence_schema(
     }
     if "summary_json" not in interval_columns:
         connection.execute("ALTER TABLE research_intervals ADD COLUMN summary_json TEXT")
+    experiment_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(research_experiments)")
+    }
+    if "event_count" not in experiment_columns:
+        connection.execute(
+            "ALTER TABLE research_experiments ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0"
+        )
     connection.execute(
         "INSERT OR IGNORE INTO research_evidence_metadata ("
         "singleton, schema_version, policy_version, created_at_utc"
@@ -789,6 +992,27 @@ def _summary_from_row(row: Mapping[str, object]) -> dict[str, object] | None:
     if not isinstance(parsed, dict):
         raise ResearchEvidenceStoreError("stored interval summary is invalid")
     return parsed
+
+
+def _experiment_from_row(row: Mapping[str, object]) -> ResearchExperiment:
+    finalized = row["finalized_at_utc"]
+    return ResearchExperiment(
+        run_id=str(row["run_id"]),
+        started_at=_parse_utc(str(row["started_at_utc"])),
+        collection_ends_at=_parse_utc(str(row["collection_ends_at_utc"])),
+        max_events=int(str(row["max_events"])),
+        max_bytes=int(str(row["max_bytes"])),
+        status=str(row["status"]),
+        code_sha=None if row["code_sha"] is None else str(row["code_sha"]),
+        configuration_digest=str(row["configuration_digest"]),
+        policy_version=str(row["policy_version"]),
+        finalized_at=None if finalized is None else _parse_utc(str(finalized)),
+        bundle_path=None if row["bundle_path"] is None else str(row["bundle_path"]),
+        bundle_sha256=None
+        if row["bundle_sha256"] is None
+        else str(row["bundle_sha256"]),
+        event_count=int(str(row["event_count"])),
+    )
 
 
 def _file_size(path: Path) -> int:

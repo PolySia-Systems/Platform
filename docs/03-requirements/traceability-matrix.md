@@ -10,5 +10,4 @@
 | REQ-006 Venue-neutral core | CAP-001-010 | Domain and application ports | Dependency direction | Architecture-boundary tests |
 | REQ-007 Reproducible runtime | All | Packaging and locks | Exact baseline, upgrade gates | Clean-environment install and `pip check` |
 | REQ-008 Stateful shadow research Replay | CAP-002-007 | Target Exposure v1, immutable SQLite Replay | No Live/Risk/Execution authority | Unit, architecture, and CLI tests |
-| REQ-009 Prospective research evidence | CAP-001-007 | Isolated research-evidence SQLite v2, persistent collector, public source benchmark | DATA_ONLY, no Live authority | Unit, architecture, Compose, and CLI tests |
-
+| REQ-009 Prospective research evidence | CAP-001-007 | Isolated research-evidence SQLite v2, route-local source recovery, honest eligibility, bounded experiment bundles, persistent collector, public source benchmark | DATA_ONLY, no Live authority | Recovery/fault, retention/finalization, unit, architecture, Compose, and CLI tests |

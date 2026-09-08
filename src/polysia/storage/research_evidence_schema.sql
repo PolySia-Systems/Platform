@@ -50,6 +50,24 @@ CREATE INDEX IF NOT EXISTS research_events_source_observed
     ON research_events (source_id, observed_time_utc);
 CREATE INDEX IF NOT EXISTS research_events_kind_class
     ON research_events (event_kind, classification);
+CREATE INDEX IF NOT EXISTS research_events_run_observed
+    ON research_events (run_id, observed_time_utc);
+
+CREATE TABLE IF NOT EXISTS research_experiments (
+    run_id TEXT PRIMARY KEY,
+    started_at_utc TEXT NOT NULL,
+    collection_ends_at_utc TEXT NOT NULL,
+    max_events INTEGER NOT NULL CHECK (max_events > 0),
+    max_bytes INTEGER NOT NULL CHECK (max_bytes > 0),
+    status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'FINALIZED')),
+    code_sha TEXT,
+    configuration_digest TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    finalized_at_utc TEXT,
+    bundle_path TEXT,
+    bundle_sha256 TEXT,
+    event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0)
+);
 
 CREATE TABLE IF NOT EXISTS research_watermarks (
     source_id TEXT PRIMARY KEY,

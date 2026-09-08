@@ -34,6 +34,7 @@ from polysia.storage.research_evidence import (
     ResearchEvidenceMaintenanceError,
     ResearchEvidenceStore,
     ResearchEvidenceStoreError,
+    ResearchExperimentBudgetError,
 )
 
 Clock = Callable[[], datetime]
@@ -134,6 +135,8 @@ class ProspectiveCollector:
             return classified
         try:
             return self._persist_classified(stamped)
+        except ResearchExperimentBudgetError:
+            raise
         except (ResearchEvidenceStoreError, OSError):
             self._invalidate(IntervalValidity.INVALID_DISK, "persistence_failure")
             raise
