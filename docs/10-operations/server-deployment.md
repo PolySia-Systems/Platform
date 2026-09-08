@@ -107,8 +107,12 @@ docker compose --profile research run --rm research-collector \
 
 The command refuses a second writer and marks the run finalized only after
 snapshot, checksum, isolated restore, integrity/foreign-key checks, and
-deterministic replay pass. Restarting the collector then starts the next
-bounded experiment. Do not treat rotating backups as the experiment archive.
+deterministic replay of the independently valid windows passes. Invalid windows
+remain in the immutable database and are reported as excluded evidence. The
+temporary restore is staged under the bundle root so a bounded experiment is
+not constrained by the service's small `/tmp` tmpfs. Restarting the collector
+then starts the next bounded experiment. Do not treat rotating backups as the
+experiment archive.
 Finalize an active experiment before deploying collector code or configuration
 that would change its recorded SHA or configuration digest.
 

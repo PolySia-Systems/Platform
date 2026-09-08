@@ -12,7 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from polysia.backtesting.prospective_replay import replay_recorded_run
+from polysia.backtesting.prospective_replay import replay_recorded_experiment
 from polysia.deployment.recovery_bundle import sha256_file
 from polysia.deployment.sqlite_backup import restore_sqlite_backup, verify_sqlite_backup
 from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
@@ -52,11 +52,8 @@ def finalize_research_experiment(
         database_copy = store.snapshot(staging / "research-evidence.sqlite3")
         replica = ResearchEvidenceStore(database_copy)
         replica.verify_integrity()
-        interval = replica.load_interval_for_run(run_id)
-        if interval is None:
-            raise ResearchEvidenceStoreError("experiment has no replayable interval")
-        first = replay_recorded_run(replica, run_id=run_id, interval=interval)
-        second = replay_recorded_run(replica, run_id=run_id, interval=interval)
+        first = replay_recorded_experiment(replica, run_id=run_id)
+        second = replay_recorded_experiment(replica, run_id=run_id)
         if first != second:
             raise ResearchEvidenceStoreError("experiment replay is not deterministic")
         replica.finalize_experiment_record(
@@ -71,23 +68,23 @@ def finalize_research_experiment(
         checksum_path.write_text(f"{checksum}  {database_copy.name}\n", encoding="ascii")
         _restrict(checksum_path)
         verify_sqlite_backup(database_copy)
-        with TemporaryDirectory(prefix="polysia-research-restore-") as temporary:
+        with TemporaryDirectory(
+            prefix="polysia-research-restore-",
+            dir=staging,
+        ) as temporary:
             restored = Path(temporary) / database_copy.name
             restore_sqlite_backup(database_copy, restored)
             restored_store = ResearchEvidenceStore(restored)
             restored_store.verify_integrity()
-            restored_interval = restored_store.load_interval_for_run(run_id)
-            if restored_interval is None:
-                raise ResearchEvidenceStoreError("restored experiment interval is missing")
-            restored_replay = replay_recorded_run(
-                restored_store,
-                run_id=run_id,
-                interval=restored_interval,
-            )
+            restored_replay = replay_recorded_experiment(restored_store, run_id=run_id)
             if restored_replay != first:
                 raise ResearchEvidenceStoreError("restored experiment replay changed")
+        invalid_reasons: dict[str, int] = {}
+        for interval in first.invalid_intervals:
+            key = f"{interval.validity.value}:{interval.reason}"
+            invalid_reasons[key] = invalid_reasons.get(key, 0) + 1
         manifest = {
-            "manifest_version": 1,
+            "manifest_version": 2,
             "run_id": run_id,
             "started_at": experiment.started_at.isoformat(),
             "collection_ends_at": experiment.collection_ends_at.isoformat(),
@@ -100,11 +97,19 @@ def finalize_research_experiment(
             "event_count": replica.experiment_event_count(run_id),
             "database": database_copy.name,
             "database_sha256": checksum,
+            "intervals": {
+                "invalid_event_bearing": len(first.invalid_intervals),
+                "invalid_reasons": invalid_reasons,
+                "valid_event_bearing": len(first.valid_intervals),
+            },
             "replay": {
-                "control_digest": first.control_digest,
-                "target_digest": first.target_digest,
-                "unknown_count": first.unknown_count,
-                "invalidated": first.invalidated,
+                "control_digest": first.result.control_digest,
+                "excluded_event_count": first.excluded_event_count,
+                "invalidated": first.result.invalidated,
+                "replayed_event_count": first.replayed_event_count,
+                "scope": "valid_intervals_only",
+                "target_digest": first.result.target_digest,
+                "unknown_count": first.result.unknown_count,
             },
         }
         manifest_path = staging / "experiment-manifest.json"
