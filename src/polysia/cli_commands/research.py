@@ -482,25 +482,27 @@ def prospective_replay(
 ) -> None:
     """Replay Current Control vs Target Exposure v1 from recorded research evidence."""
 
-    from polysia.backtesting.prospective_replay import replay_recorded_run
+    from polysia.backtesting.prospective_replay import replay_recorded_experiment
     from polysia.cli_commands.research_evidence_cli import sanitize_report
     from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
 
     try:
         store = ResearchEvidenceStore(database)
         store.initialize()
-        interval = store.load_interval_for_run(run_id)
-        if interval is None:
-            raise ValueError("no recorded research evidence for run_id")
-        result = replay_recorded_run(store, run_id=run_id, interval=interval)
+        scoped = replay_recorded_experiment(store, run_id=run_id)
+        result = scoped.result
         payload = sanitize_report(
             {
                 "control_digest": result.control_digest,
+                "excluded_event_count": scoped.excluded_event_count,
+                "invalid_interval_count": len(scoped.invalid_intervals),
                 "invalidated": result.invalidated,
-                "interval_validity": interval.validity.value,
+                "interval_scope": "valid_intervals_only",
+                "replayed_event_count": scoped.replayed_event_count,
                 "run_id": run_id,
                 "target_digest": result.target_digest,
                 "unknown_count": result.unknown_count,
+                "valid_interval_count": len(scoped.valid_intervals),
                 "control_decisions": [
                     {"evidence_id": evidence_id, "decision": decision.value}
                     for evidence_id, decision in result.control_decisions

@@ -579,6 +579,67 @@ def test_finalize_experiment_requires_verified_restore_and_replay(tmp_path: Path
     assert bundled.load_experiment("final-run").status == "FINALIZED"  # type: ignore[union-attr]
 
 
+def test_finalize_experiment_excludes_invalid_windows_and_uses_bundle_storage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tempfile
+
+    from polysia.deployment import research_experiment_bundle
+
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.start_or_resume_experiment(
+        requested_run_id="mixed-run",
+        duration=timedelta(hours=1),
+        max_events=10,
+        max_bytes=10_000_000,
+        code_sha="d" * 40,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(store, run_id="mixed-run")
+    collector.ingest(_wallet("invalid-wallet", run_id="mixed-run"))
+    collector.close_window(complete=False)
+    collector.start_window()
+    collector.ingest(_market("valid-market", run_id="mixed-run"))
+    collector.ingest(_wallet("valid-wallet", run_id="mixed-run"))
+    collector.close_window(complete=True)
+
+    restore_parents: list[Path] = []
+
+    def _temporary_directory(*args: object, **kwargs: object) -> tempfile.TemporaryDirectory[str]:
+        directory = kwargs.get("dir")
+        assert isinstance(directory, Path)
+        restore_parents.append(directory)
+        return tempfile.TemporaryDirectory(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        research_experiment_bundle,
+        "TemporaryDirectory",
+        _temporary_directory,
+    )
+    bundle_root = tmp_path / "bundles"
+    result = research_experiment_bundle.finalize_research_experiment(
+        database,
+        bundle_root,
+        run_id="mixed-run",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["manifest_version"] == 2
+    assert manifest["intervals"] == {
+        "invalid_event_bearing": 1,
+        "invalid_reasons": {"INVALID_SHUTDOWN:incomplete_window": 1},
+        "valid_event_bearing": 1,
+    }
+    assert manifest["replay"]["scope"] == "valid_intervals_only"
+    assert manifest["replay"]["invalidated"] is False
+    assert manifest["replay"]["replayed_event_count"] == 2
+    assert manifest["replay"]["excluded_event_count"] == 1
+    assert len(restore_parents) == 1
+    assert restore_parents[0].parent == bundle_root
+
+
 def test_failed_bundle_verification_does_not_finalize_experiment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

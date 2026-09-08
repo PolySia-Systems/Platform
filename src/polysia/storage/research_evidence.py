@@ -562,27 +562,19 @@ class ResearchEvidenceStore:
             connection.close()
         if row is None:
             return None
-        ended = row["ended_at_utc"]
-        return ResearchInterval(
-            interval_id=str(row["interval_id"]),
-            started_at=_parse_utc(str(row["started_at_utc"])),
-            ended_at=None if ended is None else _parse_utc(str(ended)),
-            validity=IntervalValidity(str(row["validity"])),
-            reason=str(row["reason"]),
-            code_sha=None if row["code_sha"] is None else str(row["code_sha"]),
-            configuration_digest=None
-            if row["configuration_digest"] is None
-            else str(row["configuration_digest"]),
-            policy_version=str(row["policy_version"]),
-            summary=_summary_from_row(row),
-        )
+        return _interval_from_row(row)
 
     def load_events(
         self,
         *,
         run_id: str | None = None,
         interval_id: str | None = None,
+        interval_validity: IntervalValidity | None = None,
     ) -> tuple[CanonicalResearchEvent, ...]:
+        if interval_id is not None and interval_validity is not None:
+            raise ValueError("interval_id and interval_validity are mutually exclusive")
+        if interval_validity is not None and run_id is None:
+            raise ValueError("interval_validity requires run_id")
         connection = self._connect()
         try:
             if interval_id is not None:
@@ -590,6 +582,15 @@ class ResearchEvidenceStore:
                     "SELECT * FROM research_events WHERE interval_id = ? "
                     "ORDER BY observed_time_utc, evidence_id",
                     (interval_id,),
+                ).fetchall()
+            elif interval_validity is not None:
+                rows = connection.execute(
+                    "SELECT events.* FROM research_events AS events "
+                    "JOIN research_intervals AS intervals "
+                    "ON intervals.interval_id = events.interval_id "
+                    "WHERE events.run_id = ? AND intervals.validity = ? "
+                    "ORDER BY events.observed_time_utc, events.evidence_id",
+                    (run_id, interval_validity.value),
                 ).fetchall()
             elif run_id is None:
                 rows = connection.execute(
@@ -604,6 +605,23 @@ class ResearchEvidenceStore:
         finally:
             connection.close()
         return tuple(_event_from_row(row) for row in rows)
+
+    def load_intervals_for_run(self, run_id: str) -> tuple[ResearchInterval, ...]:
+        """Return event-bearing intervals owned by one bounded experiment."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT DISTINCT intervals.* FROM research_intervals AS intervals "
+                "JOIN research_events AS events "
+                "ON events.interval_id = intervals.interval_id "
+                "WHERE events.run_id = ? "
+                "ORDER BY intervals.started_at_utc, intervals.interval_id",
+                (run_id,),
+            ).fetchall()
+        finally:
+            connection.close()
+        return tuple(_interval_from_row(row) for row in rows)
 
     def load_interval_for_run(self, run_id: str) -> ResearchInterval | None:
         connection = self._connect()
@@ -964,6 +982,23 @@ def _event_from_row(row: Mapping[str, object]) -> CanonicalResearchEvent:
         if row["related_evidence_id"] is None
         else str(row["related_evidence_id"]),
         run_id=str(row["run_id"]),
+    )
+
+
+def _interval_from_row(row: Mapping[str, object]) -> ResearchInterval:
+    ended = row["ended_at_utc"]
+    return ResearchInterval(
+        interval_id=str(row["interval_id"]),
+        started_at=_parse_utc(str(row["started_at_utc"])),
+        ended_at=None if ended is None else _parse_utc(str(ended)),
+        validity=IntervalValidity(str(row["validity"])),
+        reason=str(row["reason"]),
+        code_sha=None if row["code_sha"] is None else str(row["code_sha"]),
+        configuration_digest=None
+        if row["configuration_digest"] is None
+        else str(row["configuration_digest"]),
+        policy_version=str(row["policy_version"]),
+        summary=_summary_from_row(row),
     )
 
 

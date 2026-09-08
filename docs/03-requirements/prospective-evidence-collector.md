@@ -97,9 +97,12 @@ The collector is provider-neutral. Venue translation stays in adapters.
   768 MiB by default. Its events are protected from ordinary pruning until
   verified finalization. Reaching any bound stops new evidence fail-closed.
 - Finalization creates one immutable checksummed SQLite bundle, restores it in
-  isolation, verifies integrity and foreign keys, and reproduces replay before
-  marking the experiment `FINALIZED`. Backups are recovery points, not a
-  substitute for continuous experiment evidence.
+  isolation beside the staged bundle, verifies integrity and foreign keys, and
+  reproduces replay before marking the experiment `FINALIZED`. Replay consumes
+  only independently `VALID` windows; invalid windows remain immutable evidence
+  and their reasons and excluded event counts stay explicit in the manifest.
+  Backups are recovery points, not a substitute for continuous experiment
+  evidence.
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
