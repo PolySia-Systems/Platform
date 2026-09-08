@@ -7,6 +7,8 @@ UNKNOWN. Event-time markouts never interpolate.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -96,6 +98,115 @@ class SameObservationReplay:
     invalidated: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _SnapshotTimeline:
+    times: tuple[datetime, ...]
+    events: tuple[CanonicalResearchEvent, ...]
+
+
+class _ReplaySnapshotIndex:
+    """Bound each lookup to one outcome and a narrow time window."""
+
+    def __init__(self, snapshots: tuple[CanonicalResearchEvent, ...]) -> None:
+        markouts: dict[
+            tuple[str, MarkoutTimeBasis],
+            list[tuple[datetime, CanonicalResearchEvent]],
+        ] = defaultdict(list)
+        executions: dict[
+            tuple[str, str],
+            list[tuple[datetime, CanonicalResearchEvent]],
+        ] = defaultdict(list)
+        for snapshot in snapshots:
+            if not _is_base_snapshot(snapshot) or snapshot.outcome_reference is None:
+                continue
+            if snapshot.price is not None:
+                markouts[
+                    (snapshot.outcome_reference, MarkoutTimeBasis.FOLLOWER_OBSERVED)
+                ].append((snapshot.observed_time, snapshot))
+                if snapshot.source_time is not None:
+                    markouts[
+                        (snapshot.outcome_reference, MarkoutTimeBasis.LEADER_SOURCE)
+                    ].append((snapshot.source_time, snapshot))
+            if (
+                snapshot.side is not None
+                and snapshot.price is not None
+                and snapshot.size is not None
+                and snapshot.provenance.get("execution_evidence") is True
+                and _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
+                is not None
+            ):
+                executions[(snapshot.outcome_reference, snapshot.side)].append(
+                    (snapshot.observed_time, snapshot)
+                )
+        self._markouts = {
+            key: _build_timeline(rows, use_observed_tiebreak=True)
+            for key, rows in markouts.items()
+        }
+        self._executions = {
+            key: _build_timeline(rows, use_observed_tiebreak=False)
+            for key, rows in executions.items()
+        }
+
+    def markout(
+        self,
+        *,
+        market_reference: str,
+        outcome_reference: str,
+        event_time: datetime,
+        horizon: timedelta,
+        tolerance: timedelta,
+        time_basis: MarkoutTimeBasis,
+    ) -> MarkoutLookup:
+        _validate_markout_request(horizon=horizon, tolerance=tolerance)
+        timeline = self._markouts.get((outcome_reference, time_basis))
+        if timeline is None:
+            return _unknown_markout(horizon=horizon, time_basis=time_basis)
+        start = event_time + horizon
+        end = start + tolerance
+        left = bisect_left(timeline.times, start)
+        right = bisect_right(timeline.times, end)
+        for snapshot in timeline.events[left:right]:
+            if snapshot.market_reference in {None, market_reference}:
+                return MarkoutLookup(
+                    horizon=horizon,
+                    time_basis=time_basis,
+                    status="MEASURED",
+                    price=snapshot.price,
+                    snapshot_evidence_id=snapshot.evidence_id,
+                )
+        return _unknown_markout(horizon=horizon, time_basis=time_basis)
+
+    def execution(
+        self,
+        *,
+        observation: ProspectiveObservation,
+        max_age: timedelta,
+    ) -> ExecutionEvidence | None:
+        if max_age.total_seconds() < 0:
+            raise ValueError("execution evidence max_age must not be negative")
+        timeline = self._executions.get(
+            (observation.outcome_reference, observation.side)
+        )
+        if timeline is None:
+            return None
+        cutoff = observation.observed_time - max_age
+        left = bisect_left(timeline.times, cutoff)
+        right = bisect_right(timeline.times, observation.observed_time)
+        for snapshot in reversed(timeline.events[left:right]):
+            if snapshot.market_reference not in {None, observation.market_reference}:
+                continue
+            fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
+            if fee is None or snapshot.price is None or snapshot.size is None:
+                continue
+            return ExecutionEvidence(
+                snapshot_evidence_id=snapshot.evidence_id,
+                executable_price=snapshot.price,
+                available_quantity=snapshot.size,
+                recorded_fee=fee,
+            )
+        return None
+
+
 def observation_from_event(event: CanonicalResearchEvent) -> ProspectiveObservation | None:
     if event.event_kind is not ObservationKind.WALLET_TRADE:
         return None
@@ -140,10 +251,7 @@ def lookup_event_time_mark(
     Never interpolates between snapshots or fabricates a price.
     """
 
-    if horizon not in MARKOUT_HORIZONS:
-        raise ValueError("markout horizon is not in the frozen set")
-    if tolerance.total_seconds() < 0:
-        raise ValueError("tolerance must not be negative")
+    _validate_markout_request(horizon=horizon, tolerance=tolerance)
     start = event_time + horizon
     end = start + tolerance
     matches: list[tuple[datetime, CanonicalResearchEvent]] = []
@@ -161,13 +269,7 @@ def lookup_event_time_mark(
         ):
             matches.append((snapshot_time, snapshot))
     if not matches:
-        return MarkoutLookup(
-            horizon=horizon,
-            time_basis=time_basis,
-            status="UNKNOWN",
-            price=None,
-            snapshot_evidence_id=None,
-        )
+        return _unknown_markout(horizon=horizon, time_basis=time_basis)
     _, match = min(
         matches,
         key=lambda item: (item[0], item[1].observed_time, item[1].evidence_id),
@@ -250,6 +352,7 @@ def replay_same_observations(
     control_exposures: dict[tuple[str, str], Decimal] = {}
     control_cash = Decimal("1000")
     target_cash = Decimal("1000")
+    snapshot_index = _ReplaySnapshotIndex(snapshots)
 
     for event in ordered:
         observation = observation_from_event(event)
@@ -270,8 +373,7 @@ def replay_same_observations(
             continue
         key = (observation.market_reference, observation.outcome_reference)
         episode = target_episodes.setdefault(key, _EpisodeState())
-        execution = lookup_execution_evidence(
-            snapshots,
+        execution = snapshot_index.execution(
             observation=observation,
             max_age=execution_evidence_max_age,
         )
@@ -282,7 +384,7 @@ def replay_same_observations(
                 target.append((observation.evidence_id, "UNKNOWN"))
                 _append_markouts(
                     observation,
-                    snapshots=snapshots,
+                    snapshot_index=snapshot_index,
                     tolerance=markout_tolerance,
                     leader=leader_markouts,
                     follower=follower_markouts,
@@ -332,7 +434,7 @@ def replay_same_observations(
 
         _append_markouts(
             observation,
-            snapshots=snapshots,
+            snapshot_index=snapshot_index,
             tolerance=markout_tolerance,
             leader=leader_markouts,
             follower=follower_markouts,
@@ -355,7 +457,7 @@ def replay_same_observations(
 def _append_markouts(
     observation: ProspectiveObservation,
     *,
-    snapshots: tuple[CanonicalResearchEvent, ...],
+    snapshot_index: _ReplaySnapshotIndex,
     tolerance: timedelta,
     leader: list[tuple[str, tuple[MarkoutLookup, ...]]],
     follower: list[tuple[str, tuple[MarkoutLookup, ...]]],
@@ -365,7 +467,7 @@ def _append_markouts(
             observation.evidence_id,
             _markout_series(
                 observation,
-                snapshots=snapshots,
+                snapshot_index=snapshot_index,
                 event_time=observation.source_time,
                 tolerance=tolerance,
                 time_basis=MarkoutTimeBasis.LEADER_SOURCE,
@@ -377,7 +479,7 @@ def _append_markouts(
             observation.evidence_id,
             _markout_series(
                 observation,
-                snapshots=snapshots,
+                snapshot_index=snapshot_index,
                 event_time=observation.observed_time,
                 tolerance=tolerance,
                 time_basis=MarkoutTimeBasis.FOLLOWER_OBSERVED,
@@ -389,7 +491,7 @@ def _append_markouts(
 def _markout_series(
     observation: ProspectiveObservation,
     *,
-    snapshots: tuple[CanonicalResearchEvent, ...],
+    snapshot_index: _ReplaySnapshotIndex,
     event_time: datetime | None,
     tolerance: timedelta,
     time_basis: MarkoutTimeBasis,
@@ -400,8 +502,7 @@ def _markout_series(
             for horizon in MARKOUT_HORIZONS
         )
     return tuple(
-        lookup_event_time_mark(
-            snapshots,
+        snapshot_index.markout(
             market_reference=observation.market_reference,
             outcome_reference=observation.outcome_reference,
             event_time=event_time,
@@ -410,6 +511,53 @@ def _markout_series(
             time_basis=time_basis,
         )
         for horizon in MARKOUT_HORIZONS
+    )
+
+
+def _build_timeline(
+    rows: list[tuple[datetime, CanonicalResearchEvent]],
+    *,
+    use_observed_tiebreak: bool,
+) -> _SnapshotTimeline:
+    if use_observed_tiebreak:
+        ordered = sorted(
+            rows,
+            key=lambda item: (item[0], item[1].observed_time, item[1].evidence_id),
+        )
+    else:
+        ordered = sorted(rows, key=lambda item: (item[0], item[1].evidence_id))
+    return _SnapshotTimeline(
+        times=tuple(item[0] for item in ordered),
+        events=tuple(item[1] for item in ordered),
+    )
+
+
+def _is_base_snapshot(snapshot: CanonicalResearchEvent) -> bool:
+    return (
+        snapshot.event_kind is ObservationKind.MARKET_STATE
+        and snapshot.classification is EvidenceClassification.ACCEPTED
+        and snapshot.confirmation is ConfirmationStatus.CONFIRMED
+    )
+
+
+def _validate_markout_request(*, horizon: timedelta, tolerance: timedelta) -> None:
+    if horizon not in MARKOUT_HORIZONS:
+        raise ValueError("markout horizon is not in the frozen set")
+    if tolerance.total_seconds() < 0:
+        raise ValueError("tolerance must not be negative")
+
+
+def _unknown_markout(
+    *,
+    horizon: timedelta,
+    time_basis: MarkoutTimeBasis,
+) -> MarkoutLookup:
+    return MarkoutLookup(
+        horizon=horizon,
+        time_basis=time_basis,
+        status="UNKNOWN",
+        price=None,
+        snapshot_evidence_id=None,
     )
 
 
