@@ -39,6 +39,7 @@ _SAFE_ALIAS_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 DATA_API_BASE_URL = "https://data-api.polymarket.com"
 GAMMA_API_BASE_URL = "https://gamma-api.polymarket.com"
+CLOB_API_BASE_URL = "https://clob.polymarket.com"
 POSITION_PAGE_SIZE = 500
 POSITION_MAX_OFFSET = 10_000
 SOURCE_ID = "polymarket:data-api"
@@ -126,13 +127,18 @@ class UrllibJsonGetTransport:
         *,
         purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
     ) -> Any:
-        if base_url not in {DATA_API_BASE_URL, GAMMA_API_BASE_URL}:
+        if base_url not in {CLOB_API_BASE_URL, DATA_API_BASE_URL, GAMMA_API_BASE_URL}:
             raise PolymarketCopyTradingSourceError("Unapproved public API base URL.")
         if not path.startswith("/") or "://" in path:
             raise PolymarketCopyTradingSourceError("Invalid public API path.")
 
         url = f"{base_url}{path}?{urlencode(_stringify_params(params))}"
-        route = f"{'gamma' if base_url == GAMMA_API_BASE_URL else 'data'}:{path}"
+        api = (
+            "gamma"
+            if base_url == GAMMA_API_BASE_URL
+            else ("clob" if base_url == CLOB_API_BASE_URL else "data")
+        )
+        route = f"{api}:{path}"
         for attempt in range(1, self._max_attempts + 1):
             try:
                 async with self._scheduler.request(

@@ -19,6 +19,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 
 from polysia.adapters.polymarket.copytrading_source import (
+    CLOB_API_BASE_URL,
     DATA_API_BASE_URL,
     JsonGetTransport,
     PolymarketCopyTradingSourceError,
@@ -564,7 +565,7 @@ class OfficialMarketStreamSource:
             "fee_calculation_version": "polymarket-taker-fee-v1",
             "fee_exponent": None if exponent is None else format(exponent, "f"),
             "fee_rate": None if rate is None else format(rate, "f"),
-            "fee_source": "official-sdk-market-fee-schedule",
+            "fee_source": "official-public-market-fee-schedule",
             "fee_taker_only": taker_only,
             "fee_valid_at": event.received_at.isoformat(),
             "fees_enabled": fees_enabled,
@@ -654,18 +655,62 @@ async def discover_followed_token_ids(
     transport: JsonGetTransport,
     aliases: Mapping[str, str],
     *,
-    page_limit: int = 50,
-    token_limit: int = 32,
+    page_limit: int = 500,
+    token_limit: int = 500,
+    lookback: timedelta = timedelta(minutes=30),
+    clock: Clock | None = None,
 ) -> tuple[str, ...]:
-    """Public tokens traded by followed wallets. Missing overlap stays empty."""
+    """Public tokens recently traded by followed wallets."""
 
-    tokens: list[str] = []
-    seen: set[str] = set()
+    markets = await discover_followed_markets(
+        transport,
+        aliases,
+        page_limit=page_limit,
+        token_limit=token_limit,
+        lookback=lookback,
+        clock=clock,
+    )
+    return tuple(markets)
+
+
+async def discover_followed_markets(
+    transport: JsonGetTransport,
+    aliases: Mapping[str, str],
+    *,
+    page_limit: int = 500,
+    token_limit: int = 500,
+    lookback: timedelta = timedelta(minutes=30),
+    clock: Clock | None = None,
+) -> dict[str, str]:
+    """Map recent public outcome tokens to their condition IDs.
+
+    The lookback matches the persistent wallet source. This keeps the market
+    stream bounded while covering the observations eligible for the next
+    window instead of an arbitrary prefix of historical tokens.
+    """
+
+    if page_limit <= 0 or page_limit > 10_000:
+        raise ValueError("page_limit must be within [1, 10000]")
+    if token_limit <= 0 or token_limit > 500:
+        raise ValueError("token_limit must be within [1, 500]")
+    if lookback.total_seconds() <= 0:
+        raise ValueError("lookback must be positive")
+
+    now = (clock or (lambda: datetime.now(UTC)))()
+    start = now - lookback
+    markets: dict[str, str] = {}
     for wallet in aliases.values():
         payload = await transport.get_json(
             DATA_API_BASE_URL,
             "/trades",
-            {"user": wallet, "limit": page_limit, "offset": 0, "takerOnly": False},
+            {
+                "user": wallet,
+                "limit": page_limit,
+                "offset": 0,
+                "start": int(start.timestamp()),
+                "end": int(now.timestamp()),
+                "takerOnly": False,
+            },
             purpose=LeaderReadPurpose.DISCOVERY,
         )
         if not isinstance(payload, list):
@@ -674,12 +719,72 @@ async def discover_followed_token_ids(
             if not isinstance(row, dict):
                 continue
             token = row.get("asset")
-            if isinstance(token, str) and token and token not in seen:
-                seen.add(token)
-                tokens.append(token)
-                if len(tokens) >= token_limit:
-                    return tuple(tokens)
-    return tuple(tokens)
+            condition = row.get("conditionId")
+            if (
+                isinstance(token, str)
+                and token
+                and isinstance(condition, str)
+                and condition
+                and token not in markets
+            ):
+                markets[token] = condition
+                if len(markets) >= token_limit:
+                    return markets
+    return markets
+
+
+async def discover_clob_market_fee_schedules(
+    transport: JsonGetTransport,
+    token_markets: Mapping[str, str],
+    *,
+    batch_size: int = 20,
+) -> dict[str, MarketFeeSchedule]:
+    """Resolve fee curves from the official CLOB market-info endpoint."""
+
+    if batch_size <= 0 or batch_size > 50:
+        raise ValueError("batch_size must be within [1, 50]")
+    requested = set(token_markets)
+    conditions = tuple(dict.fromkeys(token_markets.values()))
+
+    async def fetch(condition: str) -> object:
+        return await transport.get_json(
+            CLOB_API_BASE_URL,
+            f"/clob-markets/{condition}",
+            {},
+            purpose=LeaderReadPurpose.DISCOVERY,
+        )
+
+    schedules: dict[str, MarketFeeSchedule] = {}
+    for offset in range(0, len(conditions), batch_size):
+        results = await asyncio.gather(
+            *(fetch(condition) for condition in conditions[offset : offset + batch_size]),
+            return_exceptions=True,
+        )
+        for payload in results:
+            if not isinstance(payload, Mapping):
+                continue
+            fee = payload.get("fd")
+            tokens = payload.get("t")
+            if not isinstance(fee, Mapping) or not isinstance(tokens, list):
+                continue
+            rate = _optional_decimal(fee.get("r"))
+            exponent = _optional_decimal(fee.get("e"))
+            taker_only = fee.get("to")
+            if rate is None or exponent is None or taker_only is not True:
+                continue
+            schedule = MarketFeeSchedule(
+                enabled=rate > 0,
+                rate=rate,
+                exponent=exponent,
+                taker_only=True,
+            )
+            for item in tokens:
+                if not isinstance(item, Mapping):
+                    continue
+                token = item.get("t")
+                if token is not None and str(token) in requested:
+                    schedules[str(token)] = schedule
+    return schedules
 
 
 async def discover_market_fee_schedules(

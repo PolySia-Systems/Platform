@@ -13,6 +13,8 @@ from polysia.adapters.polymarket.research_sources import (
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
     _normalize_wallet_row,
+    discover_clob_market_fee_schedules,
+    discover_followed_markets,
     discover_public_follow_set,
     public_wallet_alias,
 )
@@ -56,6 +58,24 @@ class FakeTransport:
         del purpose
         self.calls.append((base_url, path))
         return self.payload
+
+
+class RoutingTransport:
+    def __init__(self, payloads: dict[str, object]) -> None:
+        self.payloads = payloads
+        self.calls: list[tuple[str, str, dict[str, str | int | bool]]] = []
+
+    async def get_json(
+        self,
+        base_url: str,
+        path: str,
+        params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+    ) -> object:
+        del purpose
+        self.calls.append((base_url, path, params))
+        return self.payloads[path]
 
 
 class RecoveryTransport:
@@ -265,6 +285,59 @@ async def test_public_discovery_and_unavailable_user_channel() -> None:
     assert tokens == ("token-1",)
     assert USER_CHANNEL_CANDIDATE.status is SourceCandidateStatus.UNAVAILABLE
     assert USER_CHANNEL_CANDIDATE.unavailable_reason is not None
+
+
+@pytest.mark.asyncio
+async def test_followed_market_discovery_matches_wallet_source_lookback() -> None:
+    condition = "0x" + "a" * 64
+    transport = RoutingTransport(
+        {
+            "/trades": [
+                {
+                    "asset": "token-1",
+                    "conditionId": condition,
+                }
+            ]
+        }
+    )
+
+    markets = await discover_followed_markets(
+        transport,
+        {public_wallet_alias(WALLET): WALLET},
+        clock=lambda: OBSERVED,
+    )
+
+    assert markets == {"token-1": condition}
+    _, _, params = transport.calls[0]
+    assert params["start"] == int((OBSERVED - timedelta(minutes=30)).timestamp())
+    assert params["end"] == int(OBSERVED.timestamp())
+    assert params["limit"] == 500
+
+
+@pytest.mark.asyncio
+async def test_clob_market_info_resolves_fee_curve_for_requested_tokens() -> None:
+    condition = "0x" + "a" * 64
+    transport = RoutingTransport(
+        {
+            f"/clob-markets/{condition}": {
+                "t": [{"t": "token-1"}, {"t": "token-2"}],
+                "fd": {"r": "0.04", "e": 1, "to": True},
+            }
+        }
+    )
+
+    schedules = await discover_clob_market_fee_schedules(
+        transport,
+        {"token-1": condition},
+    )
+
+    assert set(schedules) == {"token-1"}
+    assert schedules["token-1"] == MarketFeeSchedule(
+        enabled=True,
+        rate=Decimal("0.04"),
+        exponent=Decimal("1"),
+        taker_only=True,
+    )
 
 
 @pytest.mark.asyncio
