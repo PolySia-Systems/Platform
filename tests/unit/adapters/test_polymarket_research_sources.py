@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -11,6 +12,8 @@ from polysia.adapters.polymarket.research_sources import (
     REST_ACTIVITY_CANDIDATE,
     USER_CHANNEL_CANDIDATE,
     DataApiWalletPollSource,
+    FollowedMarketDiscovery,
+    MarketDiscoverySnapshot,
     OfficialMarketStreamSource,
     _normalize_wallet_row,
     discover_clob_market_fee_schedules,
@@ -76,6 +79,36 @@ class RoutingTransport:
         del purpose
         self.calls.append((base_url, path, params))
         return self.payloads[path]
+
+
+class SequencedTransport:
+    def __init__(self, trades: list[object], markets: dict[str, object]) -> None:
+        self._trades = iter(trades)
+        self._markets = markets
+        self.calls: list[str] = []
+
+    async def get_json(
+        self,
+        base_url: str,
+        path: str,
+        params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+    ) -> object:
+        del base_url, params, purpose
+        self.calls.append(path)
+        if path == "/trades":
+            return next(self._trades)
+        return self._markets[path]
+
+
+class RecordingMarketStream:
+    def __init__(self, token_ids: tuple[str, ...]) -> None:
+        self.token_ids = token_ids
+
+    async def run(self, *, max_events: int | None = None) -> None:
+        del max_events
+        await asyncio.Event().wait()
 
 
 class RecoveryTransport:
@@ -338,6 +371,92 @@ async def test_clob_market_info_resolves_fee_curve_for_requested_tokens() -> Non
         exponent=Decimal("1"),
         taker_only=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_followed_market_discovery_adds_tokens_and_resolves_fee_once() -> None:
+    first_condition = "0x" + "a" * 64
+    second_condition = "0x" + "b" * 64
+    fee = {"fd": {"r": "0.04", "e": 1, "to": True}}
+    transport = SequencedTransport(
+        [
+            [{"asset": "token-1", "conditionId": first_condition}],
+            [
+                {"asset": "token-1", "conditionId": first_condition},
+                {"asset": "token-2", "conditionId": second_condition},
+            ],
+        ],
+        {
+            f"/clob-markets/{first_condition}": {
+                **fee,
+                "t": [{"t": "token-1"}],
+            },
+            f"/clob-markets/{second_condition}": {
+                **fee,
+                "t": [{"t": "token-2"}],
+            },
+        },
+    )
+    discovery = FollowedMarketDiscovery(
+        transport,
+        {public_wallet_alias(WALLET): WALLET},
+        clock=lambda: OBSERVED,
+    )
+
+    first = await discovery.refresh()
+    second = await discovery.refresh()
+
+    assert tuple(first.token_markets) == ("token-1",)
+    assert tuple(second.token_markets) == ("token-1", "token-2")
+    assert set(second.fee_schedules) == {"token-1", "token-2"}
+    assert transport.calls.count(f"/clob-markets/{first_condition}") == 1
+    assert transport.calls.count(f"/clob-markets/{second_condition}") == 1
+
+
+@pytest.mark.asyncio
+async def test_market_stream_refreshes_subscription_for_new_wallet_token() -> None:
+    clock = AdvancingClock()
+    streams: list[RecordingMarketStream] = []
+
+    def stream_factory(
+        bus: object,
+        token_ids: tuple[str, ...],
+        stale_after: timedelta,
+    ) -> RecordingMarketStream:
+        del bus, stale_after
+        stream = RecordingMarketStream(token_ids)
+        streams.append(stream)
+        return stream
+
+    async def discover() -> MarketDiscoverySnapshot:
+        return MarketDiscoverySnapshot(
+            token_markets={"token-1": "market-1", "token-2": "market-2"},
+            fee_schedules={},
+        )
+
+    source = OfficialMarketStreamSource(
+        token_ids=("token-1",),
+        clock=clock,
+        sleep=clock.sleep,
+        market_discovery=discover,
+        discovery_interval_seconds=2,
+        market_stream_factory=stream_factory,
+    )
+
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=3),
+        )
+    ]
+
+    assert events == []
+    assert [stream.token_ids for stream in streams] == [
+        ("token-1",),
+        ("token-1", "token-2"),
+    ]
+    assert source.subscription_update_count == 1
 
 
 @pytest.mark.asyncio

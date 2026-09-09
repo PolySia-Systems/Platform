@@ -102,17 +102,16 @@ async def build_persistent_public_sources() -> tuple[
     aliases, discovered_tokens = await discover_public_follow_set(transport)
     from polysia.adapters.polymarket.research_sources import (
         MARKET_STREAM_CANDIDATE,
-        discover_clob_market_fee_schedules,
-        discover_followed_markets,
+        FollowedMarketDiscovery,
     )
 
-    followed_markets = (
-        await discover_followed_markets(transport, aliases) if aliases else {}
-    )
+    discovery = FollowedMarketDiscovery(transport, aliases) if aliases else None
+    snapshot = await discovery.refresh() if discovery is not None else None
+    followed_markets = {} if snapshot is None else snapshot.token_markets
     token_ids = tuple(followed_markets) or discovered_tokens
     fee_schedules = (
-        await discover_clob_market_fee_schedules(transport, followed_markets)
-        if followed_markets
+        snapshot.fee_schedules
+        if snapshot is not None
         else await discover_market_fee_schedules(token_ids)
     )
     sources: list[ResearchObservationSource] = []
@@ -136,7 +135,11 @@ async def build_persistent_public_sources() -> tuple[
             )
         )
     sources.append(
-        OfficialMarketStreamSource(token_ids=token_ids, fee_schedules=fee_schedules)
+        OfficialMarketStreamSource(
+            token_ids=token_ids,
+            fee_schedules=fee_schedules,
+            market_discovery=None if discovery is None else discovery.refresh,
+        )
     )
     return tuple(sources), {
         "followed_alias_count": len(aliases),

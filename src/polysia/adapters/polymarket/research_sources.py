@@ -12,10 +12,10 @@ import hashlib
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 
 from polysia.adapters.polymarket.copytrading_source import (
@@ -84,6 +84,27 @@ Clock = Callable[[], datetime]
 MonotonicNs = Callable[[], int]
 Sleeper = Callable[[float], Awaitable[None]]
 MarketEventFactory = Callable[[], AsyncIterator[MarketDataEvent]]
+
+
+@dataclass(frozen=True, slots=True)
+class MarketDiscoverySnapshot:
+    """Bounded tokens and fee evidence known to the public collector."""
+
+    token_markets: Mapping[str, str]
+    fee_schedules: Mapping[str, MarketFeeSchedule]
+
+
+MarketDiscovery = Callable[[], Awaitable[MarketDiscoverySnapshot]]
+
+
+class MarketStreamRunner(Protocol):
+    async def run(self, *, max_events: int | None = None) -> None: ...
+
+
+MarketStreamFactory = Callable[
+    [Any, tuple[str, ...], timedelta],
+    MarketStreamRunner,
+]
 
 
 def public_wallet_alias(wallet: str) -> str:
@@ -284,9 +305,16 @@ class OfficialMarketStreamSource:
         sleep: Sleeper = asyncio.sleep,
         stale_after: timedelta = timedelta(seconds=30),
         fee_schedules: Mapping[str, MarketFeeSchedule] | None = None,
+        market_discovery: MarketDiscovery | None = None,
+        discovery_interval_seconds: float = 2.0,
+        market_stream_factory: MarketStreamFactory | None = None,
     ) -> None:
+        if discovery_interval_seconds <= 0:
+            raise ValueError("discovery_interval_seconds must be positive")
+        if len(token_ids) > 500:
+            raise ValueError("token_ids must contain at most 500 items")
         self.candidate = MARKET_STREAM_CANDIDATE
-        if event_factory is None and not token_ids:
+        if event_factory is None and not token_ids and market_discovery is None:
             self.candidate = SourceCandidate(
                 candidate_id=MARKET_STREAM_CANDIDATE.candidate_id,
                 display_name=MARKET_STREAM_CANDIDATE.display_name,
@@ -302,8 +330,13 @@ class OfficialMarketStreamSource:
         self._sleep = sleep
         self._stale_after = stale_after
         self._fee_schedules = dict(fee_schedules or {})
+        self._market_discovery = market_discovery
+        self._discovery_interval_seconds = discovery_interval_seconds
+        self._market_stream_factory = market_stream_factory
         self._books = BookBuilder()
         self.reconnect_count = 0
+        self.subscription_update_count = 0
+        self.discovery_failure_count = 0
         self._availability = (
             "not_started"
             if self.candidate.status is SourceCandidateStatus.MEASURED
@@ -340,27 +373,21 @@ class OfficialMarketStreamSource:
         run_id: str,
         deadline: datetime,
     ) -> AsyncIterator[CanonicalResearchEvent]:
-        from polysia.adapters.polymarket.stream import MarketStream, MarketStreamConfig
         from polysia.bus.in_memory_bus import InMemoryEventBus
 
         bus = InMemoryEventBus()
         subscription = bus.subscribe()
-        stream = MarketStream(
-            bus=bus,
-            config=MarketStreamConfig(
-                token_ids=self._token_ids,
-                stale_after=self._stale_after,
-            ),
-        )
+        stream = self._new_market_stream(bus)
         runner = asyncio.create_task(stream.run())
+        next_discovery_at = self._clock() + timedelta(
+            seconds=self._discovery_interval_seconds
+        )
         try:
             async with subscription:
                 while self._clock() < deadline:
                     wait_timeout = min(1.0, max(0.05, (deadline - self._clock()).total_seconds()))
                     next_event = asyncio.create_task(anext(subscription))
-                    sleeper: asyncio.Task[None] = asyncio.create_task(
-                        asyncio.sleep(wait_timeout)
-                    )
+                    sleeper = asyncio.ensure_future(self._sleep(wait_timeout))
                     done, pending = await asyncio.wait(
                         {next_event, sleeper, runner},
                         return_when=asyncio.FIRST_COMPLETED,
@@ -396,13 +423,75 @@ class OfficialMarketStreamSource:
                                 normalize_ns=self._monotonic_ns(),
                                 reason="stream_disconnected",
                             )
+                        stream = self._new_market_stream(bus)
                         runner = asyncio.create_task(stream.run())
+                    if self._clock() >= next_discovery_at:
+                        changed = await self._refresh_market_discovery()
+                        next_discovery_at = self._clock() + timedelta(
+                            seconds=self._discovery_interval_seconds
+                        )
+                        if changed:
+                            if not runner.done():
+                                runner.cancel()
+                                with suppress(asyncio.CancelledError):
+                                    await runner
+                            stream = self._new_market_stream(bus)
+                            runner = asyncio.create_task(stream.run())
+                            self.subscription_update_count += 1
         finally:
             if not runner.done():
                 runner.cancel()
                 with suppress(asyncio.CancelledError):
                     await runner
             await subscription.close()
+
+    def _new_market_stream(self, bus: Any) -> MarketStreamRunner:
+        if self._market_stream_factory is not None:
+            return self._market_stream_factory(bus, self._token_ids, self._stale_after)
+        from polysia.adapters.polymarket.stream import MarketStream, MarketStreamConfig
+
+        return MarketStream(
+            bus=bus,
+            config=MarketStreamConfig(
+                token_ids=self._token_ids,
+                stale_after=self._stale_after,
+            ),
+        )
+
+    async def _refresh_market_discovery(self) -> bool:
+        if self._market_discovery is None:
+            return False
+        try:
+            snapshot = await self._market_discovery()
+        except (
+            PolymarketCopyTradingSourceError,
+            TradesSourceUnavailableError,
+            HTTPError,
+            URLError,
+            OSError,
+            TimeoutError,
+            ValueError,
+            TypeError,
+        ):
+            self.discovery_failure_count += 1
+            return False
+        current = set(self._token_ids)
+        added = [
+            token
+            for token in snapshot.token_markets
+            if token and token not in current
+        ][: max(0, 500 - len(current))]
+        if added:
+            self._token_ids = (*self._token_ids, *added)
+        known = set(self._token_ids)
+        self._fee_schedules.update(
+            {
+                token: schedule
+                for token, schedule in snapshot.fee_schedules.items()
+                if token in known
+            }
+        )
+        return bool(added)
 
     def health_snapshot(self) -> Mapping[str, object]:
         return {
@@ -416,6 +505,8 @@ class OfficialMarketStreamSource:
             "failure_class": self._failure_class,
             "retry_at": None,
             "recovery_count": self.reconnect_count,
+            "subscription_update_count": self.subscription_update_count,
+            "discovery_failure_count": self.discovery_failure_count,
         }
 
     def _from_market_event(
@@ -785,6 +876,62 @@ async def discover_clob_market_fee_schedules(
                 if token is not None and str(token) in requested:
                     schedules[str(token)] = schedule
     return schedules
+
+
+class FollowedMarketDiscovery:
+    """Refresh a bounded followed-token set without repeating fee lookups."""
+
+    def __init__(
+        self,
+        transport: JsonGetTransport,
+        aliases: Mapping[str, str],
+        *,
+        token_limit: int = 500,
+        lookback: timedelta = timedelta(minutes=30),
+        clock: Clock | None = None,
+    ) -> None:
+        if not aliases:
+            raise ValueError("at least one public wallet alias is required")
+        if token_limit <= 0 or token_limit > 500:
+            raise ValueError("token_limit must be within [1, 500]")
+        self._transport = transport
+        self._aliases = dict(aliases)
+        self._token_limit = token_limit
+        self._lookback = lookback
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._token_markets: dict[str, str] = {}
+        self._fee_schedules: dict[str, MarketFeeSchedule] = {}
+        self._fee_retry_at: dict[str, datetime] = {}
+
+    async def refresh(self) -> MarketDiscoverySnapshot:
+        discovered = await discover_followed_markets(
+            self._transport,
+            self._aliases,
+            token_limit=self._token_limit,
+            lookback=self._lookback,
+            clock=self._clock,
+        )
+        for token, condition in discovered.items():
+            if token in self._token_markets or len(self._token_markets) < self._token_limit:
+                self._token_markets[token] = condition
+
+        now = self._clock()
+        pending = {
+            token: condition
+            for token, condition in self._token_markets.items()
+            if token not in self._fee_schedules
+            and self._fee_retry_at.get(token, now) <= now
+        }
+        resolved = await discover_clob_market_fee_schedules(self._transport, pending)
+        self._fee_schedules.update(resolved)
+        retry_at = now + timedelta(minutes=1)
+        self._fee_retry_at.update(
+            {token: retry_at for token in pending if token not in resolved}
+        )
+        return MarketDiscoverySnapshot(
+            token_markets=dict(self._token_markets),
+            fee_schedules=dict(self._fee_schedules),
+        )
 
 
 async def discover_market_fee_schedules(
