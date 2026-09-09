@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -121,6 +122,44 @@ def _quote(
     )
 
 
+def _depth_quote(
+    evidence_id: str,
+    *,
+    observed_time: datetime,
+    side: str = "BUY",
+    market: str = "market-a",
+    outcome: str = "token-a",
+    levels: tuple[tuple[str, str], ...] = (("0.50", "20"),),
+    fee_rate: str | None = "0.25",
+    fee_exponent: str | None = "2",
+) -> CanonicalResearchEvent:
+    snapshot = _snapshot(
+        evidence_id,
+        source_time=observed_time,
+        observed_time=observed_time,
+        market=market,
+        outcome=outcome,
+        price=Decimal(levels[0][0]),
+        side=side,
+        size=sum((Decimal(size) for _, size in levels), Decimal("0")),
+    )
+    return replace(
+        snapshot,
+        provenance={
+            "book_levels": [
+                {"price": price, "size": size} for price, size in levels
+            ],
+            "execution_evidence": fee_rate is not None and fee_exponent is not None,
+            "execution_evidence_version": "order-book-depth-v1",
+            "fee_calculation_version": "polymarket-taker-fee-v1",
+            "fee_exponent": fee_exponent,
+            "fee_rate": fee_rate,
+            "fee_taker_only": True,
+            "fees_enabled": True,
+        },
+    )
+
+
 def test_same_observations_control_accumulates_target_does_not() -> None:
     first = _trade("a", observed=OBSERVED)
     second = _trade("b", observed=OBSERVED + timedelta(seconds=1))
@@ -219,6 +258,75 @@ def test_missing_execution_evidence_stays_unknown() -> None:
         assert replay.control_decisions == (("a", ControlAdmission.UNKNOWN),)
         assert replay.target_decisions == (("a", "UNKNOWN"),)
         assert replay.unknown_count == 1
+
+
+def test_depth_execution_uses_asks_vwap_fee_and_partial_fill() -> None:
+    trade = _trade(
+        "buy",
+        observed=OBSERVED,
+        price=Decimal("0.50"),
+    )
+    quote = _depth_quote(
+        "depth",
+        observed_time=OBSERVED - timedelta(seconds=1),
+        levels=(("0.51", "4"), ("0.52", "10")),
+    )
+
+    replay = replay_same_observations((trade,), snapshots=(quote,))
+
+    evaluation = replay.evaluations[0]
+    assert evaluation.execution is not None
+    assert evaluation.execution.economically_complete is True
+    assert evaluation.execution.executable_price > Decimal("0.51")
+    assert evaluation.execution.notional == Decimal("5.000000000000000000000000000")
+    assert evaluation.execution.recorded_fee > Decimal("0")
+    assert evaluation.execution.partial_fill is False
+    assert replay.execution_evidence_count == 1
+
+
+def test_sell_uses_bids_and_reports_insufficient_depth_as_partial() -> None:
+    trade = _trade(
+        "sell",
+        observed=OBSERVED,
+        side="SELL",
+        price=Decimal("0.50"),
+    )
+    quote = _depth_quote(
+        "bids",
+        observed_time=OBSERVED - timedelta(seconds=1),
+        side="SELL",
+        levels=(("0.49", "2"), ("0.48", "1")),
+    )
+
+    replay = replay_same_observations((trade,), snapshots=(quote,))
+
+    execution = replay.evaluations[0].execution
+    assert execution is not None
+    assert execution.available_quantity == Decimal("3")
+    assert execution.executable_price == Decimal("0.4866666666666666666666666667")
+    assert execution.partial_fill is True
+    assert replay.partial_fill_count == 1
+
+
+def test_fee_and_causality_failures_are_exact() -> None:
+    trade = _trade("trade", observed=OBSERVED)
+    missing_fee = _depth_quote(
+        "missing-fee",
+        observed_time=OBSERVED - timedelta(seconds=1),
+        fee_rate=None,
+    )
+    future = _depth_quote("future", observed_time=OBSERVED + timedelta(milliseconds=1))
+    stale = _depth_quote("stale", observed_time=OBSERVED - timedelta(seconds=31))
+
+    assert replay_same_observations((trade,), snapshots=(missing_fee,)).unknown_by_cause == (
+        ("missing_fee", 1),
+    )
+    assert replay_same_observations((trade,), snapshots=(future,)).unknown_by_cause == (
+        ("missing_quote", 1),
+    )
+    assert replay_same_observations((trade,), snapshots=(stale,)).unknown_by_cause == (
+        ("stale_quote", 1),
+    )
 
 
 def test_missing_attribution_and_overload_stay_unknown() -> None:

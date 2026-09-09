@@ -479,30 +479,50 @@ def prospective_replay(
         typer.Option("--database"),
     ],
     run_id: Annotated[str, typer.Option("--run-id")],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
 ) -> None:
-    """Replay Current Control vs Target Exposure v1 from recorded research evidence."""
+    """Validate, replay, and economically evaluate one recorded experiment."""
 
     from polysia.backtesting.prospective_replay import replay_recorded_experiment
     from polysia.cli_commands.research_evidence_cli import sanitize_report
+    from polysia.deployment.recovery_bundle import sha256_file
+    from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
     from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
 
     try:
         store = ResearchEvidenceStore(database)
         store.initialize()
+        store.verify_integrity()
         scoped = replay_recorded_experiment(store, run_id=run_id)
         result = scoped.result
+        experiment = store.load_experiment(run_id)
+        if experiment is None:
+            raise ValueError("recorded experiment not found")
         payload = sanitize_report(
             {
+                "code_sha": experiment.code_sha,
+                "configuration_digest": experiment.configuration_digest,
                 "control_digest": result.control_digest,
+                "economic": scoped.economics.to_dict(),
+                "experiment_contract": CONTRACT_V1.to_dict(),
+                "experiment_contract_digest": CONTRACT_V1.digest,
                 "excluded_event_count": scoped.excluded_event_count,
                 "invalid_interval_count": len(scoped.invalid_intervals),
                 "invalidated": result.invalidated,
                 "interval_scope": "valid_intervals_only",
                 "replayed_event_count": scoped.replayed_event_count,
                 "run_id": run_id,
+                "source_database_sha256": sha256_file(database),
                 "target_digest": result.target_digest,
                 "unknown_count": result.unknown_count,
+                "unknown_by_cause": dict(result.unknown_by_cause),
                 "valid_interval_count": len(scoped.valid_intervals),
+                "summary": {
+                    "control_net_pnl": scoped.economics.control.to_dict()["net_pnl"],
+                    "data_canary": scoped.economics.data_canary_status,
+                    "economic": scoped.economics.economic_classification,
+                    "target_net_pnl": scoped.economics.target.to_dict()["net_pnl"],
+                },
                 "control_decisions": [
                     {"evidence_id": evidence_id, "decision": decision.value}
                     for evidence_id, decision in result.control_decisions
@@ -511,11 +531,33 @@ def prospective_replay(
                     {"evidence_id": evidence_id, "decision": str(decision)}
                     for evidence_id, decision in result.target_decisions
                 ],
+                "decision_evidence": [
+                    {
+                        "control_decision": row.control_decision,
+                        "decision_time": row.decision_time.isoformat(),
+                        "market_reference": row.market_reference,
+                        "outcome_reference": row.outcome_reference,
+                        "side": row.side,
+                        "snapshot_evidence_id": (
+                            None
+                            if row.execution is None
+                            else row.execution.snapshot_evidence_id
+                        ),
+                        "target_decision": row.target_decision,
+                        "unknown_reason": row.unknown_reason,
+                        "wallet_evidence_id": row.evidence_id,
+                    }
+                    for row in result.evaluations
+                ],
             }
         )
     except (OSError, ValueError, ResearchEvidenceStoreError) as error:
         print_error_and_exit(error)
-    typer.echo(json.dumps(payload, sort_keys=True))
+    text = json.dumps(payload, sort_keys=True)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"{text}\n", encoding="utf-8")
+    typer.echo(text)
 
 
 def prospective_collect(
@@ -569,7 +611,14 @@ def prospective_collect(
         store = ResearchEvidenceStore(database)
         required = discovery["required_source_ids"]
         optional = discovery["optional_source_ids"]
-        if not isinstance(required, list) or not isinstance(optional, list):
+        aliases = discovery["followed_aliases"]
+        tokens = discovery["market_tokens"]
+        if (
+            not isinstance(required, list)
+            or not isinstance(optional, list)
+            or not isinstance(aliases, list)
+            or not isinstance(tokens, list)
+        ):
             raise ValueError("source discovery payload is invalid")
         collector = PersistentProspectiveCollector(
             store,
@@ -580,6 +629,8 @@ def prospective_collect(
                 report_dir=report_dir,
                 required_source_ids=tuple(str(item) for item in required),
                 optional_source_ids=tuple(str(item) for item in optional),
+                tracked_wallet_aliases=tuple(str(item) for item in aliases),
+                tracked_market_tokens=tuple(str(item) for item in tokens),
                 code_sha=code_sha,
                 experiment_duration=timedelta(seconds=experiment_duration_seconds),
                 experiment_max_events=experiment_max_events,

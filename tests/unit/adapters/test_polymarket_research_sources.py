@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -17,6 +18,7 @@ from polysia.adapters.polymarket.research_sources import (
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.domain.events import MarketDataEvent
+from polysia.domain.market import MarketFeeSchedule
 from polysia.domain.research_evidence.models import (
     AttributionStatus,
     ObservationKind,
@@ -155,6 +157,60 @@ async def test_market_stream_is_not_wallet_attributable() -> None:
     assert events[0].attribution_status is AttributionStatus.NOT_APPLICABLE
     assert events[0].leader_alias is None
     assert source.candidate.wallet_attributable is False
+
+
+@pytest.mark.asyncio
+async def test_market_book_emits_side_aware_depth_and_fee_evidence() -> None:
+    async def factory():
+        yield MarketDataEvent(
+            source="polymarket",
+            event_type="book",
+            token_id="token-1",
+            received_at=OBSERVED,
+            exchange_ts=OBSERVED - timedelta(milliseconds=20),
+            payload={
+                "market": "market-a",
+                "bids": [
+                    {"price": "0.48", "size": "4"},
+                    {"price": "0.47", "size": "10"},
+                ],
+                "asks": [
+                    {"price": "0.52", "size": "3"},
+                    {"price": "0.53", "size": "10"},
+                ],
+            },
+            raw_payload={},
+        )
+
+    source = OfficialMarketStreamSource(
+        token_ids=("token-1",),
+        event_factory=factory,
+        clock=lambda: OBSERVED,
+        monotonic_ns=lambda: 5,
+        fee_schedules={
+            "token-1": MarketFeeSchedule(
+                enabled=True,
+                rate=Decimal("0.25"),
+                exponent=Decimal("2"),
+                taker_only=True,
+            )
+        },
+    )
+    events = [
+        event
+        async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
+    ]
+
+    assert len(events) == 3
+    base, buy, sell = events
+    assert base.market_reference == "market-a"
+    assert base.price == Decimal("0.48")
+    assert buy.side == "BUY" and buy.price == Decimal("0.52")
+    assert sell.side == "SELL" and sell.price == Decimal("0.48")
+    assert buy.provenance["book_levels"][1] == {"price": "0.53", "size": "10"}
+    assert sell.provenance["fee_exponent"] == "2"
+    assert buy.related_evidence_id == base.evidence_id
+    assert buy.provenance["execution_evidence"] is True
 
 
 def test_wallet_observation_identity_preserves_distinct_wallet_attribution() -> None:

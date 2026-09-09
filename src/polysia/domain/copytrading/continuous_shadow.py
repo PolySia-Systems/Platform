@@ -246,10 +246,13 @@ def calculate_verified_taker_fee(
             schedule.exponent,
             schedule.taker_only,
         )
-    try:
-        per_share = schedule.rate * ((price * (ONE - price)) ** schedule.exponent)
-        amount = (size * per_share).quantize(FEE_QUANTUM)
-    except (InvalidOperation, ValueError):
+    amount = calculate_taker_fee_amount(
+        price=price,
+        size=size,
+        rate=schedule.rate,
+        exponent=schedule.exponent,
+    )
+    if amount is None:
         return FeeEvidence(
             None,
             "UNKNOWN",
@@ -266,6 +269,31 @@ def calculate_verified_taker_fee(
         schedule.exponent,
         schedule.taker_only,
     )
+
+
+def calculate_taker_fee_amount(
+    *,
+    price: Decimal,
+    size: Decimal,
+    rate: Decimal,
+    exponent: Decimal,
+) -> Decimal | None:
+    """Apply the shared prediction-market taker-fee calculation."""
+
+    if (
+        not all(value.is_finite() for value in (price, size, rate, exponent))
+        or price <= ZERO
+        or price >= ONE
+        or size < ZERO
+        or rate < ZERO
+        or exponent < ZERO
+    ):
+        return None
+    try:
+        per_share = rate * ((price * (ONE - price)) ** exponent)
+        return (size * per_share).quantize(FEE_QUANTUM)
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def walk_order_book(
@@ -417,6 +445,7 @@ __all__ = [
     "FeeEvidence",
     "adverse_price_drift_exceeded",
     "calculate_verified_taker_fee",
+    "calculate_taker_fee_amount",
     "follower_accepts_pool",
     "mark_freshness",
     "quote_is_fresh",

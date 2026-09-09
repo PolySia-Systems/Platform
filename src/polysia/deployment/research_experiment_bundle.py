@@ -15,6 +15,7 @@ from uuid import uuid4
 from polysia.backtesting.prospective_replay import replay_recorded_experiment
 from polysia.deployment.recovery_bundle import sha256_file
 from polysia.deployment.sqlite_backup import restore_sqlite_backup, verify_sqlite_backup
+from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
 
 
@@ -92,6 +93,8 @@ def finalize_research_experiment(
             "code_sha": experiment.code_sha,
             "policy_version": experiment.policy_version,
             "configuration_digest": experiment.configuration_digest,
+            "experiment_contract": CONTRACT_V1.to_dict(),
+            "experiment_contract_digest": CONTRACT_V1.digest,
             "max_events": experiment.max_events,
             "max_bytes": experiment.max_bytes,
             "event_count": replica.experiment_event_count(run_id),
@@ -110,7 +113,9 @@ def finalize_research_experiment(
                 "scope": "valid_intervals_only",
                 "target_digest": first.result.target_digest,
                 "unknown_count": first.result.unknown_count,
+                "unknown_by_cause": dict(first.result.unknown_by_cause),
             },
+            "economic": first.economics.to_dict(),
         }
         manifest_path = staging / "experiment-manifest.json"
         manifest_path.write_text(

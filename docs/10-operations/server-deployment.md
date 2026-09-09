@@ -92,6 +92,30 @@ command additionally requires a successful required-source request in the
 active window. A quiet successful request is eligible; `retrying`, an
 unresolved transport failure, or an ended required source is not.
 
+For an economic canary, use a fresh database/run and freeze T0 before starting.
+Stop after exactly two ten-minute windows, snapshot through the SQLite Backup
+API, and run the canonical evaluation twice on that stopped snapshot:
+
+```bash
+python -m polysia.cli research prospective-replay \
+  --database <canary-snapshot.sqlite3> --run-id <run-id> \
+  --output <canary-analysis.json>
+```
+
+The two economic and decision digests must match. Data `PASS` additionally
+requires 20 eligible wallet observations, complete accounting, mapping >= 95%,
+and executable-evidence coverage >= 90%. Verify health, restart count, bounded
+DB/WAL/report/log growth, empty Live allowlist, Live disabled, and zero mutating
+order calls separately. `INSUFFICIENT_ACTIVITY` is not permission to extend the
+canary. Any `FAIL` requires a new green SHA and new T0; never weaken thresholds.
+
+Only after a canary `PASS`, start one fresh experiment for no more than four
+hours under the unchanged SHA, follow set, contract, and caps. Finalize and
+restore-test it with `prospective-finalize`, copy the complete bundle and
+analysis off-host, and rerun canonical evaluation twice. Keep the technical
+result separate from `POSITIVE`, `NEGATIVE`, or `INSUFFICIENT_DATA`; none of
+these authorizes Live trading.
+
 The Compose collector declares a four-hour / 750,000-event / 768-MiB active
 experiment. Stop the collector before finalization, then create the one-time
 verified evidence bundle:

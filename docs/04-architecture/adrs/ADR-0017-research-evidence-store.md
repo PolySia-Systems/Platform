@@ -59,6 +59,14 @@ SQLite Backup-API snapshot, restores and verifies it, reproduces replay, and
 only then marks the experiment finalized. This adds no database service and
 does not turn rotating recovery backups into a continuous archive.
 
+Economic evaluation remains inside the same research boundary. Side-aware
+book-depth and official fee-schedule provenance are stored as versioned
+canonical market evidence; no financial or parallel research database is
+added. The existing prospective replay joins each Wallet observation only to
+market evidence already observed at its decision time and emits a deterministic
+cost-aware Control-versus-Target report. This path has no Risk, Execution, or
+Live authority.
+
 ## Consequences
 
 Prospective collection and replay can proceed without mutating financial
