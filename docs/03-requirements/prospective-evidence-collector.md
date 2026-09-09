@@ -151,10 +151,12 @@ accepted only when non-zero causal depth exists and are reported explicitly.
 
 Each executable snapshot stores full bounded book levels, market/token mapping,
 source and observation clocks, fee schedule provenance, and a related base-book
-evidence ID. Persistent collection discovers the followed wallets' token set
-over the same 30-minute lookback used by wallet polling, capped at 500 tokens,
-and resolves each condition through the official public CLOB market-info
-surface. Fee-enabled markets require its rate, exponent, and taker-only flag.
+evidence ID. Persistent collection discovers and refreshes the followed
+wallets' token set over the same 30-minute lookback used by wallet polling,
+capped at 500 tokens. New tokens extend the active public market subscription
+without waiting for a window boundary. Each condition is resolved through the
+official public CLOB market-info surface once per run. Fee-enabled markets
+require its rate, exponent, and taker-only flag.
 Disabled fees are verified zero; unknown fee data stays
 `missing_fee`. Replay selects only evidence observed at or before the wallet
 decision and no older than 30 seconds. Missing mapping, quote, depth, fee, or
