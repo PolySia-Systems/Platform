@@ -139,6 +139,52 @@ qualifying snapshot deterministically, and never interpolate prices.
 This is not a second accounting engine. Stage 4B ledger semantics remain in
 the historical replay path.
 
+## Prospective economic contract v1
+
+`prospective-economic-v1` freezes the recorded follow set and public source
+identities in the experiment configuration digest. It compares
+`continuous-shadow-policy-v0.2` with `target-exposure-v1` from equal synthetic
+capital (1000), a 5-unit BUY budget, and the existing 100-unit per-market cap.
+BUY consumes asks and is bounded by account-currency budget and leader shares;
+SELL consumes bids and is bounded by held and leader shares. Partial fills are
+accepted only when non-zero causal depth exists and are reported explicitly.
+
+Each executable snapshot stores full bounded book levels, market/token mapping,
+source and observation clocks, fee schedule provenance, and a related base-book
+evidence ID. Fee-enabled markets require the official SDK rate, exponent, and
+taker-only flag. Disabled fees are verified zero; unknown fee data stays
+`missing_fee`. Replay selects only evidence observed at or before the wallet
+decision and no older than 30 seconds. Missing mapping, quote, depth, fee, or
+freshness is classified exactly and no eligible wallet observation is silently
+discarded.
+
+The canonical command is:
+
+```text
+python -m polysia.cli research prospective-replay \
+  --database <immutable-or-stopped-research-db> --run-id <run-id> \
+  --output <versioned-analysis.json>
+```
+
+It validates storage, replays both policies over identical evidence, and emits
+deterministic decision/economic digests, evidence links, configuration and
+contract identity, data coverage, fees, slippage, net P&L, exposure, drawdown,
+and open-position valuation status. The raw bundle is never modified.
+
+A 20-minute canary uses all deduplicated confirmed wallet observations in
+independently `VALID` windows. `PASS` requires at least 20 eligible observations,
+100% explicit accounting, at least 95% market/token mapping, at least 90%
+complete executable evidence, deterministic replay, no look-ahead, and the
+separate runtime safety gates in the deployment runbook. Fewer than 20 is
+`INSUFFICIENT_ACTIVITY`; another failed threshold is `FAIL`. Thresholds must
+not change after T0.
+
+The economic classification is independent: `INSUFFICIENT_DATA` when complete
+evidence or terminal valuation is inadequate, `POSITIVE` only when Target net
+P&L is positive, otherwise `NEGATIVE`. A bounded positive result is not proof of
+persistent Alpha or Live readiness. Market-only and placebo controls remain
+`UNSUPPORTED` until independently collected evidence exists.
+
 ## Later research capture
 
 Wallet+Market research needs accepted wallet-attributable trades plus

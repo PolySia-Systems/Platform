@@ -72,6 +72,12 @@ CURRENT capabilities:
   active experiment evidence is retained until verified bundle finalization.
   They do not write into Stage 4B financial state or the latency sidecar. See
   [Prospective Research Evidence Collector](../03-requirements/prospective-evidence-collector.md).
+- Prospective economic evaluation now has a frozen v1 contract and one
+  deterministic command. It links each eligible Wallet observation to causal
+  side-aware depth and verified fee evidence, then reports cost-aware Current
+  Control versus Target Exposure results. Historical evidence without this
+  bridge remains `INSUFFICIENT_DATA`; a new bounded DATA_ONLY canary and
+  experiment are operational work, not proof of Live readiness.
 - Combined backups validate staged snapshots before publishing and rotating a
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
@@ -93,8 +99,8 @@ Earlier dated deployment, restart, backup, restore, storage, and replay evidence
 remains in [Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
 
 **Next task:** deploy the exact green current SHA to Helsinki in DATA_ONLY,
-confirm required Wallet-source recovery and eligibility, record a fresh T0,
-and finish one bounded experiment bundle before economic evaluation. Preserve
+run the frozen 20-minute economic-data canary, and only after `PASS` finish one
+bounded four-hour bundle and deterministic economic evaluation. Preserve
 `UNKNOWN`; do not access Nuremberg without separate authorization.
 
 Blockers and limitations:

@@ -21,6 +21,7 @@ from polysia.domain.copytrading.target_exposure import (
     TargetExposurePolicy,
     decide_entry,
 )
+from polysia.domain.research_evidence.economic_contract import taker_fee
 from polysia.domain.research_evidence.models import (
     AttributionStatus,
     CanonicalResearchEvent,
@@ -77,6 +78,26 @@ class ExecutionEvidence:
     executable_price: Decimal
     available_quantity: Decimal
     recorded_fee: Decimal
+    notional: Decimal = ZERO
+    slippage: Decimal = ZERO
+    partial_fill: bool = False
+    fee_rate: Decimal | None = None
+    fee_model_version: str = "legacy-recorded-fee"
+    economically_complete: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationEvaluation:
+    evidence_id: str
+    leader_alias: str | None
+    market_reference: str
+    outcome_reference: str
+    side: str
+    decision_time: datetime
+    execution: ExecutionEvidence | None
+    unknown_reason: str | None
+    control_decision: str
+    target_decision: str
 
 
 @dataclass(slots=True)
@@ -84,6 +105,8 @@ class _EpisodeState:
     open: bool = False
     first_price: Decimal | None = None
     exposure: Decimal = ZERO
+    quantity: Decimal = ZERO
+    closed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +119,12 @@ class SameObservationReplay:
     target_digest: str
     unknown_count: int
     invalidated: bool
+    unknown_by_cause: tuple[tuple[str, int], ...] = ()
+    evaluations: tuple[ObservationEvaluation, ...] = ()
+    eligible_observation_count: int = 0
+    mapped_observation_count: int = 0
+    execution_evidence_count: int = 0
+    partial_fill_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +146,13 @@ class _ReplaySnapshotIndex:
             list[tuple[datetime, CanonicalResearchEvent]],
         ] = defaultdict(list)
         for snapshot in snapshots:
-            if not _is_base_snapshot(snapshot) or snapshot.outcome_reference is None:
+            if snapshot.outcome_reference is None:
                 continue
-            if snapshot.price is not None:
+            if (
+                _is_base_snapshot(snapshot)
+                and snapshot.price is not None
+                and snapshot.provenance.get("markout_eligible") is not False
+            ):
                 markouts[
                     (snapshot.outcome_reference, MarkoutTimeBasis.FOLLOWER_OBSERVED)
                 ].append((snapshot.observed_time, snapshot))
@@ -127,14 +160,8 @@ class _ReplaySnapshotIndex:
                     markouts[
                         (snapshot.outcome_reference, MarkoutTimeBasis.LEADER_SOURCE)
                     ].append((snapshot.source_time, snapshot))
-            if (
-                snapshot.side is not None
-                and snapshot.price is not None
-                and snapshot.size is not None
-                and snapshot.provenance.get("execution_evidence") is True
-                and _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
-                is not None
-            ):
+            if _is_execution_candidate(snapshot):
+                assert snapshot.side is not None
                 executions[(snapshot.outcome_reference, snapshot.side)].append(
                     (snapshot.observed_time, snapshot)
                 )
@@ -181,30 +208,55 @@ class _ReplaySnapshotIndex:
         *,
         observation: ProspectiveObservation,
         max_age: timedelta,
-    ) -> ExecutionEvidence | None:
+        entry_budget: Decimal,
+    ) -> tuple[ExecutionEvidence | None, str | None, bool]:
         if max_age.total_seconds() < 0:
             raise ValueError("execution evidence max_age must not be negative")
         timeline = self._executions.get(
             (observation.outcome_reference, observation.side)
         )
         if timeline is None:
-            return None
-        cutoff = observation.observed_time - max_age
-        left = bisect_left(timeline.times, cutoff)
-        right = bisect_right(timeline.times, observation.observed_time)
-        for snapshot in reversed(timeline.events[left:right]):
-            if snapshot.market_reference not in {None, observation.market_reference}:
-                continue
-            fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
-            if fee is None or snapshot.price is None or snapshot.size is None:
-                continue
-            return ExecutionEvidence(
-                snapshot_evidence_id=snapshot.evidence_id,
-                executable_price=snapshot.price,
-                available_quantity=snapshot.size,
-                recorded_fee=fee,
+            mapped = any(
+                key[0] == observation.outcome_reference for key in self._executions
             )
-        return None
+            return None, "missing_quote" if mapped else "missing_market_token_mapping", mapped
+        exact = tuple(
+            snapshot
+            for snapshot in timeline.events
+            if snapshot.market_reference == observation.market_reference
+        )
+        if not exact:
+            return None, "missing_market_token_mapping", False
+        cutoff = observation.observed_time - max_age
+        eligible = tuple(
+            snapshot
+            for snapshot in exact
+            if cutoff <= snapshot.observed_time <= observation.observed_time
+        )
+        for snapshot in reversed(eligible):
+            if snapshot.provenance.get("execution_evidence_version") == "order-book-depth-v1":
+                evidence, reason = depth_execution_from_snapshot(
+                    snapshot,
+                    observation=observation,
+                    entry_budget=entry_budget,
+                )
+                return evidence, reason, True
+            fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
+            if fee is not None and snapshot.price is not None and snapshot.size is not None:
+                return (
+                    ExecutionEvidence(
+                        snapshot_evidence_id=snapshot.evidence_id,
+                        executable_price=snapshot.price,
+                        available_quantity=snapshot.size,
+                        recorded_fee=fee,
+                    ),
+                    None,
+                    True,
+                )
+            return None, str(snapshot.provenance.get("execution_failure") or "missing_fee"), True
+        if any(snapshot.observed_time < cutoff for snapshot in exact):
+            return None, "stale_quote", True
+        return None, "missing_quote", True
 
 
 def observation_from_event(event: CanonicalResearchEvent) -> ProspectiveObservation | None:
@@ -347,9 +399,15 @@ def replay_same_observations(
     target: list[tuple[str, TargetExposureDecision | str]] = []
     leader_markouts: list[tuple[str, tuple[MarkoutLookup, ...]]] = []
     follower_markouts: list[tuple[str, tuple[MarkoutLookup, ...]]] = []
+    evaluations: list[ObservationEvaluation] = []
+    unknown_by_cause: dict[str, int] = defaultdict(int)
     unknown_count = 0
+    eligible_count = 0
+    mapped_count = 0
+    execution_count = 0
+    partial_count = 0
     target_episodes: dict[tuple[str, str], _EpisodeState] = {}
-    control_exposures: dict[tuple[str, str], Decimal] = {}
+    control_episodes: dict[tuple[str, str], _EpisodeState] = {}
     control_cash = Decimal("1000")
     target_cash = Decimal("1000")
     snapshot_index = _ReplaySnapshotIndex(snapshots)
@@ -371,66 +429,171 @@ def replay_same_observations(
             control.append((observation.evidence_id, ControlAdmission.INVALIDATED))
             target.append((observation.evidence_id, "INVALIDATED"))
             continue
+        eligible_count += 1
         key = (observation.market_reference, observation.outcome_reference)
         episode = target_episodes.setdefault(key, _EpisodeState())
-        execution = snapshot_index.execution(
+        control_episode = control_episodes.setdefault(key, _EpisodeState())
+        execution, unknown_reason, mapped = snapshot_index.execution(
             observation=observation,
             max_age=execution_evidence_max_age,
+            entry_budget=policy.entry_budget,
         )
-        if observation.side == "BUY":
-            if execution is None:
-                unknown_count += 1
-                control.append((observation.evidence_id, ControlAdmission.UNKNOWN))
-                target.append((observation.evidence_id, "UNKNOWN"))
-                _append_markouts(
-                    observation,
-                    snapshot_index=snapshot_index,
-                    tolerance=markout_tolerance,
-                    leader=leader_markouts,
-                    follower=follower_markouts,
+        if mapped:
+            mapped_count += 1
+        if execution is not None and execution.economically_complete:
+            execution_count += 1
+            if execution.partial_fill:
+                partial_count += 1
+        control_decision: ControlAdmission
+        target_decision: TargetExposureDecision | str
+        if execution is None:
+            reason = unknown_reason or "missing_quote"
+            unknown_count += 1
+            unknown_by_cause[reason] += 1
+            control_decision = ControlAdmission.UNKNOWN
+            target_decision = "UNKNOWN"
+            control.append((observation.evidence_id, control_decision))
+            target.append((observation.evidence_id, target_decision))
+            evaluations.append(
+                ObservationEvaluation(
+                    evidence_id=observation.evidence_id,
+                    leader_alias=event.leader_alias,
+                    market_reference=observation.market_reference,
+                    outcome_reference=observation.outcome_reference,
+                    side=observation.side,
+                    decision_time=observation.observed_time,
+                    execution=None,
+                    unknown_reason=reason,
+                    control_decision=control_decision.value,
+                    target_decision=str(target_decision),
                 )
-                continue
-            requested = min(observation.size, execution.available_quantity)
-            requested_fee = (
-                execution.recorded_fee * requested / execution.available_quantity
             )
-            control_notional = min(
+            _append_markouts(
+                observation,
+                snapshot_index=snapshot_index,
+                tolerance=markout_tolerance,
+                leader=leader_markouts,
+                follower=follower_markouts,
+            )
+            continue
+        if observation.side == "BUY":
+            control_notional = execution.notional or min(
                 policy.entry_budget,
-                execution.executable_price * requested,
+                execution.executable_price * execution.available_quantity,
             )
             control_quantity = control_notional / execution.executable_price
-            control_fee = requested_fee * control_quantity / requested
-            control_exposure = control_exposures.get(key, ZERO)
+            requested = control_quantity
+            control_fee = (
+                execution.recorded_fee
+                if execution.notional > ZERO
+                else execution.recorded_fee
+                * control_quantity
+                / execution.available_quantity
+            )
+            requested_fee = control_fee
+            market_exposure = sum(
+                item.exposure
+                for episode_key, item in control_episodes.items()
+                if episode_key[0] == key[0]
+            )
             if (
                 control_cash >= control_notional + control_fee
-                and control_exposure + control_notional <= policy.market_exposure_cap
+                and market_exposure + control_notional <= policy.market_exposure_cap
             ):
-                control.append((observation.evidence_id, ControlAdmission.ADMIT))
+                control_decision = ControlAdmission.ADMIT
                 control_cash -= control_notional + control_fee
-                control_exposures[key] = control_exposure + control_notional
+                control_episode.open = True
+                control_episode.quantity += control_quantity
+                control_episode.exposure += control_notional
             else:
-                control.append((observation.evidence_id, ControlAdmission.SKIP))
+                control_decision = ControlAdmission.SKIP
+            control.append((observation.evidence_id, control_decision))
             admission = decide_entry(
                 policy,
                 episode_open=episode.open,
-                episode_closed=False,
+                episode_closed=episode.closed,
                 first_entry_price=episode.first_price,
                 executable_price=execution.executable_price,
                 requested_quantity=requested,
                 recorded_fee=requested_fee,
-                opposing_quantity=ZERO,
-                market_exposure=episode.exposure,
+                opposing_quantity=sum(
+                    (
+                        item.quantity
+                        for episode_key, item in target_episodes.items()
+                        if episode_key[0] == key[0] and episode_key != key
+                    ),
+                    ZERO,
+                ),
+                market_exposure=sum(
+                    (
+                        item.exposure
+                        for episode_key, item in target_episodes.items()
+                        if episode_key[0] == key[0]
+                    ),
+                    ZERO,
+                ),
                 cash=target_cash,
             )
-            target.append((observation.evidence_id, admission.decision))
+            target_decision = admission.decision
+            target.append((observation.evidence_id, target_decision))
             if admission.accepted:
                 episode.open = True
                 episode.first_price = execution.executable_price
                 target_cash -= admission.notional + admission.fee
                 episode.exposure += admission.notional
+                episode.quantity += admission.target_quantity
         else:
-            control.append((observation.evidence_id, ControlAdmission.SKIP))
-            target.append((observation.evidence_id, TargetExposureDecision.SKIP_REPEAT_SIGNAL))
+            if control_episode.quantity > ZERO:
+                control_decision = ControlAdmission.ADMIT
+                exit_quantity = min(control_episode.quantity, execution.available_quantity)
+                ratio = exit_quantity / control_episode.quantity
+                released = control_episode.exposure * ratio
+                control_episode.quantity -= exit_quantity
+                control_episode.exposure -= released
+                control_cash += execution.executable_price * exit_quantity - (
+                    execution.recorded_fee * exit_quantity / execution.available_quantity
+                )
+                if control_episode.quantity <= Decimal("0.000001"):
+                    control_episode.quantity = ZERO
+                    control_episode.exposure = ZERO
+                    control_episode.open = False
+                    control_episode.closed = True
+            else:
+                control_decision = ControlAdmission.SKIP
+            if episode.quantity > ZERO:
+                target_decision = "EXIT"
+                exit_quantity = min(episode.quantity, execution.available_quantity)
+                ratio = exit_quantity / episode.quantity
+                released = episode.exposure * ratio
+                episode.quantity -= exit_quantity
+                episode.exposure -= released
+                target_cash += execution.executable_price * exit_quantity - (
+                    execution.recorded_fee * exit_quantity / execution.available_quantity
+                )
+                if episode.quantity <= Decimal("0.000001"):
+                    episode.quantity = ZERO
+                    episode.exposure = ZERO
+                    episode.open = False
+                    episode.closed = True
+            else:
+                target_decision = TargetExposureDecision.SKIP_REPEAT_SIGNAL
+            control.append((observation.evidence_id, control_decision))
+            target.append((observation.evidence_id, target_decision))
+
+        evaluations.append(
+            ObservationEvaluation(
+                evidence_id=observation.evidence_id,
+                leader_alias=event.leader_alias,
+                market_reference=observation.market_reference,
+                outcome_reference=observation.outcome_reference,
+                side=observation.side,
+                decision_time=observation.observed_time,
+                execution=execution,
+                unknown_reason=None,
+                control_decision=control_decision.value,
+                target_decision=str(target_decision),
+            )
+        )
 
         _append_markouts(
             observation,
@@ -451,6 +614,12 @@ def replay_same_observations(
         target_digest=target_digest,
         unknown_count=unknown_count,
         invalidated=not interval_valid,
+        unknown_by_cause=tuple(sorted(unknown_by_cause.items())),
+        evaluations=tuple(evaluations),
+        eligible_observation_count=eligible_count,
+        mapped_observation_count=mapped_count,
+        execution_evidence_count=execution_count,
+        partial_fill_count=partial_count,
     )
 
 
@@ -540,6 +709,118 @@ def _is_base_snapshot(snapshot: CanonicalResearchEvent) -> bool:
     )
 
 
+def _is_execution_candidate(snapshot: CanonicalResearchEvent) -> bool:
+    return (
+        snapshot.event_kind is ObservationKind.MARKET_STATE
+        and snapshot.classification is EvidenceClassification.ACCEPTED
+        and snapshot.outcome_reference is not None
+        and snapshot.side in {"BUY", "SELL"}
+        and (
+            snapshot.provenance.get("execution_evidence_version")
+            == "order-book-depth-v1"
+            or snapshot.provenance.get("execution_evidence") is True
+        )
+    )
+
+
+def depth_execution_from_snapshot(
+    snapshot: CanonicalResearchEvent,
+    *,
+    observation: ProspectiveObservation,
+    entry_budget: Decimal,
+) -> tuple[ExecutionEvidence | None, str | None]:
+    enabled = snapshot.provenance.get("fees_enabled")
+    rate = _nonnegative_decimal(snapshot.provenance.get("fee_rate"))
+    exponent = _nonnegative_decimal(snapshot.provenance.get("fee_exponent"))
+    taker_only = snapshot.provenance.get("fee_taker_only")
+    if enabled is False:
+        rate = ZERO
+        exponent = ZERO
+        taker_only = True
+    if rate is None or exponent is None or taker_only is not True:
+        return None, "missing_fee"
+    raw_levels = snapshot.provenance.get("book_levels")
+    if not isinstance(raw_levels, list | tuple) or not raw_levels:
+        return None, "missing_depth"
+    levels: list[tuple[Decimal, Decimal]] = []
+    for raw in raw_levels:
+        if not isinstance(raw, dict):
+            return None, "missing_depth"
+        price = _positive_decimal(raw.get("price"))
+        size = _positive_decimal(raw.get("size"))
+        if price is None or size is None:
+            return None, "missing_depth"
+        levels.append((price, size))
+    remaining_quantity = observation.size
+    requested_notional = min(entry_budget, observation.price * observation.size)
+    remaining_notional = requested_notional
+    filled = ZERO
+    notional = ZERO
+    fee = ZERO
+    for price, available in levels:
+        if observation.side == "BUY":
+            quantity = min(available, remaining_quantity, remaining_notional / price)
+        else:
+            quantity = min(available, remaining_quantity)
+        if quantity <= ZERO:
+            continue
+        filled += quantity
+        level_notional = price * quantity
+        notional += level_notional
+        fee += taker_fee(
+            shares=quantity,
+            price=price,
+            rate=rate,
+            exponent=exponent,
+        )
+        remaining_quantity -= quantity
+        if observation.side == "BUY":
+            remaining_notional -= level_notional
+            if remaining_notional <= Decimal("0.000000000001"):
+                break
+        elif remaining_quantity <= ZERO:
+            break
+    if filled <= ZERO or notional <= ZERO:
+        return None, "insufficient_depth"
+    quantity_remaining = remaining_quantity > Decimal("0.000001")
+    partial = (
+        quantity_remaining and remaining_notional > Decimal("0.000001")
+        if observation.side == "BUY"
+        else quantity_remaining
+    )
+    vwap = notional / filled
+    slippage_per_share = (
+        max(ZERO, vwap - observation.price)
+        if observation.side == "BUY"
+        else max(ZERO, observation.price - vwap)
+    )
+    return (
+        ExecutionEvidence(
+            snapshot_evidence_id=snapshot.evidence_id,
+            executable_price=vwap,
+            available_quantity=filled,
+            recorded_fee=fee,
+            notional=notional,
+            slippage=slippage_per_share * filled,
+            partial_fill=partial,
+            fee_rate=rate,
+            fee_model_version=str(
+                snapshot.provenance.get("fee_calculation_version")
+                or "polymarket-taker-fee-v1"
+            ),
+            economically_complete=True,
+        ),
+        None,
+    )
+
+
+def _positive_decimal(value: object) -> Decimal | None:
+    parsed = _nonnegative_decimal(value)
+    if parsed is None or parsed <= ZERO:
+        return None
+    return parsed
+
+
 def _validate_markout_request(*, horizon: timedelta, tolerance: timedelta) -> None:
     if horizon not in MARKOUT_HORIZONS:
         raise ValueError("markout horizon is not in the frozen set")
@@ -587,3 +868,19 @@ def _decision_digest(rows: Sequence[tuple[str, object]]) -> str:
             "rows": tuple((evidence_id, str(decision)) for evidence_id, decision in rows),
         }
     )
+
+
+__all__ = [
+    "ControlAdmission",
+    "ExecutionEvidence",
+    "MarkoutLookup",
+    "MarkoutTimeBasis",
+    "ObservationEvaluation",
+    "ProspectiveObservation",
+    "SameObservationReplay",
+    "depth_execution_from_snapshot",
+    "lookup_event_time_mark",
+    "lookup_execution_evidence",
+    "observation_from_event",
+    "replay_same_observations",
+]

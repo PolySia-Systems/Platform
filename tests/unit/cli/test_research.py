@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 from typer.testing import CliRunner
 
+from polysia.application.services.prospective_collector import ProspectiveCollector
 from polysia.cli import app
+from polysia.domain.research_evidence.models import (
+    RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    AttributionStatus,
+    CanonicalResearchEvent,
+    ConfirmationStatus,
+    EvidenceClassification,
+    ObservationKind,
+    payload_digest,
+)
 from polysia.monitoring.real_data_shadow_run import RealDataShadowMetrics, RealDataShadowRunReport
+from polysia.storage.research_evidence import ResearchEvidenceStore
 
 runner = CliRunner()
 
@@ -367,6 +378,99 @@ def test_prospective_replay_requires_recorded_run(tmp_path: Path) -> None:
     assert result.exit_code == 1
     payload = json.loads(result.stderr)
     assert payload["status"] == "error"
+
+
+def test_prospective_replay_emits_versioned_economic_evidence(tmp_path: Path) -> None:
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.start_or_resume_experiment(
+        requested_run_id="economic-run",
+        duration=timedelta(hours=1),
+        max_events=100,
+        max_bytes=10_000_000,
+        code_sha="a" * 40,
+        configuration_digest="configuration",
+    )
+    collector = ProspectiveCollector(store, run_id="economic-run")
+    observed = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
+    quote = CanonicalResearchEvent(
+        evidence_id="quote",
+        schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        source_id="market",
+        event_kind=ObservationKind.MARKET_STATE,
+        classification=EvidenceClassification.ACCEPTED,
+        market_reference="market-a",
+        outcome_reference="token-a",
+        side="BUY",
+        price=Decimal("0.51"),
+        size=Decimal("20"),
+        source_time=observed - timedelta(seconds=1),
+        observed_time=observed - timedelta(seconds=1),
+        receive_monotonic_ns=1,
+        normalize_monotonic_ns=2,
+        attribution_status=AttributionStatus.NOT_APPLICABLE,
+        leader_alias=None,
+        confirmation=ConfirmationStatus.CONFIRMED,
+        payload_digest=payload_digest({"id": "quote"}),
+        provenance={
+            "book_levels": [{"price": "0.51", "size": "20"}],
+            "execution_evidence": True,
+            "execution_evidence_version": "order-book-depth-v1",
+            "fee_exponent": "0",
+            "fee_rate": "0",
+            "fee_taker_only": True,
+            "fees_enabled": False,
+        },
+        run_id="economic-run",
+    )
+    wallet = CanonicalResearchEvent(
+        evidence_id="wallet",
+        schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        source_id="wallet",
+        event_kind=ObservationKind.WALLET_TRADE,
+        classification=EvidenceClassification.ACCEPTED,
+        market_reference="market-a",
+        outcome_reference="token-a",
+        side="BUY",
+        price=Decimal("0.50"),
+        size=Decimal("10"),
+        source_time=observed - timedelta(seconds=2),
+        observed_time=observed,
+        receive_monotonic_ns=3,
+        normalize_monotonic_ns=4,
+        attribution_status=AttributionStatus.WALLET_ALIASED,
+        leader_alias="pub-wallet",
+        confirmation=ConfirmationStatus.CONFIRMED,
+        payload_digest=payload_digest({"id": "wallet"}),
+        provenance={},
+        source_event_id="source-wallet",
+        run_id="economic-run",
+    )
+    collector.ingest(quote)
+    collector.ingest(wallet)
+    collector.close_window(complete=True)
+    output = tmp_path / "analysis.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-replay",
+            "--database",
+            str(database),
+            "--run-id",
+            "economic-run",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["experiment_contract"]["version"] == "prospective-economic-v1"
+    assert payload["summary"]["economic"] == "INSUFFICIENT_DATA"
+    assert payload["decision_evidence"][0]["snapshot_evidence_id"] == "quote"
+    assert len(payload["source_database_sha256"]) == 64
 
 
 def test_prospective_health_reads_sanitized_file(tmp_path: Path) -> None:

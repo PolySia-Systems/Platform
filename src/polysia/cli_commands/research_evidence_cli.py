@@ -21,6 +21,7 @@ from polysia.adapters.polymarket.research_sources import (
     USER_CHANNEL_CANDIDATE,
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
+    discover_market_fee_schedules,
     discover_public_follow_set,
 )
 from polysia.application.ports.research_evidence import ResearchObservationSource
@@ -69,7 +70,10 @@ async def build_public_benchmark(
                 transport=transport,
             )
         )
-    sources.append(OfficialMarketStreamSource(token_ids=token_ids))
+    fee_schedules = await discover_market_fee_schedules(token_ids)
+    sources.append(
+        OfficialMarketStreamSource(token_ids=token_ids, fee_schedules=fee_schedules)
+    )
     report = await runner(
         tuple(sources),
         store=store,
@@ -105,6 +109,7 @@ async def build_persistent_public_sources() -> tuple[
         await discover_followed_token_ids(transport, aliases) if aliases else ()
     )
     token_ids = followed_tokens or discovered_tokens
+    fee_schedules = await discover_market_fee_schedules(token_ids)
     sources: list[ResearchObservationSource] = []
     if aliases:
         sources.append(
@@ -125,10 +130,15 @@ async def build_persistent_public_sources() -> tuple[
                 transport=transport,
             )
         )
-    sources.append(OfficialMarketStreamSource(token_ids=token_ids))
+    sources.append(
+        OfficialMarketStreamSource(token_ids=token_ids, fee_schedules=fee_schedules)
+    )
     return tuple(sources), {
         "followed_alias_count": len(aliases),
+        "followed_aliases": sorted(aliases),
         "market_token_count": len(token_ids),
+        "market_tokens": list(token_ids),
+        "market_fee_schedule_count": len(fee_schedules),
         "required_source_ids": [REST_TRADES_CANDIDATE.candidate_id]
         if aliases
         else [],

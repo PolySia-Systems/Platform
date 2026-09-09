@@ -18,6 +18,7 @@ from uuid import uuid4
 from polysia.application.ports.research_evidence import ResearchObservationSource
 from polysia.application.services.prospective_collector import ProspectiveCollector
 from polysia.domain.research_evidence.collector import CollectorPolicy
+from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.domain.research_evidence.models import (
     EvidenceClassification,
     IntervalValidity,
@@ -53,6 +54,8 @@ class PersistentCollectorConfig:
     report_dir: Path | None = None
     required_source_ids: tuple[str, ...] = ()
     optional_source_ids: tuple[str, ...] = ()
+    tracked_wallet_aliases: tuple[str, ...] = ()
+    tracked_market_tokens: tuple[str, ...] = ()
     code_sha: str | None = None
     stale_after: timedelta = STALE_AFTER
     fatal_idle: bool = True
@@ -110,9 +113,13 @@ class PersistentProspectiveCollector:
         self._configuration_digest = payload_digest(
             {
                 "policy_version": SERVICE_POLICY_VERSION,
+                "economic_contract_version": CONTRACT_V1.version,
+                "economic_contract_digest": CONTRACT_V1.digest,
                 "window_seconds": int(self._config.window.total_seconds()),
                 "required_source_ids": list(self._config.required_source_ids),
                 "optional_source_ids": list(self._config.optional_source_ids),
+                "tracked_wallet_aliases": list(self._config.tracked_wallet_aliases),
+                "tracked_market_tokens": list(self._config.tracked_market_tokens),
                 "experiment_duration_seconds": int(
                     self._config.experiment_duration.total_seconds()
                 ),

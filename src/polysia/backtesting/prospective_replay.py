@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+from polysia.backtesting.prospective_economics import (
+    ProspectiveEconomicReport,
+    evaluate_prospective_economics,
+)
 from polysia.domain.copytrading.target_exposure import TargetExposurePolicy
 from polysia.domain.research_evidence.models import IntervalValidity, ResearchInterval
 from polysia.domain.research_evidence.replay import (
@@ -27,6 +31,7 @@ class RecordedExperimentReplay:
     invalid_intervals: tuple[ResearchInterval, ...]
     replayed_event_count: int
     excluded_event_count: int
+    economics: ProspectiveEconomicReport
 
 
 def replay_recorded_run(
@@ -91,4 +96,5 @@ def replay_recorded_experiment(
         invalid_intervals=invalid_intervals,
         replayed_event_count=len(events),
         excluded_event_count=total_events - len(events),
+        economics=evaluate_prospective_economics(replay, events=events),
     )
