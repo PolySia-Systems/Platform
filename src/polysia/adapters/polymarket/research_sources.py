@@ -126,6 +126,7 @@ class DataApiWalletPollSource:
         aliases: Mapping[str, str],
         transport: JsonGetTransport | None = None,
         poll_interval_seconds: float = 2.0,
+        initial_delay_seconds: float = 0.0,
         page_limit: int = 50,
         clock: Clock | None = None,
         monotonic_ns: MonotonicNs | None = None,
@@ -135,12 +136,15 @@ class DataApiWalletPollSource:
             raise ValueError("at least one public wallet alias is required")
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds must be positive")
+        if initial_delay_seconds < 0:
+            raise ValueError("initial_delay_seconds must not be negative")
         self.candidate = candidate
         self._path = path
         self._source_id = source_id
         self._aliases = dict(aliases)
         self._transport = transport or UrllibJsonGetTransport()
         self._poll_interval_seconds = poll_interval_seconds
+        self._initial_delay_seconds = initial_delay_seconds
         self._page_limit = page_limit
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic_ns = monotonic_ns or _perf_ns
@@ -161,6 +165,11 @@ class DataApiWalletPollSource:
         run_id: str,
         deadline: datetime,
     ) -> AsyncIterator[CanonicalResearchEvent]:
+        if self._initial_delay_seconds:
+            remaining = (deadline - self._clock()).total_seconds()
+            if remaining <= 0:
+                return
+            await self._sleep(min(self._initial_delay_seconds, remaining))
         backoff = 1.0
         while self._clock() < deadline:
             window_end = self._clock()
