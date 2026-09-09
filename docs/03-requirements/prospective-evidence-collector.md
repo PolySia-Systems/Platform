@@ -157,6 +157,10 @@ capped at 500 tokens. New tokens extend the active public market subscription
 without waiting for a window boundary. Each condition is resolved through the
 official public CLOB market-info surface once per run. Fee-enabled markets
 require its rate, exponent, and taker-only flag.
+Persistent collection gives the initial market subscription a bounded
+30-second warm-up before wallet polling begins and refreshes followed-market
+discovery once per second. The warm-up stays inside the recorded interval: it
+does not invent or backdate execution evidence.
 Disabled fees are verified zero; unknown fee data stays
 `missing_fee`. Replay selects only evidence observed at or before the wallet
 decision and no older than 30 seconds. Missing mapping, quote, depth, fee, or

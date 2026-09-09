@@ -184,6 +184,40 @@ async def test_wallet_poll_source_aliases_and_does_not_emit_addresses() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wallet_poll_source_honors_initial_market_warmup() -> None:
+    clock = AdvancingClock()
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        await clock.sleep(seconds)
+
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path="/trades",
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=FakeTransport([]),
+        clock=clock,
+        monotonic_ns=lambda: 10,
+        sleep=sleep,
+        poll_interval_seconds=1,
+        initial_delay_seconds=2,
+    )
+
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=3),
+        )
+    ]
+
+    assert events == []
+    assert waits[0] == 2
+
+
+@pytest.mark.asyncio
 async def test_market_stream_is_not_wallet_attributable() -> None:
     async def factory():
         yield MarketDataEvent(

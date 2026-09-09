@@ -29,6 +29,7 @@ from polysia.application.services.source_benchmark import SourceBenchmarkReport
 from polysia.storage.research_evidence import ResearchEvidenceStore
 
 _WALLET_RE = re.compile(r"0x[a-fA-F0-9]{40}")
+_PERSISTENT_MARKET_WARMUP_SECONDS = 30.0
 BenchmarkRunner = Callable[..., Awaitable[SourceBenchmarkReport]]
 
 
@@ -123,6 +124,7 @@ async def build_persistent_public_sources() -> tuple[
                 source_id=TRADES_SOURCE_ID,
                 aliases=aliases,
                 transport=transport,
+                initial_delay_seconds=_PERSISTENT_MARKET_WARMUP_SECONDS,
             )
         )
         sources.append(
@@ -132,6 +134,7 @@ async def build_persistent_public_sources() -> tuple[
                 source_id=ACTIVITY_SOURCE_ID,
                 aliases=aliases,
                 transport=transport,
+                initial_delay_seconds=_PERSISTENT_MARKET_WARMUP_SECONDS,
             )
         )
     sources.append(
@@ -139,6 +142,7 @@ async def build_persistent_public_sources() -> tuple[
             token_ids=token_ids,
             fee_schedules=fee_schedules,
             market_discovery=None if discovery is None else discovery.refresh,
+            discovery_interval_seconds=1.0,
         )
     )
     return tuple(sources), {
