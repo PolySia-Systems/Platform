@@ -102,6 +102,12 @@ python -m polysia.cli research prospective-replay \
   --output <canary-analysis.json>
 ```
 
+When using `--cycles 2`, keep `--experiment-duration-seconds` strictly above
+1,200 seconds (1,800 is the operator default). The cycle limit still stops
+collection after exactly two windows; the duration is a safety cap and must not
+collide with the second window boundary or that window correctly becomes
+`INVALID_DRAIN`.
+
 The two economic and decision digests must match. Data `PASS` additionally
 requires 20 eligible wallet observations, complete accounting, mapping >= 95%,
 and executable-evidence coverage >= 90%. Verify health, restart count, bounded
