@@ -153,8 +153,10 @@ Each executable snapshot stores full bounded book levels, market/token mapping,
 source and observation clocks, fee schedule provenance, and a related base-book
 evidence ID. Persistent collection discovers and refreshes the followed
 wallets' token set over the same 30-minute lookback used by wallet polling,
-capped at 500 tokens. New tokens extend the active public market subscription
-without waiting for a window boundary. Each condition is resolved through the
+capped at the 500 most recent tokens across all followed wallets. The bounded
+set rotates as activity changes instead of being permanently filled by the
+first wallet inspected. Subscription changes apply without waiting for a
+window boundary. Each condition is resolved through the
 official public CLOB market-info surface once per run. Fee-enabled markets
 require its rate, exponent, and taker-only flag.
 Persistent collection gives the initial market subscription a bounded
