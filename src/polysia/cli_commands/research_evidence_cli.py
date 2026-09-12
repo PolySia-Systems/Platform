@@ -5,6 +5,7 @@ Keeps research.py free of venue wiring. Reports are sanitized before print.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -29,7 +30,7 @@ from polysia.adapters.polymarket.research_sources import (
 )
 from polysia.application.ports.research_evidence import ResearchObservationSource
 from polysia.application.services.source_benchmark import SourceBenchmarkReport
-from polysia.domain.market import MarketOrderBookSnapshot
+from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot
 from polysia.storage.research_evidence import ResearchEvidenceStore
 
 _WALLET_RE = re.compile(r"0x[a-fA-F0-9]{40}")
@@ -105,6 +106,7 @@ async def build_persistent_public_sources() -> tuple[
 ]:
     transport = UrllibJsonGetTransport()
     public_adapter = PolymarketPublicAdapter()
+    snapshot_fee_cache: dict[str, MarketFeeSchedule] = {}
     aliases, discovered_tokens = await discover_public_follow_set(transport)
     from polysia.adapters.polymarket.research_sources import (
         MARKET_STREAM_CANDIDATE,
@@ -118,9 +120,28 @@ async def build_persistent_public_sources() -> tuple[
     ) -> TerminalMarketSnapshot:
         books: dict[str, MarketOrderBookSnapshot] = {}
         tokens = tuple(token_markets)
-        for index in range(0, len(tokens), 50):
-            books.update(await public_adapter.get_order_books(tokens[index : index + 50]))
-        fees = await discover_clob_market_fee_schedules(transport, token_markets)
+        batches = await asyncio.gather(
+            *(
+                public_adapter.get_order_books(tokens[index : index + 50])
+                for index in range(0, len(tokens), 50)
+            )
+        )
+        for batch in batches:
+            books.update(batch)
+        missing_fees = {
+            token: market
+            for token, market in token_markets.items()
+            if token not in snapshot_fee_cache
+        }
+        if missing_fees:
+            snapshot_fee_cache.update(
+                await discover_clob_market_fee_schedules(transport, missing_fees)
+            )
+        fees = {
+            token: snapshot_fee_cache[token]
+            for token in token_markets
+            if token in snapshot_fee_cache
+        }
         return TerminalMarketSnapshot(books=books, fee_schedules=fees)
 
     snapshot = await discovery.refresh() if discovery is not None else None
@@ -131,6 +152,7 @@ async def build_persistent_public_sources() -> tuple[
         if snapshot is not None
         else await discover_market_fee_schedules(token_ids)
     )
+    snapshot_fee_cache.update(fee_schedules)
     sources: list[ResearchObservationSource] = []
     if aliases:
         sources.append(

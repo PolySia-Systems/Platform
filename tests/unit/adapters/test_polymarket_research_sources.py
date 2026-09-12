@@ -433,6 +433,62 @@ async def test_terminal_snapshot_emits_fresh_side_aware_evidence() -> None:
     assert health["terminal_snapshot_missing"] == 0
 
 
+@pytest.mark.asyncio
+async def test_official_stream_refreshes_quiet_book_before_freshness_expires() -> None:
+    clock = AdvancingClock()
+    requests: list[dict[str, str]] = []
+
+    async def fetch(token_markets: dict[str, str]) -> TerminalMarketSnapshot:
+        requests.append(dict(token_markets))
+        return TerminalMarketSnapshot(
+            books={
+                "token-1": MarketOrderBookSnapshot(
+                    token_id="token-1",
+                    market_id="market-a",
+                    timestamp=clock(),
+                    bids=(OrderBookLevel(price=Decimal("0.48"), size=Decimal("4")),),
+                    asks=(OrderBookLevel(price=Decimal("0.52"), size=Decimal("5")),),
+                    minimum_order_size=Decimal("1"),
+                    tick_size=Decimal("0.01"),
+                )
+            },
+            fee_schedules={
+                "token-1": MarketFeeSchedule(
+                    enabled=False,
+                    rate=None,
+                    exponent=None,
+                    taker_only=None,
+                )
+            },
+        )
+
+    source = OfficialMarketStreamSource(
+        token_ids=("token-1",),
+        token_markets={"token-1": "market-a"},
+        clock=clock,
+        sleep=clock.sleep,
+        market_stream_factory=lambda bus, tokens, stale: RecordingMarketStream(tokens),
+        terminal_snapshot_fetcher=fetch,
+        snapshot_refresh_interval_seconds=20,
+    )
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=2),
+        )
+    ]
+
+    assert requests == [{"token-1": "market-a"}]
+    assert len(events) == 3
+    assert events[1].provenance["execution_evidence"] is True
+    assert events[1].provenance["source_event_type"] == "book"
+    health = source.health_snapshot()
+    assert health["snapshot_refresh_count"] == 1
+    assert health["snapshot_refresh_failure_count"] == 0
+    assert health["snapshot_refresh_missing"] == 0
+
+
 def test_wallet_observation_identity_preserves_distinct_wallet_attribution() -> None:
     second_wallet = "0x2222222222222222222222222222222222222222"
     shared = {

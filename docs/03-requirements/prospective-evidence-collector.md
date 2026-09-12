@@ -176,7 +176,10 @@ An invalid incremental order-book update immediately discards that token's
 local executable state. Further increments stay `UNKNOWN` until a fresh full
 snapshot is received; the public stream is restarted with bounded recovery and
 sanitized validation/recovery health. Stale pre-error depth must never be
-published as executable evidence.
+published as executable evidence. While collecting, one bounded public book
+snapshot refreshes the current followed-token set every 20 seconds so quiet
+books do not become falsely executable after the frozen 30-second freshness
+limit. Fee schedules are cached and fetched only for newly observed tokens.
 
 Immediately before the terminal experiment window closes, the collector makes
 one bounded public batch capture of fresh books and fee schedules for the
