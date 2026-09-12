@@ -81,6 +81,25 @@ class RoutingTransport:
         return self.payloads[path]
 
 
+class WalletRoutingTransport:
+    def __init__(self, payloads: dict[str, object]) -> None:
+        self.payloads = payloads
+        self.calls: list[str] = []
+
+    async def get_json(
+        self,
+        base_url: str,
+        path: str,
+        params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+    ) -> object:
+        del base_url, path, purpose
+        wallet = str(params["user"])
+        self.calls.append(wallet)
+        return self.payloads[wallet]
+
+
 class SequencedTransport:
     def __init__(self, trades: list[object], markets: dict[str, object]) -> None:
         self._trades = iter(trades)
@@ -382,6 +401,61 @@ async def test_followed_market_discovery_matches_wallet_source_lookback() -> Non
 
 
 @pytest.mark.asyncio
+async def test_followed_market_discovery_ranks_recent_tokens_across_wallets() -> None:
+    second_wallet = "0x2222222222222222222222222222222222222222"
+    conditions = {
+        token: "0x" + digit * 64
+        for token, digit in (
+            ("token-1", "1"),
+            ("token-2", "2"),
+            ("token-3", "3"),
+            ("token-4", "4"),
+        )
+    }
+    transport = WalletRoutingTransport(
+        {
+            WALLET: [
+                {
+                    "asset": "token-1",
+                    "conditionId": conditions["token-1"],
+                    "timestamp": 100,
+                },
+                {
+                    "asset": "token-2",
+                    "conditionId": conditions["token-2"],
+                    "timestamp": 99,
+                },
+                {
+                    "asset": "token-3",
+                    "conditionId": conditions["token-3"],
+                    "timestamp": 98,
+                },
+            ],
+            second_wallet: [
+                {
+                    "asset": "token-4",
+                    "conditionId": conditions["token-4"],
+                    "timestamp": 101,
+                }
+            ],
+        }
+    )
+
+    markets = await discover_followed_markets(
+        transport,
+        {
+            public_wallet_alias(WALLET): WALLET,
+            public_wallet_alias(second_wallet): second_wallet,
+        },
+        token_limit=3,
+        clock=lambda: OBSERVED,
+    )
+
+    assert tuple(markets) == ("token-4", "token-1", "token-2")
+    assert transport.calls == [WALLET, second_wallet]
+
+
+@pytest.mark.asyncio
 async def test_clob_market_info_resolves_fee_curve_for_requested_tokens() -> None:
     condition = "0x" + "a" * 64
     transport = RoutingTransport(
@@ -448,7 +522,37 @@ async def test_followed_market_discovery_adds_tokens_and_resolves_fee_once() -> 
 
 
 @pytest.mark.asyncio
-async def test_market_stream_refreshes_subscription_for_new_wallet_token() -> None:
+async def test_followed_market_discovery_rotates_out_expired_tokens() -> None:
+    first_condition = "0x" + "a" * 64
+    second_condition = "0x" + "b" * 64
+    fee = {"fd": {"r": "0.04", "e": 1, "to": True}}
+    transport = SequencedTransport(
+        [
+            [{"asset": "token-1", "conditionId": first_condition, "timestamp": 1}],
+            [{"asset": "token-2", "conditionId": second_condition, "timestamp": 2}],
+        ],
+        {
+            f"/clob-markets/{first_condition}": {**fee, "t": [{"t": "token-1"}]},
+            f"/clob-markets/{second_condition}": {**fee, "t": [{"t": "token-2"}]},
+        },
+    )
+    discovery = FollowedMarketDiscovery(
+        transport,
+        {public_wallet_alias(WALLET): WALLET},
+        token_limit=1,
+        clock=lambda: OBSERVED,
+    )
+
+    first = await discovery.refresh()
+    second = await discovery.refresh()
+
+    assert tuple(first.token_markets) == ("token-1",)
+    assert tuple(second.token_markets) == ("token-2",)
+    assert set(second.fee_schedules) == {"token-2"}
+
+
+@pytest.mark.asyncio
+async def test_market_stream_rotates_subscription_to_current_wallet_tokens() -> None:
     clock = AdvancingClock()
     streams: list[RecordingMarketStream] = []
 
@@ -464,7 +568,7 @@ async def test_market_stream_refreshes_subscription_for_new_wallet_token() -> No
 
     async def discover() -> MarketDiscoverySnapshot:
         return MarketDiscoverySnapshot(
-            token_markets={"token-1": "market-1", "token-2": "market-2"},
+            token_markets={"token-2": "market-2"},
             fee_schedules={},
         )
 
@@ -488,7 +592,7 @@ async def test_market_stream_refreshes_subscription_for_new_wallet_token() -> No
     assert events == []
     assert [stream.token_ids for stream in streams] == [
         ("token-1",),
-        ("token-1", "token-2"),
+        ("token-2",),
     ]
     assert source.subscription_update_count == 1
 

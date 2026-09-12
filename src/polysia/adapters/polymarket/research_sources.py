@@ -485,14 +485,22 @@ class OfficialMarketStreamSource:
             self.discovery_failure_count += 1
             return False
         current = set(self._token_ids)
-        added = [
-            token
-            for token in snapshot.token_markets
-            if token and token not in current
-        ][: max(0, 500 - len(current))]
-        if added:
-            self._token_ids = (*self._token_ids, *added)
+        desired = {token for token in snapshot.token_markets if token}
+        changed = desired != current
+        if changed:
+            retained = tuple(token for token in self._token_ids if token in desired)
+            added = tuple(
+                token
+                for token in snapshot.token_markets
+                if token and token not in current
+            )
+            self._token_ids = (*retained, *added)[:500]
         known = set(self._token_ids)
+        self._fee_schedules = {
+            token: schedule
+            for token, schedule in self._fee_schedules.items()
+            if token in known
+        }
         self._fee_schedules.update(
             {
                 token: schedule
@@ -500,7 +508,7 @@ class OfficialMarketStreamSource:
                 if token in known
             }
         )
-        return bool(added)
+        return changed
 
     def health_snapshot(self) -> Mapping[str, object]:
         return {
@@ -798,7 +806,7 @@ async def discover_followed_markets(
 
     now = (clock or (lambda: datetime.now(UTC)))()
     start = now - lookback
-    markets: dict[str, str] = {}
+    candidates: dict[str, tuple[int, str]] = {}
     for wallet in aliases.values():
         payload = await transport.get_json(
             DATA_API_BASE_URL,
@@ -825,12 +833,19 @@ async def discover_followed_markets(
                 and token
                 and isinstance(condition, str)
                 and condition
-                and token not in markets
             ):
-                markets[token] = condition
-                if len(markets) >= token_limit:
-                    return markets
-    return markets
+                observed = _row_timestamp(row)
+                current = candidates.get(token)
+                if current is None or observed > current[0]:
+                    candidates[token] = (observed, condition)
+    ranked = sorted(
+        candidates.items(),
+        key=lambda item: (-item[1][0], item[0]),
+    )
+    return {
+        token: timestamp_and_condition[1]
+        for token, timestamp_and_condition in ranked[:token_limit]
+    }
 
 
 async def discover_clob_market_fee_schedules(
@@ -920,9 +935,18 @@ class FollowedMarketDiscovery:
             lookback=self._lookback,
             clock=self._clock,
         )
-        for token, condition in discovered.items():
-            if token in self._token_markets or len(self._token_markets) < self._token_limit:
-                self._token_markets[token] = condition
+        self._token_markets = dict(discovered)
+        active_tokens = set(self._token_markets)
+        self._fee_schedules = {
+            token: schedule
+            for token, schedule in self._fee_schedules.items()
+            if token in active_tokens
+        }
+        self._fee_retry_at = {
+            token: retry_at
+            for token, retry_at in self._fee_retry_at.items()
+            if token in active_tokens
+        }
 
         now = self._clock()
         pending = {
