@@ -36,7 +36,7 @@ from polysia.storage.research_evidence import (
 )
 
 Clock = Callable[[], datetime]
-SERVICE_POLICY_VERSION = "persistent-prospective-collector-v2"
+SERVICE_POLICY_VERSION = "persistent-prospective-collector-v3"
 DEFAULT_WINDOW = timedelta(minutes=10)
 DEFAULT_EXPERIMENT_DURATION = timedelta(hours=4)
 DEFAULT_EXPERIMENT_MAX_EVENTS = 750_000
@@ -354,6 +354,12 @@ class PersistentProspectiveCollector:
                 self._write_health(force=True)
                 return
             deadline = self._clock() + self._config.window
+            experiment = self._experiment
+            if experiment is not None:
+                deadline = min(deadline, experiment.collection_ends_at)
+            terminal_window = (
+                cycles is not None and completed + 1 >= cycles
+            ) or (experiment is not None and deadline >= experiment.collection_ends_at)
             await self._wait_until(deadline)
             if self._stop.is_set():
                 return
@@ -361,13 +367,16 @@ class PersistentProspectiveCollector:
             complete = not required_missing and self._fatal_reason is None
             try:
                 async with self._lifecycle_lock:
+                    if terminal_window:
+                        await self._capture_terminal_evidence()
+                        self._stop.set()
                     if required_missing:
                         self._active().mark_drain_failed("required_source_unavailable")
                     closed = self._active().close_window(
                         complete=complete,
                         summary=self._window_summary(),
                     )
-                    if cycles is None or completed + 1 < cycles:
+                    if not terminal_window:
                         self._active().start_window()
             except (ResearchEvidenceStoreError, OSError) as error:
                 self._fatal_from_storage(error)
@@ -376,10 +385,27 @@ class PersistentProspectiveCollector:
             self._windows_closed += 1
             self._write_window_report(closed)
             completed += 1
-            if cycles is not None and completed >= cycles:
+            if terminal_window:
                 self._stop.set()
                 return
             self._write_health(force=True)
+
+    async def _capture_terminal_evidence(self) -> None:
+        token_markets = dict(
+            self._store.load_latest_wallet_token_markets(
+                run_id=self._active().run_id,
+            )
+        )
+        for source in self._sources:
+            capture = getattr(source, "capture_terminal_evidence", None)
+            if not callable(capture):
+                continue
+            events = await capture(
+                run_id=self._active().run_id,
+                token_markets=token_markets,
+            )
+            for event in events:
+                await self._active().ingest_async(event)
 
     async def _drain_source(self, source: ResearchObservationSource) -> None:
         candidate_id = source.candidate.candidate_id
@@ -396,6 +422,8 @@ class PersistentProspectiveCollector:
                 self._queue_depth = self._active().queue_depth
                 try:
                     async with self._lifecycle_lock:
+                        if self._stop.is_set() or self._fatal_reason is not None:
+                            return
                         persisted = await self._active().ingest_async(event)
                 except ResearchExperimentBudgetError as error:
                     self._fatal_reason = "experiment_budget_reached"

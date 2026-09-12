@@ -139,8 +139,12 @@ class EndpointRequestScheduler:
         await self._sleeper(delay)
         await state.semaphore.acquire()
         try:
-            await self._assert_circuit_allows(route_name, purpose, claim_probe=True)
-        except Exception:
+            probe_claimed = await self._assert_circuit_allows(
+                route_name,
+                purpose,
+                claim_probe=True,
+            )
+        except BaseException:
             state.semaphore.release()
             raise
         async with state.lock:
@@ -155,17 +159,30 @@ class EndpointRequestScheduler:
         try:
             yield
         finally:
-            async with state.lock:
-                state.current_in_flight -= 1
-            state.semaphore.release()
+            try:
+                if probe_claimed:
+                    await asyncio.shield(self._release_probe_claim())
+            finally:
+                async with state.lock:
+                    state.current_in_flight -= 1
+                state.semaphore.release()
 
-    async def record_rate_limit(self, retry_after: str | None) -> None:
+    async def record_rate_limit(
+        self,
+        retry_after: str | None,
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> None:
         now = _aware(self._wall_clock())
         delay = parse_retry_after(retry_after, now=now)
         source = "header"
         async with self._circuit_lock:
             self._rate_limits += 1
-            if self._outage_started_at is not None and not self._probe_in_flight:
+            if (
+                self._outage_started_at is not None
+                and not self._probe_in_flight
+                and purpose is not LeaderReadPurpose.RECOVERY
+            ):
                 return
             if delay is None:
                 source = "fallback"
@@ -177,10 +194,18 @@ class EndpointRequestScheduler:
             self._retry_after_source = source
             self._cooldowns += 1
 
-    async def record_trades_failure(self) -> None:
+    async def record_trades_failure(
+        self,
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    ) -> None:
         now = _aware(self._wall_clock())
         async with self._circuit_lock:
-            if self._outage_started_at is not None and not self._probe_in_flight:
+            if (
+                self._outage_started_at is not None
+                and not self._probe_in_flight
+                and purpose is not LeaderReadPurpose.RECOVERY
+            ):
                 return
             delay = self._next_fallback_delay()
             if self._outage_started_at is None:
@@ -340,12 +365,12 @@ class EndpointRequestScheduler:
         purpose: LeaderReadPurpose,
         *,
         claim_probe: bool,
-    ) -> None:
+    ) -> bool:
         if route_name != "trades":
-            return
+            return False
         async with self._circuit_lock:
             if self._outage_started_at is None:
-                return
+                return False
             assert self._retry_at is not None
             now = _aware(self._wall_clock())
             allowed_probe = (
@@ -361,6 +386,12 @@ class EndpointRequestScheduler:
                 )
             if claim_probe:
                 self._probe_in_flight = True
+                return True
+            return False
+
+    async def _release_probe_claim(self) -> None:
+        async with self._circuit_lock:
+            self._probe_in_flight = False
 
     def _next_fallback_delay(self) -> int:
         index = min(self._fallback_index, len(FALLBACK_BACKOFF_SECONDS) - 1)

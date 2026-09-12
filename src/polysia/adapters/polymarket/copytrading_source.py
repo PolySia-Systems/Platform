@@ -154,14 +154,17 @@ class UrllibJsonGetTransport:
                     retry_after = (
                         None if error.headers is None else error.headers.get("Retry-After")
                     )
-                    await self._scheduler.record_rate_limit(retry_after)
+                    await self._scheduler.record_rate_limit(
+                        retry_after,
+                        purpose=purpose,
+                    )
                     raise await self._scheduler.unavailable_error(
                         reason="Public /trades source returned HTTP 429."
                     ) from error
                 retryable = error.code >= 500
                 if not retryable or attempt >= self._max_attempts:
                     if path == "/trades":
-                        await self._scheduler.record_trades_failure()
+                        await self._scheduler.record_trades_failure(purpose=purpose)
                         raise await self._scheduler.unavailable_error(
                             reason="Public /trades source remained unavailable."
                         ) from error
@@ -171,7 +174,7 @@ class UrllibJsonGetTransport:
             except (TimeoutError, URLError) as error:
                 if attempt >= self._max_attempts:
                     if path == "/trades":
-                        await self._scheduler.record_trades_failure()
+                        await self._scheduler.record_trades_failure(purpose=purpose)
                         raise await self._scheduler.unavailable_error(
                             reason="Public /trades read failed after bounded retry."
                         ) from error

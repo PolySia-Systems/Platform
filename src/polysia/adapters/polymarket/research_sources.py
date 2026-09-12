@@ -29,7 +29,7 @@ from polysia.adapters.polymarket.request_scheduling import TradesSourceUnavailab
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.research_evidence import SourceCandidate
 from polysia.domain.events import MarketDataEvent
-from polysia.domain.market import MarketFeeSchedule
+from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot
 from polysia.domain.research_evidence.models import (
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
@@ -95,6 +95,20 @@ class MarketDiscoverySnapshot:
 
 
 MarketDiscovery = Callable[[], Awaitable[MarketDiscoverySnapshot]]
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalMarketSnapshot:
+    """Fresh public books and fee evidence captured at experiment end."""
+
+    books: Mapping[str, MarketOrderBookSnapshot]
+    fee_schedules: Mapping[str, MarketFeeSchedule]
+
+
+TerminalMarketSnapshotFetcher = Callable[
+    [Mapping[str, str]],
+    Awaitable[TerminalMarketSnapshot],
+]
 
 
 class MarketStreamRunner(Protocol):
@@ -317,11 +331,16 @@ class OfficialMarketStreamSource:
         market_discovery: MarketDiscovery | None = None,
         discovery_interval_seconds: float = 2.0,
         market_stream_factory: MarketStreamFactory | None = None,
+        token_markets: Mapping[str, str] | None = None,
+        terminal_snapshot_fetcher: TerminalMarketSnapshotFetcher | None = None,
+        terminal_snapshot_limit: int = 500,
     ) -> None:
         if discovery_interval_seconds <= 0:
             raise ValueError("discovery_interval_seconds must be positive")
         if len(token_ids) > 500:
             raise ValueError("token_ids must contain at most 500 items")
+        if terminal_snapshot_limit <= 0 or terminal_snapshot_limit > 500:
+            raise ValueError("terminal_snapshot_limit must be within [1, 500]")
         self.candidate = MARKET_STREAM_CANDIDATE
         if event_factory is None and not token_ids and market_discovery is None:
             self.candidate = SourceCandidate(
@@ -342,10 +361,25 @@ class OfficialMarketStreamSource:
         self._market_discovery = market_discovery
         self._discovery_interval_seconds = discovery_interval_seconds
         self._market_stream_factory = market_stream_factory
+        self._token_markets = dict(token_markets or {})
+        self._terminal_snapshot_fetcher = terminal_snapshot_fetcher
+        self._terminal_snapshot_limit = terminal_snapshot_limit
         self._books = BookBuilder()
+        self._invalid_book_tokens: set[str] = set()
+        self._last_book_failure_at: datetime | None = None
+        self._last_book_failure_class: str | None = None
+        self._book_recovery_requested = False
+        self._book_recovery_not_before: datetime | None = None
+        self._usable_book_tokens: set[str] = set()
         self.reconnect_count = 0
         self.subscription_update_count = 0
         self.discovery_failure_count = 0
+        self.book_validation_failure_count = 0
+        self.book_recovery_count = 0
+        self.terminal_snapshot_requested = 0
+        self.terminal_snapshot_captured = 0
+        self.terminal_snapshot_missing = 0
+        self.terminal_snapshot_limit_reached = False
         self._availability = (
             "not_started"
             if self.candidate.status is SourceCandidateStatus.MEASURED
@@ -418,6 +452,16 @@ class OfficialMarketStreamSource:
                         )
                         for item in normalized:
                             yield item
+                        if self._book_recovery_requested and self._book_recovery_due():
+                            if not runner.done():
+                                runner.cancel()
+                                with suppress(asyncio.CancelledError):
+                                    await runner
+                            stream = self._new_market_stream(bus)
+                            runner = asyncio.create_task(stream.run())
+                            self._book_recovery_requested = False
+                            self._book_recovery_not_before = self._clock() + timedelta(seconds=5)
+                            self.book_recovery_count += 1
                     if runner in done:
                         self.reconnect_count += 1
                         if runner.exception() is not None:
@@ -495,6 +539,11 @@ class OfficialMarketStreamSource:
                 if token and token not in current
             )
             self._token_ids = (*retained, *added)[:500]
+        self._token_markets = {
+            token: market
+            for token, market in snapshot.token_markets.items()
+            if token in set(self._token_ids)
+        }
         known = set(self._token_ids)
         self._fee_schedules = {
             token: schedule
@@ -524,7 +573,71 @@ class OfficialMarketStreamSource:
             "recovery_count": self.reconnect_count,
             "subscription_update_count": self.subscription_update_count,
             "discovery_failure_count": self.discovery_failure_count,
+            "book_validation_failure_count": self.book_validation_failure_count,
+            "book_recovery_count": self.book_recovery_count,
+            "last_book_failure_at": _optional_time(self._last_book_failure_at),
+            "last_book_failure_class": self._last_book_failure_class,
+            "invalid_book_token_count": len(self._invalid_book_tokens),
+            "usable_book_token_count": len(self._usable_book_tokens),
+            "terminal_snapshot_requested": self.terminal_snapshot_requested,
+            "terminal_snapshot_captured": self.terminal_snapshot_captured,
+            "terminal_snapshot_missing": self.terminal_snapshot_missing,
+            "terminal_snapshot_limit_reached": self.terminal_snapshot_limit_reached,
         }
+
+    async def capture_terminal_evidence(
+        self,
+        *,
+        run_id: str,
+        token_markets: Mapping[str, str],
+    ) -> tuple[CanonicalResearchEvent, ...]:
+        """Capture bounded fresh books needed for terminal valuation."""
+
+        if self._terminal_snapshot_fetcher is None or not token_markets:
+            return ()
+        selected = dict(list(token_markets.items())[: self._terminal_snapshot_limit])
+        self.terminal_snapshot_requested = len(token_markets)
+        self.terminal_snapshot_limit_reached = len(token_markets) > len(selected)
+        try:
+            snapshot = await self._terminal_snapshot_fetcher(selected)
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+            self.terminal_snapshot_captured = 0
+            self.terminal_snapshot_missing = len(selected)
+            self._last_failure_at = self._clock()
+            self._failure_class = "terminal_snapshot_failed"
+            return ()
+        self._fee_schedules.update(snapshot.fee_schedules)
+        self._token_markets.update(selected)
+        self.terminal_snapshot_captured = len(snapshot.books)
+        self.terminal_snapshot_missing = len(selected) - len(snapshot.books)
+        observed = self._clock()
+        events: list[CanonicalResearchEvent] = []
+        for token, book in snapshot.books.items():
+            if token not in selected:
+                continue
+            event = MarketDataEvent(
+                source="polymarket",
+                event_type="book",
+                token_id=token,
+                received_at=observed,
+                exchange_ts=book.timestamp,
+                payload={
+                    "asks": [
+                        {"price": format(level.price, "f"), "size": format(level.size, "f")}
+                        for level in book.asks
+                    ],
+                    "bids": [
+                        {"price": format(level.price, "f"), "size": format(level.size, "f")}
+                        for level in book.bids
+                    ],
+                    "hash": book.book_hash,
+                    "market": selected[token],
+                    "snapshot_reason": "terminal_valuation",
+                },
+                raw_payload={},
+            )
+            events.extend(self._from_market_event(event, run_id=run_id))
+        return tuple(events)
 
     def _from_market_event(
         self,
@@ -587,10 +700,23 @@ class OfficialMarketStreamSource:
         )
         if event.event_type not in {"book", "price_change"}:
             return (base,)
+        if event.token_id in self._invalid_book_tokens and event.event_type != "book":
+            return (self._invalid_book_base(base, "awaiting_fresh_snapshot"),)
         try:
             book = self._books.apply(event)
-        except (KeyError, TypeError, ValueError, OrderBookValidationError):
-            return (base,)
+        except (KeyError, TypeError, ValueError, OrderBookValidationError) as error:
+            self._books.invalidate(event.token_id)
+            self._usable_book_tokens.discard(event.token_id)
+            self._invalid_book_tokens.add(event.token_id)
+            self._book_recovery_requested = True
+            self.book_validation_failure_count += 1
+            self._last_book_failure_at = self._clock()
+            self._last_book_failure_class = type(error).__name__
+            return (self._invalid_book_base(base, type(error).__name__),)
+        if event.event_type == "book":
+            self._invalid_book_tokens.discard(event.token_id)
+        if book.best_bid is not None and book.best_ask is not None:
+            self._usable_book_tokens.add(event.token_id)
         book_bid = book.best_bid
         book_ask = book.best_ask
         if book_bid is not None:
@@ -620,6 +746,31 @@ class OfficialMarketStreamSource:
             for side, levels in (("BUY", book.asks), ("SELL", book.bids))
         )
         return (base, *executions)
+
+    def _book_recovery_due(self) -> bool:
+        return (
+            self._book_recovery_not_before is None
+            or self._clock() >= self._book_recovery_not_before
+        )
+
+    @staticmethod
+    def _invalid_book_base(
+        base: CanonicalResearchEvent,
+        failure_class: str,
+    ) -> CanonicalResearchEvent:
+        return replace(
+            base,
+            price=None,
+            confirmation=ConfirmationStatus.UNCONFIRMED,
+            provenance={
+                **base.provenance,
+                "book_state": "invalid",
+                "book_validation_failure": failure_class,
+                "depth_status": "UNKNOWN",
+                "executable_price": None,
+                "quote_status": "UNKNOWN",
+            },
+        )
 
     def _execution_event(
         self,

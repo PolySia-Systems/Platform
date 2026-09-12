@@ -24,6 +24,11 @@ class BookBuilder:
             raise KeyError(f"no book exists for token_id={token_id}")
         return book
 
+    def invalidate(self, token_id: str) -> None:
+        """Discard a book that can no longer support executable evidence."""
+
+        self._books.pop(token_id, None)
+
     def apply(self, event: MarketDataEvent) -> LocalOrderBook:
         """Apply one normalized market-data event to its local book."""
         book = self._books.setdefault(

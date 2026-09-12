@@ -197,6 +197,57 @@ async def test_shared_circuit_allows_exactly_one_recovery_probe() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_recovery_releases_probe_and_advances_cooldown() -> None:
+    clock = RecordingClock()
+    scheduler = _scheduler(clock)
+    await scheduler.record_rate_limit("1")
+    clock.advance(1)
+
+    with pytest.raises(RuntimeError, match="recovery failed"):
+        async with scheduler.request(
+            "data:/trades",
+            purpose=LeaderReadPurpose.RECOVERY,
+        ):
+            raise RuntimeError("recovery failed")
+
+    assert scheduler.circuit_snapshot()["single_probe_in_flight"] is False
+    await scheduler.record_trades_failure(purpose=LeaderReadPurpose.RECOVERY)
+    snapshot = scheduler.circuit_snapshot()
+    assert snapshot["retry_at"] == (clock.wall + timedelta(seconds=2)).isoformat()
+
+    with pytest.raises(TradesSourceUnavailableError):
+        await _request_once(scheduler, LeaderReadPurpose.RECOVERY)
+    clock.advance(2)
+    await _request_once(scheduler, LeaderReadPurpose.RECOVERY)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_recovery_releases_probe_claim() -> None:
+    clock = RecordingClock()
+    scheduler = _scheduler(clock)
+    await scheduler.record_rate_limit("1")
+    clock.advance(1)
+    entered = asyncio.Event()
+
+    async def hold_probe() -> None:
+        async with scheduler.request(
+            "data:/trades",
+            purpose=LeaderReadPurpose.RECOVERY,
+        ):
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(hold_probe())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert scheduler.circuit_snapshot()["single_probe_in_flight"] is False
+    await _request_once(scheduler, LeaderReadPurpose.RECOVERY)
+
+
+@pytest.mark.asyncio
 async def test_trades_circuit_does_not_block_unrelated_routes() -> None:
     clock = RecordingClock()
     scheduler = _scheduler(clock)
