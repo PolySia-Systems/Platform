@@ -70,6 +70,9 @@ The collector is provider-neutral. Venue translation stays in adapters.
   sources remains usable.
 - The `/trades` circuit is route-local. After cooldown it permits exactly one
   `RECOVERY` probe; a successful probe returns later reads to `DISCOVERY`.
+  The probe claim is released on success, retry, error, timeout, and
+  cancellation. A failed recovery advances the bounded cooldown rather than
+  leaving the source permanently blocked.
   Sanitized health and window evidence preserve failure class, retry time,
   last successful request/event, and recovery count. Error control events are
   not source progress.
@@ -168,6 +171,20 @@ Disabled fees are verified zero; unknown fee data stays
 decision and no older than 30 seconds. Missing mapping, quote, depth, fee, or
 freshness is classified exactly and no eligible wallet observation is silently
 discarded.
+
+An invalid incremental order-book update immediately discards that token's
+local executable state. Further increments stay `UNKNOWN` until a fresh full
+snapshot is received; the public stream is restarted with bounded recovery and
+sanitized validation/recovery health. Stale pre-error depth must never be
+published as executable evidence.
+
+Immediately before the terminal experiment window closes, the collector makes
+one bounded public batch capture of fresh books and fee schedules for the
+distinct tokens actually observed in accepted wallet trades (newest 500 at
+most). The capture is stored in the same immutable run before close so open
+positions can be valued causally at the frozen 30-second freshness threshold.
+Missing, capped, or failed terminal evidence remains explicit and produces
+`INSUFFICIENT_DATA`; the threshold is never relaxed.
 
 The canonical command is:
 

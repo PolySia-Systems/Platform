@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -107,6 +107,32 @@ class UnavailableSource(SequenceSource):
             "retry_at": (OBSERVED + timedelta(seconds=10)).isoformat(),
             "recovery_count": 0,
         }
+
+
+class TerminalSequenceSource(SequenceSource):
+    def __init__(
+        self,
+        candidate: SourceCandidate,
+        events: tuple[CanonicalResearchEvent, ...],
+    ) -> None:
+        super().__init__(candidate, events, hang=True)
+        self.terminal_requests: list[dict[str, str]] = []
+
+    async def capture_terminal_evidence(
+        self,
+        *,
+        run_id: str,
+        token_markets: Mapping[str, str],
+    ) -> tuple[CanonicalResearchEvent, ...]:
+        self.terminal_requests.append(dict(token_markets))
+        return (
+            _market(
+                "terminal-market",
+                outcome="o1",
+                observed=OBSERVED + timedelta(seconds=2),
+                run_id=run_id,
+            ),
+        )
 
 def _candidate(candidate_id: str, *, wallet: bool = True) -> SourceCandidate:
     return SourceCandidate(
@@ -218,6 +244,48 @@ def test_empty_window_closes_valid(tmp_path: Path) -> None:
     assert closed.summary is not None
     assert closed.summary["empty"] is True
     assert closed.reason == "closed"
+
+
+def test_terminal_window_captures_wallet_market_evidence_before_close(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    store = ResearchEvidenceStore(tmp_path / "research.sqlite3", clock=clock)
+    source = TerminalSequenceSource(
+        _candidate("rest_trades"),
+        (
+            _wallet("wallet-before-terminal", run_id="terminal-run"),
+            _wallet(
+                "wallet-latest-market",
+                market="m2",
+                observed=OBSERVED + timedelta(seconds=1),
+                run_id="terminal-run",
+            ),
+        ),
+    )
+    collector = PersistentProspectiveCollector(
+        store,
+        (source,),
+        config=PersistentCollectorConfig(
+            window=timedelta(seconds=2),
+            required_source_ids=("rest_trades",),
+        ),
+        clock=clock,
+        sleep=clock.sleep,
+        run_id="terminal-run",
+    )
+
+    asyncio.run(collector.run(cycles=1))
+
+    assert source.terminal_requests == [{"o1": "m2"}]
+    closed = store.latest_closed_interval()
+    assert closed is not None
+    assert closed.validity is IntervalValidity.VALID
+    assert {event.evidence_id for event in store.load_events(interval_id=closed.interval_id)} == {
+        "wallet-before-terminal",
+        "wallet-latest-market",
+        "terminal-market",
+    }
 
 
 def test_health_heartbeat_stays_fresh_inside_long_window(

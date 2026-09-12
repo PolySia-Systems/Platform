@@ -606,6 +606,40 @@ class ResearchEvidenceStore:
             connection.close()
         return tuple(_event_from_row(row) for row in rows)
 
+    def load_latest_wallet_token_markets(
+        self,
+        *,
+        run_id: str,
+        limit: int = 501,
+    ) -> tuple[tuple[str, str], ...]:
+        """Return the latest market attribution per wallet token, newest first."""
+
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT outcome_reference, market_reference FROM ("
+                "SELECT outcome_reference, market_reference, observed_time_utc, "
+                "evidence_id, ROW_NUMBER() OVER ("
+                "PARTITION BY outcome_reference "
+                "ORDER BY observed_time_utc DESC, evidence_id DESC"
+                ") AS latest_rank FROM research_events "
+                "WHERE run_id = ? AND event_kind = ? AND classification = ? "
+                "AND outcome_reference IS NOT NULL AND market_reference IS NOT NULL"
+                ") WHERE latest_rank = 1 "
+                "ORDER BY observed_time_utc DESC, outcome_reference LIMIT ?",
+                (
+                    run_id,
+                    ObservationKind.WALLET_TRADE.value,
+                    EvidenceClassification.ACCEPTED.value,
+                    limit,
+                ),
+            ).fetchall()
+        finally:
+            connection.close()
+        return tuple((str(row[0]), str(row[1])) for row in rows)
+
     def load_intervals_for_run(self, run_id: str) -> tuple[ResearchInterval, ...]:
         """Return event-bearing intervals owned by one bounded experiment."""
 

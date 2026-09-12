@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from polysia.adapters.polymarket.copytrading_source import UrllibJsonGetTransport
+from polysia.adapters.polymarket.public import PolymarketPublicAdapter
 from polysia.adapters.polymarket.research_sources import (
     ACTIVITY_SOURCE_ID,
     REST_ACTIVITY_CANDIDATE,
@@ -21,11 +22,14 @@ from polysia.adapters.polymarket.research_sources import (
     USER_CHANNEL_CANDIDATE,
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
+    TerminalMarketSnapshot,
+    discover_clob_market_fee_schedules,
     discover_market_fee_schedules,
     discover_public_follow_set,
 )
 from polysia.application.ports.research_evidence import ResearchObservationSource
 from polysia.application.services.source_benchmark import SourceBenchmarkReport
+from polysia.domain.market import MarketOrderBookSnapshot
 from polysia.storage.research_evidence import ResearchEvidenceStore
 
 _WALLET_RE = re.compile(r"0x[a-fA-F0-9]{40}")
@@ -100,6 +104,7 @@ async def build_persistent_public_sources() -> tuple[
     dict[str, object],
 ]:
     transport = UrllibJsonGetTransport()
+    public_adapter = PolymarketPublicAdapter()
     aliases, discovered_tokens = await discover_public_follow_set(transport)
     from polysia.adapters.polymarket.research_sources import (
         MARKET_STREAM_CANDIDATE,
@@ -107,6 +112,17 @@ async def build_persistent_public_sources() -> tuple[
     )
 
     discovery = FollowedMarketDiscovery(transport, aliases) if aliases else None
+
+    async def terminal_snapshot(
+        token_markets: Mapping[str, str],
+    ) -> TerminalMarketSnapshot:
+        books: dict[str, MarketOrderBookSnapshot] = {}
+        tokens = tuple(token_markets)
+        for index in range(0, len(tokens), 50):
+            books.update(await public_adapter.get_order_books(tokens[index : index + 50]))
+        fees = await discover_clob_market_fee_schedules(transport, token_markets)
+        return TerminalMarketSnapshot(books=books, fee_schedules=fees)
+
     snapshot = await discovery.refresh() if discovery is not None else None
     followed_markets = {} if snapshot is None else snapshot.token_markets
     token_ids = tuple(followed_markets) or discovered_tokens
@@ -141,8 +157,10 @@ async def build_persistent_public_sources() -> tuple[
         OfficialMarketStreamSource(
             token_ids=token_ids,
             fee_schedules=fee_schedules,
+            token_markets=followed_markets,
             market_discovery=None if discovery is None else discovery.refresh,
             discovery_interval_seconds=1.0,
+            terminal_snapshot_fetcher=terminal_snapshot,
         )
     )
     return tuple(sources), {

@@ -15,6 +15,7 @@ from polysia.adapters.polymarket.research_sources import (
     FollowedMarketDiscovery,
     MarketDiscoverySnapshot,
     OfficialMarketStreamSource,
+    TerminalMarketSnapshot,
     _normalize_wallet_row,
     discover_clob_market_fee_schedules,
     discover_followed_markets,
@@ -23,7 +24,7 @@ from polysia.adapters.polymarket.research_sources import (
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.domain.events import MarketDataEvent
-from polysia.domain.market import MarketFeeSchedule
+from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot, OrderBookLevel
 from polysia.domain.research_evidence.models import (
     AttributionStatus,
     ObservationKind,
@@ -317,6 +318,119 @@ async def test_market_book_emits_side_aware_depth_and_fee_evidence() -> None:
     assert sell.provenance["fee_exponent"] == "2"
     assert buy.related_evidence_id == base.evidence_id
     assert buy.provenance["execution_evidence"] is True
+
+
+def test_invalid_book_update_discards_stale_state_until_fresh_snapshot() -> None:
+    source = OfficialMarketStreamSource(
+        token_ids=("token-1",),
+        clock=lambda: OBSERVED,
+        monotonic_ns=lambda: 5,
+    )
+
+    fresh = MarketDataEvent(
+        source="polymarket",
+        event_type="book",
+        token_id="token-1",
+        received_at=OBSERVED,
+        exchange_ts=OBSERVED,
+        payload={
+            "market": "market-a",
+            "bids": [{"price": "0.48", "size": "4"}],
+            "asks": [{"price": "0.52", "size": "4"}],
+        },
+        raw_payload={},
+    )
+    assert len(source._from_market_event(fresh, run_id="r1")) == 3
+
+    invalid = MarketDataEvent(
+        source="polymarket",
+        event_type="price_change",
+        token_id="token-1",
+        received_at=OBSERVED + timedelta(seconds=1),
+        exchange_ts=OBSERVED + timedelta(seconds=1),
+        payload={"market": "market-a", "price_change": {"side": "BROKEN"}},
+        raw_payload={},
+    )
+    invalid_events = source._from_market_event(invalid, run_id="r1")
+    assert len(invalid_events) == 1
+    assert invalid_events[0].price is None
+    assert invalid_events[0].provenance["book_state"] == "invalid"
+    assert source._books.get_book("token-1") is None
+
+    incremental = MarketDataEvent(
+        source="polymarket",
+        event_type="price_change",
+        token_id="token-1",
+        received_at=OBSERVED + timedelta(seconds=2),
+        exchange_ts=OBSERVED + timedelta(seconds=2),
+        payload={
+            "market": "market-a",
+            "price_change": {"side": "BUY", "price": "0.49", "size": "5"},
+        },
+        raw_payload={},
+    )
+    waiting = source._from_market_event(incremental, run_id="r1")
+    assert len(waiting) == 1
+    assert waiting[0].provenance["book_validation_failure"] == "awaiting_fresh_snapshot"
+    assert source._books.get_book("token-1") is None
+
+    recovered = source._from_market_event(fresh, run_id="r1")
+    assert len(recovered) == 3
+    health = source.health_snapshot()
+    assert health["book_validation_failure_count"] == 1
+    assert health["invalid_book_token_count"] == 0
+    assert health["usable_book_token_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_snapshot_emits_fresh_side_aware_evidence() -> None:
+    requests: list[dict[str, str]] = []
+
+    async def fetch(token_markets: dict[str, str]) -> TerminalMarketSnapshot:
+        requests.append(dict(token_markets))
+        return TerminalMarketSnapshot(
+            books={
+                "token-1": MarketOrderBookSnapshot(
+                    token_id="token-1",
+                    market_id="market-a",
+                    timestamp=OBSERVED,
+                    bids=(OrderBookLevel(price=Decimal("0.48"), size=Decimal("4")),),
+                    asks=(OrderBookLevel(price=Decimal("0.52"), size=Decimal("5")),),
+                    minimum_order_size=Decimal("1"),
+                    tick_size=Decimal("0.01"),
+                    book_hash="terminal-hash",
+                )
+            },
+            fee_schedules={
+                "token-1": MarketFeeSchedule(
+                    enabled=True,
+                    rate=Decimal("0.25"),
+                    exponent=Decimal("2"),
+                    taker_only=True,
+                )
+            },
+        )
+
+    source = OfficialMarketStreamSource(
+        token_ids=("token-1",),
+        clock=lambda: OBSERVED,
+        monotonic_ns=lambda: 5,
+        terminal_snapshot_fetcher=fetch,
+    )
+    events = await source.capture_terminal_evidence(
+        run_id="r1",
+        token_markets={"token-1": "market-a"},
+    )
+
+    assert requests == [{"token-1": "market-a"}]
+    assert len(events) == 3
+    assert [event.side for event in events] == [None, "BUY", "SELL"]
+    assert events[2].price == Decimal("0.48")
+    assert events[2].provenance["execution_evidence"] is True
+    health = source.health_snapshot()
+    assert health["terminal_snapshot_requested"] == 1
+    assert health["terminal_snapshot_captured"] == 1
+    assert health["terminal_snapshot_missing"] == 0
 
 
 def test_wallet_observation_identity_preserves_distinct_wallet_attribution() -> None:

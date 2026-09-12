@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 
 import pytest
 
@@ -15,6 +17,11 @@ from polysia.adapters.polymarket.copytrading_source import (
     PolymarketCopyTradingSource,
     PolymarketCopyTradingSourceError,
     PolymarketMarketScope,
+    UrllibJsonGetTransport,
+)
+from polysia.adapters.polymarket.request_scheduling import (
+    EndpointRequestScheduler,
+    TradesSourceUnavailableError,
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.domain.copytrading import (
@@ -29,6 +36,26 @@ WALLET = "0x1111111111111111111111111111111111111111"
 OBSERVED_AT = datetime(2026, 7, 28, 16, 31, tzinfo=UTC)
 START_AT = datetime(2026, 7, 28, 16, 15, tzinfo=UTC)
 END_AT = datetime(2026, 7, 28, 16, 31, tzinfo=UTC)
+
+
+class _AdvancingRequestClock:
+    def __init__(self) -> None:
+        self.monotonic = 0.0
+        self.wall = OBSERVED_AT
+
+    def monotonic_now(self) -> float:
+        return self.monotonic
+
+    def wall_now(self) -> datetime:
+        return self.wall
+
+    async def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+        await asyncio.sleep(0)
+
+    def advance(self, seconds: float) -> None:
+        self.monotonic += seconds
+        self.wall += timedelta(seconds=seconds)
 
 
 class FakeTransport:
@@ -585,6 +612,63 @@ async def test_interval_time_mapping_uses_at_most_one_second_tolerance(
     )
 
     assert bool(page.events) is accepted
+
+
+@pytest.mark.asyncio
+async def test_failed_http_recovery_probe_can_retry_and_recover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _AdvancingRequestClock()
+    scheduler = EndpointRequestScheduler(
+        monotonic_clock=clock.monotonic_now,
+        wall_clock=clock.wall_now,
+        sleeper=clock.sleep,
+        jitter=lambda _attempt: 0,
+    )
+    transport = UrllibJsonGetTransport(
+        max_attempts=1,
+        scheduler=scheduler,
+    )
+    outcomes: list[object] = [
+        HTTPError("safe", 503, "server", None, None),
+        HTTPError("safe", 503, "server", None, None),
+        {"status": "recovered"},
+    ]
+
+    def read_json(_url: str) -> object:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(transport, "_read_json", read_json)
+    with pytest.raises(TradesSourceUnavailableError):
+        await transport.get_json(
+            DATA_API_BASE_URL,
+            "/trades",
+            {},
+            purpose=LeaderReadPurpose.DISCOVERY,
+        )
+    clock.advance(2)
+
+    with pytest.raises(TradesSourceUnavailableError):
+        await transport.get_json(
+            DATA_API_BASE_URL,
+            "/trades",
+            {},
+            purpose=LeaderReadPurpose.RECOVERY,
+        )
+    assert scheduler.circuit_snapshot()["single_probe_in_flight"] is False
+    clock.advance(3)
+
+    result = await transport.get_json(
+        DATA_API_BASE_URL,
+        "/trades",
+        {},
+        purpose=LeaderReadPurpose.RECOVERY,
+    )
+    assert result == {"status": "recovered"}
+    assert scheduler.circuit_snapshot()["open"] is False
 
 
 def test_source_module_contains_only_get_transport_and_no_mutation_methods() -> None:
