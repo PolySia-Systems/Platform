@@ -334,6 +334,7 @@ class OfficialMarketStreamSource:
         token_markets: Mapping[str, str] | None = None,
         terminal_snapshot_fetcher: TerminalMarketSnapshotFetcher | None = None,
         terminal_snapshot_limit: int = 500,
+        snapshot_refresh_interval_seconds: float = 20.0,
     ) -> None:
         if discovery_interval_seconds <= 0:
             raise ValueError("discovery_interval_seconds must be positive")
@@ -341,6 +342,8 @@ class OfficialMarketStreamSource:
             raise ValueError("token_ids must contain at most 500 items")
         if terminal_snapshot_limit <= 0 or terminal_snapshot_limit > 500:
             raise ValueError("terminal_snapshot_limit must be within [1, 500]")
+        if snapshot_refresh_interval_seconds <= 0:
+            raise ValueError("snapshot_refresh_interval_seconds must be positive")
         self.candidate = MARKET_STREAM_CANDIDATE
         if event_factory is None and not token_ids and market_discovery is None:
             self.candidate = SourceCandidate(
@@ -364,6 +367,7 @@ class OfficialMarketStreamSource:
         self._token_markets = dict(token_markets or {})
         self._terminal_snapshot_fetcher = terminal_snapshot_fetcher
         self._terminal_snapshot_limit = terminal_snapshot_limit
+        self._snapshot_refresh_interval_seconds = snapshot_refresh_interval_seconds
         self._books = BookBuilder()
         self._invalid_book_tokens: set[str] = set()
         self._last_book_failure_at: datetime | None = None
@@ -376,6 +380,9 @@ class OfficialMarketStreamSource:
         self.discovery_failure_count = 0
         self.book_validation_failure_count = 0
         self.book_recovery_count = 0
+        self.snapshot_refresh_count = 0
+        self.snapshot_refresh_failure_count = 0
+        self.snapshot_refresh_missing = 0
         self.terminal_snapshot_requested = 0
         self.terminal_snapshot_captured = 0
         self.terminal_snapshot_missing = 0
@@ -425,6 +432,7 @@ class OfficialMarketStreamSource:
         next_discovery_at = self._clock() + timedelta(
             seconds=self._discovery_interval_seconds
         )
+        next_snapshot_at = self._clock()
         try:
             async with subscription:
                 while self._clock() < deadline:
@@ -491,6 +499,23 @@ class OfficialMarketStreamSource:
                             stream = self._new_market_stream(bus)
                             runner = asyncio.create_task(stream.run())
                             self.subscription_update_count += 1
+                    if self._clock() >= next_snapshot_at:
+                        refreshed = await self._capture_snapshot_evidence(
+                            run_id=run_id,
+                            token_markets=self._token_markets,
+                            reason="periodic_refresh",
+                        )
+                        if refreshed is None:
+                            self.snapshot_refresh_failure_count += 1
+                        else:
+                            events, _requested, _captured, missing, _capped = refreshed
+                            self.snapshot_refresh_count += 1
+                            self.snapshot_refresh_missing = missing
+                            for item in events:
+                                yield item
+                        next_snapshot_at = self._clock() + timedelta(
+                            seconds=self._snapshot_refresh_interval_seconds
+                        )
         finally:
             if not runner.done():
                 runner.cancel()
@@ -575,6 +600,9 @@ class OfficialMarketStreamSource:
             "discovery_failure_count": self.discovery_failure_count,
             "book_validation_failure_count": self.book_validation_failure_count,
             "book_recovery_count": self.book_recovery_count,
+            "snapshot_refresh_count": self.snapshot_refresh_count,
+            "snapshot_refresh_failure_count": self.snapshot_refresh_failure_count,
+            "snapshot_refresh_missing": self.snapshot_refresh_missing,
             "last_book_failure_at": _optional_time(self._last_book_failure_at),
             "last_book_failure_class": self._last_book_failure_class,
             "invalid_book_token_count": len(self._invalid_book_tokens),
@@ -593,23 +621,47 @@ class OfficialMarketStreamSource:
     ) -> tuple[CanonicalResearchEvent, ...]:
         """Capture bounded fresh books needed for terminal valuation."""
 
-        if self._terminal_snapshot_fetcher is None or not token_markets:
-            return ()
-        selected = dict(list(token_markets.items())[: self._terminal_snapshot_limit])
-        self.terminal_snapshot_requested = len(token_markets)
-        self.terminal_snapshot_limit_reached = len(token_markets) > len(selected)
-        try:
-            snapshot = await self._terminal_snapshot_fetcher(selected)
-        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+        captured = await self._capture_snapshot_evidence(
+            run_id=run_id,
+            token_markets=token_markets,
+            reason="terminal_valuation",
+        )
+        if captured is None:
+            self.terminal_snapshot_requested = len(token_markets)
             self.terminal_snapshot_captured = 0
-            self.terminal_snapshot_missing = len(selected)
+            self.terminal_snapshot_missing = min(
+                len(token_markets),
+                self._terminal_snapshot_limit,
+            )
+            self.terminal_snapshot_limit_reached = (
+                len(token_markets) > self._terminal_snapshot_limit
+            )
             self._last_failure_at = self._clock()
             self._failure_class = "terminal_snapshot_failed"
             return ()
+        events, requested, books, missing, capped = captured
+        self.terminal_snapshot_requested = requested
+        self.terminal_snapshot_captured = books
+        self.terminal_snapshot_missing = missing
+        self.terminal_snapshot_limit_reached = capped
+        return events
+
+    async def _capture_snapshot_evidence(
+        self,
+        *,
+        run_id: str,
+        token_markets: Mapping[str, str],
+        reason: str,
+    ) -> tuple[tuple[CanonicalResearchEvent, ...], int, int, int, bool] | None:
+        if self._terminal_snapshot_fetcher is None or not token_markets:
+            return ((), len(token_markets), 0, len(token_markets), False)
+        selected = dict(list(token_markets.items())[: self._terminal_snapshot_limit])
+        try:
+            snapshot = await self._terminal_snapshot_fetcher(selected)
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+            return None
         self._fee_schedules.update(snapshot.fee_schedules)
         self._token_markets.update(selected)
-        self.terminal_snapshot_captured = len(snapshot.books)
-        self.terminal_snapshot_missing = len(selected) - len(snapshot.books)
         observed = self._clock()
         events: list[CanonicalResearchEvent] = []
         for token, book in snapshot.books.items():
@@ -632,12 +684,18 @@ class OfficialMarketStreamSource:
                     ],
                     "hash": book.book_hash,
                     "market": selected[token],
-                    "snapshot_reason": "terminal_valuation",
+                    "snapshot_reason": reason,
                 },
                 raw_payload={},
             )
             events.extend(self._from_market_event(event, run_id=run_id))
-        return tuple(events)
+        return (
+            tuple(events),
+            len(token_markets),
+            len(snapshot.books),
+            len(selected) - len(snapshot.books),
+            len(token_markets) > len(selected),
+        )
 
     def _from_market_event(
         self,

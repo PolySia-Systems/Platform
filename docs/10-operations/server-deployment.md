@@ -114,6 +114,9 @@ and executable-evidence coverage >= 90%. The stopped canary must also show no
 outstanding invalid book state and complete terminal snapshot coverage for all
 requested tokens within the 500-token cap. Terminal capture failure, missing
 books, or a reached cap remains `INSUFFICIENT_DATA`; do not increase quote age.
+The market-source health must show continuing periodic snapshot refresh and
+must expose any refresh failure or missing book; repeated failures are not
+source progress.
 Verify health, restart count, bounded
 DB/WAL/report/log growth, empty Live allowlist, Live disabled, and zero mutating
 order calls separately. `INSUFFICIENT_ACTIVITY` is not permission to extend the
