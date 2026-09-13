@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.domain.research_evidence.models import CanonicalResearchEvent, ObservationKind
@@ -337,6 +337,37 @@ def _latest_liquidation(
     shares: Decimal,
     cutoff: datetime | None,
 ) -> ExecutionEvidence | None:
+    settlements = [
+        item
+        for item in events
+        if item.event_kind is ObservationKind.MARKET_STATE
+        and item.classification.value == "ACCEPTED"
+        and item.outcome_reference == outcome
+        and item.market_reference == market
+        and item.provenance.get("settlement_evidence_version")
+        == "official-terminal-settlement-v1"
+        and cutoff is not None
+        and item.observed_time <= cutoff
+    ]
+    if settlements:
+        settlement = max(
+            settlements,
+            key=lambda item: (item.observed_time, item.evidence_id),
+        )
+        price = _settlement_price(settlement.provenance.get("settlement_price"))
+        if price is not None:
+            return ExecutionEvidence(
+                snapshot_evidence_id=settlement.evidence_id,
+                executable_price=price,
+                available_quantity=shares,
+                recorded_fee=ZERO,
+                notional=price * shares,
+                slippage=ZERO,
+                partial_fill=False,
+                fee_rate=ZERO,
+                fee_model_version="official-settlement-v1",
+                economically_complete=True,
+            )
     candidates = [
         item
         for item in events
@@ -370,6 +401,14 @@ def _latest_liquidation(
         entry_budget=CONTRACT_V1.entry_budget,
     )
     return evidence
+
+
+def _settlement_price(value: object) -> Decimal | None:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if parsed in {ZERO, Decimal("1")} else None
 
 
 def _ratio(numerator: int, denominator: int) -> Decimal:

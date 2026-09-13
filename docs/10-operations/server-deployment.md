@@ -112,8 +112,10 @@ The two economic and decision digests must match. Data `PASS` additionally
 requires 20 eligible wallet observations, complete accounting, mapping >= 95%,
 and executable-evidence coverage >= 90%. The stopped canary must also show no
 outstanding invalid book state and complete terminal snapshot coverage for all
-requested tokens within the 500-token cap. Terminal capture failure, missing
-books, or a reached cap remains `INSUFFICIENT_DATA`; do not increase quote age.
+requested tokens within the 500-token cap. A closed market may satisfy terminal
+coverage with its exact official zero/one settlement instead of a nonexistent
+book. Terminal capture failure, unresolved missing evidence, or a reached cap
+remains `INSUFFICIENT_DATA`; do not increase quote age.
 The market-source health must show continuing periodic snapshot refresh and
 must expose any refresh failure or missing book; repeated failures are not
 source progress.
