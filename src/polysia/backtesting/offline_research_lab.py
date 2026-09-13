@@ -580,4 +580,3 @@ async def run_offline_proof(work: Path) -> dict[str, LabScenarioResult]:
         "B": await run_scenario_b(work / "scenario-b"),
         "C": await run_scenario_c(work / "scenario-c"),
     }
-
