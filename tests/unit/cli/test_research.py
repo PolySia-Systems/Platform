@@ -467,7 +467,7 @@ def test_prospective_replay_emits_versioned_economic_evidence(tmp_path: Path) ->
 
     assert result.exit_code == 0, result.output
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["experiment_contract"]["version"] == "prospective-economic-v1"
+    assert payload["experiment_contract"]["version"] == "prospective-economic-v2"
     assert payload["summary"]["economic"] == "INSUFFICIENT_DATA"
     assert payload["decision_evidence"][0]["snapshot_evidence_id"] == "quote"
     assert len(payload["source_database_sha256"]) == 64

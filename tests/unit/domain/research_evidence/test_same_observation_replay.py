@@ -252,12 +252,22 @@ def test_missing_execution_evidence_stays_unknown() -> None:
         source_time=OBSERVED - timedelta(seconds=1),
         price=Decimal("0.49"),
     )
-    future_quote = _quote("future", observed_time=OBSERVED + timedelta(milliseconds=1))
-    for snapshots in ((), (raw_market_price,), (future_quote,)):
+    for snapshots in ((), (raw_market_price,)):
         replay = replay_same_observations((trade,), snapshots=snapshots)
         assert replay.control_decisions == (("a", ControlAdmission.UNKNOWN),)
         assert replay.target_decisions == (("a", "UNKNOWN"),)
         assert replay.unknown_count == 1
+
+
+def test_bounded_causal_quote_acquisition_is_not_lookahead() -> None:
+    trade = _trade("a", observed=OBSERVED)
+    future_quote = _quote("future", observed_time=OBSERVED + timedelta(milliseconds=1))
+
+    replay = replay_same_observations((trade,), snapshots=(future_quote,))
+
+    assert replay.control_decisions == (("a", ControlAdmission.ADMIT),)
+    assert replay.target_decisions == (("a", TargetExposureDecision.ADMIT),)
+    assert replay.evaluations[0].decision_time == future_quote.observed_time
 
 
 def test_depth_execution_uses_asks_vwap_fee_and_partial_fill() -> None:
@@ -315,13 +325,13 @@ def test_fee_and_causality_failures_are_exact() -> None:
         observed_time=OBSERVED - timedelta(seconds=1),
         fee_rate=None,
     )
-    future = _depth_quote("future", observed_time=OBSERVED + timedelta(milliseconds=1))
+    too_late = _depth_quote("future", observed_time=OBSERVED + timedelta(seconds=31))
     stale = _depth_quote("stale", observed_time=OBSERVED - timedelta(seconds=31))
 
     assert replay_same_observations((trade,), snapshots=(missing_fee,)).unknown_by_cause == (
         ("missing_fee", 1),
     )
-    assert replay_same_observations((trade,), snapshots=(future,)).unknown_by_cause == (
+    assert replay_same_observations((trade,), snapshots=(too_late,)).unknown_by_cause == (
         ("missing_quote", 1),
     )
     assert replay_same_observations((trade,), snapshots=(stale,)).unknown_by_cause == (

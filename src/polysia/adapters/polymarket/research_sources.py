@@ -177,6 +177,7 @@ class DataApiWalletPollSource:
         self._retry_at: datetime | None = None
         self._recovery_required = False
         self._recovery_count = 0
+        self._bootstrap_rows_skipped = 0
 
     async def run(
         self,
@@ -184,6 +185,7 @@ class DataApiWalletPollSource:
         run_id: str,
         deadline: datetime,
     ) -> AsyncIterator[CanonicalResearchEvent]:
+        collection_started = self._clock()
         if self._initial_delay_seconds:
             remaining = (deadline - self._clock()).total_seconds()
             if remaining <= 0:
@@ -269,6 +271,10 @@ class DataApiWalletPollSource:
                     self._last_successful_event_at = observed
                 rows.sort(key=_row_timestamp)
                 for row in rows:
+                    source_time = _optional_timestamp(row.get("timestamp"))
+                    if source_time is not None and source_time < collection_started:
+                        self._bootstrap_rows_skipped += 1
+                        continue
                     yield _normalize_wallet_row(
                         row,
                         source_id=self._source_id,
@@ -295,6 +301,7 @@ class DataApiWalletPollSource:
             "failure_class": self._failure_class,
             "retry_at": _optional_time(self._retry_at),
             "recovery_count": self._recovery_count,
+            "bootstrap_rows_skipped": self._bootstrap_rows_skipped,
         }
 
     def _params(
@@ -971,7 +978,7 @@ class OfficialMarketStreamSource:
                 {"price": format(item.price, "f"), "size": format(item.size, "f")}
                 for item in normalized_levels
             ],
-            "decision_clock": "wallet-observed-time",
+            "decision_clock": "causal-execution-evidence-time",
             "execution_evidence": complete,
             "execution_evidence_version": "order-book-depth-v1",
             "execution_failure": failure,

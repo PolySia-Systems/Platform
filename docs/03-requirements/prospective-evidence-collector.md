@@ -142,9 +142,9 @@ qualifying snapshot deterministically, and never interpolate prices.
 This is not a second accounting engine. Stage 4B ledger semantics remain in
 the historical replay path.
 
-## Prospective economic contract v1
+## Prospective economic contract v2
 
-`prospective-economic-v1` freezes the recorded follow set and public source
+`prospective-economic-v2` freezes the recorded follow set and public source
 identities in the experiment configuration digest. It compares
 `continuous-shadow-policy-v0.2` with `target-exposure-v1` from equal synthetic
 capital (1000), a 5-unit BUY budget, and the existing 100-unit per-market cap.
@@ -180,6 +180,14 @@ published as executable evidence. While collecting, one bounded public book
 snapshot refreshes the current followed-token set every 20 seconds so quiet
 books do not become falsely executable after the frozen 30-second freshness
 limit. Fee schedules are cached and fetched only for newly observed tokens.
+
+Bootstrap rows whose source time predates the run are discovery context, not
+prospective copy observations, and are not emitted into the economic sample.
+When no causal quote is already available at Wallet observation time, replay may
+use the first execution snapshot acquired within the frozen 30-second bound;
+the decision clock then advances to that snapshot's observed time. This is a
+measured acquisition delay, not future information. Follower markout horizons
+start from that decision time.
 
 Immediately before the terminal experiment window closes, the collector makes
 one bounded public batch capture of fresh books and fee schedules for the

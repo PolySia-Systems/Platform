@@ -8,7 +8,7 @@ from decimal import Decimal
 from polysia.domain.copytrading.continuous_shadow import calculate_taker_fee_amount
 from polysia.domain.research_evidence.models import payload_digest
 
-ECONOMIC_EXPERIMENT_VERSION = "prospective-economic-v1"
+ECONOMIC_EXPERIMENT_VERSION = "prospective-economic-v2"
 FEE_MODEL_VERSION = "polymarket-taker-fee-v1"
 
 
@@ -23,8 +23,9 @@ class EconomicExperimentContract:
     entry_budget: Decimal = Decimal("5")
     market_exposure_cap: Decimal = Decimal("100")
     quote_max_age_seconds: int = 30
+    quote_acquisition_max_seconds: int = 30
     valuation: str = "latest-causal-executable-bid-at-cutoff"
-    decision_clock: str = "wallet-observed-time"
+    decision_clock: str = "causal-execution-evidence-time"
     fee_model: str = FEE_MODEL_VERSION
     wallet_population: str = "recorded-experiment-follow-set"
     data_sources: tuple[str, ...] = (
@@ -51,7 +52,11 @@ class EconomicExperimentContract:
             raise ValueError("economic capital and entry budget must be positive")
         if self.entry_budget > self.market_exposure_cap:
             raise ValueError("entry budget must not exceed the market cap")
-        if self.quote_max_age_seconds <= 0 or self.canary_min_eligible <= 0:
+        if (
+            self.quote_max_age_seconds <= 0
+            or self.quote_acquisition_max_seconds <= 0
+            or self.canary_min_eligible <= 0
+        ):
             raise ValueError("economic time and count bounds must be positive")
 
     def to_dict(self) -> dict[str, object]:
@@ -73,6 +78,7 @@ class EconomicExperimentContract:
             "primary_metric": self.primary_metric,
             "classification_rule": self.classification_rule,
             "quote_max_age_seconds": self.quote_max_age_seconds,
+            "quote_acquisition_max_seconds": self.quote_acquisition_max_seconds,
             "target_policy": self.target_policy,
             "valuation": self.valuation,
             "version": self.version,

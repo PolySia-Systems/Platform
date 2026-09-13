@@ -705,7 +705,7 @@ def test_finalize_experiment_excludes_invalid_windows_and_uses_bundle_storage(
     assert manifest["replay"]["replayed_event_count"] == 2
     assert manifest["replay"]["excluded_event_count"] == 1
     assert manifest["economic"]["economic_classification"] == "INSUFFICIENT_DATA"
-    assert manifest["experiment_contract"]["version"] == "prospective-economic-v1"
+    assert manifest["experiment_contract"]["version"] == "prospective-economic-v2"
     assert len(manifest["experiment_contract_digest"]) == 64
     assert len(restore_parents) == 1
     assert restore_parents[0].parent == bundle_root

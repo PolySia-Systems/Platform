@@ -101,7 +101,7 @@ optional JSON artifact outside Git. It does not deploy, restart services, or
 connect this research path to Live, Risk, or Execution.
 
 Prospective evidence uses the separate canonical
-`research prospective-replay` command and `prospective-economic-v1` contract in
+`research prospective-replay` command and `prospective-economic-v2` contract in
 [Prospective Research Evidence Collector](prospective-evidence-collector.md).
 It extends this frozen comparison with causal order-book depth, verified fee
 schedule evidence, and deterministic economic reporting; it does not alter the

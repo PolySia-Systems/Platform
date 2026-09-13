@@ -175,7 +175,7 @@ async def test_wallet_poll_source_aliases_and_does_not_emit_addresses() -> None:
                 "side": "BUY",
                 "price": "0.51",
                 "size": "2",
-                "timestamp": int(OBSERVED.timestamp()) - 3,
+                "timestamp": int(OBSERVED.timestamp()),
                 "conditionId": "0x" + "a" * 64,
                 "asset": "token-1",
                 "transactionHash": "0x" + "b" * 64,
@@ -201,6 +201,46 @@ async def test_wallet_poll_source_aliases_and_does_not_emit_addresses() -> None:
     assert WALLET not in events[0].leader_alias
     assert events[0].attribution_status is AttributionStatus.WALLET_ALIASED
     assert "user" not in events[0].provenance
+
+
+@pytest.mark.asyncio
+async def test_wallet_poll_source_does_not_emit_pre_run_backlog() -> None:
+    transport = FakeTransport(
+        [
+            {
+                "proxyWallet": WALLET,
+                "side": "BUY",
+                "price": "0.51",
+                "size": "2",
+                "timestamp": int(OBSERVED.timestamp()) - 3,
+                "conditionId": "0x" + "a" * 64,
+                "asset": "token-1",
+                "transactionHash": "0x" + "b" * 64,
+            }
+        ]
+    )
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path="/activity",
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=transport,
+        clock=_BoundedClock(),
+        monotonic_ns=lambda: 10,
+        sleep=_noop_sleep,
+        poll_interval_seconds=1,
+    )
+
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=5),
+        )
+    ]
+
+    assert events == []
+    assert source.health_snapshot()["bootstrap_rows_skipped"] >= 1
 
 
 @pytest.mark.asyncio
