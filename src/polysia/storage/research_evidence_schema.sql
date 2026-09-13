@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS research_experiments (
     collection_ends_at_utc TEXT NOT NULL,
     max_events INTEGER NOT NULL CHECK (max_events > 0),
     max_bytes INTEGER NOT NULL CHECK (max_bytes > 0),
-    status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'FINALIZED')),
+    status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'FINALIZED', 'FAILURE_ARCHIVED')),
     code_sha TEXT,
     configuration_digest TEXT NOT NULL,
     policy_version TEXT NOT NULL,

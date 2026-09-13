@@ -370,6 +370,7 @@ def test_prospective_replay_requires_recorded_run(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 1
+    assert not (tmp_path / "missing.sqlite3").exists()
     result = runner.invoke(
         app,
         ["research", "shadow-replay", "--backup-dir", str(tmp_path / "missing")],
@@ -467,10 +468,101 @@ def test_prospective_replay_emits_versioned_economic_evidence(tmp_path: Path) ->
 
     assert result.exit_code == 0, result.output
     payload = json.loads(output.read_text(encoding="utf-8"))
+    stdout = json.loads(result.stdout)
     assert payload["experiment_contract"]["version"] == "prospective-economic-v2"
     assert payload["summary"]["economic"] == "INSUFFICIENT_DATA"
     assert payload["decision_evidence"][0]["snapshot_evidence_id"] == "quote"
     assert len(payload["source_database_sha256"]) == 64
+    assert "decision_evidence" not in stdout
+    assert "control_decisions" not in stdout
+    assert stdout["engine_version"]
+    assert stdout["result_hash"]
+    assert len(result.stdout.encode()) < 5120
+
+
+def test_prospective_replay_does_not_mutate_source_or_companions(tmp_path: Path) -> None:
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.start_or_resume_experiment(
+        requested_run_id="readonly-run",
+        duration=timedelta(hours=1),
+        max_events=100,
+        max_bytes=10_000_000,
+        code_sha="a" * 40,
+        configuration_digest="configuration",
+    )
+    collector = ProspectiveCollector(store, run_id="readonly-run")
+    collector.close_window(complete=True)
+    from polysia.backtesting.prospective_analysis import (
+        capture_protected_artifacts,
+        sqlite_companion_paths,
+    )
+
+    before = capture_protected_artifacts(database=database)
+    names_before = {path.name for path in sqlite_companion_paths(database) if path.exists()}
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-replay",
+            "--database",
+            str(database),
+            "--run-id",
+            "readonly-run",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    after = capture_protected_artifacts(database=database)
+    names_after = {path.name for path in sqlite_companion_paths(database) if path.exists()}
+    assert after.digests == before.digests
+    assert names_after == names_before
+
+
+def test_prospective_replay_compare_reports_identity_and_deltas(tmp_path: Path) -> None:
+    database = tmp_path / "research.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.start_or_resume_experiment(
+        requested_run_id="compare-run",
+        duration=timedelta(hours=1),
+        max_events=100,
+        max_bytes=10_000_000,
+        code_sha="a" * 40,
+        configuration_digest="configuration",
+    )
+    collector = ProspectiveCollector(store, run_id="compare-run")
+    collector.close_window(complete=True)
+    output = tmp_path / "baseline.json"
+    first = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-replay",
+            "--database",
+            str(database),
+            "--run-id",
+            "compare-run",
+            "--output",
+            str(output),
+        ],
+    )
+    assert first.exit_code == 0, first.output
+    compared = runner.invoke(
+        app,
+        [
+            "research",
+            "prospective-replay",
+            "--database",
+            str(database),
+            "--run-id",
+            "compare-run",
+            "--compare",
+            str(output),
+        ],
+    )
+    assert compared.exit_code == 0, compared.output
+    payload = json.loads(compared.stdout)
+    assert payload["comparison"]["classification"] == "identical"
+    assert payload["comparison"]["first_material_difference"] is None
 
 
 def test_prospective_health_reads_sanitized_file(tmp_path: Path) -> None:

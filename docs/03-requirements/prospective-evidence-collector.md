@@ -104,8 +104,16 @@ The collector is provider-neutral. Venue translation stays in adapters.
   reproduces replay before marking the experiment `FINALIZED`. Replay consumes
   only independently `VALID` windows; invalid windows remain immutable evidence
   and their reasons and excluded event counts stay explicit in the manifest.
-  Backups are recovery points, not a substitute for continuous experiment
-  evidence.
+  If a verified bundle already exists, finalization reuses that exact bundle
+  and does not recollect or republish evidence. Repeated successful
+  finalization is idempotent. A run without valid replayable intervals still
+  writes a `FAILURE_ARCHIVED` bundle that preserves evidence and explicit
+  limitations; that archive is never labeled verified `FINALIZED`. Conceptual
+  lifecycle is `COLLECTED → BUNDLE_PUBLISHED → VERIFIED_ANALYSIS → FINALIZED`,
+  or `COLLECTED|BUNDLE_PUBLISHED → ANALYSIS_FAILED → FAILURE_ARCHIVED`, using
+  the existing experiment row and bundle directory rather than a second
+  orchestrator. Backups are recovery points, not a substitute for continuous
+  experiment evidence.
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
@@ -114,7 +122,10 @@ latency sidecar. No cross-database transactions.
 
 ```text
 python -m polysia.cli research source-benchmark --duration-seconds 600
+python -m polysia.cli research prospective-prove --work-dir artifacts/offline-research-lab
 python -m polysia.cli research prospective-replay --database artifacts/research-evidence.sqlite3 --run-id <id>
+python -m polysia.cli research prospective-replay --database <bundle-db> --run-id <id> --output <details.json>
+python -m polysia.cli research prospective-replay --database <bundle-db> --run-id <id> --compare <baseline.json>
 python -m polysia.cli research prospective-collect --window-seconds 600
 python -m polysia.cli research prospective-health --health-report <path>
 python -m polysia.cli research prospective-health --health-report <path> --require-research-eligible
@@ -208,6 +219,33 @@ python -m polysia.cli research prospective-replay \
   --database <immutable-or-stopped-research-db> --run-id <run-id> \
   --output <versioned-analysis.json>
 ```
+
+It opens the source SQLite file read-only. It never initializes, migrates,
+creates tables, changes journal mode, or creates source-side WAL/SHM artifacts.
+Compatibility or migration work happens only on a private temporary copy.
+Protected bundle files are hashed before and after analysis; the original
+bundle must remain byte-for-byte unchanged. Default stdout is a compact
+machine-readable summary under 5 KiB. Decision-level and evidence-level
+detail is written only when `--output` is supplied. `--compare` reports
+decision, UNKNOWN, coverage, and economic deltas, the first material
+difference with its evidence ID, and contract/configuration/engine identity.
+A behavioral difference with the same declared identity is a regression
+candidate; a declared version/contract/configuration change is an expected
+version change but still reports the behavioral delta.
+
+The synthetic production-path laboratory is:
+
+```text
+python -m polysia.cli research prospective-prove --work-dir artifacts/offline-research-lab
+```
+
+It fakes only network transport, coordinated time, and controlled
+interruption. Adapter parsing, canonicalization, collection, persistence,
+replay, economics, finalization, and restore remain real. Supported failure
+modes must reproduce in seconds or minutes of simulated time. This laboratory
+is PR 1. The operational Runner, run manifest, deployment automation, and
+long-running experiment orchestration remain PR 2 and are not implemented
+here.
 
 It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and

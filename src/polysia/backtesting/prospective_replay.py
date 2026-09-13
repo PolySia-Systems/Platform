@@ -71,14 +71,31 @@ def replay_recorded_experiment(
     invalid_intervals = tuple(
         interval for interval in intervals if interval.validity is not IntervalValidity.VALID
     )
+    total_events = store.experiment_event_count(run_id)
     if not valid_intervals:
-        raise ValueError("experiment has no valid replayable interval")
+        empty = replay_same_observations((), policy=policy, interval_valid=True)
+        return RecordedExperimentReplay(
+            result=empty,
+            valid_intervals=(),
+            invalid_intervals=invalid_intervals,
+            replayed_event_count=0,
+            excluded_event_count=total_events,
+            economics=evaluate_prospective_economics(empty, events=()),
+        )
     events = store.load_events(
         run_id=run_id,
         interval_validity=IntervalValidity.VALID,
     )
     if not events:
-        raise ValueError("experiment has no evidence in a valid interval")
+        empty = replay_same_observations((), policy=policy, interval_valid=True)
+        return RecordedExperimentReplay(
+            result=empty,
+            valid_intervals=valid_intervals,
+            invalid_intervals=invalid_intervals,
+            replayed_event_count=0,
+            excluded_event_count=total_events,
+            economics=evaluate_prospective_economics(empty, events=()),
+        )
     snapshots = tuple(
         event for event in events if event.event_kind.value == "MARKET_STATE"
     )
@@ -89,7 +106,6 @@ def replay_recorded_experiment(
         snapshots=snapshots,
         markout_tolerance=markout_tolerance,
     )
-    total_events = store.experiment_event_count(run_id)
     return RecordedExperimentReplay(
         result=replay,
         valid_intervals=valid_intervals,

@@ -31,6 +31,7 @@ from polysia.domain.research_evidence.models import (
     payload_digest,
 )
 
+REPLAY_ENGINE_VERSION = "same-observation-replay-v1"
 MARKOUT_HORIZONS: tuple[timedelta, ...] = (
     timedelta(seconds=5),
     timedelta(seconds=30),
@@ -910,6 +911,7 @@ __all__ = [
     "MarkoutTimeBasis",
     "ObservationEvaluation",
     "ProspectiveObservation",
+    "REPLAY_ENGINE_VERSION",
     "SameObservationReplay",
     "depth_execution_from_snapshot",
     "lookup_event_time_mark",
