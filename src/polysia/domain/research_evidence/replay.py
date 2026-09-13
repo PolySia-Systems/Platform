@@ -37,6 +37,7 @@ MARKOUT_HORIZONS: tuple[timedelta, ...] = (
     timedelta(minutes=5),
 )
 EXECUTION_EVIDENCE_MAX_AGE = timedelta(seconds=30)
+EXECUTION_EVIDENCE_ACQUISITION_MAX_DELAY = timedelta(seconds=30)
 
 
 class ControlAdmission(StrEnum):
@@ -208,10 +209,11 @@ class _ReplaySnapshotIndex:
         *,
         observation: ProspectiveObservation,
         max_age: timedelta,
+        acquisition_max_delay: timedelta,
         entry_budget: Decimal,
-    ) -> tuple[ExecutionEvidence | None, str | None, bool]:
-        if max_age.total_seconds() < 0:
-            raise ValueError("execution evidence max_age must not be negative")
+    ) -> tuple[ExecutionEvidence | None, str | None, bool, datetime]:
+        if max_age.total_seconds() < 0 or acquisition_max_delay.total_seconds() < 0:
+            raise ValueError("execution evidence time bounds must not be negative")
         timeline = self._executions.get(
             (observation.outcome_reference, observation.side)
         )
@@ -219,28 +221,45 @@ class _ReplaySnapshotIndex:
             mapped = any(
                 key[0] == observation.outcome_reference for key in self._executions
             )
-            return None, "missing_quote" if mapped else "missing_market_token_mapping", mapped
+            return (
+                None,
+                "missing_quote" if mapped else "missing_market_token_mapping",
+                mapped,
+                observation.observed_time,
+            )
         exact = tuple(
             snapshot
             for snapshot in timeline.events
             if snapshot.market_reference == observation.market_reference
         )
         if not exact:
-            return None, "missing_market_token_mapping", False
+            return None, "missing_market_token_mapping", False, observation.observed_time
         cutoff = observation.observed_time - max_age
-        eligible = tuple(
+        past = tuple(
             snapshot
             for snapshot in exact
             if cutoff <= snapshot.observed_time <= observation.observed_time
         )
-        for snapshot in reversed(eligible):
+        future_cutoff = observation.observed_time + acquisition_max_delay
+        future = tuple(
+            snapshot
+            for snapshot in exact
+            if observation.observed_time < snapshot.observed_time <= future_cutoff
+        )
+        first_failure: tuple[str, datetime] | None = None
+        for snapshot in (*reversed(past), *future):
+            decision_time = max(observation.observed_time, snapshot.observed_time)
             if snapshot.provenance.get("execution_evidence_version") == "order-book-depth-v1":
                 evidence, reason = depth_execution_from_snapshot(
                     snapshot,
                     observation=observation,
                     entry_budget=entry_budget,
                 )
-                return evidence, reason, True
+                if evidence is not None:
+                    return evidence, None, True, decision_time
+                if first_failure is None:
+                    first_failure = (reason or "missing_quote", decision_time)
+                continue
             fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
             if fee is not None and snapshot.price is not None and snapshot.size is not None:
                 return (
@@ -252,11 +271,18 @@ class _ReplaySnapshotIndex:
                     ),
                     None,
                     True,
+                    decision_time,
                 )
-            return None, str(snapshot.provenance.get("execution_failure") or "missing_fee"), True
+            if first_failure is None:
+                first_failure = (
+                    str(snapshot.provenance.get("execution_failure") or "missing_fee"),
+                    decision_time,
+                )
+        if first_failure is not None:
+            return None, first_failure[0], True, first_failure[1]
         if any(snapshot.observed_time < cutoff for snapshot in exact):
-            return None, "stale_quote", True
-        return None, "missing_quote", True
+            return None, "stale_quote", True, observation.observed_time
+        return None, "missing_quote", True, observation.observed_time
 
 
 def observation_from_event(event: CanonicalResearchEvent) -> ProspectiveObservation | None:
@@ -385,6 +411,9 @@ def replay_same_observations(
     snapshots: tuple[CanonicalResearchEvent, ...] = (),
     markout_tolerance: timedelta = timedelta(seconds=1),
     execution_evidence_max_age: timedelta = EXECUTION_EVIDENCE_MAX_AGE,
+    execution_evidence_acquisition_max_delay: timedelta = (
+        EXECUTION_EVIDENCE_ACQUISITION_MAX_DELAY
+    ),
 ) -> SameObservationReplay:
     """Consume one observation stream for Current Control and Target Exposure."""
 
@@ -433,9 +462,10 @@ def replay_same_observations(
         key = (observation.market_reference, observation.outcome_reference)
         episode = target_episodes.setdefault(key, _EpisodeState())
         control_episode = control_episodes.setdefault(key, _EpisodeState())
-        execution, unknown_reason, mapped = snapshot_index.execution(
+        execution, unknown_reason, mapped, decision_time = snapshot_index.execution(
             observation=observation,
             max_age=execution_evidence_max_age,
+            acquisition_max_delay=execution_evidence_acquisition_max_delay,
             entry_budget=policy.entry_budget,
         )
         if mapped:
@@ -461,7 +491,7 @@ def replay_same_observations(
                     market_reference=observation.market_reference,
                     outcome_reference=observation.outcome_reference,
                     side=observation.side,
-                    decision_time=observation.observed_time,
+                    decision_time=decision_time,
                     execution=None,
                     unknown_reason=reason,
                     control_decision=control_decision.value,
@@ -474,6 +504,7 @@ def replay_same_observations(
                 tolerance=markout_tolerance,
                 leader=leader_markouts,
                 follower=follower_markouts,
+                follower_event_time=decision_time,
             )
             continue
         if observation.side == "BUY":
@@ -587,7 +618,7 @@ def replay_same_observations(
                 market_reference=observation.market_reference,
                 outcome_reference=observation.outcome_reference,
                 side=observation.side,
-                decision_time=observation.observed_time,
+                decision_time=decision_time,
                 execution=execution,
                 unknown_reason=None,
                 control_decision=control_decision.value,
@@ -601,6 +632,7 @@ def replay_same_observations(
             tolerance=markout_tolerance,
             leader=leader_markouts,
             follower=follower_markouts,
+            follower_event_time=decision_time,
         )
 
     control_digest = _decision_digest(control)
@@ -630,6 +662,7 @@ def _append_markouts(
     tolerance: timedelta,
     leader: list[tuple[str, tuple[MarkoutLookup, ...]]],
     follower: list[tuple[str, tuple[MarkoutLookup, ...]]],
+    follower_event_time: datetime,
 ) -> None:
     leader.append(
         (
@@ -649,7 +682,7 @@ def _append_markouts(
             _markout_series(
                 observation,
                 snapshot_index=snapshot_index,
-                event_time=observation.observed_time,
+                event_time=follower_event_time,
                 tolerance=tolerance,
                 time_basis=MarkoutTimeBasis.FOLLOWER_OBSERVED,
             ),

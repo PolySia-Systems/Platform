@@ -209,3 +209,60 @@ def test_resolved_terminal_settlement_values_open_position_without_book() -> Non
     assert report.control.valuation_status == "MEASURED"
     assert report.control.net_pnl == Decimal("-4")
     assert report.control.remaining_positions[0]["valuation"] == "0"
+
+
+def test_first_causal_quote_after_wallet_observation_sets_decision_time() -> None:
+    wallet = _event(
+        "wallet",
+        observed_at=START,
+        kind=ObservationKind.WALLET_TRADE,
+        side="BUY",
+        price="0.50",
+        size="10",
+    )
+    acquired_book = _event(
+        "book-acquired",
+        observed_at=START + timedelta(seconds=2),
+        kind=ObservationKind.MARKET_STATE,
+        side="BUY",
+        price="0.51",
+        size="100",
+        levels=(("0.51", "100"),),
+    )
+
+    replay = replay_same_observations(
+        (wallet, acquired_book),
+        snapshots=(acquired_book,),
+    )
+
+    assert replay.execution_evidence_count == 1
+    assert replay.evaluations[0].decision_time == START + timedelta(seconds=2)
+    assert replay.evaluations[0].unknown_reason is None
+
+
+def test_quote_after_acquisition_bound_stays_unknown() -> None:
+    wallet = _event(
+        "wallet",
+        observed_at=START,
+        kind=ObservationKind.WALLET_TRADE,
+        side="BUY",
+        price="0.50",
+        size="10",
+    )
+    late_book = _event(
+        "book-late",
+        observed_at=START + timedelta(seconds=31),
+        kind=ObservationKind.MARKET_STATE,
+        side="BUY",
+        price="0.51",
+        size="100",
+        levels=(("0.51", "100"),),
+    )
+
+    replay = replay_same_observations(
+        (wallet, late_book),
+        snapshots=(late_book,),
+    )
+
+    assert replay.execution_evidence_count == 0
+    assert dict(replay.unknown_by_cause) == {"missing_quote": 1}
