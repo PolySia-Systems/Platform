@@ -146,12 +146,25 @@ docker compose --profile research run --rm research-collector \
 
 The command refuses a second writer and marks the run finalized only after
 snapshot, checksum, isolated restore, integrity/foreign-key checks, and
-deterministic replay of the independently valid windows passes. Invalid windows
-remain in the immutable database and are reported as excluded evidence. The
-temporary restore is staged under the bundle root so a bounded experiment is
-not constrained by the service's small `/tmp` tmpfs. Restarting the collector
+deterministic replay of the independently valid windows passes. If that
+verified bundle already exists, the command reuses it and does not republish
+evidence. Repeating a successful finalize is idempotent. A run with no valid
+replayable interval writes a failure archive and records `FAILURE_ARCHIVED`;
+never treat that as verified finalization. Invalid windows remain in the
+immutable database and are reported as excluded evidence. The temporary
+restore is staged under the bundle root so a bounded experiment is not
+constrained by the service's small `/tmp` tmpfs. Restarting the collector
 then starts the next bounded experiment. Do not treat rotating backups as the
 experiment archive.
+
+Analyze a published bundle only with `prospective-replay`. It must leave the
+source database, manifest, checksums, and protected companions byte-for-byte
+unchanged. Use `--output` for detailed evidence and `--compare` for compact
+deltas. Prove the production path offline with `research prospective-prove`
+before another multi-hour experiment. That laboratory is not the operational
+Runner planned for a later change; do not deploy a runner, run manifest, or
+long-running orchestration from this PR.
+
 Finalize an active experiment before deploying collector code or configuration
 that would change its recorded SHA or configuration digest.
 

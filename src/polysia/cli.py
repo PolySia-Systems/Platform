@@ -64,6 +64,7 @@ research_app.command("prospective-replay")(research.prospective_replay)
 research_app.command("prospective-collect")(research.prospective_collect)
 research_app.command("prospective-health")(research.prospective_health)
 research_app.command("prospective-finalize")(research.prospective_finalize)
+research_app.command("prospective-prove")(research.prospective_prove)
 
 wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
 wallet_intelligence_app.command("ensure")(wallet_intelligence.ensure)

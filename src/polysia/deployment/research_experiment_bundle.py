@@ -12,11 +12,29 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from polysia.backtesting.prospective_replay import replay_recorded_experiment
+from polysia.backtesting.prospective_analysis import (
+    MANIFEST_NAME,
+    byte_copy_sqlite,
+    capture_protected_artifacts,
+    load_bundle_manifest,
+    open_recorded_experiment_store,
+    verify_protected_unchanged,
+)
+from polysia.backtesting.prospective_replay import (
+    RecordedExperimentReplay,
+    replay_recorded_experiment,
+)
 from polysia.deployment.recovery_bundle import sha256_file
 from polysia.deployment.sqlite_backup import restore_sqlite_backup, verify_sqlite_backup
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
-from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
+from polysia.storage.research_evidence import (
+    ResearchEvidenceStore,
+    ResearchEvidenceStoreError,
+    ResearchExperiment,
+)
+
+OUTCOME_FINALIZED = "FINALIZED"
+OUTCOME_FAILURE_ARCHIVED = "FAILURE_ARCHIVED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +43,8 @@ class ResearchExperimentBundle:
     database_path: Path
     manifest_path: Path
     sha256: str
+    outcome: str = OUTCOME_FINALIZED
+    verified: bool = True
 
 
 def finalize_research_experiment(
@@ -42,13 +62,37 @@ def finalize_research_experiment(
     store = ResearchEvidenceStore(database)
     store.acquire_writer()
     staging = bundle_root / f".research-experiment-{uuid4().hex}.tmp"
-    final = bundle_root / f"research-experiment-{run_id}"
+    success_final = bundle_root / f"research-experiment-{run_id}"
+    failure_final = bundle_root / f"research-experiment-{run_id}-failure"
     try:
         experiment = store.load_experiment(run_id)
-        if experiment is None or experiment.status != "ACTIVE":
-            raise ResearchEvidenceStoreError("active research experiment not found")
-        if final.exists():
-            raise FileExistsError(f"research experiment bundle already exists: {final}")
+        if experiment is None:
+            raise ResearchEvidenceStoreError("research experiment not found")
+        if experiment.status == OUTCOME_FINALIZED:
+            return _reuse_existing_bundle(
+                success_final,
+                run_id=run_id,
+                expected_sha256=experiment.bundle_sha256,
+                require_verified=True,
+            )
+        if experiment.status == OUTCOME_FAILURE_ARCHIVED:
+            return _reuse_existing_bundle(
+                failure_final,
+                run_id=run_id,
+                expected_sha256=experiment.bundle_sha256,
+                require_verified=False,
+            )
+        if experiment.status != "ACTIVE":
+            raise ResearchEvidenceStoreError("research experiment is not active")
+        if success_final.exists():
+            bundle = _verify_published_bundle(success_final, run_id=run_id, require_verified=True)
+            store.finalize_experiment_record(
+                run_id,
+                bundle_path=bundle.path,
+                bundle_sha256=bundle.sha256,
+                finalized_at=observed,
+            )
+            return bundle
         staging.mkdir(parents=True)
         database_copy = store.snapshot(staging / "research-evidence.sqlite3")
         replica = ResearchEvidenceStore(database_copy)
@@ -57,13 +101,15 @@ def finalize_research_experiment(
         second = replay_recorded_experiment(replica, run_id=run_id)
         if first != second:
             raise ResearchEvidenceStoreError("experiment replay is not deterministic")
-        replica.finalize_experiment_record(
-            run_id,
-            bundle_path=final,
-            bundle_sha256="manifest-owned",
-            finalized_at=observed,
-        )
-        replica.verify_integrity()
+        verified = _replay_is_verified(first)
+        if verified:
+            replica.finalize_experiment_record(
+                run_id,
+                bundle_path=success_final,
+                bundle_sha256="manifest-owned",
+                finalized_at=observed,
+            )
+            replica.verify_integrity()
         checksum = sha256_file(database_copy)
         checksum_path = database_copy.with_suffix(f"{database_copy.suffix}.sha256")
         checksum_path.write_text(f"{checksum}  {database_copy.name}\n", encoding="ascii")
@@ -80,66 +126,225 @@ def finalize_research_experiment(
             restored_replay = replay_recorded_experiment(restored_store, run_id=run_id)
             if restored_replay != first:
                 raise ResearchEvidenceStoreError("restored experiment replay changed")
-        invalid_reasons: dict[str, int] = {}
-        for interval in first.invalid_intervals:
-            key = f"{interval.validity.value}:{interval.reason}"
-            invalid_reasons[key] = invalid_reasons.get(key, 0) + 1
-        manifest = {
-            "manifest_version": 2,
-            "run_id": run_id,
-            "started_at": experiment.started_at.isoformat(),
-            "collection_ends_at": experiment.collection_ends_at.isoformat(),
-            "finalized_at": observed.isoformat(),
-            "code_sha": experiment.code_sha,
-            "policy_version": experiment.policy_version,
-            "configuration_digest": experiment.configuration_digest,
-            "experiment_contract": CONTRACT_V1.to_dict(),
-            "experiment_contract_digest": CONTRACT_V1.digest,
-            "max_events": experiment.max_events,
-            "max_bytes": experiment.max_bytes,
-            "event_count": replica.experiment_event_count(run_id),
-            "database": database_copy.name,
-            "database_sha256": checksum,
-            "intervals": {
-                "invalid_event_bearing": len(first.invalid_intervals),
-                "invalid_reasons": invalid_reasons,
-                "valid_event_bearing": len(first.valid_intervals),
-            },
-            "replay": {
-                "control_digest": first.result.control_digest,
-                "excluded_event_count": first.excluded_event_count,
-                "invalidated": first.result.invalidated,
-                "replayed_event_count": first.replayed_event_count,
-                "scope": "valid_intervals_only",
-                "target_digest": first.result.target_digest,
-                "unknown_count": first.result.unknown_count,
-                "unknown_by_cause": dict(first.result.unknown_by_cause),
-            },
-            "economic": first.economics.to_dict(),
-        }
-        manifest_path = staging / "experiment-manifest.json"
+        manifest = _bundle_manifest(
+            experiment=experiment,
+            run_id=run_id,
+            observed=observed,
+            replica=replica,
+            replay=first,
+            checksum=checksum,
+            database_name=database_copy.name,
+            verified=verified,
+        )
+        manifest_path = staging / MANIFEST_NAME
         manifest_path.write_text(
             f"{json.dumps(manifest, indent=2, sort_keys=True)}\n", encoding="utf-8"
         )
         _restrict(manifest_path)
         bundle_root.mkdir(parents=True, exist_ok=True)
-        os.replace(staging, final)
-        store.finalize_experiment_record(
+        if verified:
+            os.replace(staging, success_final)
+            store.finalize_experiment_record(
+                run_id,
+                bundle_path=success_final,
+                bundle_sha256=checksum,
+                finalized_at=observed,
+            )
+            return ResearchExperimentBundle(
+                path=success_final,
+                database_path=success_final / database_copy.name,
+                manifest_path=success_final / MANIFEST_NAME,
+                sha256=checksum,
+                outcome=OUTCOME_FINALIZED,
+                verified=True,
+            )
+        if failure_final.exists():
+            shutil.rmtree(staging)
+            return _reuse_existing_bundle(
+                failure_final,
+                run_id=run_id,
+                expected_sha256=None,
+                require_verified=False,
+            )
+        os.replace(staging, failure_final)
+        store.mark_experiment_terminal(
             run_id,
-            bundle_path=final,
+            status=OUTCOME_FAILURE_ARCHIVED,
+            bundle_path=failure_final,
             bundle_sha256=checksum,
-            finalized_at=observed,
+            at=observed,
+            from_statuses=("ACTIVE",),
         )
         return ResearchExperimentBundle(
-            path=final,
-            database_path=final / database_copy.name,
-            manifest_path=final / manifest_path.name,
+            path=failure_final,
+            database_path=failure_final / database_copy.name,
+            manifest_path=failure_final / MANIFEST_NAME,
             sha256=checksum,
+            outcome=OUTCOME_FAILURE_ARCHIVED,
+            verified=False,
         )
     finally:
         store.release_writer()
         if staging.exists():
             shutil.rmtree(staging)
+
+
+def _replay_is_verified(replay: RecordedExperimentReplay) -> bool:
+    return bool(replay.valid_intervals) and replay.replayed_event_count > 0
+
+
+def _bundle_manifest(
+    *,
+    experiment: ResearchExperiment,
+    run_id: str,
+    observed: datetime,
+    replica: ResearchEvidenceStore,
+    replay: RecordedExperimentReplay,
+    checksum: str,
+    database_name: str,
+    verified: bool,
+) -> dict[str, object]:
+    started_at = experiment.started_at
+    collection_ends_at = experiment.collection_ends_at
+    code_sha = experiment.code_sha
+    policy_version = experiment.policy_version
+    configuration_digest = experiment.configuration_digest
+    max_events = experiment.max_events
+    max_bytes = experiment.max_bytes
+    invalid_reasons: dict[str, int] = {}
+    for interval in replay.invalid_intervals:
+        key = f"{interval.validity.value}:{interval.reason}"
+        invalid_reasons[key] = invalid_reasons.get(key, 0) + 1
+    limitations = list(replay.economics.limitations)
+    if not verified:
+        limitations.insert(0, "no_valid_replayable_interval")
+    return {
+        "manifest_version": 2,
+        "run_id": run_id,
+        "started_at": started_at.isoformat(),
+        "collection_ends_at": collection_ends_at.isoformat(),
+        "finalized_at": observed.isoformat(),
+        "code_sha": code_sha,
+        "policy_version": policy_version,
+        "configuration_digest": configuration_digest,
+        "experiment_contract": CONTRACT_V1.to_dict(),
+        "experiment_contract_digest": CONTRACT_V1.digest,
+        "max_events": max_events,
+        "max_bytes": max_bytes,
+        "event_count": replica.experiment_event_count(run_id),
+        "database": database_name,
+        "database_sha256": checksum,
+        "outcome": OUTCOME_FINALIZED if verified else OUTCOME_FAILURE_ARCHIVED,
+        "verified": verified,
+        "lifecycle": (
+            "COLLECTED->BUNDLE_PUBLISHED->VERIFIED_ANALYSIS->FINALIZED"
+            if verified
+            else "COLLECTED->ANALYSIS_FAILED->FAILURE_ARCHIVED"
+        ),
+        "intervals": {
+            "invalid_event_bearing": len(replay.invalid_intervals),
+            "invalid_reasons": invalid_reasons,
+            "valid_event_bearing": len(replay.valid_intervals),
+        },
+        "replay": {
+            "control_digest": replay.result.control_digest,
+            "excluded_event_count": replay.excluded_event_count,
+            "invalidated": replay.result.invalidated,
+            "replayed_event_count": replay.replayed_event_count,
+            "scope": "valid_intervals_only",
+            "target_digest": replay.result.target_digest,
+            "unknown_count": replay.result.unknown_count,
+            "unknown_by_cause": dict(replay.result.unknown_by_cause),
+        },
+        "economic": replay.economics.to_dict(),
+        "limitations": limitations,
+    }
+
+
+def _reuse_existing_bundle(
+    path: Path,
+    *,
+    run_id: str,
+    expected_sha256: str | None,
+    require_verified: bool,
+) -> ResearchExperimentBundle:
+    if not path.is_dir():
+        raise ResearchEvidenceStoreError("research experiment bundle is missing")
+    bundle = _verify_published_bundle(
+        path,
+        run_id=run_id,
+        require_verified=require_verified,
+    )
+    if expected_sha256 is not None and bundle.sha256.casefold() != expected_sha256.casefold():
+        raise ResearchEvidenceStoreError("research experiment bundle checksum mismatch")
+    return bundle
+
+
+def _verify_published_bundle(
+    path: Path,
+    *,
+    run_id: str,
+    require_verified: bool,
+) -> ResearchExperimentBundle:
+    manifest_path = path / MANIFEST_NAME
+    manifest = load_bundle_manifest(manifest_path)
+    if str(manifest.get("run_id")) != run_id:
+        raise ResearchEvidenceStoreError("research experiment bundle run_id mismatch")
+    verified = manifest.get("verified") is True
+    outcome = str(manifest.get("outcome") or OUTCOME_FINALIZED)
+    if require_verified and not verified:
+        raise ResearchEvidenceStoreError("research experiment bundle is not verified")
+    if require_verified and outcome != OUTCOME_FINALIZED:
+        raise ResearchEvidenceStoreError("research experiment bundle outcome is not FINALIZED")
+    if not require_verified and verified:
+        raise ResearchEvidenceStoreError("failure archive is labeled verified")
+    database_name = str(manifest.get("database") or "research-evidence.sqlite3")
+    database_path = path / database_name
+    expected = str(manifest.get("database_sha256") or "")
+    before = capture_protected_artifacts(
+        database=database_path,
+        bundle_root=path,
+        manifest=manifest,
+    )
+    if sha256_file(database_path) != expected:
+        raise ResearchEvidenceStoreError("research experiment bundle checksum mismatch")
+    with open_recorded_experiment_store(
+        database_path,
+        bundle_root=path,
+        expected_database_sha256=expected,
+    ) as replica:
+        first = replay_recorded_experiment(replica, run_id=run_id)
+        second = replay_recorded_experiment(replica, run_id=run_id)
+        if first != second:
+            raise ResearchEvidenceStoreError("experiment replay is not deterministic")
+        if require_verified and not _replay_is_verified(first):
+            raise ResearchEvidenceStoreError("verified bundle has no replayable analysis")
+    with TemporaryDirectory(prefix="polysia-research-resume-") as temporary:
+        copied = byte_copy_sqlite(database_path, Path(temporary) / database_path.name)
+        checksum_src = database_path.with_suffix(f"{database_path.suffix}.sha256")
+        if checksum_src.is_file():
+            shutil.copy2(checksum_src, copied.with_suffix(f"{copied.suffix}.sha256"))
+        restored = Path(temporary) / f"restored-{database_path.name}"
+        restore_sqlite_backup(copied, restored)
+        restored_store = ResearchEvidenceStore(restored)
+        restored_store.verify_integrity()
+        restored_replay = replay_recorded_experiment(restored_store, run_id=run_id)
+        if restored_replay != first:
+            raise ResearchEvidenceStoreError("restored experiment replay changed")
+    after = capture_protected_artifacts(
+        database=database_path,
+        bundle_root=path,
+        manifest=manifest,
+    )
+    verify_protected_unchanged(before, after)
+    return ResearchExperimentBundle(
+        path=path,
+        database_path=database_path,
+        manifest_path=manifest_path,
+        sha256=expected,
+        outcome=outcome,
+        verified=verified,
+    )
 
 
 def _restrict(path: Path) -> None:

@@ -56,8 +56,15 @@ One durable `research_experiments` record declares the active capture's time,
 event-count, and storage bounds. Ordinary retention does not prune an active
 experiment. Finalization is a separate operator action that creates one
 SQLite Backup-API snapshot, restores and verifies it, reproduces replay, and
-only then marks the experiment finalized. This adds no database service and
-does not turn rotating recovery backups into a continuous archive.
+only then marks the experiment finalized. A verified bundle on disk is reused
+when the live `FINALIZED` row is incomplete. Successful finalization is
+idempotent. Missing valid intervals produce a `FAILURE_ARCHIVED` evidence
+bundle, never a verified `FINALIZED` label. Analysis of a published bundle is
+strictly read-only: the source database is opened immutable/query-only, and
+any compatibility work uses a private copy. Compact deterministic replay
+comparison extends the existing `prospective-replay` command. This adds no
+database service and does not turn rotating recovery backups into a
+continuous archive.
 
 Economic evaluation remains inside the same research boundary. Side-aware
 book-depth and official fee-schedule provenance are stored as versioned

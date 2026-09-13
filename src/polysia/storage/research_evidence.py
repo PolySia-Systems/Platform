@@ -29,6 +29,7 @@ from polysia.domain.research_evidence.models import (
     ObservationKind,
     ResearchInterval,
 )
+from polysia.storage.immutable_sqlite import connect_immutable_sqlite
 
 Clock = Callable[[], datetime]
 
@@ -37,6 +38,7 @@ RESEARCH_EVIDENCE_FILENAME = "research-evidence.sqlite3"
 WRITER_BUSY_TIMEOUT_MS = 5_000
 WAL_CHECKPOINT_BYTES = 8 * 1024 * 1024
 EXPERIMENT_WRITE_RESERVE_BYTES = 1024 * 1024
+EXPERIMENT_TERMINAL_STATUSES = frozenset({"FINALIZED", "FAILURE_ARCHIVED"})
 
 
 class ResearchEvidenceStoreError(RuntimeError):
@@ -149,11 +151,15 @@ class ResearchEvidenceStore:
         *,
         policy: CollectorPolicy | None = None,
         clock: Clock | None = None,
+        read_only: bool = False,
+        immutable: bool = False,
     ) -> None:
         self._path = Path(path)
         self._policy = policy or CollectorPolicy()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._events_since_maintain = 0
+        self._read_only = read_only or immutable
+        self._immutable = immutable
         self._writer_lock = ExclusiveWriterLock(self._path)
 
     @property
@@ -161,10 +167,19 @@ class ResearchEvidenceStore:
         return self._path
 
     @property
+    def read_only(self) -> bool:
+        return self._read_only
+
+    @property
     def maintenance_due(self) -> bool:
         return self._events_since_maintain >= 64
 
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise ResearchEvidenceStoreError("research evidence store is read-only")
+
     def initialize(self) -> None:
+        self._require_writable()
         connection = self._connect()
         try:
             ensure_research_evidence_schema(
@@ -177,12 +192,14 @@ class ResearchEvidenceStore:
         _restrict_store_files(self._path)
 
     def acquire_writer(self) -> None:
+        self._require_writable()
         self._writer_lock.acquire()
 
     def release_writer(self) -> None:
         self._writer_lock.release()
 
     def persist_interval(self, interval: ResearchInterval) -> None:
+        self._require_writable()
         connection = self._connect()
         try:
             ensure_research_evidence_schema(
@@ -260,6 +277,7 @@ class ResearchEvidenceStore:
 
         if event.schema_version != RESEARCH_EVIDENCE_SCHEMA_VERSION:
             raise ResearchEvidenceStoreError("legacy research evidence is read-only")
+        self._require_writable()
         connection = self._connect()
         try:
             ensure_research_evidence_schema(
@@ -364,6 +382,7 @@ class ResearchEvidenceStore:
             or max_bytes < EXPERIMENT_WRITE_RESERVE_BYTES
         ):
             raise ValueError("experiment bounds must be positive")
+        self._require_writable()
         self.initialize()
         connection = self._connect()
         try:
@@ -448,25 +467,50 @@ class ResearchEvidenceStore:
         bundle_sha256: str,
         finalized_at: datetime,
     ) -> None:
+        self.mark_experiment_terminal(
+            run_id,
+            status="FINALIZED",
+            bundle_path=bundle_path,
+            bundle_sha256=bundle_sha256,
+            at=finalized_at,
+            from_statuses=("ACTIVE",),
+        )
+
+    def mark_experiment_terminal(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        bundle_path: Path,
+        bundle_sha256: str,
+        at: datetime,
+        from_statuses: tuple[str, ...] = ("ACTIVE",),
+    ) -> None:
+        if status not in EXPERIMENT_TERMINAL_STATUSES:
+            raise ResearchEvidenceStoreError("research experiment terminal status is invalid")
+        self._require_writable()
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            placeholders = ",".join("?" for _ in from_statuses)
             cursor = connection.execute(
-                "UPDATE research_experiments SET status='FINALIZED', finalized_at_utc=?, "
-                "bundle_path=?, bundle_sha256=? WHERE run_id=? AND status='ACTIVE'",
+                "UPDATE research_experiments SET status=?, finalized_at_utc=?, "
+                f"bundle_path=?, bundle_sha256=? WHERE run_id=? AND status IN ({placeholders})",
                 (
-                    _utc_text(finalized_at),
+                    status,
+                    _utc_text(at),
                     str(bundle_path),
                     bundle_sha256,
                     run_id,
+                    *from_statuses,
                 ),
             )
             if cursor.rowcount != 1:
-                raise ResearchEvidenceStoreError("active research experiment not found")
+                raise ResearchEvidenceStoreError("research experiment is not in an expected status")
             connection.commit()
         except sqlite3.Error as error:
             connection.rollback()
-            raise ResearchEvidenceStoreError("research experiment finalization failed") from error
+            raise ResearchEvidenceStoreError("research experiment status update failed") from error
         finally:
             connection.close()
 
@@ -478,6 +522,7 @@ class ResearchEvidenceStore:
             connection.close()
 
     def record_reconnect(self, source_id: str, *, observed_at: datetime) -> int:
+        self._require_writable()
         connection = self._connect()
         try:
             ensure_research_evidence_schema(
@@ -508,6 +553,7 @@ class ResearchEvidenceStore:
             connection.close()
 
     def persist_decision(self, decision: DecisionRecord) -> None:
+        self._require_writable()
         connection = self._connect()
         try:
             ensure_research_evidence_schema(
@@ -790,6 +836,7 @@ class ResearchEvidenceStore:
     def maintain(self, *, now: datetime | None = None) -> WalCheckpointResult:
         """Prune in one transaction, then checkpoint outside every transaction."""
 
+        self._require_writable()
         observed = now or self._clock()
         connection = self._connect()
         try:
@@ -886,10 +933,25 @@ class ResearchEvidenceStore:
             raise ResearchExperimentBudgetError("storage")
 
     def _connect(self, *, timeout_seconds: float | None = None) -> sqlite3.Connection:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         timeout = (
             WRITER_BUSY_TIMEOUT_MS / 1000 if timeout_seconds is None else timeout_seconds
         )
+        if self._read_only:
+            if not self._path.is_file():
+                raise ResearchEvidenceStoreError("research evidence database is missing")
+            if self._immutable:
+                return connect_immutable_sqlite(self._path)
+            connection = sqlite3.connect(
+                f"{self._path.resolve().as_uri()}?mode=ro",
+                uri=True,
+                timeout=timeout,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(f"PRAGMA busy_timeout = {WRITER_BUSY_TIMEOUT_MS}")
+            return connection
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._path, timeout=timeout)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -923,6 +985,7 @@ def ensure_research_evidence_schema(
         connection.execute(
             "ALTER TABLE research_experiments ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0"
         )
+    _ensure_experiment_status_constraint(connection)
     connection.execute(
         "INSERT OR IGNORE INTO research_evidence_metadata ("
         "singleton, schema_version, policy_version, created_at_utc"
@@ -945,6 +1008,47 @@ def ensure_research_evidence_schema(
     if row is None or str(row[0]) != RESEARCH_EVIDENCE_SCHEMA_VERSION:
         raise ResearchEvidenceStoreError("research evidence schema version mismatch")
     connection.commit()
+
+
+def _ensure_experiment_status_constraint(connection: sqlite3.Connection) -> None:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='research_experiments'"
+    ).fetchone()
+    if row is None:
+        return
+    sql = str(row[0])
+    if "FAILURE_ARCHIVED" in sql:
+        return
+    connection.execute("ALTER TABLE research_experiments RENAME TO research_experiments_legacy")
+    connection.execute(
+        "CREATE TABLE research_experiments ("
+        "run_id TEXT PRIMARY KEY, "
+        "started_at_utc TEXT NOT NULL, "
+        "collection_ends_at_utc TEXT NOT NULL, "
+        "max_events INTEGER NOT NULL CHECK (max_events > 0), "
+        "max_bytes INTEGER NOT NULL CHECK (max_bytes > 0), "
+        "status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'FINALIZED', 'FAILURE_ARCHIVED')), "
+        "code_sha TEXT, "
+        "configuration_digest TEXT NOT NULL, "
+        "policy_version TEXT NOT NULL, "
+        "finalized_at_utc TEXT, "
+        "bundle_path TEXT, "
+        "bundle_sha256 TEXT, "
+        "event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0)"
+        ")"
+    )
+    connection.execute(
+        "INSERT INTO research_experiments ("
+        "run_id, started_at_utc, collection_ends_at_utc, max_events, max_bytes, "
+        "status, code_sha, configuration_digest, policy_version, finalized_at_utc, "
+        "bundle_path, bundle_sha256, event_count"
+        ") SELECT "
+        "run_id, started_at_utc, collection_ends_at_utc, max_events, max_bytes, "
+        "status, code_sha, configuration_digest, policy_version, finalized_at_utc, "
+        "bundle_path, bundle_sha256, event_count "
+        "FROM research_experiments_legacy"
+    )
+    connection.execute("DROP TABLE research_experiments_legacy")
 
 
 def default_research_evidence_path(data_directory: Path) -> Path:

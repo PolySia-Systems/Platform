@@ -480,83 +480,55 @@ def prospective_replay(
     ],
     run_id: Annotated[str, typer.Option("--run-id")],
     output: Annotated[Path | None, typer.Option("--output")] = None,
+    compare: Annotated[
+        Path | None,
+        typer.Option("--compare", help="Optional baseline report JSON to compare."),
+    ] = None,
 ) -> None:
     """Validate, replay, and economically evaluate one recorded experiment."""
 
+    from polysia.backtesting.prospective_analysis import open_recorded_experiment_store
     from polysia.backtesting.prospective_replay import replay_recorded_experiment
+    from polysia.backtesting.replay_report import (
+        COMPACT_STDOUT_LIMIT,
+        compact_replay_payload,
+        compare_replay_reports,
+        detailed_replay_payload,
+    )
     from polysia.cli_commands.research_evidence_cli import sanitize_report
-    from polysia.deployment.recovery_bundle import sha256_file
-    from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
-    from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchEvidenceStoreError
+    from polysia.storage.research_evidence import ResearchEvidenceStoreError
 
     try:
-        store = ResearchEvidenceStore(database)
-        store.initialize()
-        store.verify_integrity()
-        scoped = replay_recorded_experiment(store, run_id=run_id)
-        result = scoped.result
-        experiment = store.load_experiment(run_id)
-        if experiment is None:
-            raise ValueError("recorded experiment not found")
-        payload = sanitize_report(
-            {
-                "code_sha": experiment.code_sha,
-                "configuration_digest": experiment.configuration_digest,
-                "control_digest": result.control_digest,
-                "economic": scoped.economics.to_dict(),
-                "experiment_contract": CONTRACT_V1.to_dict(),
-                "experiment_contract_digest": CONTRACT_V1.digest,
-                "excluded_event_count": scoped.excluded_event_count,
-                "invalid_interval_count": len(scoped.invalid_intervals),
-                "invalidated": result.invalidated,
-                "interval_scope": "valid_intervals_only",
-                "replayed_event_count": scoped.replayed_event_count,
-                "run_id": run_id,
-                "source_database_sha256": sha256_file(database),
-                "target_digest": result.target_digest,
-                "unknown_count": result.unknown_count,
-                "unknown_by_cause": dict(result.unknown_by_cause),
-                "valid_interval_count": len(scoped.valid_intervals),
-                "summary": {
-                    "control_net_pnl": scoped.economics.control.to_dict()["net_pnl"],
-                    "data_canary": scoped.economics.data_canary_status,
-                    "economic": scoped.economics.economic_classification,
-                    "target_net_pnl": scoped.economics.target.to_dict()["net_pnl"],
-                },
-                "control_decisions": [
-                    {"evidence_id": evidence_id, "decision": decision.value}
-                    for evidence_id, decision in result.control_decisions
-                ],
-                "target_decisions": [
-                    {"evidence_id": evidence_id, "decision": str(decision)}
-                    for evidence_id, decision in result.target_decisions
-                ],
-                "decision_evidence": [
-                    {
-                        "control_decision": row.control_decision,
-                        "decision_time": row.decision_time.isoformat(),
-                        "market_reference": row.market_reference,
-                        "outcome_reference": row.outcome_reference,
-                        "side": row.side,
-                        "snapshot_evidence_id": (
-                            None
-                            if row.execution is None
-                            else row.execution.snapshot_evidence_id
-                        ),
-                        "target_decision": row.target_decision,
-                        "unknown_reason": row.unknown_reason,
-                        "wallet_evidence_id": row.evidence_id,
-                    }
-                    for row in result.evaluations
-                ],
-            }
-        )
+        with open_recorded_experiment_store(database) as store:
+            scoped = replay_recorded_experiment(store, run_id=run_id)
+            experiment = store.load_experiment(run_id)
+            if experiment is None:
+                raise ValueError("recorded experiment not found")
+            from polysia.storage.immutable_sqlite import sha256_file
+
+            payload = sanitize_report(
+                detailed_replay_payload(
+                    scoped,
+                    experiment=experiment,
+                    run_id=run_id,
+                    source_database_sha256=sha256_file(database),
+                )
+            )
+            compact = compact_replay_payload(payload)
+            if compare is not None:
+                baseline = json.loads(compare.read_text(encoding="utf-8"))
+                if not isinstance(baseline, dict):
+                    raise ValueError("comparison report must be a JSON object")
+                compact["comparison"] = compare_replay_reports(payload, baseline)
     except (OSError, ValueError, ResearchEvidenceStoreError) as error:
         print_error_and_exit(error)
-    text = json.dumps(payload, sort_keys=True)
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(f"{text}\n", encoding="utf-8")
+        output.write_text(f"{json.dumps(payload, sort_keys=True)}\n", encoding="utf-8")
+        compact = {**compact, "output": str(output)}
+    text = json.dumps(compact, sort_keys=True)
+    if len(text.encode()) > COMPACT_STDOUT_LIMIT:
+        print_error_and_exit(RuntimeError("prospective replay stdout exceeded 5 KiB"))
     typer.echo(text)
 
 
@@ -701,9 +673,47 @@ def prospective_finalize(
             {
                 "bundle": str(bundle.path),
                 "manifest": str(bundle.manifest_path),
+                "outcome": bundle.outcome,
                 "run_id": run_id,
                 "sha256": bundle.sha256,
+                "verified": bundle.verified,
             },
             sort_keys=True,
         )
     )
+
+
+def prospective_prove(
+    work_dir: Annotated[
+        Path,
+        typer.Option("--work-dir", help="Isolated directory for synthetic proof artifacts."),
+    ] = Path("artifacts/offline-research-lab"),
+) -> None:
+    """Run the deterministic production-path laboratory through real PolySia components."""
+
+    from polysia.backtesting.offline_research_lab import run_offline_proof
+    from polysia.backtesting.replay_report import compact_replay_payload
+    from polysia.cli_commands.research_evidence_cli import sanitize_report
+
+    try:
+        results = asyncio.run(run_offline_proof(work_dir))
+    except (OSError, ValueError, RuntimeError) as error:
+        print_error_and_exit(error)
+    payload = sanitize_report(
+        {
+            "command": "prospective-prove",
+            "scenarios": {
+                name: {
+                    "bundle_outcome": result.bundle_outcome,
+                    "bundle_verified": result.bundle_verified,
+                    "replay_hashes": list(result.replay_hashes),
+                    "run_id": result.run_id,
+                    "source_hash_after": result.source_hash_after,
+                    "source_hash_before": result.source_hash_before,
+                    **compact_replay_payload(result.report),
+                }
+                for name, result in results.items()
+            },
+        }
+    )
+    typer.echo(json.dumps(payload, sort_keys=True))
