@@ -434,6 +434,43 @@ async def test_terminal_snapshot_emits_fresh_side_aware_evidence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_snapshot_uses_resolved_settlement_when_book_is_closed() -> None:
+    async def fetch(token_markets: dict[str, str]) -> TerminalMarketSnapshot:
+        del token_markets
+        return TerminalMarketSnapshot(books={}, fee_schedules={})
+
+    async def settlements(token_markets: dict[str, str]) -> dict[str, Decimal]:
+        assert token_markets == {"token-1": "market-a"}
+        return {"token-1": Decimal("0")}
+
+    source = OfficialMarketStreamSource(
+        token_ids=("token-1",),
+        clock=lambda: OBSERVED,
+        monotonic_ns=lambda: 5,
+        terminal_snapshot_fetcher=fetch,
+        terminal_settlement_fetcher=settlements,
+    )
+    source._invalid_book_tokens.add("token-1")
+    events = await source.capture_terminal_evidence(
+        run_id="r1",
+        token_markets={"token-1": "market-a"},
+    )
+
+    assert len(events) == 1
+    assert events[0].price is None
+    assert events[0].provenance["settlement_price"] == "0"
+    assert (
+        events[0].provenance["settlement_evidence_version"]
+        == "official-terminal-settlement-v1"
+    )
+    health = source.health_snapshot()
+    assert health["terminal_snapshot_requested"] == 1
+    assert health["terminal_snapshot_captured"] == 1
+    assert health["terminal_snapshot_missing"] == 0
+    assert health["invalid_book_token_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_official_stream_refreshes_quiet_book_before_freshness_expires() -> None:
     clock = AdvancingClock()
     requests: list[dict[str, str]] = []
@@ -742,6 +779,27 @@ async def test_market_stream_rotates_subscription_to_current_wallet_tokens() -> 
             fee_schedules={},
         )
 
+    requests: list[dict[str, str]] = []
+
+    async def fetch(token_markets: dict[str, str]) -> TerminalMarketSnapshot:
+        requests.append(dict(token_markets))
+        token = next(iter(token_markets))
+        market = token_markets[token]
+        return TerminalMarketSnapshot(
+            books={
+                token: MarketOrderBookSnapshot(
+                    token_id=token,
+                    market_id=market,
+                    timestamp=clock(),
+                    bids=(OrderBookLevel(price=Decimal("0.48"), size=Decimal("4")),),
+                    asks=(OrderBookLevel(price=Decimal("0.52"), size=Decimal("5")),),
+                    minimum_order_size=Decimal("1"),
+                    tick_size=Decimal("0.01"),
+                )
+            },
+            fee_schedules={token: MarketFeeSchedule(enabled=False)},
+        )
+
     source = OfficialMarketStreamSource(
         token_ids=("token-1",),
         clock=clock,
@@ -749,6 +807,9 @@ async def test_market_stream_rotates_subscription_to_current_wallet_tokens() -> 
         market_discovery=discover,
         discovery_interval_seconds=2,
         market_stream_factory=stream_factory,
+        token_markets={"token-1": "market-1"},
+        terminal_snapshot_fetcher=fetch,
+        snapshot_refresh_interval_seconds=20,
     )
 
     events = [
@@ -759,7 +820,11 @@ async def test_market_stream_rotates_subscription_to_current_wallet_tokens() -> 
         )
     ]
 
-    assert events == []
+    assert len(events) == 6
+    assert requests == [
+        {"token-1": "market-1"},
+        {"token-2": "market-2"},
+    ]
     assert [stream.token_ids for stream in streams] == [
         ("token-1",),
         ("token-2",),

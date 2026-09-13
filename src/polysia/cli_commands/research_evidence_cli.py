@@ -10,6 +10,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +145,35 @@ async def build_persistent_public_sources() -> tuple[
         }
         return TerminalMarketSnapshot(books=books, fee_schedules=fees)
 
+    async def terminal_settlements(
+        token_markets: Mapping[str, str],
+    ) -> Mapping[str, Decimal]:
+        conditions = tuple(dict.fromkeys(token_markets.values()))
+        results = await asyncio.gather(
+            *(public_adapter.get_market_by_condition_id(item) for item in conditions),
+            return_exceptions=True,
+        )
+        markets = {
+            market.condition_id: market
+            for market in results
+            if not isinstance(market, BaseException)
+            and market.closed is True
+            and market.condition_id is not None
+        }
+        settlements: dict[str, Decimal] = {}
+        for token, condition in token_markets.items():
+            market = markets.get(condition)
+            if market is None:
+                continue
+            for outcome in market.outcomes:
+                if outcome.token_id == token and outcome.price in {
+                    Decimal("0"),
+                    Decimal("1"),
+                }:
+                    settlements[token] = outcome.price
+                    break
+        return settlements
+
     snapshot = await discovery.refresh() if discovery is not None else None
     followed_markets = {} if snapshot is None else snapshot.token_markets
     token_ids = tuple(followed_markets) or discovered_tokens
@@ -183,6 +213,7 @@ async def build_persistent_public_sources() -> tuple[
             market_discovery=None if discovery is None else discovery.refresh,
             discovery_interval_seconds=1.0,
             terminal_snapshot_fetcher=terminal_snapshot,
+            terminal_settlement_fetcher=terminal_settlements,
         )
     )
     return tuple(sources), {

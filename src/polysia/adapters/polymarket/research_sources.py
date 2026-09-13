@@ -48,6 +48,7 @@ _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 ACTIVITY_SOURCE_ID = "polymarket:data-api:activity"
 TRADES_SOURCE_ID = "polymarket:data-api:trades"
 MARKET_STREAM_SOURCE_ID = "polymarket:clob:market-stream"
+TERMINAL_SETTLEMENT_SOURCE_ID = "polymarket:gamma:terminal-settlement"
 USER_CHANNEL_SOURCE_ID = "polymarket:clob:user-stream"
 
 REST_ACTIVITY_CANDIDATE = SourceCandidate(
@@ -108,6 +109,10 @@ class TerminalMarketSnapshot:
 TerminalMarketSnapshotFetcher = Callable[
     [Mapping[str, str]],
     Awaitable[TerminalMarketSnapshot],
+]
+TerminalSettlementFetcher = Callable[
+    [Mapping[str, str]],
+    Awaitable[Mapping[str, Decimal]],
 ]
 
 
@@ -333,6 +338,7 @@ class OfficialMarketStreamSource:
         market_stream_factory: MarketStreamFactory | None = None,
         token_markets: Mapping[str, str] | None = None,
         terminal_snapshot_fetcher: TerminalMarketSnapshotFetcher | None = None,
+        terminal_settlement_fetcher: TerminalSettlementFetcher | None = None,
         terminal_snapshot_limit: int = 500,
         snapshot_refresh_interval_seconds: float = 20.0,
     ) -> None:
@@ -366,6 +372,7 @@ class OfficialMarketStreamSource:
         self._market_stream_factory = market_stream_factory
         self._token_markets = dict(token_markets or {})
         self._terminal_snapshot_fetcher = terminal_snapshot_fetcher
+        self._terminal_settlement_fetcher = terminal_settlement_fetcher
         self._terminal_snapshot_limit = terminal_snapshot_limit
         self._snapshot_refresh_interval_seconds = snapshot_refresh_interval_seconds
         self._books = BookBuilder()
@@ -499,6 +506,10 @@ class OfficialMarketStreamSource:
                             stream = self._new_market_stream(bus)
                             runner = asyncio.create_task(stream.run())
                             self.subscription_update_count += 1
+                            # Newly discovered wallet tokens need executable evidence
+                            # immediately; waiting for the periodic cadence creates a
+                            # deterministic first-observation coverage gap.
+                            next_snapshot_at = self._clock()
                     if self._clock() >= next_snapshot_at:
                         refreshed = await self._capture_snapshot_evidence(
                             run_id=run_id,
@@ -640,11 +651,96 @@ class OfficialMarketStreamSource:
             self._failure_class = "terminal_snapshot_failed"
             return ()
         events, requested, books, missing, capped = captured
+        selected = dict(list(token_markets.items())[: self._terminal_snapshot_limit])
+        captured_tokens = {
+            item.outcome_reference
+            for item in events
+            if item.outcome_reference is not None
+        }
+        settlement_events: tuple[CanonicalResearchEvent, ...] = ()
+        if self._terminal_settlement_fetcher is not None and missing:
+            unresolved = {
+                token: market
+                for token, market in selected.items()
+                if token not in captured_tokens
+            }
+            try:
+                settlements = await self._terminal_settlement_fetcher(unresolved)
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+                settlements = {}
+            settlement_events = tuple(
+                self._settlement_event(
+                    run_id=run_id,
+                    token=token,
+                    market=unresolved[token],
+                    price=price,
+                )
+                for token, price in settlements.items()
+                if token in unresolved and price in {Decimal("0"), Decimal("1")}
+            )
+            self._invalid_book_tokens.difference_update(
+                item.outcome_reference
+                for item in settlement_events
+                if item.outcome_reference is not None
+            )
+            books += len(settlement_events)
+            missing = max(0, len(selected) - books)
         self.terminal_snapshot_requested = requested
         self.terminal_snapshot_captured = books
         self.terminal_snapshot_missing = missing
         self.terminal_snapshot_limit_reached = capped
-        return events
+        return (*events, *settlement_events)
+
+    def _settlement_event(
+        self,
+        *,
+        run_id: str,
+        token: str,
+        market: str,
+        price: Decimal,
+    ) -> CanonicalResearchEvent:
+        observed = self._clock()
+        receive = self._monotonic_ns()
+        identity = {
+            "event_type": "settlement",
+            "market": market,
+            "received_at": observed.isoformat(),
+            "settlement_price": format(price, "f"),
+            "token_id": token,
+        }
+        return CanonicalResearchEvent(
+            evidence_id=stable_evidence_id(
+                source_id=TERMINAL_SETTLEMENT_SOURCE_ID,
+                identity_fields=identity,
+            ),
+            schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
+            source_id=TERMINAL_SETTLEMENT_SOURCE_ID,
+            event_kind=ObservationKind.MARKET_STATE,
+            classification=EvidenceClassification.ACCEPTED,
+            market_reference=market,
+            outcome_reference=token,
+            side=None,
+            price=price if price > 0 else None,
+            size=None,
+            source_time=None,
+            observed_time=observed,
+            receive_monotonic_ns=receive,
+            normalize_monotonic_ns=receive,
+            attribution_status=AttributionStatus.NOT_APPLICABLE,
+            leader_alias=None,
+            confirmation=ConfirmationStatus.CONFIRMED,
+            payload_digest=payload_digest(identity),
+            provenance={
+                "event_type": "settlement",
+                "settlement_evidence_version": "official-terminal-settlement-v1",
+                "settlement_price": format(price, "f"),
+                "settlement_status": "resolved",
+                "source": "polymarket-public-market",
+                "valuation_basis": "official-settlement",
+                "wallet_attribution": "not_applicable",
+            },
+            run_id=run_id,
+        )
 
     async def _capture_snapshot_evidence(
         self,

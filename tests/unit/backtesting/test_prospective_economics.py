@@ -156,3 +156,56 @@ def test_legacy_quote_never_becomes_complete_economic_evidence() -> None:
     assert report.economic_classification == "INSUFFICIENT_DATA"
     assert report.execution_evidence_ratio == Decimal("0")
     assert dict(report.unknown_by_cause) == {"legacy_incomplete_execution": 1}
+
+
+def test_resolved_terminal_settlement_values_open_position_without_book() -> None:
+    wallet = _event(
+        "wallet",
+        observed_at=START,
+        kind=ObservationKind.WALLET_TRADE,
+        side="BUY",
+        price="0.50",
+        size="10",
+    )
+    buy_book = _event(
+        "book-buy",
+        observed_at=START - timedelta(seconds=1),
+        kind=ObservationKind.MARKET_STATE,
+        side="BUY",
+        price="0.40",
+        size="100",
+        levels=(("0.40", "100"),),
+    )
+    settlement = CanonicalResearchEvent(
+        evidence_id="settlement",
+        schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        source_id="market",
+        event_kind=ObservationKind.MARKET_STATE,
+        classification=EvidenceClassification.ACCEPTED,
+        market_reference="market-a",
+        outcome_reference="token-a",
+        side=None,
+        price=None,
+        size=None,
+        source_time=None,
+        observed_time=START + timedelta(seconds=60),
+        receive_monotonic_ns=3,
+        normalize_monotonic_ns=4,
+        attribution_status=AttributionStatus.NOT_APPLICABLE,
+        leader_alias=None,
+        confirmation=ConfirmationStatus.CONFIRMED,
+        payload_digest=payload_digest({"id": "settlement"}),
+        provenance={
+            "settlement_evidence_version": "official-terminal-settlement-v1",
+            "settlement_price": "0",
+        },
+        run_id="run-1",
+    )
+    events = (wallet, buy_book, settlement)
+    replay = replay_same_observations(events, snapshots=(buy_book, settlement))
+
+    report = evaluate_prospective_economics(replay, events=events)
+
+    assert report.control.valuation_status == "MEASURED"
+    assert report.control.net_pnl == Decimal("-4")
+    assert report.control.remaining_positions[0]["valuation"] == "0"

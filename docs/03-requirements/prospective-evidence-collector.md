@@ -184,7 +184,11 @@ limit. Fee schedules are cached and fetched only for newly observed tokens.
 Immediately before the terminal experiment window closes, the collector makes
 one bounded public batch capture of fresh books and fee schedules for the
 distinct tokens actually observed in accepted wallet trades (newest 500 at
-most). The capture is stored in the same immutable run before close so open
+most). When a requested book no longer exists because its market resolved
+during the experiment, the collector records the official closed-market
+settlement price instead. A settlement is accepted only when the exact token
+maps to a closed market and its authoritative outcome price is exactly zero or
+one. The capture is stored in the same immutable run before close so open
 positions can be valued causally at the frozen 30-second freshness threshold.
 Missing, capped, or failed terminal evidence remains explicit and produces
 `INSUFFICIENT_DATA`; the threshold is never relaxed.
