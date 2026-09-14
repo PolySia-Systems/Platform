@@ -278,6 +278,7 @@ class ResearchEvidenceStore:
         event: CanonicalResearchEvent,
         *,
         interval_id: str,
+        allow_after_collection_end: bool = False,
     ) -> EvidenceClassification:
         """Insert one event. Identical retries increment a duplicate counter."""
 
@@ -296,6 +297,7 @@ class ResearchEvidenceStore:
                 connection,
                 event.run_id,
                 will_insert=classification is not EvidenceClassification.DUPLICATE,
+                allow_after_collection_end=allow_after_collection_end,
             )
             inserted = False
             if classification is EvidenceClassification.DUPLICATE:
@@ -920,6 +922,7 @@ class ResearchEvidenceStore:
         run_id: str,
         *,
         will_insert: bool = True,
+        allow_after_collection_end: bool = False,
     ) -> None:
         row = connection.execute(
             "SELECT * FROM research_experiments WHERE run_id = ? AND status = 'ACTIVE'",
@@ -928,7 +931,7 @@ class ResearchEvidenceStore:
         if row is None:
             return
         experiment = _experiment_from_row(row)
-        if self._clock() >= experiment.collection_ends_at:
+        if not allow_after_collection_end and self._clock() >= experiment.collection_ends_at:
             raise ResearchExperimentBudgetError("duration")
         if will_insert and experiment.event_count >= experiment.max_events:
             raise ResearchExperimentBudgetError("event")
