@@ -55,12 +55,14 @@ SourceFactory = Callable[
     [],
     Awaitable[tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]],
 ]
+PreparedSources = tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]
 SettingsFactory = Callable[[], AppSettings]
 
 PHASES = ("PREPARED", "COLLECTING", "COLLECTED", "VERIFYING", "CLOSED")
 MANIFEST_NAME = "run-manifest.json"
 STOP_REQUEST_NAME = "stop-request.json"
 RESULT_NAME = "result.json"
+STOP_POLL_SECONDS = 0.1
 
 
 class ResearchRunnerError(RuntimeError):
@@ -225,6 +227,7 @@ class ResearchExperimentRunner:
     ) -> dict[str, object]:
         resolved = profile if isinstance(profile, RunnerProfile) else resolve_profile(profile)
         workspace = ResearchRunWorkspace(state_root)
+        prepared_sources: PreparedSources | None = None
         self._preflight(workspace, resolved)
         try:
             workspace.lock().acquire()
@@ -248,6 +251,7 @@ class ResearchExperimentRunner:
                 if validate_existing:
                     raise ResearchRunnerError("research run manifest is missing")
                 sources, discovery = await self._source_factory()
+                prepared_sources = (sources, discovery)
                 manifest = self._prepare(
                     workspace,
                     profile=resolved,
@@ -255,9 +259,12 @@ class ResearchExperimentRunner:
                     image_sha=image_sha or code_sha,
                     run_id=run_id or uuid4().hex,
                     discovery=discovery,
-                    sources=sources,
                 )
-            return await self._continue(workspace, manifest)
+            return await self._continue(
+                workspace,
+                manifest,
+                prepared_sources=prepared_sources,
+            )
         finally:
             workspace.lock().release()
 
@@ -291,9 +298,7 @@ class ResearchExperimentRunner:
         image_sha: str,
         run_id: str,
         discovery: Mapping[str, object],
-        sources: tuple[ResearchObservationSource, ...],
     ) -> dict[str, object]:
-        del sources
         prepared_at = self._clock()
         thresholds = profile.to_dict()["acceptance_thresholds"]
         if not isinstance(thresholds, dict):
@@ -331,13 +336,7 @@ class ResearchExperimentRunner:
             "contract_digest": CONTRACT_V1.digest,
             "economic_contract_version": CONTRACT_V1.version,
             "effective_configuration": profile.to_dict(),
-            "followed_wallet_selection": {
-                "aliases": _strings(discovery.get("followed_aliases")),
-                "required_source_ids": _strings(discovery.get("required_source_ids")),
-                "optional_source_ids": _strings(discovery.get("optional_source_ids")),
-                "unavailable_sources": _strings(discovery.get("unavailable")),
-                "market_tokens": _strings(discovery.get("market_tokens")),
-            },
+            "followed_wallet_selection": _discovery_selection(discovery),
             "image_sha": image_sha,
             "live_token_allowlist": [],
             "live_trading_enabled": False,
@@ -367,10 +366,16 @@ class ResearchExperimentRunner:
         self,
         workspace: ResearchRunWorkspace,
         manifest: dict[str, object],
+        *,
+        prepared_sources: PreparedSources | None = None,
     ) -> dict[str, object]:
         phase = str(manifest.get("phase"))
         if phase in {"PREPARED", "COLLECTING"}:
-            manifest = await self._collect(workspace, manifest)
+            manifest = await self._collect(
+                workspace,
+                manifest,
+                prepared_sources=prepared_sources,
+            )
             phase = str(manifest.get("phase"))
         if phase in {"COLLECTED", "VERIFYING"}:
             return await self._verify_and_close(workspace, manifest)
@@ -382,13 +387,21 @@ class ResearchExperimentRunner:
         self,
         workspace: ResearchRunWorkspace,
         manifest: dict[str, object],
+        *,
+        prepared_sources: PreparedSources | None = None,
     ) -> dict[str, object]:
         profile = _profile_from_manifest(manifest)
-        sources, discovery = await self._source_factory()
-        required = tuple(_strings(discovery.get("required_source_ids")))
-        optional = tuple(_strings(discovery.get("optional_source_ids")))
-        aliases = tuple(_strings(discovery.get("followed_aliases")))
-        tokens = tuple(_strings(discovery.get("market_tokens")))
+        if prepared_sources is None:
+            sources, discovery = await self._source_factory()
+        else:
+            sources, discovery = prepared_sources
+        selection = _discovery_selection(discovery)
+        if _mapping(manifest.get("followed_wallet_selection")) != selection:
+            raise ResearchRunnerError("research run source selection mismatch")
+        required = tuple(_strings(selection.get("required_source_ids")))
+        optional = tuple(_strings(selection.get("optional_source_ids")))
+        aliases = tuple(_strings(selection.get("aliases")))
+        tokens = tuple(_strings(selection.get("market_tokens")))
         store = ResearchEvidenceStore(workspace.database_path, clock=self._clock)
         collector = PersistentProspectiveCollector(
             store,
@@ -548,7 +561,7 @@ class ResearchExperimentRunner:
             if workspace.stop_request_path.is_file():
                 collector.request_stop()
                 return
-            await asyncio.sleep(0)
+            await asyncio.sleep(STOP_POLL_SECONDS)
 
     def _validate_existing(
         self,
@@ -706,6 +719,16 @@ def _strings(value: object) -> list[str]:
     if isinstance(value, list | tuple):
         return [str(item) for item in value]
     return []
+
+
+def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "aliases": sorted(_strings(discovery.get("followed_aliases"))),
+        "required_source_ids": sorted(_strings(discovery.get("required_source_ids"))),
+        "optional_source_ids": sorted(_strings(discovery.get("optional_source_ids"))),
+        "unavailable_sources": sorted(_strings(discovery.get("unavailable"))),
+        "market_tokens": sorted(_strings(discovery.get("market_tokens"))),
+    }
 
 
 def _int_config(value: object, default: int) -> int:
