@@ -4,7 +4,7 @@
 #
 annotated-doc==0.0.5
 annotated-types==0.8.0
-anyio==4.15.0
+anyio==4.15.1
 bitarray==3.11.0
 certifi==2026.7.22
 ckzg==2.1.8
@@ -37,7 +37,7 @@ pydantic-core==2.46.5
 pydantic-settings==2.15.0
 pygments==2.21.0
 python-dotenv==1.2.3
-regex==2026.9.3
+regex==2026.9.10
 rich==15.0.0
 rlp==5.0.0
 shellingham==1.5.4
