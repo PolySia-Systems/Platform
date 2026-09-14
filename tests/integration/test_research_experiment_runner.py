@@ -60,7 +60,9 @@ def test_resume_from_prepared_manifest_preserves_run_id(
     service = _runner(clock, work)
 
     async def crash_after_prepare(
-        workspace: ResearchRunWorkspace, manifest: dict[str, object]
+        workspace: ResearchRunWorkspace,
+        manifest: dict[str, object],
+        **_kwargs: object,
     ) -> dict[str, object]:
         del workspace, manifest
         raise ResearchRunnerError("simulated crash after prepare")
@@ -118,6 +120,75 @@ def test_runner_start_is_idempotent_and_preserves_t0(tmp_path: Path) -> None:
     assert manifest["phase"] == "CLOSED"
     encoded = json.dumps(first, sort_keys=True)
     assert len(encoded.encode()) < 5120
+
+
+def test_fresh_start_discovers_sources_once(tmp_path: Path) -> None:
+    clock = CoordinatedClock()
+    factory, _transport = lab_source_factory(clock)
+    calls = 0
+
+    async def counted_factory():
+        nonlocal calls
+        calls += 1
+        return await factory()
+
+    service = ResearchExperimentRunner(
+        source_factory=counted_factory,
+        clock=clock,
+        sleep=clock.sleep,
+        settings_factory=AppSettings,
+    )
+    payload = asyncio.run(
+        service.start(
+            tmp_path / "single-discovery",
+            profile=LAB_PROFILE,
+            code_sha=CODE_SHA,
+            run_id="single-discovery-run",
+        )
+    )
+
+    assert payload["phase"] == "CLOSED"
+    assert calls == 1
+
+
+def test_resume_rejects_changed_prepared_source_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "selection"
+    service = _runner(clock, work)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace, manifest: dict[str, object], **_kwargs: object
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="selection-run")
+        )
+    monkeypatch.undo()
+
+    original_factory = service._source_factory
+
+    async def changed_factory():
+        sources, discovery = await original_factory()
+        changed = dict(discovery)
+        changed["followed_aliases"] = ["changed-wallet"]
+        return sources, changed
+
+    service._source_factory = changed_factory
+    with pytest.raises(ResearchRunnerError, match="source selection mismatch"):
+        asyncio.run(
+            service.resume(
+                work,
+                profile=LAB_PROFILE,
+                code_sha=CODE_SHA,
+                run_id="selection-run",
+            )
+        )
 
 
 def test_duplicate_start_rejects_second_runner(tmp_path: Path) -> None:
