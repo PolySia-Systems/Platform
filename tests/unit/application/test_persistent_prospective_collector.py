@@ -835,7 +835,7 @@ def test_overload_prevents_valid_on_close(tmp_path: Path) -> None:
 def test_compose_research_collector_is_data_only() -> None:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     section = compose.split("  research-collector:", maxsplit=1)[1].split(
-        "\n  backup:", maxsplit=1
+        "\n  research-runner:", maxsplit=1
     )[0]
     assert "TRADING_MODE: DATA_ONLY" in section
     assert 'LIVE_TRADING_ENABLED: "false"' in section
@@ -858,6 +858,25 @@ def test_compose_research_collector_is_data_only() -> None:
     health = module.read_text(encoding="utf-8")
     assert "polysia.execution" not in health
     assert "place_order" not in health
+
+
+def test_compose_research_runner_is_data_only_and_does_not_restart() -> None:
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    section = compose.split("  research-runner:", maxsplit=1)[1].split(
+        "\n  backup:", maxsplit=1
+    )[0]
+    assert "TRADING_MODE: DATA_ONLY" in section
+    assert 'LIVE_TRADING_ENABLED: "false"' in section
+    assert "POLYMARKET_LIVE_TOKEN_ALLOWLIST: \"\"" in section
+    assert "prospective-run" in section
+    assert "prospective-run status" in section
+    assert 'restart: "no"' in section
+    assert "tiny-execute" not in section
+    assert "cancel-order" not in section
+    assert "read_only: true" in section
+    assert 'user: "10001:10001"' in section
+    assert "cap_drop:" in section
+    assert "no-new-privileges:true" in section
 
 
 def test_busy_timeout_and_wal_files(tmp_path: Path) -> None:

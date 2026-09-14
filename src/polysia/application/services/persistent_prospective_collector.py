@@ -170,6 +170,10 @@ class PersistentProspectiveCollector:
         return self._collector.run_id
 
     @property
+    def configuration_digest(self) -> str:
+        return self._configuration_digest
+
+    @property
     def interval(self) -> ResearchInterval:
         return self._active().interval
 

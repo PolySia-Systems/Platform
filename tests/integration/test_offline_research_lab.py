@@ -177,51 +177,67 @@ def test_honest_failure_archive_is_not_verified(tmp_path: Path) -> None:
     assert store.load_experiment("fail-run").status == OUTCOME_FAILURE_ARCHIVED  # type: ignore[union-attr]
 
 
-FROZEN_BUNDLE_ROOT = Path(r"C:\Users\Siamak\Documents\PolySia-backups\experiment-20260913-e009355")
+FROZEN_BUNDLE_ENV = "POLYSIA_FROZEN_RESEARCH_BUNDLE"
 FROZEN_RUN_ID = "2a596ba825e4471385c2dd18aa7b8370"
 FROZEN_DB_SHA256 = "2e0fc780e8c9d6fe9013d0be2ef2ccd7714520aecf741a4a39c368298e4a9140"
 
 
 def test_frozen_bundle_read_only_replay_is_deterministic() -> None:
+    import os
+
     import pytest
 
     from polysia.backtesting.prospective_analysis import (
         capture_protected_artifacts,
         load_bundle_manifest,
         open_recorded_experiment_store,
+        protected_bundle_paths,
+        verify_declared_bundle_artifacts,
     )
     from polysia.backtesting.prospective_replay import replay_recorded_experiment
     from polysia.backtesting.replay_report import detailed_replay_payload, result_hash
     from polysia.storage.immutable_sqlite import sha256_file
 
-    if not FROZEN_BUNDLE_ROOT.is_dir():
-        pytest.skip("frozen experiment bundle is not present on this host")
-    manifest_path = FROZEN_BUNDLE_ROOT / "experiment-manifest.json"
-    database = FROZEN_BUNDLE_ROOT / "research-evidence.sqlite3"
-    if not database.is_file():
+    configured = os.environ.get(FROZEN_BUNDLE_ENV, "").strip()
+    if not configured:
         pytest.skip(
-            "frozen bundle database missing; synthetic offline proof remains authoritative"
+            f"{FROZEN_BUNDLE_ENV} is unset; synthetic offline proof remains authoritative"
         )
+    bundle_root = Path(configured)
+    if not bundle_root.is_dir():
+        pytest.fail(f"frozen bundle directory is missing: {bundle_root}")
+    manifest_path = bundle_root / "experiment-manifest.json"
+    database = bundle_root / "research-evidence.sqlite3"
+    checksum = database.with_suffix(f"{database.suffix}.sha256")
+    if not manifest_path.is_file() or not database.is_file() or not checksum.is_file():
+        pytest.fail("frozen bundle is incomplete; not substituting another bundle")
     actual = sha256_file(database)
     if actual != FROZEN_DB_SHA256:
-        pytest.skip(
+        pytest.fail(
             f"frozen bundle SHA-256 mismatch: expected {FROZEN_DB_SHA256}, got {actual}; "
-            "not substituting another bundle; synthetic offline proof remains authoritative"
+            "not substituting another bundle"
         )
-    manifest = load_bundle_manifest(manifest_path) if manifest_path.is_file() else None
-    if manifest is not None and str(manifest.get("run_id")) != FROZEN_RUN_ID:
-        pytest.skip(
+    manifest = load_bundle_manifest(manifest_path)
+    if str(manifest.get("run_id")) != FROZEN_RUN_ID:
+        pytest.fail(
             f"frozen bundle run_id mismatch: expected {FROZEN_RUN_ID}; "
             "not substituting another bundle"
         )
+    verify_declared_bundle_artifacts(
+        database=database,
+        bundle_root=bundle_root,
+        manifest=manifest,
+    )
+    protected = protected_bundle_paths(bundle_root, manifest=manifest)
+    assert all(path.is_file() for path in protected)
     before = capture_protected_artifacts(
         database=database,
-        bundle_root=database.parent,
+        bundle_root=bundle_root,
         manifest=manifest,
     )
     with open_recorded_experiment_store(
         database,
-        bundle_root=database.parent,
+        bundle_root=bundle_root,
         expected_database_sha256=FROZEN_DB_SHA256,
     ) as store:
         first = replay_recorded_experiment(store, run_id=FROZEN_RUN_ID)
@@ -229,7 +245,7 @@ def test_frozen_bundle_read_only_replay_is_deterministic() -> None:
         experiment = store.load_experiment(FROZEN_RUN_ID)
     after = capture_protected_artifacts(
         database=database,
-        bundle_root=database.parent,
+        bundle_root=bundle_root,
         manifest=manifest,
     )
     assert after.digests == before.digests
@@ -256,3 +272,5 @@ def test_frozen_bundle_read_only_replay_is_deterministic() -> None:
     assert first.result.unknown_count == 4303
     unknown = dict(first.result.unknown_by_cause)
     assert unknown.get("stale_quote") == 4273
+    assert first.replayed_event_count == 174_920
+    assert len(first.valid_intervals) == 24

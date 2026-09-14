@@ -141,6 +141,67 @@ services:
         max-size: 10m
         max-file: "5"
 
+  research-runner:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
+    profiles:
+      - research
+    env_file:
+      - path: ${POLYSIA_ENV_FILE:-/etc/polysia/polysia.env}
+        required: true
+    environment:
+      APP_ENV: production
+      LIVE_TRADING_ENABLED: "false"
+      POLYMARKET_LIVE_TOKEN_ALLOWLIST: ""
+      TRADING_MODE: DATA_ONLY
+    command:
+      - research
+      - prospective-run
+      - start
+      - --state-root
+      - /var/lib/polysia/research-run
+      - --profile
+      - ${POLYSIA_RESEARCH_PROFILE:-canary}
+      - --code-sha
+      - ${POLYSIA_IMAGE_TAG:-unknown}
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}
+        target: /var/lib/polysia
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -m polysia.cli research prospective-run status
+          --state-root /var/lib/polysia/research-run
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    restart: "no"
+    stop_grace_period: 30s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
   backup:
     image: polysia:${POLYSIA_IMAGE_TAG:-local}
     build:

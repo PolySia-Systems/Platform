@@ -161,9 +161,42 @@ Analyze a published bundle only with `prospective-replay`. It must leave the
 source database, manifest, checksums, and protected companions byte-for-byte
 unchanged. Use `--output` for detailed evidence and `--compare` for compact
 deltas. Prove the production path offline with `research prospective-prove`
-before another multi-hour experiment. That laboratory is not the operational
-Runner planned for a later change; do not deploy a runner, run manifest, or
-long-running orchestration from this PR.
+before another multi-hour experiment.
+
+The bounded Runner is a separate Compose service. It does not replace
+`research-collector`. After review, start one Canary with the exact image SHA:
+
+```bash
+docker compose --profile research run --no-deps research-runner \
+  research prospective-run start \
+  --state-root /var/lib/polysia/research-run \
+  --profile canary \
+  --code-sha "$POLYSIA_IMAGE_TAG"
+```
+
+Status, stop, resume, verify, and result do not start a new experiment:
+
+```bash
+docker compose --profile research run --rm --no-deps research-runner \
+  research prospective-run status --state-root /var/lib/polysia/research-run
+docker compose --profile research run --rm --no-deps research-runner \
+  research prospective-run stop --state-root /var/lib/polysia/research-run \
+  --reason operator_stop
+docker compose --profile research run --rm --no-deps research-runner \
+  research prospective-run resume --state-root /var/lib/polysia/research-run \
+  --profile canary --code-sha "$POLYSIA_IMAGE_TAG"
+docker compose --profile research run --rm --no-deps research-runner \
+  research prospective-run verify --state-root /var/lib/polysia/research-run
+docker compose --profile research run --rm --no-deps research-runner \
+  research prospective-run result --state-root /var/lib/polysia/research-run
+```
+
+`research-runner` uses `restart: "no"` so a CLOSED run cannot respawn a new
+experiment. Rollback is `docker compose --profile research stop research-runner`
+and revert to the previous green image tag. Off-host transfer of the printed
+bundle path and SHA-256 remains an explicit operator action; the Runner does
+not add credentials or a file-transfer subsystem. The main bounded profile
+requires a separate explicit start with `--profile main`.
 
 Finalize an active experiment before deploying collector code or configuration
 that would change its recorded SHA or configuration digest.

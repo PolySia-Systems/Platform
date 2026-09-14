@@ -97,9 +97,17 @@ class WalCheckpointResult:
 class ExclusiveWriterLock:
     """Smallest local exclusive lock. Rejects a second writer deterministically."""
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        rejected_message: str | None = None,
+    ) -> None:
         self._path = database_path.with_name(f"{database_path.name}.lock")
         self._handle: IO[bytes] | None = None
+        self._rejected_message = (
+            rejected_message or "second writer rejected for research-evidence database"
+        )
 
     @property
     def path(self) -> Path:
@@ -119,9 +127,7 @@ class ExclusiveWriterLock:
             _lock_exclusive_nonblocking(handle)
         except OSError as error:
             handle.close()
-            raise ResearchWriterLockError(
-                "second writer rejected for research-evidence database"
-            ) from error
+            raise ResearchWriterLockError(self._rejected_message) from error
         self._handle = handle
         _restrict_file_permissions(self._path)
 

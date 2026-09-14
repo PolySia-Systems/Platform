@@ -8,6 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Literal,
 )
@@ -57,6 +58,10 @@ from polysia.monitoring.strategy_evaluation import (
 )
 from polysia.storage.control import ControlRepository
 from polysia.storage.db import SQLiteDatabase
+
+if TYPE_CHECKING:
+    from polysia.application.ports.research_evidence import ResearchObservationSource
+    from polysia.deployment.research_experiment_runner import ResearchExperimentRunner
 
 
 def shadow_run(
@@ -717,3 +722,177 @@ def prospective_prove(
         }
     )
     typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def _research_runner() -> ResearchExperimentRunner:
+    from polysia.cli_commands.research_evidence_cli import build_persistent_public_sources
+    from polysia.deployment.research_experiment_runner import ResearchExperimentRunner
+
+    async def source_factory() -> tuple[
+        tuple[ResearchObservationSource, ...], dict[str, object]
+    ]:
+        return await build_persistent_public_sources()
+
+    return ResearchExperimentRunner(source_factory=source_factory)
+
+
+def _echo_runner_payload(payload: dict[str, object]) -> None:
+    from polysia.backtesting.replay_report import COMPACT_STDOUT_LIMIT
+    from polysia.cli_commands.research_evidence_cli import sanitize_report
+
+    text = json.dumps(sanitize_report(dict(payload)), sort_keys=True)
+    if len(text.encode()) > COMPACT_STDOUT_LIMIT:
+        print_error_and_exit(RuntimeError("prospective-run stdout exceeded 5 KiB"))
+    typer.echo(text)
+
+
+def prospective_run_start(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root"),
+    ] = Path("/var/lib/polysia/research-run"),
+    profile: Annotated[str, typer.Option("--profile")] = "canary",
+    code_sha: Annotated[str, typer.Option("--code-sha")] = "",
+    run_id: Annotated[str | None, typer.Option("--run-id")] = None,
+    image_sha: Annotated[str | None, typer.Option("--image-sha")] = None,
+) -> None:
+    """Prepare, collect, verify, and close one isolated research experiment."""
+
+    if not code_sha:
+        print_error_and_exit(ValueError("code SHA is required"))
+    from polysia.deployment.research_experiment_runner import (
+        ResearchRunnerConflictError,
+        ResearchRunnerError,
+    )
+    from polysia.storage.research_evidence import ResearchEvidenceStoreError
+
+    try:
+        payload = asyncio.run(
+            _research_runner().start(
+                state_root,
+                profile=profile,
+                code_sha=code_sha,
+                run_id=run_id,
+                image_sha=image_sha,
+            )
+        )
+    except ResearchRunnerConflictError as error:
+        _echo_runner_payload(error.payload)
+        raise typer.Exit(code=1) from error
+    except (OSError, ValueError, ResearchRunnerError, ResearchEvidenceStoreError) as error:
+        print_error_and_exit(error)
+    _echo_runner_payload(payload)
+
+
+def prospective_run_status(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root"),
+    ] = Path("/var/lib/polysia/research-run"),
+) -> None:
+    """Report runner phase and health without mutating the run."""
+
+    from polysia.deployment.research_experiment_runner import ResearchRunnerError
+
+    try:
+        payload = _research_runner().status(state_root)
+    except (OSError, ValueError, ResearchRunnerError) as error:
+        print_error_and_exit(error)
+    _echo_runner_payload(payload)
+
+
+def prospective_run_resume(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root"),
+    ] = Path("/var/lib/polysia/research-run"),
+    profile: Annotated[str, typer.Option("--profile")] = "canary",
+    code_sha: Annotated[str, typer.Option("--code-sha")] = "",
+    run_id: Annotated[str | None, typer.Option("--run-id")] = None,
+    image_sha: Annotated[str | None, typer.Option("--image-sha")] = None,
+) -> None:
+    """Resume the first incomplete phase of a frozen research run."""
+
+    if not code_sha:
+        print_error_and_exit(ValueError("code SHA is required"))
+    from polysia.deployment.research_experiment_runner import (
+        ResearchRunnerConflictError,
+        ResearchRunnerError,
+    )
+    from polysia.storage.research_evidence import ResearchEvidenceStoreError
+
+    try:
+        payload = asyncio.run(
+            _research_runner().resume(
+                state_root,
+                profile=profile,
+                code_sha=code_sha,
+                run_id=run_id,
+                image_sha=image_sha,
+            )
+        )
+    except ResearchRunnerConflictError as error:
+        _echo_runner_payload(error.payload)
+        raise typer.Exit(code=1) from error
+    except (OSError, ValueError, ResearchRunnerError, ResearchEvidenceStoreError) as error:
+        print_error_and_exit(error)
+    _echo_runner_payload(payload)
+
+
+def prospective_run_stop(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root"),
+    ] = Path("/var/lib/polysia/research-run"),
+    reason: Annotated[str, typer.Option("--reason")] = "operator_stop",
+) -> None:
+    """Request bounded shutdown of the active research runner."""
+
+    from polysia.deployment.research_experiment_runner import ResearchRunnerError
+
+    try:
+        payload = _research_runner().request_stop(state_root, reason=reason)
+    except (OSError, ValueError, ResearchRunnerError) as error:
+        print_error_and_exit(error)
+    _echo_runner_payload(payload)
+
+
+def prospective_run_verify(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root"),
+    ] = Path("/var/lib/polysia/research-run"),
+) -> None:
+    """Verify collected evidence and complete or resume finalization."""
+
+    from polysia.deployment.research_experiment_runner import (
+        ResearchRunnerConflictError,
+        ResearchRunnerError,
+    )
+    from polysia.storage.research_evidence import ResearchEvidenceStoreError
+
+    try:
+        payload = asyncio.run(_research_runner().verify(state_root))
+    except ResearchRunnerConflictError as error:
+        _echo_runner_payload(error.payload)
+        raise typer.Exit(code=1) from error
+    except (OSError, ValueError, ResearchRunnerError, ResearchEvidenceStoreError) as error:
+        print_error_and_exit(error)
+    _echo_runner_payload(payload)
+
+
+def prospective_run_result(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root"),
+    ] = Path("/var/lib/polysia/research-run"),
+) -> None:
+    """Return the closed research result without rerunning collection."""
+
+    from polysia.deployment.research_experiment_runner import ResearchRunnerError
+
+    try:
+        payload = _research_runner().result(state_root)
+    except (OSError, ValueError, ResearchRunnerError) as error:
+        print_error_and_exit(error)
+    _echo_runner_payload(payload)
