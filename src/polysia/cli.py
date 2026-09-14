@@ -65,6 +65,17 @@ research_app.command("prospective-collect")(research.prospective_collect)
 research_app.command("prospective-health")(research.prospective_health)
 research_app.command("prospective-finalize")(research.prospective_finalize)
 research_app.command("prospective-prove")(research.prospective_prove)
+research_run_app = typer.Typer(
+    help="Run one bounded, resumable research experiment.",
+    no_args_is_help=True,
+)
+research_app.add_typer(research_run_app, name="prospective-run")
+research_run_app.command("start")(research.prospective_run_start)
+research_run_app.command("status")(research.prospective_run_status)
+research_run_app.command("resume")(research.prospective_run_resume)
+research_run_app.command("stop")(research.prospective_run_stop)
+research_run_app.command("verify")(research.prospective_run_verify)
+research_run_app.command("result")(research.prospective_run_result)
 
 wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
 wallet_intelligence_app.command("ensure")(wallet_intelligence.ensure)

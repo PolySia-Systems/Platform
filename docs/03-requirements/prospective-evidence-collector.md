@@ -112,8 +112,12 @@ The collector is provider-neutral. Venue translation stays in adapters.
   lifecycle is `COLLECTED → BUNDLE_PUBLISHED → VERIFIED_ANALYSIS → FINALIZED`,
   or `COLLECTED|BUNDLE_PUBLISHED → ANALYSIS_FAILED → FAILURE_ARCHIVED`, using
   the existing experiment row and bundle directory rather than a second
-  orchestrator. Backups are recovery points, not a substitute for continuous
-  experiment evidence.
+  orchestrator. The bounded research Runner (PR 2) owns orchestration
+  progress, receipts, and phase (`PREPARED → COLLECTING → COLLECTED →
+  VERIFYING → CLOSED`) in one isolated workspace manifest. CLOSED does not
+  imply technical success or positive economics. Canary success does not
+  start the main experiment. Backups are recovery points, not a substitute
+  for continuous experiment evidence.
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
@@ -130,6 +134,12 @@ python -m polysia.cli research prospective-collect --window-seconds 600
 python -m polysia.cli research prospective-health --health-report <path>
 python -m polysia.cli research prospective-health --health-report <path> --require-research-eligible
 python -m polysia.cli research prospective-finalize --database <stopped-db> --run-id <id> --bundle-root <dir>
+python -m polysia.cli research prospective-run start --state-root /var/lib/polysia/research-run --profile canary --code-sha <sha>
+python -m polysia.cli research prospective-run status --state-root /var/lib/polysia/research-run
+python -m polysia.cli research prospective-run resume --state-root /var/lib/polysia/research-run --profile canary --code-sha <sha>
+python -m polysia.cli research prospective-run stop --state-root /var/lib/polysia/research-run
+python -m polysia.cli research prospective-run verify --state-root /var/lib/polysia/research-run
+python -m polysia.cli research prospective-run result --state-root /var/lib/polysia/research-run
 ```
 
 Raw databases stay under `artifacts/` or `/var/lib/polysia/data/` and are not
@@ -243,9 +253,10 @@ It fakes only network transport, coordinated time, and controlled
 interruption. Adapter parsing, canonicalization, collection, persistence,
 replay, economics, finalization, and restore remain real. Supported failure
 modes must reproduce in seconds or minutes of simulated time. This laboratory
-is PR 1. The operational Runner, run manifest, deployment automation, and
-long-running experiment orchestration remain PR 2 and are not implemented
-here.
+is the offline proof. The operational Runner is `research prospective-run`
+with versioned `canary` and `main` profiles, one isolated state root, and
+Compose service `research-runner` (`restart: "no"`). Canary success does not
+start the main experiment.
 
 It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and

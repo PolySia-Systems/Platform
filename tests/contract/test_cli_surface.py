@@ -35,6 +35,7 @@ EXPECTED_COMMANDS = {
         "prospective-health",
         "prospective-finalize",
         "prospective-prove",
+        "prospective-run",
     },
     "ops": {
         "acceptance-audit",
@@ -140,6 +141,14 @@ def test_cli_exposes_capability_namespaces() -> None:
     assert visible_commands == EXPECTED_NAMESPACES
     for namespace, expected in EXPECTED_COMMANDS.items():
         assert set(command.commands[namespace].commands) == expected
+    assert set(command.commands["research"].commands["prospective-run"].commands) == {
+        "result",
+        "resume",
+        "start",
+        "status",
+        "stop",
+        "verify",
+    }
 
 
 def test_root_help_hides_compatibility_aliases() -> None:

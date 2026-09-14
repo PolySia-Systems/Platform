@@ -117,6 +117,38 @@ def byte_copy_sqlite(source: Path, destination: Path) -> Path:
     return destination
 
 
+def verify_declared_bundle_artifacts(
+    *,
+    database: Path,
+    bundle_root: Path,
+    manifest: Mapping[str, object],
+) -> None:
+    """Require every manifest-protected file and matching checksums."""
+
+    missing = [
+        path.name
+        for path in protected_bundle_paths(bundle_root, manifest=manifest)
+        if not path.is_file()
+    ]
+    if missing:
+        raise ResearchEvidenceStoreError(
+            "protected research evidence artifact is missing: " + ",".join(sorted(missing))
+        )
+    declared = str(manifest.get("database_sha256") or "")
+    actual = sha256_file(database)
+    if declared and declared.casefold() != actual.casefold():
+        raise ResearchEvidenceStoreError(
+            "research evidence database SHA-256 does not match the declared bundle"
+        )
+    checksum_path = database.with_suffix(f"{database.suffix}.sha256")
+    if checksum_path.is_file():
+        token = checksum_path.read_text(encoding="ascii").split()[0]
+        if token.casefold() != actual.casefold():
+            raise ResearchEvidenceStoreError(
+                "research evidence checksum sidecar does not match the database"
+            )
+
+
 @contextmanager
 def open_recorded_experiment_store(
     database: Path,
@@ -133,6 +165,11 @@ def open_recorded_experiment_store(
         manifest_path = bundle_root / MANIFEST_NAME
         if manifest_path.is_file():
             manifest = load_bundle_manifest(manifest_path)
+            verify_declared_bundle_artifacts(
+                database=database,
+                bundle_root=bundle_root,
+                manifest=manifest,
+            )
     before = capture_protected_artifacts(
         database=database,
         bundle_root=bundle_root,
@@ -187,5 +224,6 @@ __all__ = [
     "protected_bundle_paths",
     "sha256_file",
     "sqlite_companion_paths",
+    "verify_declared_bundle_artifacts",
     "verify_protected_unchanged",
 ]

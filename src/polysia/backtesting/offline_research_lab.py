@@ -8,7 +8,7 @@ restore remain the real production components.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -580,3 +580,39 @@ async def run_offline_proof(work: Path) -> dict[str, LabScenarioResult]:
         "B": await run_scenario_b(work / "scenario-b"),
         "C": await run_scenario_c(work / "scenario-c"),
     }
+
+
+def lab_source_factory(
+    clock: CoordinatedClock,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+) -> tuple[
+    Callable[[], Awaitable[tuple[tuple[Any, ...], dict[str, object]]]],
+    ScriptedJsonTransport,
+]:
+    transport = ScriptedJsonTransport(rows_by_call=[rows or _complete_rows(clock)])
+    market = _market_source(clock, event=book_event(clock))
+    aliases = _aliases()
+
+    async def factory() -> tuple[tuple[Any, ...], dict[str, object]]:
+        wallet = DataApiWalletPollSource(
+            REST_TRADES_CANDIDATE,
+            path="/trades",
+            source_id=TRADES_SOURCE_ID,
+            aliases=aliases,
+            transport=transport,
+            poll_interval_seconds=1.0,
+            initial_delay_seconds=0.5,
+            clock=clock,
+            monotonic_ns=clock.monotonic_ns,
+            sleep=clock.park,
+        )
+        return (market, wallet), {
+            "followed_aliases": sorted(aliases),
+            "market_tokens": [TOKEN],
+            "required_source_ids": ["rest_trades"],
+            "optional_source_ids": ["clob_market_ws"],
+            "unavailable": [],
+        }
+
+    return factory, transport

@@ -62,7 +62,10 @@ idempotent. Missing valid intervals produce a `FAILURE_ARCHIVED` evidence
 bundle, never a verified `FINALIZED` label. Analysis of a published bundle is
 strictly read-only: the source database is opened immutable/query-only, and
 any compatibility work uses a private copy. Compact deterministic replay
-comparison extends the existing `prospective-replay` command. This adds no
+comparison extends the existing `prospective-replay` command. The bounded
+research Runner records orchestration phase, receipts, and frozen non-secret
+configuration in one workspace manifest. Canary and main profiles share the
+same production path and differ only by declared parameters. This adds no
 database service and does not turn rotating recovery backups into a
 continuous archive.
 
