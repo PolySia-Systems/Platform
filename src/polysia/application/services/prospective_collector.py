@@ -122,7 +122,12 @@ class ProspectiveCollector:
     def recover_orphans(self) -> int:
         return self._store.invalidate_open_intervals(reason="orphan_open_after_restart")
 
-    def ingest(self, candidate: CanonicalResearchEvent) -> CanonicalResearchEvent:
+    def ingest(
+        self,
+        candidate: CanonicalResearchEvent,
+        *,
+        allow_after_collection_end: bool = False,
+    ) -> CanonicalResearchEvent:
         """Classify and persist one observation. Overload invalidates the interval."""
 
         stamped = replace(candidate, run_id=self._run_id)
@@ -134,7 +139,10 @@ class ProspectiveCollector:
             self._persist_or_invalidate(classified)
             return classified
         try:
-            return self._persist_classified(stamped)
+            return self._persist_classified(
+                stamped,
+                allow_after_collection_end=allow_after_collection_end,
+            )
         except ResearchExperimentBudgetError:
             raise
         except (ResearchEvidenceStoreError, OSError):
@@ -144,9 +152,17 @@ class ProspectiveCollector:
             self._queue.get_nowait()
             self._queue.task_done()
 
-    async def ingest_async(self, candidate: CanonicalResearchEvent) -> CanonicalResearchEvent:
+    async def ingest_async(
+        self,
+        candidate: CanonicalResearchEvent,
+        *,
+        allow_after_collection_end: bool = False,
+    ) -> CanonicalResearchEvent:
         async with self._write_lock:
-            return self.ingest(candidate)
+            return self.ingest(
+                candidate,
+                allow_after_collection_end=allow_after_collection_end,
+            )
 
     def record_reconnect(self, source_id: str) -> None:
         observed = self._clock()
@@ -262,7 +278,12 @@ class ProspectiveCollector:
             self._invalidate(IntervalValidity.INVALID_DISK, "persistence_failure")
             raise
 
-    def _persist_classified(self, candidate: CanonicalResearchEvent) -> CanonicalResearchEvent:
+    def _persist_classified(
+        self,
+        candidate: CanonicalResearchEvent,
+        *,
+        allow_after_collection_end: bool = False,
+    ) -> CanonicalResearchEvent:
         last_source_time, _, _ = self._store.watermark(candidate.source_id)
         existing = self._store.existing_digest(candidate.evidence_id)
         reconnect_pending = self._reconnect_pending.get(candidate.source_id, False)
@@ -278,7 +299,11 @@ class ProspectiveCollector:
                 source_id=candidate.source_id,
                 reason="source_time_gap",
             )
-            self._store.persist_event(gap, interval_id=self._interval.interval_id)
+            self._store.persist_event(
+                gap,
+                interval_id=self._interval.interval_id,
+                allow_after_collection_end=allow_after_collection_end,
+            )
             self._invalidate(IntervalValidity.INVALID_GAP, "source_time_gap")
         classified = classify_observation(
             candidate,
@@ -288,7 +313,11 @@ class ProspectiveCollector:
             policy=self._policy,
             reconnect_pending=reconnect_pending,
         )
-        self._store.persist_event(classified, interval_id=self._interval.interval_id)
+        self._store.persist_event(
+            classified,
+            interval_id=self._interval.interval_id,
+            allow_after_collection_end=allow_after_collection_end,
+        )
         self._last_persist_at = self._clock()
         self._maintain_if_due()
         if classified.classification is EvidenceClassification.ACCEPTED:

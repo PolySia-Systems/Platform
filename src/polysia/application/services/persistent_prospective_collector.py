@@ -409,7 +409,10 @@ class PersistentProspectiveCollector:
                 token_markets=token_markets,
             )
             for event in events:
-                await self._active().ingest_async(event)
+                await self._active().ingest_async(
+                    event,
+                    allow_after_collection_end=True,
+                )
 
     async def _drain_source(self, source: ResearchObservationSource) -> None:
         candidate_id = source.candidate.candidate_id
@@ -430,6 +433,8 @@ class PersistentProspectiveCollector:
                             return
                         persisted = await self._active().ingest_async(event)
                 except ResearchExperimentBudgetError as error:
+                    if error.limit == "duration":
+                        return
                     self._fatal_reason = "experiment_budget_reached"
                     self._fatal_stage = error.limit
                     self._fatal_error_code = None

@@ -269,6 +269,7 @@ def test_terminal_window_captures_wallet_market_evidence_before_close(
         config=PersistentCollectorConfig(
             window=timedelta(seconds=2),
             required_source_ids=("rest_trades",),
+            experiment_duration=timedelta(seconds=2),
         ),
         clock=clock,
         sleep=clock.sleep,
@@ -281,6 +282,7 @@ def test_terminal_window_captures_wallet_market_evidence_before_close(
     closed = store.latest_closed_interval()
     assert closed is not None
     assert closed.validity is IntervalValidity.VALID
+    assert collector.health_payload()["fatal"] is None
     assert {event.evidence_id for event in store.load_events(interval_id=closed.interval_id)} == {
         "wallet-before-terminal",
         "wallet-latest-market",
