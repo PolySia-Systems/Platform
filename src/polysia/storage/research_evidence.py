@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 from polysia.domain.research_evidence.collector import CollectorPolicy
 from polysia.domain.research_evidence.models import (
@@ -38,6 +38,7 @@ RESEARCH_EVIDENCE_FILENAME = "research-evidence.sqlite3"
 WRITER_BUSY_TIMEOUT_MS = 5_000
 WAL_CHECKPOINT_BYTES = 8 * 1024 * 1024
 EXPERIMENT_WRITE_RESERVE_BYTES = 1024 * 1024
+EVENT_FETCH_CHUNK = 256
 EXPERIMENT_TERMINAL_STATUSES = frozenset({"FINALIZED", "FAILURE_ARCHIVED"})
 
 
@@ -618,47 +619,57 @@ class ResearchEvidenceStore:
             return None
         return _interval_from_row(row)
 
+    def iter_events(
+        self,
+        *,
+        run_id: str | None = None,
+        interval_id: str | None = None,
+        interval_validity: IntervalValidity | None = None,
+        event_kind: ObservationKind | None = None,
+        chunk_size: int = EVENT_FETCH_CHUNK,
+    ) -> Iterator[CanonicalResearchEvent]:
+        """Yield canonical events in observed order without materializing the full set."""
+
+        if interval_id is not None and interval_validity is not None:
+            raise ValueError("interval_id and interval_validity are mutually exclusive")
+        if interval_validity is not None and run_id is None:
+            raise ValueError("interval_validity requires run_id")
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive")
+        sql, parameters = _event_query(
+            run_id=run_id,
+            interval_id=interval_id,
+            interval_validity=interval_validity,
+            event_kind=event_kind,
+        )
+        connection = self._connect()
+        try:
+            cursor = connection.execute(sql, parameters)
+            while True:
+                rows = _fetch_event_chunk(cursor, chunk_size)
+                if not rows:
+                    break
+                for row in rows:
+                    yield _event_from_row(row)
+        finally:
+            connection.close()
+
     def load_events(
         self,
         *,
         run_id: str | None = None,
         interval_id: str | None = None,
         interval_validity: IntervalValidity | None = None,
+        event_kind: ObservationKind | None = None,
     ) -> tuple[CanonicalResearchEvent, ...]:
-        if interval_id is not None and interval_validity is not None:
-            raise ValueError("interval_id and interval_validity are mutually exclusive")
-        if interval_validity is not None and run_id is None:
-            raise ValueError("interval_validity requires run_id")
-        connection = self._connect()
-        try:
-            if interval_id is not None:
-                rows = connection.execute(
-                    "SELECT * FROM research_events WHERE interval_id = ? "
-                    "ORDER BY observed_time_utc, evidence_id",
-                    (interval_id,),
-                ).fetchall()
-            elif interval_validity is not None:
-                rows = connection.execute(
-                    "SELECT events.* FROM research_events AS events "
-                    "JOIN research_intervals AS intervals "
-                    "ON intervals.interval_id = events.interval_id "
-                    "WHERE events.run_id = ? AND intervals.validity = ? "
-                    "ORDER BY events.observed_time_utc, events.evidence_id",
-                    (run_id, interval_validity.value),
-                ).fetchall()
-            elif run_id is None:
-                rows = connection.execute(
-                    "SELECT * FROM research_events ORDER BY observed_time_utc, evidence_id"
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    "SELECT * FROM research_events WHERE run_id = ? "
-                    "ORDER BY observed_time_utc, evidence_id",
-                    (run_id,),
-                ).fetchall()
-        finally:
-            connection.close()
-        return tuple(_event_from_row(row) for row in rows)
+        return tuple(
+            self.iter_events(
+                run_id=run_id,
+                interval_id=interval_id,
+                interval_validity=interval_validity,
+                event_kind=event_kind,
+            )
+        )
 
     def load_latest_wallet_token_markets(
         self,
@@ -1090,6 +1101,54 @@ def _event_params(event: CanonicalResearchEvent, *, interval_id: str) -> tuple[o
         event.run_id,
         interval_id,
     )
+
+
+def _event_query(
+    *,
+    run_id: str | None,
+    interval_id: str | None,
+    interval_validity: IntervalValidity | None,
+    event_kind: ObservationKind | None = None,
+) -> tuple[str, tuple[object, ...]]:
+    kind_sql = ""
+    kind_params: tuple[object, ...] = ()
+    if event_kind is not None:
+        kind_sql = " AND event_kind = ?"
+        kind_params = (event_kind.value,)
+    if interval_id is not None:
+        return (
+            "SELECT * FROM research_events WHERE interval_id = ?"
+            f"{kind_sql} ORDER BY observed_time_utc, evidence_id",
+            (interval_id, *kind_params),
+        )
+    if interval_validity is not None:
+        kind_sql = "" if event_kind is None else " AND events.event_kind = ?"
+        return (
+            "SELECT events.* FROM research_events AS events "
+            "JOIN research_intervals AS intervals "
+            "ON intervals.interval_id = events.interval_id "
+            "WHERE events.run_id = ? AND intervals.validity = ?"
+            f"{kind_sql} "
+            "ORDER BY events.observed_time_utc, events.evidence_id",
+            (run_id, interval_validity.value, *kind_params),
+        )
+    if run_id is None:
+        where = "" if event_kind is None else " WHERE event_kind = ?"
+        return (
+            f"SELECT * FROM research_events{where} ORDER BY observed_time_utc, evidence_id",
+            kind_params,
+        )
+    return (
+        "SELECT * FROM research_events WHERE run_id = ?"
+        f"{kind_sql} ORDER BY observed_time_utc, evidence_id",
+        (run_id, *kind_params),
+    )
+
+
+def _fetch_event_chunk(
+    cursor: sqlite3.Cursor, chunk_size: int
+) -> Sequence[Mapping[str, object]]:
+    return cast(Sequence[Mapping[str, object]], cursor.fetchmany(chunk_size))
 
 
 def _event_from_row(row: Mapping[str, object]) -> CanonicalResearchEvent:

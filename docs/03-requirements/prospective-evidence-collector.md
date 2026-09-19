@@ -112,12 +112,23 @@ The collector is provider-neutral. Venue translation stays in adapters.
   lifecycle is `COLLECTED → BUNDLE_PUBLISHED → VERIFIED_ANALYSIS → FINALIZED`,
   or `COLLECTED|BUNDLE_PUBLISHED → ANALYSIS_FAILED → FAILURE_ARCHIVED`, using
   the existing experiment row and bundle directory rather than a second
-  orchestrator. The bounded research Runner (PR 2) owns orchestration
-  progress, receipts, and phase (`PREPARED → COLLECTING → COLLECTED →
-  VERIFYING → CLOSED`) in one isolated workspace manifest. CLOSED does not
-  imply technical success or positive economics. Canary success does not
-  start the main experiment. Backups are recovery points, not a substitute
-  for continuous experiment evidence.
+  orchestrator. The bounded research Runner owns orchestration progress,
+  receipts, and phase (`PREPARED → COLLECTING → COLLECTED → VERIFYING →
+  CLOSED`) in one isolated workspace manifest. CLOSED does not imply technical
+  success or positive economics. Canary success does not start the main
+  experiment. Backups are recovery points, not a substitute for continuous
+  experiment evidence.
+- Finalization is memory-bounded. Event reads are chunked. Replay consumes
+  valid windows as a stream, holds market snapshots only as long as economics
+  needs them, and drops per-observation traces after digests exist. The
+  Finalizer and Runner share one authoritative replay result; the Runner does
+  not replay the published bundle again. A crash after bundle publication
+  resumes from that verified bundle. Collection `code_sha` stays frozen at T0.
+  A later analysis SHA may close an already collected run and is recorded
+  separately as `finalization_code_sha`. Capacity preflight includes the
+  profile memory budget required for finalization, not disk/event collection
+  bounds alone. The configured Runner `mem_limit` remains 512 MiB unless a
+  measured closeout proves a smaller justified increase.
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
@@ -138,7 +149,7 @@ python -m polysia.cli research prospective-run start --state-root /var/lib/polys
 python -m polysia.cli research prospective-run status --state-root /var/lib/polysia/research-run
 python -m polysia.cli research prospective-run resume --state-root /var/lib/polysia/research-run --profile canary --code-sha <sha>
 python -m polysia.cli research prospective-run stop --state-root /var/lib/polysia/research-run
-python -m polysia.cli research prospective-run verify --state-root /var/lib/polysia/research-run
+python -m polysia.cli research prospective-run verify --state-root /var/lib/polysia/research-run --code-sha <analysis-sha>
 python -m polysia.cli research prospective-run result --state-root /var/lib/polysia/research-run
 ```
 

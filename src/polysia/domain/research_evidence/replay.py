@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -175,6 +175,14 @@ class _ReplaySnapshotIndex:
             key: _build_timeline(rows, use_observed_tiebreak=False)
             for key, rows in executions.items()
         }
+        self._execution_markets = {
+            key: frozenset(
+                snapshot.market_reference
+                for snapshot in timeline.events
+                if snapshot.market_reference is not None
+            )
+            for key, timeline in self._executions.items()
+        }
 
     def markout(
         self,
@@ -228,62 +236,87 @@ class _ReplaySnapshotIndex:
                 mapped,
                 observation.observed_time,
             )
-        exact = tuple(
-            snapshot
-            for snapshot in timeline.events
-            if snapshot.market_reference == observation.market_reference
-        )
-        if not exact:
-            return None, "missing_market_token_mapping", False, observation.observed_time
         cutoff = observation.observed_time - max_age
-        past = tuple(
-            snapshot
-            for snapshot in exact
-            if cutoff <= snapshot.observed_time <= observation.observed_time
-        )
         future_cutoff = observation.observed_time + acquisition_max_delay
-        future = tuple(
-            snapshot
-            for snapshot in exact
-            if observation.observed_time < snapshot.observed_time <= future_cutoff
+        markets = self._execution_markets.get(
+            (observation.outcome_reference, observation.side), frozenset()
         )
+        if observation.market_reference not in markets:
+            return None, "missing_market_token_mapping", False, observation.observed_time
         first_failure: tuple[str, datetime] | None = None
-        for snapshot in (*reversed(past), *future):
-            decision_time = max(observation.observed_time, snapshot.observed_time)
-            if snapshot.provenance.get("execution_evidence_version") == "order-book-depth-v1":
-                evidence, reason = depth_execution_from_snapshot(
-                    snapshot,
-                    observation=observation,
-                    entry_budget=entry_budget,
-                )
-                if evidence is not None:
-                    return evidence, None, True, decision_time
-                if first_failure is None:
-                    first_failure = (reason or "missing_quote", decision_time)
+        left = bisect_left(timeline.times, cutoff)
+        mid = bisect_right(timeline.times, observation.observed_time)
+        future_right = bisect_right(timeline.times, future_cutoff)
+        for index in range(mid - 1, left - 1, -1):
+            snapshot = timeline.events[index]
+            if snapshot.market_reference != observation.market_reference:
                 continue
-            fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
-            if fee is not None and snapshot.price is not None and snapshot.size is not None:
-                return (
-                    ExecutionEvidence(
-                        snapshot_evidence_id=snapshot.evidence_id,
-                        executable_price=snapshot.price,
-                        available_quantity=snapshot.size,
-                        recorded_fee=fee,
-                    ),
-                    None,
-                    True,
-                    decision_time,
-                )
-            if first_failure is None:
-                first_failure = (
-                    str(snapshot.provenance.get("execution_failure") or "missing_fee"),
-                    decision_time,
-                )
+            evidence, reason, decision_time = _execution_from_snapshot(
+                snapshot,
+                observation=observation,
+                entry_budget=entry_budget,
+            )
+            if evidence is not None:
+                return evidence, None, True, decision_time
+            if first_failure is None and reason is not None:
+                first_failure = (reason, decision_time)
+        for index in range(mid, future_right):
+            snapshot = timeline.events[index]
+            if snapshot.market_reference != observation.market_reference:
+                continue
+            evidence, reason, decision_time = _execution_from_snapshot(
+                snapshot,
+                observation=observation,
+                entry_budget=entry_budget,
+            )
+            if evidence is not None:
+                return evidence, None, True, decision_time
+            if first_failure is None and reason is not None:
+                first_failure = (reason, decision_time)
         if first_failure is not None:
             return None, first_failure[0], True, first_failure[1]
-        if any(snapshot.observed_time < cutoff for snapshot in exact):
+        stale = any(
+            timeline.events[index].market_reference == observation.market_reference
+            for index in range(left)
+        )
+        if stale:
             return None, "stale_quote", True, observation.observed_time
         return None, "missing_quote", True, observation.observed_time
+
+
+def _execution_from_snapshot(
+    snapshot: CanonicalResearchEvent,
+    *,
+    observation: ProspectiveObservation,
+    entry_budget: Decimal,
+) -> tuple[ExecutionEvidence | None, str | None, datetime]:
+    decision_time = max(observation.observed_time, snapshot.observed_time)
+    if snapshot.provenance.get("execution_evidence_version") == "order-book-depth-v1":
+        evidence, reason = depth_execution_from_snapshot(
+            snapshot,
+            observation=observation,
+            entry_budget=entry_budget,
+        )
+        if evidence is not None:
+            return evidence, None, decision_time
+        return None, reason or "missing_quote", decision_time
+    fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
+    if fee is not None and snapshot.price is not None and snapshot.size is not None:
+        return (
+            ExecutionEvidence(
+                snapshot_evidence_id=snapshot.evidence_id,
+                executable_price=snapshot.price,
+                available_quantity=snapshot.size,
+                recorded_fee=fee,
+            ),
+            None,
+            decision_time,
+        )
+    return (
+        None,
+        str(snapshot.provenance.get("execution_failure") or "missing_fee"),
+        decision_time,
+    )
 
 
 def observation_from_event(event: CanonicalResearchEvent) -> ProspectiveObservation | None:
@@ -405,26 +438,33 @@ def lookup_execution_evidence(
 
 
 def replay_same_observations(
-    events: tuple[CanonicalResearchEvent, ...],
+    events: Iterable[CanonicalResearchEvent],
     *,
     policy: TargetExposurePolicy | None = None,
     interval_valid: bool = True,
-    snapshots: tuple[CanonicalResearchEvent, ...] = (),
+    snapshots: Sequence[CanonicalResearchEvent] = (),
     markout_tolerance: timedelta = timedelta(seconds=1),
     execution_evidence_max_age: timedelta = EXECUTION_EVIDENCE_MAX_AGE,
     execution_evidence_acquisition_max_delay: timedelta = (
         EXECUTION_EVIDENCE_ACQUISITION_MAX_DELAY
     ),
+    ordered: bool = False,
+    record_markouts: bool = True,
 ) -> SameObservationReplay:
     """Consume one observation stream for Current Control and Target Exposure."""
 
     policy = policy or TargetExposurePolicy()
-    ordered = tuple(
-        sorted(
-            events,
-            key=lambda item: (item.observed_time, item.evidence_id),
+    ordered_events: Iterable[CanonicalResearchEvent]
+    if ordered:
+        ordered_events = events
+    else:
+        ordered_events = tuple(
+            sorted(
+                events,
+                key=lambda item: (item.observed_time, item.evidence_id),
+            )
         )
-    )
+    snapshot_index = _ReplaySnapshotIndex(tuple(snapshots))
     control: list[tuple[str, ControlAdmission]] = []
     target: list[tuple[str, TargetExposureDecision | str]] = []
     leader_markouts: list[tuple[str, tuple[MarkoutLookup, ...]]] = []
@@ -440,9 +480,8 @@ def replay_same_observations(
     control_episodes: dict[tuple[str, str], _EpisodeState] = {}
     control_cash = Decimal("1000")
     target_cash = Decimal("1000")
-    snapshot_index = _ReplaySnapshotIndex(snapshots)
 
-    for event in ordered:
+    for event in ordered_events:
         observation = observation_from_event(event)
         if observation is None:
             if event.event_kind is ObservationKind.WALLET_TRADE and event.classification in {
@@ -627,14 +666,15 @@ def replay_same_observations(
             )
         )
 
-        _append_markouts(
-            observation,
-            snapshot_index=snapshot_index,
-            tolerance=markout_tolerance,
-            leader=leader_markouts,
-            follower=follower_markouts,
-            follower_event_time=decision_time,
-        )
+        if record_markouts:
+            _append_markouts(
+                observation,
+                snapshot_index=snapshot_index,
+                tolerance=markout_tolerance,
+                leader=leader_markouts,
+                follower=follower_markouts,
+                follower_event_time=decision_time,
+            )
 
     control_digest = _decision_digest(control)
     target_digest = _decision_digest(target)

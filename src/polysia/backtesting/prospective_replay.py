@@ -6,7 +6,8 @@ consume the same accepted observations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, replace
 from datetime import timedelta
 
 from polysia.backtesting.prospective_economics import (
@@ -14,12 +15,19 @@ from polysia.backtesting.prospective_economics import (
     evaluate_prospective_economics,
 )
 from polysia.domain.copytrading.target_exposure import TargetExposurePolicy
-from polysia.domain.research_evidence.models import IntervalValidity, ResearchInterval
+from polysia.domain.research_evidence.models import (
+    CanonicalResearchEvent,
+    IntervalValidity,
+    ObservationKind,
+    ResearchInterval,
+)
 from polysia.domain.research_evidence.replay import (
     SameObservationReplay,
     replay_same_observations,
 )
 from polysia.storage.research_evidence import ResearchEvidenceStore
+
+REPLAY_CALLS: list[str] = []
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +42,25 @@ class RecordedExperimentReplay:
     economics: ProspectiveEconomicReport
 
 
+def replay_identity(replay: RecordedExperimentReplay) -> tuple[object, ...]:
+    """Compact identity used for deterministic comparison without retaining traces."""
+
+    return (
+        replay.result.control_digest,
+        replay.result.target_digest,
+        replay.result.unknown_count,
+        replay.result.unknown_by_cause,
+        replay.result.eligible_observation_count,
+        replay.result.mapped_observation_count,
+        replay.result.execution_evidence_count,
+        replay.replayed_event_count,
+        replay.excluded_event_count,
+        replay.economics.digest,
+        len(replay.valid_intervals),
+        len(replay.invalid_intervals),
+    )
+
+
 def replay_recorded_run(
     store: ResearchEvidenceStore,
     *,
@@ -44,7 +71,7 @@ def replay_recorded_run(
 ) -> SameObservationReplay:
     events = store.load_events(run_id=run_id)
     snapshots = tuple(
-        event for event in events if event.event_kind.value == "MARKET_STATE"
+        event for event in events if event.event_kind is ObservationKind.MARKET_STATE
     )
     return replay_same_observations(
         events,
@@ -61,9 +88,12 @@ def replay_recorded_experiment(
     run_id: str,
     policy: TargetExposurePolicy | None = None,
     markout_tolerance: timedelta = timedelta(seconds=1),
+    record_markouts: bool = False,
+    retain_traces: bool = True,
 ) -> RecordedExperimentReplay:
     """Replay only evidence from independently valid windows in one experiment."""
 
+    REPLAY_CALLS.append(run_id)
     intervals = store.load_intervals_for_run(run_id)
     valid_intervals = tuple(
         interval for interval in intervals if interval.validity is IntervalValidity.VALID
@@ -82,11 +112,21 @@ def replay_recorded_experiment(
             excluded_event_count=total_events,
             economics=evaluate_prospective_economics(empty, events=()),
         )
-    events = store.load_events(
-        run_id=run_id,
-        interval_validity=IntervalValidity.VALID,
+    snapshots = _collect_snapshots(store, run_id=run_id)
+    events = store.iter_events(run_id=run_id, interval_validity=IntervalValidity.VALID)
+    counted_events, events = _count_and_tee(events)
+    replay = replay_same_observations(
+        events,
+        policy=policy,
+        interval_valid=True,
+        snapshots=snapshots,
+        markout_tolerance=markout_tolerance,
+        ordered=True,
+        record_markouts=record_markouts,
     )
-    if not events:
+    replayed_event_count = counted_events[0]
+    if replayed_event_count == 0:
+        del snapshots
         empty = replay_same_observations((), policy=policy, interval_valid=True)
         return RecordedExperimentReplay(
             result=empty,
@@ -96,21 +136,51 @@ def replay_recorded_experiment(
             excluded_event_count=total_events,
             economics=evaluate_prospective_economics(empty, events=()),
         )
-    snapshots = tuple(
-        event for event in events if event.event_kind.value == "MARKET_STATE"
-    )
-    replay = replay_same_observations(
-        events,
-        policy=policy,
-        interval_valid=True,
-        snapshots=snapshots,
-        markout_tolerance=markout_tolerance,
-    )
+    economics = evaluate_prospective_economics(replay, events=snapshots)
+    del snapshots
+    if not retain_traces:
+        replay = _compact_replay_result(replay)
     return RecordedExperimentReplay(
         result=replay,
         valid_intervals=valid_intervals,
         invalid_intervals=invalid_intervals,
-        replayed_event_count=len(events),
-        excluded_event_count=total_events - len(events),
-        economics=evaluate_prospective_economics(replay, events=events),
+        replayed_event_count=replayed_event_count,
+        excluded_event_count=total_events - replayed_event_count,
+        economics=economics,
+    )
+
+
+def _collect_snapshots(
+    store: ResearchEvidenceStore, *, run_id: str
+) -> tuple[CanonicalResearchEvent, ...]:
+    return tuple(
+        store.iter_events(
+            run_id=run_id,
+            interval_validity=IntervalValidity.VALID,
+            event_kind=ObservationKind.MARKET_STATE,
+        )
+    )
+
+
+def _count_and_tee(
+    events: Iterable[CanonicalResearchEvent],
+) -> tuple[list[int], Iterator[CanonicalResearchEvent]]:
+    counted = [0]
+
+    def iterator() -> Iterator[CanonicalResearchEvent]:
+        for event in events:
+            counted[0] += 1
+            yield event
+
+    return counted, iterator()
+
+
+def _compact_replay_result(result: SameObservationReplay) -> SameObservationReplay:
+    return replace(
+        result,
+        control_decisions=(),
+        target_decisions=(),
+        leader_markouts=(),
+        follower_markouts=(),
+        evaluations=(),
     )
