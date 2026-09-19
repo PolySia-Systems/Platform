@@ -9,7 +9,7 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -106,9 +106,52 @@ async def build_persistent_public_sources() -> tuple[
     dict[str, object],
 ]:
     transport = UrllibJsonGetTransport()
+    aliases, discovered_tokens = await discover_public_follow_set(transport)
+    sources, discovery = await build_persistent_sources_from_aliases(
+        aliases,
+        transport=transport,
+        discovered_tokens=discovered_tokens,
+    )
+    discovery["discovery_status"] = "measured" if aliases else "insufficient_public_wallets"
+    discovery["selection_mode"] = "public-discovery"
+    return sources, discovery
+
+
+async def build_persistent_runner_sources(
+    *,
+    database: Path | None = None,
+    now: datetime | None = None,
+) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
+    from polysia.deployment.research_wallet_selection import (
+        DEFAULT_SELECTION_DATABASE,
+        load_current_polycop_snapshot,
+        public_selection_payload,
+        reconstruction_payload,
+        resolve_polycop_shadow_alpha_top3,
+    )
+
+    snapshot = load_current_polycop_snapshot(database or DEFAULT_SELECTION_DATABASE)
+    selection = resolve_polycop_shadow_alpha_top3(snapshot, now=now or datetime.now(UTC))
+    sources, discovery = await build_persistent_sources_from_aliases(
+        selection.addresses_by_alias
+    )
+    discovery.update(public_selection_payload(selection))
+    discovery["_reconstruction"] = reconstruction_payload(selection)
+    discovery["_restricted_aliases"] = dict(selection.addresses_by_alias)
+    discovery["discovery_status"] = "polycop_shadow_alpha"
+    discovery["selection_mode"] = selection.policy_version
+    return sources, discovery
+
+
+async def build_persistent_sources_from_aliases(
+    aliases: Mapping[str, str],
+    *,
+    transport: UrllibJsonGetTransport | None = None,
+    discovered_tokens: tuple[str, ...] = (),
+) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
+    transport = transport or UrllibJsonGetTransport()
     public_adapter = PolymarketPublicAdapter()
     snapshot_fee_cache: dict[str, MarketFeeSchedule] = {}
-    aliases, discovered_tokens = await discover_public_follow_set(transport)
     from polysia.adapters.polymarket.research_sources import (
         MARKET_STREAM_CANDIDATE,
         FollowedMarketDiscovery,
@@ -230,5 +273,4 @@ async def build_persistent_public_sources() -> tuple[
             MARKET_STREAM_CANDIDATE.candidate_id,
         ],
         "unavailable": [USER_CHANNEL_CANDIDATE.candidate_id],
-        "discovery_status": "measured" if aliases else "insufficient_public_wallets",
     }

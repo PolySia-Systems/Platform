@@ -37,6 +37,7 @@ from polysia.deployment.research_run_profiles import (
     RunnerProfile,
     resolve_profile,
 )
+from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
 from polysia.domain.research_evidence.collector import COLLECTOR_POLICY_VERSION
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.domain.research_evidence.models import RESEARCH_EVIDENCE_SCHEMA_VERSION
@@ -52,6 +53,10 @@ Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
 SourceFactory = Callable[
     [],
+    Awaitable[tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]],
+]
+SourceRebuilder = Callable[
+    [Mapping[str, str]],
     Awaitable[tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]],
 ]
 PreparedSources = tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]
@@ -110,6 +115,10 @@ class ResearchRunWorkspace:
     def stop_request_path(self) -> Path:
         return self.root / STOP_REQUEST_NAME
 
+    @property
+    def selection_reconstruction_path(self) -> Path:
+        return self.root / "selection-reconstruction.json"
+
     def lock(self) -> ExclusiveWriterLock:
         return ExclusiveWriterLock(
             self.root / "runner",
@@ -127,8 +136,10 @@ class ResearchExperimentRunner:
         clock: Clock | None = None,
         sleep: Sleeper | None = None,
         settings_factory: SettingsFactory | None = None,
+        source_rebuilder: SourceRebuilder | None = None,
     ) -> None:
         self._source_factory = source_factory
+        self._source_rebuilder = source_rebuilder
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep or asyncio.sleep
         self._settings_factory = settings_factory or AppSettings
@@ -255,10 +266,15 @@ class ResearchExperimentRunner:
                 )
                 if str(manifest.get("phase")) == "CLOSED":
                     return self.result(state_root)
+                if str(manifest.get("phase")) in {"PREPARED", "COLLECTING"}:
+                    prepared_sources = await self._restore_sources(workspace, manifest)
             else:
                 if validate_existing:
                     raise ResearchRunnerError("research run manifest is missing")
-                sources, discovery = await self._source_factory()
+                try:
+                    sources, discovery = await self._source_factory()
+                except ResearchWalletSelectionError as error:
+                    raise ResearchRunnerError(str(error)) from error
                 prepared_sources = (sources, discovery)
                 manifest = self._prepare(
                     workspace,
@@ -372,8 +388,34 @@ class ResearchExperimentRunner:
             "trading_mode": TradingMode.DATA_ONLY.value,
         }
         _append_receipt(manifest, "prepare", "ok", prepared_at)
+        reconstruction = discovery.get("_reconstruction")
+        if isinstance(reconstruction, Mapping):
+            _atomic_json(workspace.selection_reconstruction_path, reconstruction)
         _write_manifest(workspace.manifest_path, manifest)
         return manifest
+
+    async def _restore_sources(
+        self,
+        workspace: ResearchRunWorkspace,
+        manifest: Mapping[str, object],
+    ) -> PreparedSources:
+        reconstruction = _read_reconstruction(workspace)
+        public = _mapping(manifest.get("followed_wallet_selection"))
+        if reconstruction is None:
+            if str(public.get("selection_policy", "")).startswith("polycop-"):
+                raise ResearchRunnerError("frozen Polycop reconstruction is missing")
+            sources, discovery = await self._source_factory()
+            return sources, discovery
+        from polysia.deployment.research_wallet_selection import verify_reconstruction
+
+        try:
+            aliases = verify_reconstruction(reconstruction, public)
+        except ResearchWalletSelectionError as error:
+            raise ResearchRunnerError(str(error)) from error
+        if self._source_rebuilder is None:
+            raise ResearchRunnerError("frozen wallet source rebuilder is missing")
+        sources, discovery = await self._source_rebuilder(aliases)
+        return sources, discovery
 
     async def _continue(
         self,
@@ -413,13 +455,20 @@ class ResearchExperimentRunner:
             sources, discovery = await self._source_factory()
         else:
             sources, discovery = prepared_sources
-        selection = _discovery_selection(discovery)
-        if _mapping(manifest.get("followed_wallet_selection")) != selection:
-            raise ResearchRunnerError("research run source selection mismatch")
-        required = tuple(_strings(selection.get("required_source_ids")))
-        optional = tuple(_strings(selection.get("optional_source_ids")))
-        aliases = tuple(_strings(selection.get("aliases")))
-        tokens = tuple(_strings(selection.get("market_tokens")))
+        frozen = _mapping(manifest.get("followed_wallet_selection"))
+        identity = _source_identity(discovery)
+        for key in (
+            "aliases",
+            "required_source_ids",
+            "optional_source_ids",
+            "unavailable_sources",
+        ):
+            if identity.get(key) != sorted(_strings(frozen.get(key))):
+                raise ResearchRunnerError("research run source selection mismatch")
+        required = tuple(_strings(frozen.get("required_source_ids")))
+        optional = tuple(_strings(frozen.get("optional_source_ids")))
+        aliases = tuple(_strings(frozen.get("aliases")))
+        tokens = tuple(_strings(frozen.get("market_tokens") or identity.get("market_tokens")))
         store = ResearchEvidenceStore(workspace.database_path, clock=self._clock)
         collector = PersistentProspectiveCollector(
             store,
@@ -747,7 +796,7 @@ def _strings(value: object) -> list[str]:
     return []
 
 
-def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
+def _source_identity(discovery: Mapping[str, object]) -> dict[str, object]:
     return {
         "aliases": sorted(_strings(discovery.get("followed_aliases"))),
         "required_source_ids": sorted(_strings(discovery.get("required_source_ids"))),
@@ -755,6 +804,45 @@ def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
         "unavailable_sources": sorted(_strings(discovery.get("unavailable"))),
         "market_tokens": sorted(_strings(discovery.get("market_tokens"))),
     }
+
+
+def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
+    payload = _source_identity(discovery)
+    for key in (
+        "feature_set_version",
+        "freshness_bound",
+        "policy_id",
+        "policy_version",
+        "published_at",
+        "ranking_version",
+        "reconstruction_digest",
+        "selected_pools",
+        "selected_ranks",
+        "selection_digest",
+        "selection_policy",
+        "selection_policy_version",
+        "selection_run_id",
+        "snapshot_digest",
+        "source_id",
+        "source_snapshot_id",
+        "wallet_count",
+        "wallet_ids",
+        "wallet_limit",
+    ):
+        value = discovery.get(key)
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _read_reconstruction(workspace: ResearchRunWorkspace) -> dict[str, object] | None:
+    path = workspace.selection_reconstruction_path
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ResearchRunnerError("frozen Polycop reconstruction is invalid")
+    return payload
 
 
 def _int_config(value: object, default: int) -> int:

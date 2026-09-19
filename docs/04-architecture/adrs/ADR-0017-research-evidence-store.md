@@ -69,7 +69,10 @@ any compatibility work uses a private copy. Compact deterministic replay
 comparison extends the existing `prospective-replay` command. The bounded
 research Runner records orchestration phase, receipts, and frozen non-secret
 configuration in one workspace manifest. Canary and main profiles share the
-same production path and differ only by declared parameters. This adds no
+same production path and differ only by declared parameters. Their follow set
+is the current successful Polycop Stage 3 snapshot, selected by
+`polycop-shadow-alpha-top3-v1` and frozen before T0; arbitrary public-wallet
+discovery is not a silent fallback. This adds no
 database service and does not turn rotating recovery backups into a
 continuous archive.
 

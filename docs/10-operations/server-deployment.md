@@ -193,7 +193,14 @@ docker compose --profile research run --rm --no-deps research-runner \
 ```
 
 `research-runner` uses `restart: "no"` so a CLOSED run cannot respawn a new
-experiment. Preflight refuses to start when the cgroup memory limit is below
+experiment. Canary and main starts fail closed before T0 unless a current
+successful Polycop Stage 3 snapshot can supply three distinct `SHADOW_ALPHA`
+wallets under `polycop-shadow-alpha-top3-v1` and the Continuous Shadow 36-hour
+freshness bound. The frozen reconstruction file
+`selection-reconstruction.json` is permission-restricted and is the resume
+authority; later Polycop rankings must not change an existing run. Do not
+point Canary/Main at public-trade discovery. Preflight refuses to start when
+the cgroup memory limit is below
 the profile finalization budget. The Runner `mem_limit` is 2 GiB after the
 `main-economic-20260919T115418Z` closeout measured a 2 GiB cgroup peak while
 finalizing 199,399 events. Do not lower it back to 512 MiB without a new

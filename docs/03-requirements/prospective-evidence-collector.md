@@ -267,8 +267,20 @@ replay, economics, finalization, and restore remain real. Supported failure
 modes must reproduce in seconds or minutes of simulated time. This laboratory
 is the offline proof. The operational Runner is `research prospective-run`
 with versioned `canary` and `main` profiles, one isolated state root, and
-Compose service `research-runner` (`restart: "no"`). Canary success does not
-start the main experiment.
+Compose service `research-runner` (`restart: "no"`). Canary and main resolve
+one current Polycop Stage 3 snapshot before T0 using
+`polycop-shadow-alpha-top3-v1`: the highest-ranked distinct `SHADOW_ALPHA`
+wallets, bounded at three, with the existing Continuous Shadow 36-hour
+freshness bound (`PT36H`). Missing, stale, inconsistent, or insufficient
+selection fails closed before collection. The run freezes
+`selection_run_id`, source snapshot identity, published time, feature/policy/
+ranking versions, selected pools and ranks, selection-policy version, and
+selection/reconstruction digests. Resume rebuilds sources from the permission-
+restricted `selection-reconstruction.json` even if Polycop later changes.
+Public-trade discovery remains only for explicit benchmark commands such as
+`research-collector` and `prospective-benchmark`. Compact logs and public
+reports keep hashed aliases; raw addresses stay in the restricted
+reconstruction file. Canary success does not start the main experiment.
 
 It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and
