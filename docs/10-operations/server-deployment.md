@@ -194,8 +194,10 @@ docker compose --profile research run --rm --no-deps research-runner \
 
 `research-runner` uses `restart: "no"` so a CLOSED run cannot respawn a new
 experiment. Preflight refuses to start when the cgroup memory limit is below
-the profile finalization budget. Do not raise the 512 MiB `mem_limit` unless
-a measured finalization closeout proves that a smaller increase is required.
+the profile finalization budget. The Runner `mem_limit` is 2 GiB after the
+`main-economic-20260919T115418Z` closeout measured a 2 GiB cgroup peak while
+finalizing 199,399 events. Do not lower it back to 512 MiB without a new
+measurement.
 After collection, resume/verify may use a newer analysis SHA; the original
 collection SHA remains the frozen evidence identity. Rollback is `docker compose --profile research stop research-runner`
 and revert to the previous green image tag. Off-host transfer of the printed

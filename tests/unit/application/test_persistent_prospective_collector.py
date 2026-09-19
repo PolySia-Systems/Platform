@@ -879,6 +879,7 @@ def test_compose_research_runner_is_data_only_and_does_not_restart() -> None:
     assert 'user: "10001:10001"' in section
     assert "cap_drop:" in section
     assert "no-new-privileges:true" in section
+    assert "mem_limit: 2g" in section
 
 
 def test_busy_timeout_and_wal_files(tmp_path: Path) -> None:
