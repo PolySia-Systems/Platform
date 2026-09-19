@@ -22,6 +22,7 @@ from polysia.backtesting.prospective_analysis import (
 )
 from polysia.backtesting.prospective_replay import (
     RecordedExperimentReplay,
+    replay_identity,
     replay_recorded_experiment,
 )
 from polysia.deployment.recovery_bundle import sha256_file
@@ -45,6 +46,7 @@ class ResearchExperimentBundle:
     sha256: str
     outcome: str = OUTCOME_FINALIZED
     verified: bool = True
+    replay: RecordedExperimentReplay | None = None
 
 
 def finalize_research_experiment(
@@ -97,10 +99,16 @@ def finalize_research_experiment(
         database_copy = store.snapshot(staging / "research-evidence.sqlite3")
         replica = ResearchEvidenceStore(database_copy)
         replica.verify_integrity()
-        first = replay_recorded_experiment(replica, run_id=run_id)
-        second = replay_recorded_experiment(replica, run_id=run_id)
-        if first != second:
+        first = replay_recorded_experiment(
+            replica, run_id=run_id, retain_traces=False
+        )
+        first_identity = replay_identity(first)
+        second = replay_recorded_experiment(
+            replica, run_id=run_id, retain_traces=False
+        )
+        if replay_identity(second) != first_identity:
             raise ResearchEvidenceStoreError("experiment replay is not deterministic")
+        del second
         verified = _replay_is_verified(first)
         if verified:
             replica.finalize_experiment_record(
@@ -123,9 +131,12 @@ def finalize_research_experiment(
             restore_sqlite_backup(database_copy, restored)
             restored_store = ResearchEvidenceStore(restored)
             restored_store.verify_integrity()
-            restored_replay = replay_recorded_experiment(restored_store, run_id=run_id)
-            if restored_replay != first:
+            restored_replay = replay_recorded_experiment(
+                restored_store, run_id=run_id, retain_traces=False
+            )
+            if replay_identity(restored_replay) != first_identity:
                 raise ResearchEvidenceStoreError("restored experiment replay changed")
+            del restored_replay
         manifest = _bundle_manifest(
             experiment=experiment,
             run_id=run_id,
@@ -157,6 +168,7 @@ def finalize_research_experiment(
                 sha256=checksum,
                 outcome=OUTCOME_FINALIZED,
                 verified=True,
+                replay=first,
             )
         if failure_final.exists():
             shutil.rmtree(staging)
@@ -182,6 +194,7 @@ def finalize_research_experiment(
             sha256=checksum,
             outcome=OUTCOME_FAILURE_ARCHIVED,
             verified=False,
+            replay=first,
         )
     finally:
         store.release_writer()
@@ -313,12 +326,21 @@ def _verify_published_bundle(
         bundle_root=path,
         expected_database_sha256=expected,
     ) as replica:
-        first = replay_recorded_experiment(replica, run_id=run_id)
-        second = replay_recorded_experiment(replica, run_id=run_id)
-        if first != second:
-            raise ResearchEvidenceStoreError("experiment replay is not deterministic")
-        if require_verified and not _replay_is_verified(first):
+        replica.verify_integrity()
+        confirmed = replay_recorded_experiment(
+            replica, run_id=run_id, retain_traces=False
+        )
+        if require_verified and not _replay_is_verified(confirmed):
             raise ResearchEvidenceStoreError("verified bundle has no replayable analysis")
+        declared_control = str(_mapping(manifest.get("replay")).get("control_digest") or "")
+        declared_target = str(_mapping(manifest.get("replay")).get("target_digest") or "")
+        declared_economic = str(_mapping(manifest.get("economic")).get("digest") or "")
+        if declared_control and declared_control != confirmed.result.control_digest:
+            raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
+        if declared_target and declared_target != confirmed.result.target_digest:
+            raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
+        if declared_economic and declared_economic != confirmed.economics.digest:
+            raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
     with TemporaryDirectory(prefix="polysia-research-resume-") as temporary:
         copied = byte_copy_sqlite(database_path, Path(temporary) / database_path.name)
         checksum_src = database_path.with_suffix(f"{database_path.suffix}.sha256")
@@ -328,9 +350,6 @@ def _verify_published_bundle(
         restore_sqlite_backup(copied, restored)
         restored_store = ResearchEvidenceStore(restored)
         restored_store.verify_integrity()
-        restored_replay = replay_recorded_experiment(restored_store, run_id=run_id)
-        if restored_replay != first:
-            raise ResearchEvidenceStoreError("restored experiment replay changed")
     after = capture_protected_artifacts(
         database=database_path,
         bundle_root=path,
@@ -344,7 +363,12 @@ def _verify_published_bundle(
         sha256=expected,
         outcome=outcome,
         verified=verified,
+        replay=confirmed,
     )
+
+
+def _mapping(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
 
 
 def _restrict(path: Path) -> None:

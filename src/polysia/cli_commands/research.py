@@ -862,6 +862,7 @@ def prospective_run_verify(
         Path,
         typer.Option("--state-root"),
     ] = Path("/var/lib/polysia/research-run"),
+    code_sha: Annotated[str | None, typer.Option("--code-sha")] = None,
 ) -> None:
     """Verify collected evidence and complete or resume finalization."""
 
@@ -872,7 +873,9 @@ def prospective_run_verify(
     from polysia.storage.research_evidence import ResearchEvidenceStoreError
 
     try:
-        payload = asyncio.run(_research_runner().verify(state_root))
+        payload = asyncio.run(
+            _research_runner().verify(state_root, finalization_code_sha=code_sha)
+        )
     except ResearchRunnerConflictError as error:
         _echo_runner_payload(error.payload)
         raise typer.Exit(code=1) from error

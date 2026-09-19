@@ -29,6 +29,7 @@ def detailed_replay_payload(
     experiment: ResearchExperiment,
     run_id: str,
     source_database_sha256: str,
+    include_decision_rows: bool = True,
 ) -> dict[str, Any]:
     result = scoped.result
     economics = scoped.economics
@@ -69,15 +70,17 @@ def detailed_replay_payload(
             "target_net_pnl": economics.target.to_dict()["net_pnl"],
             "unknown_count": result.unknown_count,
         },
-        "control_decisions": [
+    }
+    if include_decision_rows:
+        payload["control_decisions"] = [
             {"evidence_id": evidence_id, "decision": decision.value}
             for evidence_id, decision in result.control_decisions
-        ],
-        "target_decisions": [
+        ]
+        payload["target_decisions"] = [
             {"evidence_id": evidence_id, "decision": str(decision)}
             for evidence_id, decision in result.target_decisions
-        ],
-        "decision_evidence": [
+        ]
+        payload["decision_evidence"] = [
             {
                 "control_decision": row.control_decision,
                 "decision_time": row.decision_time.isoformat(),
@@ -92,8 +95,7 @@ def detailed_replay_payload(
                 "wallet_evidence_id": row.evidence_id,
             }
             for row in result.evaluations
-        ],
-    }
+        ]
     payload["result_hash"] = result_hash(payload)
     return payload
 

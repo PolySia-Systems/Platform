@@ -24,7 +24,6 @@ from polysia.application.services.persistent_prospective_collector import (
     PersistentProspectiveCollector,
 )
 from polysia.backtesting.prospective_analysis import open_recorded_experiment_store
-from polysia.backtesting.prospective_replay import replay_recorded_experiment
 from polysia.backtesting.replay_report import (
     COMPACT_STDOUT_LIMIT,
     compact_replay_payload,
@@ -198,7 +197,12 @@ class ResearchExperimentRunner:
             validate_existing=True,
         )
 
-    async def verify(self, state_root: Path) -> dict[str, object]:
+    async def verify(
+        self,
+        state_root: Path,
+        *,
+        finalization_code_sha: str | None = None,
+    ) -> dict[str, object]:
         workspace = ResearchRunWorkspace(state_root)
         try:
             workspace.lock().acquire()
@@ -211,7 +215,11 @@ class ResearchExperimentRunner:
                 return self.result(state_root)
             if phase not in {"COLLECTED", "VERIFYING"}:
                 raise ResearchRunnerError("verification requires collected evidence")
-            return await self._verify_and_close(workspace, manifest)
+            return await self._verify_and_close(
+                workspace,
+                manifest,
+                finalization_code_sha=finalization_code_sha,
+            )
         finally:
             workspace.lock().release()
 
@@ -264,6 +272,7 @@ class ResearchExperimentRunner:
                 workspace,
                 manifest,
                 prepared_sources=prepared_sources,
+                finalization_code_sha=code_sha,
             )
         finally:
             workspace.lock().release()
@@ -288,6 +297,9 @@ class ResearchExperimentRunner:
         needed = profile.max_bytes * 3 + SAFETY_MARGIN_BYTES
         if usage.free < needed:
             raise ResearchRunnerError("insufficient disk capacity for research run")
+        available_memory = _cgroup_memory_limit_bytes()
+        if available_memory is not None and available_memory < profile.memory_bytes:
+            raise ResearchRunnerError("insufficient memory for research finalization")
 
     def _prepare(
         self,
@@ -320,6 +332,7 @@ class ResearchExperimentRunner:
                 "max_bytes": profile.max_bytes,
                 "max_events": profile.max_events,
                 "memory_bytes": profile.memory_bytes,
+                "finalization_memory_bytes": profile.memory_bytes,
                 "window_count": profile.window_count,
             },
             "clocks": {
@@ -368,6 +381,7 @@ class ResearchExperimentRunner:
         manifest: dict[str, object],
         *,
         prepared_sources: PreparedSources | None = None,
+        finalization_code_sha: str | None = None,
     ) -> dict[str, object]:
         phase = str(manifest.get("phase"))
         if phase in {"PREPARED", "COLLECTING"}:
@@ -378,7 +392,11 @@ class ResearchExperimentRunner:
             )
             phase = str(manifest.get("phase"))
         if phase in {"COLLECTED", "VERIFYING"}:
-            return await self._verify_and_close(workspace, manifest)
+            return await self._verify_and_close(
+                workspace,
+                manifest,
+                finalization_code_sha=finalization_code_sha,
+            )
         if phase == "CLOSED":
             return self.result(workspace.root)
         raise ResearchRunnerError("research run phase is not resumable")
@@ -488,6 +506,8 @@ class ResearchExperimentRunner:
         self,
         workspace: ResearchRunWorkspace,
         manifest: dict[str, object],
+        *,
+        finalization_code_sha: str | None = None,
     ) -> dict[str, object]:
         manifest["phase"] = "VERIFYING"
         outcome = _outcome(manifest)
@@ -507,17 +527,21 @@ class ResearchExperimentRunner:
             actual = _stable_database_sha256(workspace.database_path)
             if actual.casefold() != collected_hash.casefold():
                 raise ResearchRunnerError("research database hash mismatch")
+        analysis_sha = finalization_code_sha or str(manifest.get("code_sha"))
+        manifest["finalization_code_sha"] = analysis_sha
         bundle = finalize_research_experiment(
             workspace.database_path,
             workspace.bundle_root,
             run_id=run_id,
         )
+        replay = bundle.replay
+        if replay is None:
+            raise ResearchRunnerError("finalized experiment analysis is missing")
         with open_recorded_experiment_store(
             bundle.database_path,
             bundle_root=bundle.path,
             expected_database_sha256=bundle.sha256,
         ) as replica:
-            replay = replay_recorded_experiment(replica, run_id=run_id)
             experiment = replica.load_experiment(run_id)
         if experiment is None:
             raise ResearchRunnerError("finalized experiment record is missing")
@@ -526,6 +550,7 @@ class ResearchExperimentRunner:
             experiment=experiment,
             run_id=run_id,
             source_database_sha256=bundle.sha256,
+            include_decision_rows=False,
         )
         compact = compact_replay_payload(detailed)
         artifacts = _mapping(manifest.get("artifacts"))
@@ -578,10 +603,12 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError("research run manifest version mismatch")
         if run_id is not None and str(manifest.get("run_id")) != run_id:
             raise ResearchRunnerError("research run identity mismatch")
-        if str(manifest.get("code_sha")) != code_sha:
+        phase = str(manifest.get("phase"))
+        collection_locked = phase in {"PREPARED", "COLLECTING"}
+        if collection_locked and str(manifest.get("code_sha")) != code_sha:
             raise ResearchRunnerError("research run code SHA mismatch")
         expected_image = image_sha or code_sha
-        if str(manifest.get("image_sha")) != expected_image:
+        if collection_locked and str(manifest.get("image_sha")) != expected_image:
             raise ResearchRunnerError("research run image SHA mismatch")
         if str(manifest.get("profile")) != profile.name:
             raise ResearchRunnerError("research run profile mismatch")
@@ -592,7 +619,6 @@ class ResearchExperimentRunner:
         if str(manifest.get("replay_engine_version")) != REPLAY_ENGINE_VERSION:
             raise ResearchRunnerError("research run engine version mismatch")
         artifacts = _mapping(manifest.get("artifacts"))
-        phase = str(manifest.get("phase"))
         published = _published_bundle_database(
             artifacts,
             workspace=workspace,
@@ -835,6 +861,7 @@ def _compact_result(
         "bundle_sha256": _mapping(manifest.get("artifacts")).get("bundle_sha256"),
         "bundle_verified": result.get("bundle_verified"),
         "command": "prospective-run",
+        "finalization_code_sha": manifest.get("finalization_code_sha"),
         "live_trading_enabled": False,
         "outcome": manifest.get("outcome"),
         "phase": manifest.get("phase"),
@@ -862,6 +889,19 @@ def _ensure_compact(payload: Mapping[str, object]) -> None:
     encoded = json.dumps(dict(payload), sort_keys=True, default=str)
     if len(encoded.encode()) > COMPACT_STDOUT_LIMIT:
         raise ResearchRunnerError("research runner stdout exceeded 5 KiB")
+
+
+def _cgroup_memory_limit_bytes() -> int | None:
+    path = Path("/sys/fs/cgroup/memory.max")
+    if not path.is_file():
+        return None
+    raw = path.read_text(encoding="ascii").strip()
+    if not raw or raw == "max":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _utc_text(value: datetime) -> str:

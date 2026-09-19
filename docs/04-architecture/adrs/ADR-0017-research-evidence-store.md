@@ -56,7 +56,11 @@ One durable `research_experiments` record declares the active capture's time,
 event-count, and storage bounds. Ordinary retention does not prune an active
 experiment. Finalization is a separate operator action that creates one
 SQLite Backup-API snapshot, restores and verifies it, reproduces replay, and
-only then marks the experiment finalized. A verified bundle on disk is reused
+only then marks the experiment finalized. Replay is streamed and chunked so
+peak memory stays inside the declared Runner profile; the Runner consumes the
+Finalizer's authoritative replay instead of computing a second one. Collection
+`code_sha` is frozen before T0, while `finalization_code_sha` may record a later
+analysis revision used only to close already collected evidence. A verified bundle on disk is reused
 when the live `FINALIZED` row is incomplete. Successful finalization is
 idempotent. Missing valid intervals produce a `FAILURE_ARCHIVED` evidence
 bundle, never a verified `FINALIZED` label. Analysis of a published bundle is

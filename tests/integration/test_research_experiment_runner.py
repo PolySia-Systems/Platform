@@ -92,6 +92,8 @@ def test_canary_and_main_profile_bounds() -> None:
     assert int(MAIN_PROFILE.duration.total_seconds()) == 14_400
     assert MAIN_PROFILE.max_events == 750_000
     assert MAIN_PROFILE.max_bytes == 805_306_368
+    assert MAIN_PROFILE.memory_bytes == 512 * 1024 * 1024
+    assert CANARY_PROFILE.memory_bytes == 512 * 1024 * 1024
     assert MAIN_PROFILE.duration <= timedelta(hours=4)
 
 
@@ -212,12 +214,13 @@ def test_resume_rejects_identity_and_hash_mismatch(tmp_path: Path) -> None:
     work = tmp_path / "bad"
     service = _runner(clock, work)
     asyncio.run(service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="id-run"))
-    with pytest.raises(ResearchRunnerError, match="code SHA"):
-        asyncio.run(
-            service.resume(work, profile=LAB_PROFILE, code_sha="b" * 40, run_id="id-run")
-        )
+    newer = asyncio.run(
+        service.resume(work, profile=LAB_PROFILE, code_sha="b" * 40, run_id="id-run")
+    )
+    assert newer["phase"] == "CLOSED"
     manifest_path = work / "run-manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["code_sha"] == CODE_SHA
     payload["artifacts"]["database_sha256"] = "0" * 64
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ResearchRunnerError, match="hash mismatch"):
@@ -278,7 +281,9 @@ def test_prepare_then_resume_from_collected_manifest(
     service = _runner(clock, work)
 
     async def crash_after_collect(
-        workspace: ResearchRunWorkspace, manifest: dict[str, object]
+        workspace: ResearchRunWorkspace,
+        manifest: dict[str, object],
+        **_: object,
     ) -> dict[str, object]:
         del workspace, manifest
         raise ResearchRunnerError("simulated crash after collect")
@@ -292,12 +297,17 @@ def test_prepare_then_resume_from_collected_manifest(
     t0 = manifest["clocks"]["t0"]
     assert manifest["phase"] == "COLLECTED"
     monkeypatch.undo()
+    analysis_sha = "b" * 40
     resumed = asyncio.run(
-        service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="crash-run")
+        service.resume(
+            work, profile=LAB_PROFILE, code_sha=analysis_sha, run_id="crash-run"
+        )
     )
     again = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
     assert resumed["phase"] == "CLOSED"
     assert again["clocks"]["t0"] == t0
+    assert again["code_sha"] == CODE_SHA
+    assert again["finalization_code_sha"] == analysis_sha
     verified = asyncio.run(service.verify(work))
     result = service.result(work)
     assert verified["run_id"] == result["run_id"] == "crash-run"
@@ -373,3 +383,150 @@ def test_live_settings_fail_preflight(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     with pytest.raises(ResearchRunnerError, match="LIVE_TRADING_ENABLED"):
         asyncio.run(service.start(tmp_path / "live", profile=LAB_PROFILE, code_sha=CODE_SHA))
+
+
+def test_runner_does_not_replay_after_authoritative_finalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polysia.backtesting import prospective_replay
+
+    prospective_replay.REPLAY_CALLS.clear()
+    clock = CoordinatedClock()
+    work = tmp_path / "once"
+    service = _runner(clock, work)
+    asyncio.run(service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="once-run"))
+    assert prospective_replay.REPLAY_CALLS.count("once-run") == 3
+    asyncio.run(service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="once-run"))
+    assert prospective_replay.REPLAY_CALLS.count("once-run") == 3
+    asyncio.run(service.verify(work))
+    service.result(work)
+    assert prospective_replay.REPLAY_CALLS.count("once-run") == 3
+
+
+def test_prepared_resume_rejects_collection_sha_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "prep-sha"
+    service = _runner(clock, work)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace,
+        manifest: dict[str, object],
+        **_: object,
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="prep-sha")
+        )
+    with pytest.raises(ResearchRunnerError, match="code SHA"):
+        asyncio.run(
+            service.resume(work, profile=LAB_PROFILE, code_sha="b" * 40, run_id="prep-sha")
+        )
+
+
+def test_verifying_oom_shape_resumes_from_collected_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "oom"
+    service = _runner(clock, work)
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise MemoryError("simulated verifying OOM")
+
+    monkeypatch.setattr(
+        "polysia.deployment.research_experiment_runner.finalize_research_experiment",
+        boom,
+    )
+    with pytest.raises(MemoryError, match="simulated verifying OOM"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="oom-run")
+        )
+    manifest = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
+    t0 = manifest["clocks"]["t0"]
+    collected = manifest["artifacts"]["collected_database_sha256"]
+    assert manifest["phase"] == "VERIFYING"
+    assert collected
+    monkeypatch.undo()
+    analysis_sha = "c" * 40
+    resumed = asyncio.run(
+        service.resume(work, profile=LAB_PROFILE, code_sha=analysis_sha, run_id="oom-run")
+    )
+    again = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
+    assert resumed["phase"] == "CLOSED"
+    assert again["clocks"]["t0"] == t0
+    assert again["code_sha"] == CODE_SHA
+    assert again["finalization_code_sha"] == analysis_sha
+    assert again["artifacts"]["collected_database_sha256"] == collected
+
+
+def test_corrupted_published_bundle_fails_closed(tmp_path: Path) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "corrupt"
+    service = _runner(clock, work)
+    asyncio.run(service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="corrupt-run"))
+    manifest = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
+    bundle = Path(str(manifest["artifacts"]["bundle"]))
+    database = bundle / "research-evidence.sqlite3"
+    database.write_bytes(database.read_bytes() + b"tamper")
+    with pytest.raises(ResearchRunnerError, match="hash mismatch"):
+        asyncio.run(
+            service.resume(
+                work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="corrupt-run"
+            )
+        )
+
+
+def test_collected_database_hash_mismatch_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "hash"
+    service = _runner(clock, work)
+
+    async def crash_after_collect(
+        workspace: ResearchRunWorkspace,
+        manifest: dict[str, object],
+        **_: object,
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after collect")
+
+    monkeypatch.setattr(service, "_verify_and_close", crash_after_collect)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after collect"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="hash-run")
+        )
+    database = work / "research-evidence.sqlite3"
+    database.write_bytes(database.read_bytes() + b"tamper")
+    monkeypatch.undo()
+    with pytest.raises(ResearchRunnerError, match="hash mismatch"):
+        asyncio.run(
+            service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="hash-run")
+        )
+
+
+def test_preflight_rejects_cgroup_below_profile_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "polysia.deployment.research_experiment_runner._cgroup_memory_limit_bytes",
+        lambda: 1024,
+    )
+    clock = CoordinatedClock()
+    factory, _transport = lab_source_factory(clock)
+    service = ResearchExperimentRunner(
+        source_factory=factory,
+        clock=clock,
+        sleep=clock.sleep,
+        settings_factory=AppSettings,
+    )
+    with pytest.raises(ResearchRunnerError, match="insufficient memory"):
+        asyncio.run(
+            service.start(tmp_path / "low-mem", profile=LAB_PROFILE, code_sha=CODE_SHA)
+        )

@@ -186,13 +186,18 @@ docker compose --profile research run --rm --no-deps research-runner \
   research prospective-run resume --state-root /var/lib/polysia/research-run \
   --profile canary --code-sha "$POLYSIA_IMAGE_TAG"
 docker compose --profile research run --rm --no-deps research-runner \
-  research prospective-run verify --state-root /var/lib/polysia/research-run
+  research prospective-run verify --state-root /var/lib/polysia/research-run \
+  --code-sha "$POLYSIA_IMAGE_TAG"
 docker compose --profile research run --rm --no-deps research-runner \
   research prospective-run result --state-root /var/lib/polysia/research-run
 ```
 
 `research-runner` uses `restart: "no"` so a CLOSED run cannot respawn a new
-experiment. Rollback is `docker compose --profile research stop research-runner`
+experiment. Preflight refuses to start when the cgroup memory limit is below
+the profile finalization budget. Do not raise the 512 MiB `mem_limit` unless
+a measured finalization closeout proves that a smaller increase is required.
+After collection, resume/verify may use a newer analysis SHA; the original
+collection SHA remains the frozen evidence identity. Rollback is `docker compose --profile research stop research-runner`
 and revert to the previous green image tag. Off-host transfer of the printed
 bundle path and SHA-256 remains an explicit operator action; the Runner does
 not add credentials or a file-transfer subsystem. The main bounded profile
