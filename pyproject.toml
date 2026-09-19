@@ -21,17 +21,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "build==1.6.0",
-    "cyclonedx-bom==7.3.1",
+    "build==1.6.1",
+    "cyclonedx-bom==7.4.0",
     "hatchling==1.32.0",
-    "hypothesis==6.167.1",
+    "hypothesis==6.168.0",
     "mypy==2.3.1",
     "pip-audit==2.10.1",
     "pip-tools==7.6.1",
     "pre-commit==4.6.2",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
-    "ruff==0.16.6",
+    "ruff==0.16.7",
     "setuptools==84.0.0",
 ]
 
