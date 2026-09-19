@@ -92,8 +92,8 @@ def test_canary_and_main_profile_bounds() -> None:
     assert int(MAIN_PROFILE.duration.total_seconds()) == 14_400
     assert MAIN_PROFILE.max_events == 750_000
     assert MAIN_PROFILE.max_bytes == 805_306_368
-    assert MAIN_PROFILE.memory_bytes == 512 * 1024 * 1024
-    assert CANARY_PROFILE.memory_bytes == 512 * 1024 * 1024
+    assert MAIN_PROFILE.memory_bytes == 2 * 1024 * 1024 * 1024
+    assert CANARY_PROFILE.memory_bytes == 2 * 1024 * 1024 * 1024
     assert MAIN_PROFILE.duration <= timedelta(hours=4)
 
 

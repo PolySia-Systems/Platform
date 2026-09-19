@@ -127,8 +127,9 @@ The collector is provider-neutral. Venue translation stays in adapters.
   A later analysis SHA may close an already collected run and is recorded
   separately as `finalization_code_sha`. Capacity preflight includes the
   profile memory budget required for finalization, not disk/event collection
-  bounds alone. The configured Runner `mem_limit` remains 512 MiB unless a
-  measured closeout proves a smaller justified increase.
+  bounds alone. The configured Runner `mem_limit` is 2 GiB after measured
+  closeout of the 199,399-event main experiment; do not revert to 512 MiB
+  without a new peak-memory measurement.
 
 Do not write research evidence into the Stage 4B financial database or the
 latency sidecar. No cross-database transactions.
