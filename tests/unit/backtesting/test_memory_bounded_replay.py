@@ -144,4 +144,3 @@ def test_experiment_replay_is_deterministic_and_can_drop_traces(tmp_path: Path) 
     assert first.result.evaluations
     assert second.result.evaluations == ()
     assert first.economics.digest == second.economics.digest
-
