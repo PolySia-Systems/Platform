@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from polysia.application.ports.continuous_shadow import ContinuousSelectionSnapshot
+from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.backtesting.offline_research_lab import (
     CODE_SHA,
+    WALLET_A,
+    WALLET_B,
     CoordinatedClock,
     lab_source_factory,
 )
@@ -529,4 +533,182 @@ def test_preflight_rejects_cgroup_below_profile_memory(
     with pytest.raises(ResearchRunnerError, match="insufficient memory"):
         asyncio.run(
             service.start(tmp_path / "low-mem", profile=LAB_PROFILE, code_sha=CODE_SHA)
+        )
+
+
+def _two_wallet_snapshot() -> ContinuousSelectionSnapshot:
+    published = datetime(2026, 1, 1, tzinfo=UTC)
+    return ContinuousSelectionSnapshot.create(
+        source_id="polycop",
+        selection_run_id="selection-run-lab",
+        source_snapshot_id="source-snap-lab",
+        feature_set_version="features-v1",
+        policy_id="copyability-v1",
+        policy_version="policy-v1",
+        ranking_version="ranking-v1",
+        published_at=published,
+        candidates=(
+            ProtectedShadowCandidate(
+                wallet_id="wallet-b",
+                address=WALLET_B,
+                pools=("SHADOW_ALPHA",),
+                alpha_rank=1,
+            ),
+            ProtectedShadowCandidate(
+                wallet_id="wallet-a",
+                address=WALLET_A,
+                pools=("SHADOW_ALPHA",),
+                alpha_rank=2,
+            ),
+        ),
+    )
+
+
+def _polycop_lab_runner(clock: CoordinatedClock) -> ResearchExperimentRunner:
+    from datetime import UTC, datetime
+
+    from polysia.deployment.research_wallet_selection import (
+        public_selection_payload,
+        reconstruction_payload,
+        resolve_polycop_shadow_alpha_top3,
+    )
+
+    factory, _transport = lab_source_factory(clock)
+    selection = resolve_polycop_shadow_alpha_top3(
+        _two_wallet_snapshot(),
+        now=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        wallet_limit=2,
+    )
+    factory_calls = {"count": 0}
+
+    async def source_factory() -> tuple[tuple[object, ...], dict[str, object]]:
+        factory_calls["count"] += 1
+        sources, discovery = await factory()
+        discovery.update(public_selection_payload(selection))
+        discovery["_reconstruction"] = reconstruction_payload(selection)
+        discovery["followed_aliases"] = list(selection.aliases)
+        return sources, discovery
+
+    async def rebuilder(aliases: dict[str, str]) -> tuple[tuple[object, ...], dict[str, object]]:
+        sources, discovery = await factory()
+        discovery["followed_aliases"] = sorted(aliases)
+        return sources, discovery
+
+    service = ResearchExperimentRunner(
+        source_factory=source_factory,
+        source_rebuilder=rebuilder,
+        clock=clock,
+        sleep=clock.sleep,
+        settings_factory=AppSettings,
+    )
+    service._factory_calls = factory_calls  # type: ignore[attr-defined]
+    service._selection = selection  # type: ignore[attr-defined]
+    return service
+
+
+def test_missing_polycop_selection_fails_before_t0(tmp_path: Path) -> None:
+    from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
+
+    clock = CoordinatedClock()
+
+    async def failing_factory() -> tuple[tuple[object, ...], dict[str, object]]:
+        raise ResearchWalletSelectionError("current Polycop selection is unavailable")
+
+    service = ResearchExperimentRunner(
+        source_factory=failing_factory,
+        clock=clock,
+        sleep=clock.sleep,
+        settings_factory=AppSettings,
+    )
+    work = tmp_path / "missing-selection"
+    with pytest.raises(ResearchRunnerError, match="unavailable"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="missing-run")
+        )
+    assert not (work / "run-manifest.json").is_file()
+    assert not (work / "selection-reconstruction.json").is_file()
+
+
+def test_polycop_resume_keeps_frozen_selection_and_t0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import re
+
+    clock = CoordinatedClock()
+    work = tmp_path / "polycop-freeze"
+    service = _polycop_lab_runner(clock)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace,
+        manifest: dict[str, object],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="polycop-run")
+        )
+    manifest = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
+    frozen = manifest["followed_wallet_selection"]
+    assert frozen["selection_policy"] == "polycop-shadow-alpha-top3-v1"
+    assert frozen["selection_run_id"] == "selection-run-lab"
+    assert (work / "selection-reconstruction.json").is_file()
+    monkeypatch.undo()
+
+    async def changed_factory() -> tuple[tuple[object, ...], dict[str, object]]:
+        raise AssertionError("resume must not resolve a new Polycop snapshot")
+
+    service._source_factory = changed_factory
+    payload = asyncio.run(
+        service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="polycop-run")
+    )
+    resumed = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
+    assert resumed["followed_wallet_selection"] == frozen
+    assert resumed["clocks"]["t0"] is not None
+    assert payload["phase"] == "CLOSED"
+    assert payload["trading_mode"] == TradingMode.DATA_ONLY.value
+    assert payload["live_trading_enabled"] is False
+    encoded = json.dumps(payload, sort_keys=True)
+    assert re.search(r"0x[a-fA-F0-9]{40}", encoded) is None
+    assert WALLET_A not in encoded
+    assert WALLET_B not in encoded
+    store = ResearchEvidenceStore(work / "research-evidence.sqlite3", read_only=True)
+    events = list(store.iter_events(run_id=str(resumed["run_id"])))
+    aliases = set(frozen["aliases"])
+    attributed = [event for event in events if event.leader_alias in aliases]
+    assert attributed
+    assert all(event.leader_alias in aliases for event in attributed)
+
+
+def test_polycop_reconstruction_tampering_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "polycop-tamper"
+    service = _polycop_lab_runner(clock)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace,
+        manifest: dict[str, object],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="tamper-run")
+        )
+    path = work / "selection-reconstruction.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["digest"] = "0" * 64
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.undo()
+    with pytest.raises(ResearchRunnerError, match="reconstruction digest"):
+        asyncio.run(
+            service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="tamper-run")
         )

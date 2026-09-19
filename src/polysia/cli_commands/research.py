@@ -725,15 +725,35 @@ def prospective_prove(
 
 
 def _research_runner() -> ResearchExperimentRunner:
-    from polysia.cli_commands.research_evidence_cli import build_persistent_public_sources
-    from polysia.deployment.research_experiment_runner import ResearchExperimentRunner
+    from collections.abc import Mapping
+
+    from polysia.cli_commands.research_evidence_cli import (
+        build_persistent_runner_sources,
+        build_persistent_sources_from_aliases,
+    )
+    from polysia.deployment.research_experiment_runner import (
+        ResearchExperimentRunner,
+        ResearchRunnerError,
+    )
+    from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
 
     async def source_factory() -> tuple[
-        tuple[ResearchObservationSource, ...], dict[str, object]
+        tuple[ResearchObservationSource, ...], Mapping[str, object]
     ]:
-        return await build_persistent_public_sources()
+        try:
+            return await build_persistent_runner_sources()
+        except ResearchWalletSelectionError as error:
+            raise ResearchRunnerError(str(error)) from error
 
-    return ResearchExperimentRunner(source_factory=source_factory)
+    async def rebuild_sources(
+        aliases: Mapping[str, str],
+    ) -> tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]:
+        return await build_persistent_sources_from_aliases(aliases)
+
+    return ResearchExperimentRunner(
+        source_factory=source_factory,
+        source_rebuilder=rebuild_sources,
+    )
 
 
 def _echo_runner_payload(payload: dict[str, object]) -> None:
