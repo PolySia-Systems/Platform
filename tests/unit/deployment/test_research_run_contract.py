@@ -19,6 +19,7 @@ from polysia.deployment.research_experiment_runner import (
 )
 from polysia.deployment.research_run_commands import DISPOSITION_ACCEPTED
 from polysia.deployment.research_run_contract import (
+    CONFIGURED_SELECTION_POLICY,
     DEFAULT_SELECTION_POLICY,
     DEFAULT_WALLET_COUNT,
     ResearchRunContractError,
@@ -40,7 +41,7 @@ def test_spec_rejects_unknown_fields_and_executable_expressions() -> None:
                 "spec_version": "research-run-spec-v1",
                 "profile": "canary",
                 "code_sha": CODE_SHA,
-                "wallet_count": 10,
+                "extra_field": 10,
             }
         )
     with pytest.raises(ResearchRunContractError, match="executable"):
@@ -81,6 +82,56 @@ def test_identical_inputs_resolve_to_equivalent_semantic_plans() -> None:
     assert left.safety["trading_mode"] == "DATA_ONLY"
     assert left.safety["overridable"] is False
     assert left.economic_contract["entry_budget"] == "5"
+
+
+def test_explicit_wallet_count_uses_configured_policy_without_changing_top3_default() -> None:
+    omitted = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+            }
+        ),
+        observed=NOW,
+    )
+    explicit_three = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "wallet_count": 3,
+            }
+        ),
+        observed=NOW,
+    )
+    configured = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "wallet_count": 2,
+            }
+        ),
+        observed=NOW,
+    )
+    assert omitted.selection["policy"] == DEFAULT_SELECTION_POLICY
+    assert plans_semantically_equal(omitted, explicit_three)
+    assert configured.selection["policy"] == CONFIGURED_SELECTION_POLICY
+    assert configured.selection["wallet_count"] == 2
+    assert configured.selection["capacity"]["operational_status"] == "unverified"
+    assert omitted.selection["capacity"]["operational_status"] == "validated"
+    with pytest.raises(ResearchRunContractError, match="operationally supported capacity"):
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "wallet_count": 10,
+            }
+        )
 
 
 def test_canary_and_main_budgets_stay_on_declared_profiles() -> None:

@@ -10,11 +10,13 @@ from polysia.adapters.polymarket.research_sources import public_wallet_alias
 from polysia.application.ports.continuous_shadow import ContinuousSelectionSnapshot
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.deployment.research_wallet_selection import (
+    POLYCOP_SHADOW_ALPHA_CONFIGURED_V1,
     POLYCOP_SHADOW_ALPHA_TOP3_V1,
     ResearchWalletSelectionError,
     load_current_polycop_snapshot,
     public_selection_payload,
     reconstruction_payload,
+    resolve_polycop_follow_set,
     resolve_polycop_shadow_alpha_top3,
     verify_reconstruction,
 )
@@ -111,6 +113,22 @@ def test_selects_top_ranked_distinct_shadow_alpha_wallets() -> None:
     reconstruction = reconstruction_payload(selection)
     restored = verify_reconstruction(reconstruction, public | {"aliases": list(selection.aliases)})
     assert restored == selection.addresses_by_alias
+
+
+def test_configured_count_keeps_stress_out_of_profitability_selection() -> None:
+    selection = resolve_polycop_follow_set(
+        _alpha_snapshot(),
+        now=NOW,
+        wallet_limit=2,
+        policy_version=POLYCOP_SHADOW_ALPHA_CONFIGURED_V1,
+    )
+    assert selection.policy_version == POLYCOP_SHADOW_ALPHA_CONFIGURED_V1
+    assert selection.wallet_ids == ("w1", "w2")
+    assert public_wallet_alias(WALLET_STRESS) not in selection.addresses_by_alias
+    public = public_selection_payload(selection)
+    assert public["selection_policy"] == POLYCOP_SHADOW_ALPHA_CONFIGURED_V1
+    assert public["wallet_count"] == 2
+    assert selection.reasons[0].startswith("highest-ranked distinct SHADOW_ALPHA")
 
 
 def test_missing_snapshot_fails_closed(tmp_path: Path) -> None:

@@ -68,6 +68,26 @@ def test_compare_version_change_still_reports_delta() -> None:
     assert compared["identity_changed"] is True
 
 
+def test_compare_incompatible_source_hash_is_reported_without_causal_inference() -> None:
+    current = _report()
+    baseline = _report()
+    current["source_hash"] = "c" * 64
+    current["run_id"] = "other-run"
+    current["wallet_selection"] = {
+        "policy": "polycop-shadow-alpha-configured-v1",
+        "wallet_count": 2,
+    }
+    baseline["wallet_selection"] = {"policy": "polycop-shadow-alpha-top3-v1", "wallet_count": 3}
+    compared = compare_replay_reports(current, baseline)
+    assert compared["classification"] == "incompatible_comparison"
+    assert compared["incompatible"] is True
+    assert "source_evidence" in compared["incompatible_reasons"]
+    assert compared["causal_inference"] == "not_inferred"
+    assert compared["wallet_selection"]["policy"]["current"] == (
+        "polycop-shadow-alpha-configured-v1"
+    )
+
+
 def test_compact_payload_omits_decision_rows() -> None:
     compact = compact_replay_payload(_report())
     encoded = json.dumps(compact, sort_keys=True)

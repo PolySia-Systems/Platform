@@ -67,7 +67,7 @@ from polysia.storage.research_evidence import (
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
 SourceFactory = Callable[
-    [],
+    ...,
     Awaitable[tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]],
 ]
 SourceRebuilder = Callable[
@@ -379,7 +379,7 @@ class ResearchExperimentRunner:
                         raise ResearchRunnerError("research run manifest is missing")
                     self._freeze_plan(workspace, plan, existing=None)
                     try:
-                        sources, discovery = await self._source_factory()
+                        sources, discovery = await self._open_sources(plan)
                     except ResearchWalletSelectionError as error:
                         raise ResearchRunnerError(str(error)) from error
                     prepared_sources = (sources, discovery)
@@ -863,6 +863,7 @@ class ResearchExperimentRunner:
             code_sha=code_sha,
             image_sha=image_sha or parsed.image_sha,
             run_id=run_id or parsed.run_id,
+            wallet_count=parsed.wallet_count,
         )
         return resolve_run_plan(
             parsed,
@@ -920,6 +921,21 @@ class ResearchExperimentRunner:
             )
         except ResearchRunCommandError as error:
             raise ResearchRunnerError(str(error)) from error
+
+    async def _open_sources(self, plan: ResearchRunPlan) -> PreparedSources:
+        kwargs: dict[str, object] = {}
+        policy = plan.selection.get("policy")
+        count = plan.selection.get("wallet_count")
+        if isinstance(policy, str) and policy.startswith("polycop-"):
+            kwargs["selection_policy"] = policy
+            if isinstance(count, int) and not isinstance(count, bool):
+                kwargs["wallet_count"] = count
+        if not kwargs:
+            return await self._source_factory()
+        try:
+            return await self._source_factory(**kwargs)
+        except TypeError:
+            return await self._source_factory()
 
     def _admission_lock(self, state_root: Path) -> ExclusiveWriterLock:
         del state_root
@@ -1081,6 +1097,7 @@ def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
         "wallet_count",
         "wallet_ids",
         "wallet_limit",
+        "selection_reasons",
     ):
         value = discovery.get(key)
         if value is not None:

@@ -31,7 +31,9 @@ from polysia.domain.research_evidence.replay import REPLAY_ENGINE_VERSION
 SPEC_VERSION = "research-run-spec-v1"
 PLAN_VERSION = "research-run-plan-v1"
 DEFAULT_SELECTION_POLICY = "polycop-shadow-alpha-top3-v1"
+CONFIGURED_SELECTION_POLICY = "polycop-shadow-alpha-configured-v1"
 DEFAULT_WALLET_COUNT = 3
+OPERATIONAL_WALLET_COUNT_BOUND = 3
 LEGACY_SELECTION_POLICY = "legacy-cli-sources"
 EXECUTABLE_EXPRESSION_RE = re.compile(
     r"(?is)(__import__|\beval\s*\(|\bexec\s*\(|\$\{|\{\{)"
@@ -43,6 +45,7 @@ SPEC_FIELDS = frozenset(
         "profile",
         "run_id",
         "spec_version",
+        "wallet_count",
     }
 )
 PLAN_SEMANTIC_KEYS = (
@@ -73,6 +76,7 @@ class ResearchRunSpec:
     code_sha: str
     image_sha: str | None = None
     run_id: str | None = None
+    wallet_count: int | None = None
     spec_version: str = SPEC_VERSION
 
 
@@ -142,6 +146,7 @@ def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
         code_sha=code_sha,
         image_sha=None if image_sha is None else _require_text(image_sha, "image_sha"),
         run_id=None if run_id is None else _require_text(run_id, "run_id"),
+        wallet_count=_optional_wallet_count(payload.get("wallet_count")),
     )
 
 
@@ -189,11 +194,7 @@ def resolve_run_plan(
         resolved = profile
     generated = (observed or datetime.now(UTC)).astimezone(UTC)
     official = resolved.name in {PROFILE_CANARY, PROFILE_MAIN}
-    selection: dict[str, object] = {
-        "policy": DEFAULT_SELECTION_POLICY if official else LEGACY_SELECTION_POLICY,
-        "wallet_count": DEFAULT_WALLET_COUNT if official else None,
-        "reconstruction_required": official,
-    }
+    selection = _selection_contract(spec, official=official)
     return ResearchRunPlan(
         profile=resolved.name,
         profile_version=resolved.version,
@@ -296,6 +297,52 @@ def canonical_dumps(payload: Mapping[str, object]) -> str:
 
 def canonical_digest(payload: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical_dumps(payload).encode("utf-8")).hexdigest()
+
+
+def _selection_contract(spec: ResearchRunSpec, *, official: bool) -> dict[str, object]:
+    if not official:
+        if spec.wallet_count is not None:
+            raise ResearchRunContractError(
+                "wallet_count is only supported for canary and main research-run profiles"
+            )
+        return {
+            "capacity": {
+                "declared_operational_count": OPERATIONAL_WALLET_COUNT_BOUND,
+                "operational_status": "not-applicable",
+                "requested_count": None,
+            },
+            "policy": LEGACY_SELECTION_POLICY,
+            "reasons_policy": "operator-supplied-sources",
+            "reconstruction_required": False,
+            "wallet_count": None,
+        }
+    count = DEFAULT_WALLET_COUNT if spec.wallet_count is None else spec.wallet_count
+    legacy_top3 = spec.wallet_count is None or count == DEFAULT_WALLET_COUNT
+    return {
+        "capacity": {
+            "declared_operational_count": OPERATIONAL_WALLET_COUNT_BOUND,
+            "operational_status": "validated" if count == DEFAULT_WALLET_COUNT else "unverified",
+            "requested_count": count,
+        },
+        "policy": DEFAULT_SELECTION_POLICY if legacy_top3 else CONFIGURED_SELECTION_POLICY,
+        "reasons_policy": "highest-ranked-distinct-shadow-alpha",
+        "reconstruction_required": True,
+        "wallet_count": count,
+    }
+
+
+def _optional_wallet_count(value: object) -> int | None:
+    if value is None:
+        return None
+    count = _require_int(value, "wallet_count")
+    if count < 1:
+        raise ResearchRunContractError("wallet_count must be a positive integer")
+    if count > OPERATIONAL_WALLET_COUNT_BOUND:
+        raise ResearchRunContractError(
+            "wallet_count is not an operationally supported capacity; "
+            f"declared bound is {OPERATIONAL_WALLET_COUNT_BOUND}"
+        )
+    return count
 
 
 def _profile_for_spec(spec: ResearchRunSpec) -> RunnerProfile:

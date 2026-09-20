@@ -157,10 +157,12 @@ copies use the same operation-owned parent. Restarting the collector
 then starts the next bounded experiment. Do not treat rotating backups as the
 experiment archive.
 
-Analyze a published bundle only with `prospective-replay`. It must leave the
-source database, manifest, checksums, and protected companions byte-for-byte
-unchanged. Use `--output` for detailed evidence and `--compare` for compact
-deltas. Prove the production path offline with `research prospective-prove`
+Analyze a published bundle with `prospective-replay` or additive
+`prospective-reanalyze`. Both must leave the source database, manifest,
+checksums, and protected companions byte-for-byte unchanged. Reanalysis writes
+a new directory and refuses to overwrite an existing analysis id. Use
+`--output` for detailed evidence and `--compare` for compact deltas. Prove the
+production path offline with `research prospective-prove`
 before another multi-hour experiment.
 
 The bounded Runner is a separate Compose service. It does not replace
@@ -199,9 +201,11 @@ admission lock at `/var/lib/polysia/research-runner-admission` (file
 `--state-root` parents on the same host share that lock. Override only with
 `POLYSIA_RESEARCH_ADMISSION_LOCK` for isolated tests. Canary and main starts
 fail closed before T0 unless a current
-successful Polycop Stage 3 snapshot can supply three distinct `SHADOW_ALPHA`
-wallets under `polycop-shadow-alpha-top3-v1` and the Continuous Shadow 36-hour
-freshness bound. Compose mounts the host wallet-intelligence database into the
+successful Polycop Stage 3 snapshot can supply the requested distinct
+`SHADOW_ALPHA` wallets. The default remains three wallets under
+`polycop-shadow-alpha-top3-v1` and the Continuous Shadow 36-hour
+freshness bound. Spec `wallet_count` 1 or 2 is unverified capacity, not an
+operational claim; counts above three fail closed. Compose mounts the host wallet-intelligence database into the
 Runner at `/var/lib/polysia/data/wallet-intelligence.sqlite3` as read-only;
 absence of that file prevents the container from starting. The frozen
 reconstruction file

@@ -537,6 +537,67 @@ def prospective_replay(
     typer.echo(text)
 
 
+def prospective_reanalyze(
+    database: Annotated[Path, typer.Option("--database")],
+    run_id: Annotated[str, typer.Option("--run-id")],
+    analysis_dir: Annotated[
+        Path,
+        typer.Option("--analysis-dir", help="Directory for additive analysis results."),
+    ],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
+    analysis_id: Annotated[str | None, typer.Option("--analysis-id")] = None,
+    hypothesis_file: Annotated[
+        Path | None,
+        typer.Option("--hypothesis-file", help="Frozen prior hypothesis JSON."),
+    ] = None,
+    bundle_root: Annotated[Path | None, typer.Option("--bundle-root")] = None,
+    compare: Annotated[
+        Path | None,
+        typer.Option("--compare", help="Optional baseline report JSON to compare."),
+    ] = None,
+) -> None:
+    """Write an immutable reanalysis beside captured evidence without mutating it."""
+
+    from polysia.backtesting.prospective_reanalysis import (
+        ProspectiveReanalysisError,
+        write_reanalysis,
+    )
+    from polysia.backtesting.replay_report import COMPACT_STDOUT_LIMIT, compare_replay_reports
+    from polysia.cli_commands.research_evidence_cli import sanitize_report
+    from polysia.storage.research_evidence import ResearchEvidenceStoreError
+
+    try:
+        hypothesis: dict[str, object] | None = None
+        if hypothesis_file is not None:
+            loaded = json.loads(hypothesis_file.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("hypothesis file must be a JSON object")
+            hypothesis = loaded
+        summary = write_reanalysis(
+            database=database,
+            run_id=run_id,
+            analysis_code_sha=code_sha,
+            analysis_dir=analysis_dir,
+            analysis_id=analysis_id,
+            hypothesis=hypothesis,
+            bundle_root=bundle_root,
+        )
+        if compare is not None:
+            result_path = Path(str(summary["path"])) / "result.json"
+            current = json.loads(result_path.read_text(encoding="utf-8"))
+            baseline = json.loads(compare.read_text(encoding="utf-8"))
+            if not isinstance(current, dict) or not isinstance(baseline, dict):
+                raise ValueError("comparison report must be a JSON object")
+            summary["comparison"] = compare_replay_reports(current, baseline)
+        payload = sanitize_report(dict(summary))
+    except (OSError, ValueError, ResearchEvidenceStoreError, ProspectiveReanalysisError) as error:
+        print_error_and_exit(error)
+    text = json.dumps(payload, sort_keys=True)
+    if len(text.encode()) > COMPACT_STDOUT_LIMIT:
+        print_error_and_exit(RuntimeError("prospective reanalyze stdout exceeded 5 KiB"))
+    typer.echo(text)
+
+
 def prospective_collect(
     database: Annotated[
         Path,
@@ -737,11 +798,18 @@ def _research_runner() -> ResearchExperimentRunner:
     )
     from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
 
-    async def source_factory() -> tuple[
-        tuple[ResearchObservationSource, ...], Mapping[str, object]
-    ]:
+    async def source_factory(
+        *,
+        wallet_count: int | None = None,
+        selection_policy: str | None = None,
+        **_kwargs: object,
+    ) -> tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]:
+        del _kwargs
         try:
-            return await build_persistent_runner_sources()
+            return await build_persistent_runner_sources(
+                wallet_count=wallet_count,
+                selection_policy=selection_policy,
+            )
         except ResearchWalletSelectionError as error:
             raise ResearchRunnerError(str(error)) from error
 

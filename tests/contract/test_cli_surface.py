@@ -39,6 +39,7 @@ EXPECTED_COMMANDS = {
         "shadow-replay",
         "source-benchmark",
         "prospective-replay",
+        "prospective-reanalyze",
         "prospective-collect",
         "prospective-health",
         "prospective-finalize",

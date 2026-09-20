@@ -121,17 +121,42 @@ async def build_persistent_runner_sources(
     *,
     database: Path | None = None,
     now: datetime | None = None,
+    wallet_count: int | None = None,
+    selection_policy: str | None = None,
 ) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
+    from polysia.deployment.research_run_contract import (
+        CONFIGURED_SELECTION_POLICY,
+        DEFAULT_SELECTION_POLICY,
+        DEFAULT_WALLET_COUNT,
+    )
     from polysia.deployment.research_wallet_selection import (
         DEFAULT_SELECTION_DATABASE,
         load_current_polycop_snapshot,
         public_selection_payload,
         reconstruction_payload,
+        resolve_polycop_follow_set,
         resolve_polycop_shadow_alpha_top3,
     )
 
+    count = DEFAULT_WALLET_COUNT if wallet_count is None else wallet_count
+    policy = selection_policy or (
+        DEFAULT_SELECTION_POLICY
+        if count == DEFAULT_WALLET_COUNT
+        else CONFIGURED_SELECTION_POLICY
+    )
     snapshot = load_current_polycop_snapshot(database or DEFAULT_SELECTION_DATABASE)
-    selection = resolve_polycop_shadow_alpha_top3(snapshot, now=now or datetime.now(UTC))
+    observed = now or datetime.now(UTC)
+    if policy == DEFAULT_SELECTION_POLICY:
+        selection = resolve_polycop_shadow_alpha_top3(
+            snapshot, now=observed, wallet_limit=count
+        )
+    else:
+        selection = resolve_polycop_follow_set(
+            snapshot,
+            now=observed,
+            wallet_limit=count,
+            policy_version=policy,
+        )
     sources, discovery = await build_persistent_sources_from_aliases(
         selection.addresses_by_alias
     )
