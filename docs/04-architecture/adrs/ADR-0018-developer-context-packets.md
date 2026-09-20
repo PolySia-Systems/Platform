@@ -19,8 +19,9 @@ generated views. They MUST NOT become a second source of truth, a workflow
 engine, or a production control plane.
 
 Safety instructions from root `AGENTS.md` are retained even when non-safety
-excerpts are dropped for size. Untrusted task text is recorded as data and is
-never executed. Secret files are out of scope.
+excerpts are dropped for size. Untrusted task text is never copied into the
+packet or rendered output. `next_action` may interpolate only a sanitized
+opaque Issue/PR identifier. Secret files are out of scope.
 
 ## Consequences
 

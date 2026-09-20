@@ -16,7 +16,7 @@ views and are never project truth.
 A packet MUST report:
 
 - repository identity, exact HEAD, and dirty-state fingerprint;
-- task/PR reference when supplied, treated as untrusted data;
+- an opaque Issue/PR identifier when a task reference is supplied;
 - applicable `AGENTS.md` files discovered from the repository root toward the
   scoped path;
 - relevant requirements and approved ADRs with path, digest, and why they apply;
@@ -25,10 +25,17 @@ A packet MUST report:
 - reusable validation evidence and checks still missing;
 - unresolved decisions and the next concrete action.
 
+Task input is untrusted data. The packet and rendered text MUST contain only a
+sanitized opaque identifier such as `PR #123`, or an omission marker. Raw task
+text MUST NOT appear in JSON, excerpts, `next_action`, or human-readable output.
 The tool MUST NOT read secret files, execute Issue/PR/log text, or silently
 omit safety instructions when excerpts are truncated. Cache reuse is valid only
 when HEAD, dirty fingerprint, instruction digest, scope, and environment
 fingerprints match.
+
+Dependency-classified changes include both configured supply-chain gates:
+`python -m pip_audit --strict --vulnerability-service osv` and
+`cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json`.
 
 ## Command
 

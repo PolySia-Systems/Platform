@@ -338,5 +338,14 @@ def gates_for(change_map: object) -> tuple[dict[str, object], ...]:
             "why": "Supply-chain audit applies only when dependency inputs change.",
             "owner": "AGENTS.md supply-chain gates / CI dependencies job",
         },
+        {
+            "command": (
+                "cyclonedx-py environment --output-format JSON "
+                "--output-file artifacts/sbom.json"
+            ),
+            "applies": dependencies,
+            "why": "SBOM generation applies only when dependency inputs change.",
+            "owner": "AGENTS.md supply-chain gates / CI dependencies job",
+        },
     ]
     return tuple(gates)
