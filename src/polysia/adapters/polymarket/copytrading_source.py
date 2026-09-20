@@ -150,7 +150,7 @@ class UrllibJsonGetTransport:
                 await self._scheduler.record_success(route, purpose=purpose)
                 return payload
             except HTTPError as error:
-                if error.code == 429 and path == "/trades":
+                if error.code == 429 and _is_trades_path(path):
                     retry_after = (
                         None if error.headers is None else error.headers.get("Retry-After")
                     )
@@ -163,7 +163,7 @@ class UrllibJsonGetTransport:
                     ) from error
                 retryable = error.code >= 500
                 if not retryable or attempt >= self._max_attempts:
-                    if path == "/trades":
+                    if _is_trades_path(path):
                         await self._scheduler.record_trades_failure(purpose=purpose)
                         raise await self._scheduler.unavailable_error(
                             reason="Public /trades source remained unavailable."
@@ -173,7 +173,7 @@ class UrllibJsonGetTransport:
                     ) from error
             except (TimeoutError, URLError) as error:
                 if attempt >= self._max_attempts:
-                    if path == "/trades":
+                    if _is_trades_path(path):
                         await self._scheduler.record_trades_failure(purpose=purpose)
                         raise await self._scheduler.unavailable_error(
                             reason="Public /trades read failed after bounded retry."
@@ -816,3 +816,7 @@ def _stringify_params(
         key: ("true" if value else "false") if isinstance(value, bool) else value
         for key, value in params.items()
     }
+
+
+def _is_trades_path(path: str) -> bool:
+    return path == "/trades" or path == "/v2/trades"

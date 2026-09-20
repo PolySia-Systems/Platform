@@ -21,6 +21,7 @@ from polysia.deployment.research_experiment_runner import (
 )
 from polysia.deployment.research_run_commands import DISPOSITION_ACCEPTED
 from polysia.deployment.research_run_contract import (
+    ACTIVE_SELECTION_POLICY,
     CONFIGURED_SELECTION_POLICY,
     DEFAULT_SELECTION_POLICY,
     DEFAULT_WALLET_COUNT,
@@ -158,6 +159,53 @@ def test_explicit_wallet_count_uses_configured_policy_without_changing_top3_defa
                 "profile": "canary",
                 "code_sha": CODE_SHA,
                 "wallet_count": 10,
+            }
+        )
+
+
+def test_activity_aware_policy_is_explicit_and_bounded_to_three_wallets() -> None:
+    active = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "selection_policy": ACTIVE_SELECTION_POLICY,
+            }
+        ),
+        observed=NOW,
+    )
+
+    assert active.selection["policy"] == ACTIVE_SELECTION_POLICY
+    assert active.selection["reasons_policy"] == (
+        "highest-recent-activity-within-shadow-alpha"
+    )
+    assert active.selection["activity_preflight"] == {
+        "candidate_limit": 50,
+        "lookback_seconds": 14_400,
+        "minimum_event_count": 1,
+        "source": "polymarket:data-api-v2:trades",
+    }
+    with pytest.raises(ResearchRunContractError, match="requires exactly three"):
+        resolve_run_plan(
+            parse_research_run_spec(
+                {
+                    "spec_version": "research-run-spec-v1",
+                    "profile": "canary",
+                    "code_sha": CODE_SHA,
+                    "selection_policy": ACTIVE_SELECTION_POLICY,
+                    "wallet_count": 2,
+                }
+            ),
+            observed=NOW,
+        )
+    with pytest.raises(ResearchRunContractError, match="not supported"):
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "selection_policy": "pick-the-winner",
             }
         )
 

@@ -32,6 +32,7 @@ SPEC_VERSION = "research-run-spec-v1"
 PLAN_VERSION = "research-run-plan-v1"
 DEFAULT_SELECTION_POLICY = "polycop-shadow-alpha-top3-v1"
 CONFIGURED_SELECTION_POLICY = "polycop-shadow-alpha-configured-v1"
+ACTIVE_SELECTION_POLICY = "polycop-shadow-alpha-active-top3-v1"
 DEFAULT_WALLET_COUNT = 3
 OPERATIONAL_WALLET_COUNT_BOUND = 3
 LEGACY_SELECTION_POLICY = "legacy-cli-sources"
@@ -45,6 +46,7 @@ SPEC_FIELDS = frozenset(
         "image_sha",
         "profile",
         "run_id",
+        "selection_policy",
         "spec_version",
         "wallet_count",
     }
@@ -78,6 +80,7 @@ class ResearchRunSpec:
     image_sha: str | None = None
     run_id: str | None = None
     wallet_count: int | None = None
+    selection_policy: str | None = None
     spec_version: str = SPEC_VERSION
 
 
@@ -148,6 +151,7 @@ def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
         image_sha=None if image_sha is None else _require_sha(image_sha, "image_sha"),
         run_id=None if run_id is None else _require_text(run_id, "run_id"),
         wallet_count=_optional_wallet_count(payload.get("wallet_count")),
+        selection_policy=_optional_selection_policy(payload.get("selection_policy")),
     )
 
 
@@ -304,9 +308,9 @@ def canonical_digest(payload: Mapping[str, object]) -> str:
 
 def _selection_contract(spec: ResearchRunSpec, *, official: bool) -> dict[str, object]:
     if not official:
-        if spec.wallet_count is not None:
+        if spec.wallet_count is not None or spec.selection_policy is not None:
             raise ResearchRunContractError(
-                "wallet_count is only supported for canary and main research-run profiles"
+                "wallet selection is only supported for canary and main research-run profiles"
             )
         return {
             "capacity": {
@@ -320,17 +324,42 @@ def _selection_contract(spec: ResearchRunSpec, *, official: bool) -> dict[str, o
             "wallet_count": None,
         }
     count = DEFAULT_WALLET_COUNT if spec.wallet_count is None else spec.wallet_count
+    requested_policy = spec.selection_policy
+    if requested_policy == ACTIVE_SELECTION_POLICY and count != DEFAULT_WALLET_COUNT:
+        raise ResearchRunContractError(
+            "activity-aware selection currently requires exactly three wallets"
+        )
     legacy_top3 = spec.wallet_count is None or count == DEFAULT_WALLET_COUNT
+    policy = (
+        requested_policy
+        or (DEFAULT_SELECTION_POLICY if legacy_top3 else CONFIGURED_SELECTION_POLICY)
+    )
     return {
         "capacity": {
             "declared_operational_count": OPERATIONAL_WALLET_COUNT_BOUND,
             "operational_status": "validated" if count == DEFAULT_WALLET_COUNT else "unverified",
             "requested_count": count,
         },
-        "policy": DEFAULT_SELECTION_POLICY if legacy_top3 else CONFIGURED_SELECTION_POLICY,
-        "reasons_policy": "highest-ranked-distinct-shadow-alpha",
+        "policy": policy,
+        "reasons_policy": (
+            "highest-recent-activity-within-shadow-alpha"
+            if policy == ACTIVE_SELECTION_POLICY
+            else "highest-ranked-distinct-shadow-alpha"
+        ),
         "reconstruction_required": True,
         "wallet_count": count,
+        **(
+            {
+                "activity_preflight": {
+                    "candidate_limit": 50,
+                    "lookback_seconds": 14_400,
+                    "minimum_event_count": 1,
+                    "source": "polymarket:data-api-v2:trades",
+                }
+            }
+            if policy == ACTIVE_SELECTION_POLICY
+            else {}
+        ),
     }
 
 
@@ -346,6 +375,20 @@ def _optional_wallet_count(value: object) -> int | None:
             f"declared bound is {OPERATIONAL_WALLET_COUNT_BOUND}"
         )
     return count
+
+
+def _optional_selection_policy(value: object) -> str | None:
+    if value is None:
+        return None
+    policy = _require_text(value, "selection_policy")
+    allowed = {
+        ACTIVE_SELECTION_POLICY,
+        CONFIGURED_SELECTION_POLICY,
+        DEFAULT_SELECTION_POLICY,
+    }
+    if policy not in allowed:
+        raise ResearchRunContractError("research-run selection_policy is not supported")
+    return policy
 
 
 def _profile_for_spec(spec: ResearchRunSpec) -> RunnerProfile:

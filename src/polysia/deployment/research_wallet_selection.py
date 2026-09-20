@@ -24,6 +24,7 @@ from polysia.storage.dynamic_shadow import DynamicShadowRepository
 
 POLYCOP_SHADOW_ALPHA_TOP3_V1 = "polycop-shadow-alpha-top3-v1"
 POLYCOP_SHADOW_ALPHA_CONFIGURED_V1 = "polycop-shadow-alpha-configured-v1"
+POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1 = "polycop-shadow-alpha-active-top3-v1"
 POLYCOP_SOURCE_ID = "polycop"
 SHADOW_ALPHA_POOL = "SHADOW_ALPHA"
 DEFAULT_WALLET_LIMIT = 3
@@ -101,9 +102,6 @@ def resolve_polycop_follow_set(
 ) -> FrozenPolycopFollowSet:
     """Select highest-ranked distinct SHADOW_ALPHA wallets for a frozen policy."""
 
-    observed = now or datetime.now(UTC)
-    if observed.tzinfo is None or observed.utcoffset() != timedelta(0):
-        raise ResearchWalletSelectionError("selection clock must be timezone-aware UTC")
     if wallet_limit < 1:
         raise ResearchWalletSelectionError("wallet limit must be positive")
     policy = policy_version or (
@@ -111,6 +109,88 @@ def resolve_polycop_follow_set(
         if wallet_limit == DEFAULT_WALLET_LIMIT
         else POLYCOP_SHADOW_ALPHA_CONFIGURED_V1
     )
+    _validate_snapshot(snapshot, observed=now or datetime.now(UTC), maximum_age=maximum_age)
+    selected = _top_alpha_wallets(snapshot.candidates, wallet_limit=wallet_limit)
+    if len(selected) < wallet_limit:
+        raise ResearchWalletSelectionError("Polycop SHADOW_ALPHA selection is insufficient")
+    ranks = tuple(int(candidate.alpha_rank or 0) for candidate in selected)
+    reasons = tuple(
+        f"highest-ranked distinct SHADOW_ALPHA at alpha_rank={rank}" for rank in ranks
+    )
+    return _freeze_follow_set(
+        snapshot,
+        selected=selected,
+        policy=policy,
+        reasons=reasons,
+    )
+
+
+def resolve_polycop_active_follow_set(
+    snapshot: ContinuousSelectionSnapshot,
+    activity_counts: Mapping[str, int],
+    *,
+    now: datetime | None = None,
+    wallet_limit: int = DEFAULT_WALLET_LIMIT,
+    maximum_age: timedelta = MAXIMUM_SELECTION_AGE,
+) -> FrozenPolycopFollowSet:
+    """Select recent-active SHADOW_ALPHA wallets without using economic outcomes."""
+
+    if wallet_limit != DEFAULT_WALLET_LIMIT:
+        raise ResearchWalletSelectionError(
+            "activity-aware Polycop selection currently requires three wallets"
+        )
+    _validate_snapshot(snapshot, observed=now or datetime.now(UTC), maximum_age=maximum_age)
+    eligible = [
+        candidate
+        for candidate in snapshot.candidates
+        if SHADOW_ALPHA_POOL in candidate.pools
+        and candidate.alpha_rank is not None
+        and activity_counts.get(candidate.wallet_id, 0) > 0
+    ]
+    eligible.sort(
+        key=lambda item: (
+            -activity_counts.get(item.wallet_id, 0),
+            int(item.alpha_rank or 0),
+            item.wallet_id,
+        )
+    )
+    selected: list[ProtectedShadowCandidate] = []
+    seen: set[str] = set()
+    for candidate in eligible:
+        if candidate.wallet_id in seen:
+            continue
+        if not candidate.address:
+            raise ResearchWalletSelectionError("Polycop selected wallet is missing an address")
+        seen.add(candidate.wallet_id)
+        selected.append(candidate)
+        if len(selected) == wallet_limit:
+            break
+    if len(selected) < wallet_limit:
+        raise ResearchWalletSelectionError(
+            "recent-active Polycop SHADOW_ALPHA selection is insufficient"
+        )
+    reasons = tuple(
+        "recent-active SHADOW_ALPHA "
+        f"event_count={activity_counts[candidate.wallet_id]} "
+        f"alpha_rank={int(candidate.alpha_rank or 0)}"
+        for candidate in selected
+    )
+    return _freeze_follow_set(
+        snapshot,
+        selected=tuple(selected),
+        policy=POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1,
+        reasons=reasons,
+    )
+
+
+def _validate_snapshot(
+    snapshot: ContinuousSelectionSnapshot,
+    *,
+    observed: datetime,
+    maximum_age: timedelta,
+) -> None:
+    if observed.tzinfo is None or observed.utcoffset() != timedelta(0):
+        raise ResearchWalletSelectionError("selection clock must be timezone-aware UTC")
     expected = ContinuousSelectionSnapshot.create(
         source_id=snapshot.source_id,
         selection_run_id=snapshot.selection_run_id,
@@ -130,9 +210,15 @@ def resolve_polycop_follow_set(
         raise ResearchWalletSelectionError("Polycop selection is from the future")
     if observed - snapshot.published_at > maximum_age:
         raise ResearchWalletSelectionError("Polycop selection is stale")
-    selected = _top_alpha_wallets(snapshot.candidates, wallet_limit=wallet_limit)
-    if len(selected) < wallet_limit:
-        raise ResearchWalletSelectionError("Polycop SHADOW_ALPHA selection is insufficient")
+
+
+def _freeze_follow_set(
+    snapshot: ContinuousSelectionSnapshot,
+    *,
+    selected: tuple[ProtectedShadowCandidate, ...],
+    policy: str,
+    reasons: tuple[str, ...],
+) -> FrozenPolycopFollowSet:
     ranked_aliases = tuple(public_wallet_alias(candidate.address) for candidate in selected)
     addresses_by_alias = {
         alias: candidate.address for alias, candidate in zip(ranked_aliases, selected, strict=True)
@@ -142,9 +228,6 @@ def resolve_polycop_follow_set(
     aliases = tuple(sorted(addresses_by_alias))
     wallet_ids = tuple(candidate.wallet_id for candidate in selected)
     ranks = tuple(int(candidate.alpha_rank or 0) for candidate in selected)
-    reasons = tuple(
-        f"highest-ranked distinct SHADOW_ALPHA at alpha_rank={rank}" for rank in ranks
-    )
     public = _canonical_public_payload(
         aliases=aliases,
         feature_set_version=snapshot.feature_set_version,
@@ -158,7 +241,7 @@ def resolve_polycop_follow_set(
         source_id=snapshot.source_id,
         source_snapshot_id=snapshot.source_snapshot_id,
         wallet_ids=wallet_ids,
-        wallet_limit=wallet_limit,
+        wallet_limit=len(selected),
         selection_policy_version=policy,
     )
     reconstruction = _canonical_reconstruction_payload(

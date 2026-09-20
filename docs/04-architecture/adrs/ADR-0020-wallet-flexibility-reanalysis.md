@@ -47,9 +47,22 @@ Selected wallets with no accepted evidence remain absent from the breakdown;
 the public frozen selection count makes the shortfall visible without exposing
 addresses.
 
+CURRENT: new Canary/Main Specs may explicitly request
+`polycop-shadow-alpha-active-top3-v1`. This policy remains bounded to three
+wallets and to the existing fresh `SHADOW_ALPHA` snapshot. Before T0 it measures
+a fixed four-hour count of public Data API v2 trades for at most the top 50
+distinct alpha candidates and freezes the three most active; deterministic
+ties use alpha rank and wallet id. Activity is an observability gate, not an
+economic score. The measurement window, sanitized counts, source, and digest
+are preserved in run evidence. Source failure or fewer than three active
+candidates fails closed. Existing runs and the default top-three policy are
+unchanged.
+
 ## Consequences
 
 Legacy top-three Runs remain readable with the original policy name and digest
-inputs. Rollback is revert of this ADR, the Spec `wallet_count` field, and the
+inputs. Prospective public wallet collection uses the official Data API v2
+envelope while retaining stable internal source ids. Rollback is revert of this
+ADR, the optional Spec selection policy, the Spec `wallet_count` field, and the
 reanalysis command. Operational validation of counts other than three remains
 outstanding.
