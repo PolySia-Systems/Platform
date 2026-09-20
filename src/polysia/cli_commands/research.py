@@ -775,9 +775,26 @@ def prospective_run_start(
     code_sha: Annotated[str, typer.Option("--code-sha")] = "",
     run_id: Annotated[str | None, typer.Option("--run-id")] = None,
     image_sha: Annotated[str | None, typer.Option("--image-sha")] = None,
+    spec_file: Annotated[
+        Path | None,
+        typer.Option("--spec-file", help="Versioned ResearchRunSpec JSON."),
+    ] = None,
 ) -> None:
     """Prepare, collect, verify, and close one isolated research experiment."""
 
+    try:
+        spec_payload = _load_run_spec(spec_file)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print_error_and_exit(error)
+    if spec_payload is not None:
+        profile = str(spec_payload["profile"])
+        code_sha = code_sha or str(spec_payload["code_sha"])
+        run_id = run_id or (
+            str(spec_payload["run_id"]) if spec_payload.get("run_id") is not None else None
+        )
+        image_sha = image_sha or (
+            str(spec_payload["image_sha"]) if spec_payload.get("image_sha") is not None else None
+        )
     if not code_sha:
         print_error_and_exit(ValueError("code SHA is required"))
     from polysia.deployment.research_experiment_runner import (
@@ -794,6 +811,7 @@ def prospective_run_start(
                 code_sha=code_sha,
                 run_id=run_id,
                 image_sha=image_sha,
+                spec=spec_payload,
             )
         )
     except ResearchRunnerConflictError as error:
@@ -830,9 +848,26 @@ def prospective_run_resume(
     code_sha: Annotated[str, typer.Option("--code-sha")] = "",
     run_id: Annotated[str | None, typer.Option("--run-id")] = None,
     image_sha: Annotated[str | None, typer.Option("--image-sha")] = None,
+    spec_file: Annotated[
+        Path | None,
+        typer.Option("--spec-file", help="Versioned ResearchRunSpec JSON."),
+    ] = None,
 ) -> None:
     """Resume the first incomplete phase of a frozen research run."""
 
+    try:
+        spec_payload = _load_run_spec(spec_file)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print_error_and_exit(error)
+    if spec_payload is not None:
+        profile = str(spec_payload["profile"])
+        code_sha = code_sha or str(spec_payload["code_sha"])
+        run_id = run_id or (
+            str(spec_payload["run_id"]) if spec_payload.get("run_id") is not None else None
+        )
+        image_sha = image_sha or (
+            str(spec_payload["image_sha"]) if spec_payload.get("image_sha") is not None else None
+        )
     if not code_sha:
         print_error_and_exit(ValueError("code SHA is required"))
     from polysia.deployment.research_experiment_runner import (
@@ -849,6 +884,7 @@ def prospective_run_resume(
                 code_sha=code_sha,
                 run_id=run_id,
                 image_sha=image_sha,
+                spec=spec_payload,
             )
         )
     except ResearchRunnerConflictError as error:
@@ -865,13 +901,20 @@ def prospective_run_stop(
         typer.Option("--state-root"),
     ] = Path("/var/lib/polysia/research-run"),
     reason: Annotated[str, typer.Option("--reason")] = "operator_stop",
+    command_id: Annotated[str, typer.Option("--command-id")] = "stop",
+    expected_revision: Annotated[int | None, typer.Option("--expected-revision")] = None,
 ) -> None:
     """Request bounded shutdown of the active research runner."""
 
     from polysia.deployment.research_experiment_runner import ResearchRunnerError
 
     try:
-        payload = _research_runner().request_stop(state_root, reason=reason)
+        payload = _research_runner().request_stop(
+            state_root,
+            reason=reason,
+            command_id=command_id,
+            expected_revision=expected_revision,
+        )
     except (OSError, ValueError, ResearchRunnerError) as error:
         print_error_and_exit(error)
     _echo_runner_payload(payload)
@@ -919,3 +962,21 @@ def prospective_run_result(
     except (OSError, ValueError, ResearchRunnerError) as error:
         print_error_and_exit(error)
     _echo_runner_payload(payload)
+
+
+def _load_run_spec(path: Path | None) -> dict[str, object] | None:
+    if path is None:
+        return None
+    from polysia.deployment.research_run_contract import parse_research_run_spec
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("research-run Spec must be a JSON object")
+    parsed = parse_research_run_spec(payload)
+    return {
+        "code_sha": parsed.code_sha,
+        "image_sha": parsed.image_sha,
+        "profile": parsed.profile,
+        "run_id": parsed.run_id,
+        "spec_version": parsed.spec_version,
+    }

@@ -9,7 +9,6 @@ import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from polysia.backtesting.prospective_analysis import (
@@ -26,6 +25,7 @@ from polysia.backtesting.prospective_replay import (
     replay_recorded_experiment,
 )
 from polysia.deployment.recovery_bundle import sha256_file
+from polysia.deployment.research_scratch import operation_scratch, planned_scratch_bytes
 from polysia.deployment.sqlite_backup import restore_sqlite_backup, verify_sqlite_backup
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.storage.research_evidence import (
@@ -123,9 +123,11 @@ def finalize_research_experiment(
         checksum_path.write_text(f"{checksum}  {database_copy.name}\n", encoding="ascii")
         _restrict(checksum_path)
         verify_sqlite_backup(database_copy)
-        with TemporaryDirectory(
+        needed = planned_scratch_bytes(database_copy, copies=4)
+        with operation_scratch(
+            staging,
             prefix="polysia-research-restore-",
-            dir=staging,
+            needed_bytes=needed,
         ) as temporary:
             restored = Path(temporary) / database_copy.name
             restore_sqlite_backup(database_copy, restored)
@@ -341,7 +343,11 @@ def _verify_published_bundle(
             raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
         if declared_economic and declared_economic != confirmed.economics.digest:
             raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
-    with TemporaryDirectory(prefix="polysia-research-resume-") as temporary:
+    with operation_scratch(
+        path,
+        prefix="polysia-research-resume-",
+        needed_bytes=planned_scratch_bytes(database_path, copies=4),
+    ) as temporary:
         copied = byte_copy_sqlite(database_path, Path(temporary) / database_path.name)
         checksum_src = database_path.with_suffix(f"{database_path.suffix}.sha256")
         if checksum_src.is_file():

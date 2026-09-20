@@ -653,8 +653,6 @@ def test_finalize_experiment_excludes_invalid_windows_and_uses_bundle_storage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tempfile
-
     from polysia.deployment import research_experiment_bundle
 
     database = tmp_path / "research.sqlite3"
@@ -676,18 +674,13 @@ def test_finalize_experiment_excludes_invalid_windows_and_uses_bundle_storage(
     collector.close_window(complete=True)
 
     restore_parents: list[Path] = []
+    original_scratch = research_experiment_bundle.operation_scratch
 
-    def _temporary_directory(*args: object, **kwargs: object) -> tempfile.TemporaryDirectory[str]:
-        directory = kwargs.get("dir")
-        assert isinstance(directory, Path)
-        restore_parents.append(directory)
-        return tempfile.TemporaryDirectory(*args, **kwargs)  # type: ignore[arg-type]
+    def _operation_scratch(parent: Path, *, prefix: str, needed_bytes: int):
+        restore_parents.append(parent)
+        return original_scratch(parent, prefix=prefix, needed_bytes=needed_bytes)
 
-    monkeypatch.setattr(
-        research_experiment_bundle,
-        "TemporaryDirectory",
-        _temporary_directory,
-    )
+    monkeypatch.setattr(research_experiment_bundle, "operation_scratch", _operation_scratch)
     bundle_root = tmp_path / "bundles"
     result = research_experiment_bundle.finalize_research_experiment(
         database,

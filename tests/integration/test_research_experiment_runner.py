@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from polysia.backtesting.offline_research_lab import (
 from polysia.cli import app
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.research_experiment_runner import (
+    ADMISSION_LOCK_ENV,
     ResearchExperimentRunner,
     ResearchRunnerConflictError,
     ResearchRunnerError,
@@ -43,6 +45,19 @@ LAB_PROFILE = RunnerProfile(
     max_bytes=10_000_000,
     memory_bytes=8_388_608,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_research_admission_lock(tmp_path: Path):
+    previous = os.environ.get(ADMISSION_LOCK_ENV)
+    os.environ[ADMISSION_LOCK_ENV] = str(tmp_path / "research-runner-admission")
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(ADMISSION_LOCK_ENV, None)
+        else:
+            os.environ[ADMISSION_LOCK_ENV] = previous
 
 
 def _runner(clock: CoordinatedClock, work: Path) -> ResearchExperimentRunner:
@@ -712,3 +727,107 @@ def test_polycop_reconstruction_tampering_fails_closed(
         asyncio.run(
             service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="tamper-run")
         )
+
+
+def test_admission_rejects_a_second_resource_consuming_workspace_across_parents(
+    tmp_path: Path,
+) -> None:
+    from polysia.storage.research_evidence import ExclusiveWriterLock
+
+    lock_path = tmp_path / "research-runner-admission"
+    held = ExclusiveWriterLock(
+        lock_path,
+        rejected_message="second resource-consuming research run rejected",
+    )
+    held.acquire()
+    try:
+        clock = CoordinatedClock()
+        factory, _transport = lab_source_factory(clock)
+        service = ResearchExperimentRunner(
+            source_factory=factory,
+            clock=clock,
+            sleep=clock.sleep,
+            settings_factory=AppSettings,
+        )
+        with pytest.raises(ResearchRunnerConflictError, match="second resource-consuming"):
+            asyncio.run(
+                service.start(
+                    tmp_path / "alpha-host" / "workspace",
+                    profile=LAB_PROFILE,
+                    code_sha=CODE_SHA,
+                    run_id="admit-run-a",
+                )
+            )
+        with pytest.raises(ResearchRunnerConflictError, match="second resource-consuming"):
+            asyncio.run(
+                service.start(
+                    tmp_path / "beta-host" / "workspace",
+                    profile=LAB_PROFILE,
+                    code_sha=CODE_SHA,
+                    run_id="admit-run-b",
+                )
+            )
+    finally:
+        held.release()
+
+
+def test_resume_without_plan_file_fails_closed_when_digest_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "missing-plan"
+    service = _runner(clock, work)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace, manifest: dict[str, object], **_kwargs: object
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="missing-plan-run")
+        )
+    manifest = json.loads((work / "run-manifest.json").read_text(encoding="utf-8"))
+    assert manifest.get("run_plan_digest")
+    (work / "run-plan.json").unlink()
+    monkeypatch.undo()
+    with pytest.raises(ResearchRunnerError, match="Plan is missing"):
+        asyncio.run(
+            service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="missing-plan-run")
+        )
+    assert not (work / "run-plan.json").is_file()
+
+
+def test_resume_writes_plan_additively_for_legacy_manifest_without_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "legacy-plan"
+    service = _runner(clock, work)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace, manifest: dict[str, object], **_kwargs: object
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="legacy-plan-run")
+        )
+    (work / "run-plan.json").unlink()
+    manifest_path = work / "run-manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del payload["run_plan_digest"]
+    manifest_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.undo()
+    resumed = asyncio.run(
+        service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="legacy-plan-run")
+    )
+    assert resumed["phase"] == "CLOSED"
+    assert (work / "run-plan.json").is_file()
+    closed = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert closed.get("run_plan_digest")

@@ -31,6 +31,21 @@ from polysia.backtesting.replay_report import (
 )
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.research_experiment_bundle import finalize_research_experiment
+from polysia.deployment.research_run_commands import (
+    STOP_KIND,
+    ResearchCommandJournal,
+    ResearchRunCommandError,
+)
+from polysia.deployment.research_run_contract import (
+    ResearchRunContractError,
+    ResearchRunPlan,
+    ResearchRunSpec,
+    load_run_plan,
+    parse_research_run_spec,
+    plans_semantically_equal,
+    resolve_run_plan,
+    spec_from_legacy,
+)
 from polysia.deployment.research_run_profiles import (
     RUNNER_MANIFEST_VERSION,
     SAFETY_MARGIN_BYTES,
@@ -64,9 +79,27 @@ SettingsFactory = Callable[[], AppSettings]
 
 PHASES = ("PREPARED", "COLLECTING", "COLLECTED", "VERIFYING", "CLOSED")
 MANIFEST_NAME = "run-manifest.json"
+PLAN_NAME = "run-plan.json"
 STOP_REQUEST_NAME = "stop-request.json"
 RESULT_NAME = "result.json"
 STOP_POLL_SECONDS = 0.1
+ADMISSION_LOCK_ENV = "POLYSIA_RESEARCH_ADMISSION_LOCK"
+HOST_ADMISSION_LOCK = Path("/var/lib/polysia/research-runner-admission")
+
+
+def resolve_admission_lock_path(
+    *,
+    configured: Path | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the host-wide admission lock stem, independent of workspace parent."""
+    if configured is not None:
+        return Path(configured)
+    env = os.environ if environment is None else environment
+    override = str(env.get(ADMISSION_LOCK_ENV) or "").strip()
+    if override:
+        return Path(override)
+    return HOST_ADMISSION_LOCK
 
 
 class ResearchRunnerError(RuntimeError):
@@ -112,6 +145,10 @@ class ResearchRunWorkspace:
         return self.root / RESULT_NAME
 
     @property
+    def plan_path(self) -> Path:
+        return self.root / PLAN_NAME
+
+    @property
     def stop_request_path(self) -> Path:
         return self.root / STOP_REQUEST_NAME
 
@@ -137,12 +174,14 @@ class ResearchExperimentRunner:
         sleep: Sleeper | None = None,
         settings_factory: SettingsFactory | None = None,
         source_rebuilder: SourceRebuilder | None = None,
+        admission_lock_path: Path | None = None,
     ) -> None:
         self._source_factory = source_factory
         self._source_rebuilder = source_rebuilder
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep or asyncio.sleep
         self._settings_factory = settings_factory or AppSettings
+        self._admission_lock_path = admission_lock_path
 
     def status(self, state_root: Path) -> dict[str, object]:
         workspace = ResearchRunWorkspace(state_root)
@@ -161,16 +200,44 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError("closed research result is missing")
         return _compact_result(manifest, payload)
 
-    def request_stop(self, state_root: Path, *, reason: str = "operator_stop") -> dict[str, object]:
+    def request_stop(
+        self,
+        state_root: Path,
+        *,
+        reason: str = "operator_stop",
+        command_id: str = "stop",
+        expected_revision: int | None = None,
+    ) -> dict[str, object]:
         workspace = ResearchRunWorkspace(state_root)
         manifest = _read_manifest(workspace.manifest_path)
+        current_revision = _int_config(manifest.get("revision"), 0)
+        expected = current_revision if expected_revision is None else expected_revision
+        journal = ResearchCommandJournal(workspace.root)
+        try:
+            command = journal.record(
+                command_id=command_id,
+                kind=STOP_KIND,
+                payload={"reason": reason},
+                expected_revision=expected,
+                current_revision=current_revision,
+                clock=self._clock(),
+            )
+        except ResearchRunCommandError as error:
+            raise ResearchRunnerError(str(error)) from error
         _atomic_json(
             workspace.stop_request_path,
-            {"reason": reason, "requested_at": _utc_text(self._clock())},
+            {
+                "command_id": command.command_id,
+                "disposition": command.disposition,
+                "reason": reason,
+                "requested_at": command.requested_at,
+            },
         )
-        _append_receipt(manifest, "stop_requested", reason, self._clock())
-        _write_manifest(workspace.manifest_path, manifest)
-        return _compact_status(manifest, stop_requested=True)
+        return _compact_status(
+            manifest,
+            stop_requested=True,
+            command=command.to_dict(),
+        )
 
     async def start(
         self,
@@ -180,6 +247,7 @@ class ResearchExperimentRunner:
         code_sha: str,
         run_id: str | None = None,
         image_sha: str | None = None,
+        spec: ResearchRunSpec | Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         return await self._advance(
             state_root,
@@ -187,6 +255,7 @@ class ResearchExperimentRunner:
             code_sha=code_sha,
             run_id=run_id,
             image_sha=image_sha,
+            spec=spec,
             validate_existing=False,
         )
 
@@ -198,6 +267,7 @@ class ResearchExperimentRunner:
         code_sha: str,
         run_id: str | None = None,
         image_sha: str | None = None,
+        spec: ResearchRunSpec | Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         return await self._advance(
             state_root,
@@ -205,6 +275,7 @@ class ResearchExperimentRunner:
             code_sha=code_sha,
             run_id=run_id,
             image_sha=image_sha,
+            spec=spec,
             validate_existing=True,
         )
 
@@ -215,24 +286,32 @@ class ResearchExperimentRunner:
         finalization_code_sha: str | None = None,
     ) -> dict[str, object]:
         workspace = ResearchRunWorkspace(state_root)
+        admission = self._admission_lock(state_root)
         try:
-            workspace.lock().acquire()
+            admission.acquire()
         except ResearchWriterLockError as error:
-            raise ResearchRunnerConflictError(str(error), self.status(state_root)) from error
+            raise self._conflict(state_root, error) from error
         try:
-            manifest = _read_manifest(workspace.manifest_path)
-            phase = str(manifest.get("phase"))
-            if phase == "CLOSED":
-                return self.result(state_root)
-            if phase not in {"COLLECTED", "VERIFYING"}:
-                raise ResearchRunnerError("verification requires collected evidence")
-            return await self._verify_and_close(
-                workspace,
-                manifest,
-                finalization_code_sha=finalization_code_sha,
-            )
+            try:
+                workspace.lock().acquire()
+            except ResearchWriterLockError as error:
+                raise self._conflict(state_root, error) from error
+            try:
+                manifest = _read_manifest(workspace.manifest_path)
+                phase = str(manifest.get("phase"))
+                if phase == "CLOSED":
+                    return self.result(state_root)
+                if phase not in {"COLLECTED", "VERIFYING"}:
+                    raise ResearchRunnerError("verification requires collected evidence")
+                return await self._verify_and_close(
+                    workspace,
+                    manifest,
+                    finalization_code_sha=finalization_code_sha,
+                )
+            finally:
+                workspace.lock().release()
         finally:
-            workspace.lock().release()
+            admission.release()
 
     async def _advance(
         self,
@@ -242,58 +321,95 @@ class ResearchExperimentRunner:
         code_sha: str,
         run_id: str | None,
         image_sha: str | None,
+        spec: ResearchRunSpec | Mapping[str, object] | None,
         validate_existing: bool,
     ) -> dict[str, object]:
-        resolved = profile if isinstance(profile, RunnerProfile) else resolve_profile(profile)
+        resolved_profile = (
+            profile if isinstance(profile, RunnerProfile) else resolve_profile(profile)
+        )
         workspace = ResearchRunWorkspace(state_root)
-        prepared_sources: PreparedSources | None = None
-        self._preflight(workspace, resolved)
+        existing = _read_json(workspace.manifest_path)
+        plan_code_sha = code_sha
+        plan_image_sha = image_sha
+        if existing is not None and str(existing.get("phase")) not in {"PREPARED", "COLLECTING"}:
+            plan_code_sha = str(existing.get("code_sha") or code_sha)
+            plan_image_sha = str(existing.get("image_sha") or plan_code_sha)
         try:
-            workspace.lock().acquire()
-        except ResearchWriterLockError as error:
-            raise ResearchRunnerConflictError(str(error), self.status(state_root)) from error
-        try:
-            if workspace.manifest_path.is_file():
-                manifest = _read_manifest(workspace.manifest_path)
-                self._validate_existing(
-                    manifest,
-                    workspace=workspace,
-                    profile=resolved,
-                    code_sha=code_sha,
-                    image_sha=image_sha,
-                    run_id=run_id,
-                    strict=validate_existing,
-                )
-                if str(manifest.get("phase")) == "CLOSED":
-                    return self.result(state_root)
-                if str(manifest.get("phase")) in {"PREPARED", "COLLECTING"}:
-                    prepared_sources = await self._restore_sources(workspace, manifest)
-            else:
-                if validate_existing:
-                    raise ResearchRunnerError("research run manifest is missing")
-                try:
-                    sources, discovery = await self._source_factory()
-                except ResearchWalletSelectionError as error:
-                    raise ResearchRunnerError(str(error)) from error
-                prepared_sources = (sources, discovery)
-                manifest = self._prepare(
-                    workspace,
-                    profile=resolved,
-                    code_sha=code_sha,
-                    image_sha=image_sha or code_sha,
-                    run_id=run_id or uuid4().hex,
-                    discovery=discovery,
-                )
-            return await self._continue(
-                workspace,
-                manifest,
-                prepared_sources=prepared_sources,
-                finalization_code_sha=code_sha,
+            plan = self._resolve_plan(
+                profile=profile,
+                resolved_profile=resolved_profile,
+                code_sha=plan_code_sha,
+                run_id=run_id or (str(existing.get("run_id")) if existing else None),
+                image_sha=plan_image_sha,
+                spec=spec,
             )
+        except ResearchRunContractError as error:
+            raise ResearchRunnerError(str(error)) from error
+        prepared_sources: PreparedSources | None = None
+        self._preflight(workspace, resolved_profile, plan=plan)
+        admission = self._admission_lock(state_root)
+        try:
+            admission.acquire()
+        except ResearchWriterLockError as error:
+            raise self._conflict(state_root, error) from error
+        try:
+            try:
+                workspace.lock().acquire()
+            except ResearchWriterLockError as error:
+                raise self._conflict(state_root, error) from error
+            try:
+                if workspace.manifest_path.is_file():
+                    manifest = _read_manifest(workspace.manifest_path)
+                    self._validate_existing(
+                        manifest,
+                        workspace=workspace,
+                        profile=resolved_profile,
+                        code_sha=code_sha,
+                        image_sha=image_sha,
+                        run_id=run_id,
+                        strict=validate_existing,
+                    )
+                    self._freeze_plan(workspace, plan, existing=manifest)
+                    if str(manifest.get("phase")) == "CLOSED":
+                        return self.result(state_root)
+                    if str(manifest.get("phase")) in {"PREPARED", "COLLECTING"}:
+                        prepared_sources = await self._restore_sources(workspace, manifest)
+                else:
+                    if validate_existing:
+                        raise ResearchRunnerError("research run manifest is missing")
+                    self._freeze_plan(workspace, plan, existing=None)
+                    try:
+                        sources, discovery = await self._source_factory()
+                    except ResearchWalletSelectionError as error:
+                        raise ResearchRunnerError(str(error)) from error
+                    prepared_sources = (sources, discovery)
+                    manifest = self._prepare(
+                        workspace,
+                        profile=resolved_profile,
+                        code_sha=code_sha,
+                        image_sha=image_sha or code_sha,
+                        run_id=run_id or uuid4().hex,
+                        discovery=discovery,
+                        plan=plan,
+                    )
+                return await self._continue(
+                    workspace,
+                    manifest,
+                    prepared_sources=prepared_sources,
+                    finalization_code_sha=code_sha,
+                )
+            finally:
+                workspace.lock().release()
         finally:
-            workspace.lock().release()
+            admission.release()
 
-    def _preflight(self, workspace: ResearchRunWorkspace, profile: RunnerProfile) -> None:
+    def _preflight(
+        self,
+        workspace: ResearchRunWorkspace,
+        profile: RunnerProfile,
+        *,
+        plan: ResearchRunPlan,
+    ) -> None:
         settings = self._settings_factory()
         if settings.trading_mode is not TradingMode.DATA_ONLY:
             raise ResearchRunnerError("TRADING_MODE must be DATA_ONLY")
@@ -301,6 +417,12 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError("LIVE_TRADING_ENABLED must be false")
         if settings.polymarket_live_token_allowlist:
             raise ResearchRunnerError("live token allowlist must be empty")
+        if plan.safety.get("trading_mode") != TradingMode.DATA_ONLY.value:
+            raise ResearchRunnerError("research-run Plan cannot override DATA_ONLY")
+        if plan.safety.get("live_trading_enabled") is not False:
+            raise ResearchRunnerError("research-run Plan cannot enable Live")
+        if plan.safety.get("overridable") is not False:
+            raise ResearchRunnerError("research-run Plan cannot make safety overridable")
         workspace.root.mkdir(parents=True, exist_ok=True)
         for path in (
             workspace.window_report_dir,
@@ -326,6 +448,7 @@ class ResearchExperimentRunner:
         image_sha: str,
         run_id: str,
         discovery: Mapping[str, object],
+        plan: ResearchRunPlan,
     ) -> dict[str, object]:
         prepared_at = self._clock()
         thresholds = profile.to_dict()["acceptance_thresholds"]
@@ -383,7 +506,9 @@ class ResearchExperimentRunner:
             "receipts": [],
             "replay_engine_version": REPLAY_ENGINE_VERSION,
             "research_schema_version": RESEARCH_EVIDENCE_SCHEMA_VERSION,
+            "revision": 0,
             "run_id": run_id,
+            "run_plan_digest": plan.semantic_digest(),
             "service_policy_version": SERVICE_POLICY_VERSION,
             "trading_mode": TradingMode.DATA_ONLY.value,
         }
@@ -547,6 +672,7 @@ class ResearchExperimentRunner:
         outcome["lifecycle"] = lifecycle
         if stop is not None:
             outcome["stop_reason"] = str(stop.get("reason") or "operator_stop")
+            self._apply_stop_command(workspace, stop, lifecycle=lifecycle)
         _append_receipt(manifest, "collect", lifecycle, self._clock())
         _write_manifest(workspace.manifest_path, manifest)
         return manifest
@@ -700,6 +826,122 @@ class ResearchExperimentRunner:
                     raise ResearchRunnerError("research database hash mismatch")
             elif strict:
                 raise ResearchRunnerError("research database hash mismatch")
+        recorded_plan = _recorded_run_plan_digest(manifest)
+        if recorded_plan is not None:
+            if not workspace.plan_path.is_file():
+                raise ResearchRunnerError("research-run Plan is missing")
+            stored = load_run_plan(_read_json(workspace.plan_path) or {})
+            if stored.semantic_digest() != recorded_plan:
+                raise ResearchRunnerError("research-run Plan digest mismatch")
+
+    def _resolve_plan(
+        self,
+        *,
+        profile: str | RunnerProfile,
+        resolved_profile: RunnerProfile,
+        code_sha: str,
+        run_id: str | None,
+        image_sha: str | None,
+        spec: ResearchRunSpec | Mapping[str, object] | None,
+    ) -> ResearchRunPlan:
+        supplied_profile = resolved_profile if isinstance(profile, RunnerProfile) else None
+        if spec is None:
+            parsed, legacy_profile = spec_from_legacy(
+                profile,
+                code_sha=code_sha,
+                image_sha=image_sha,
+                run_id=run_id,
+            )
+            return resolve_run_plan(
+                parsed,
+                profile=legacy_profile or supplied_profile,
+                observed=self._clock(),
+            )
+        parsed = spec if isinstance(spec, ResearchRunSpec) else parse_research_run_spec(spec)
+        parsed = ResearchRunSpec(
+            profile=parsed.profile,
+            code_sha=code_sha,
+            image_sha=image_sha or parsed.image_sha,
+            run_id=run_id or parsed.run_id,
+        )
+        return resolve_run_plan(
+            parsed,
+            profile=supplied_profile if parsed.profile == resolved_profile.name else None,
+            observed=self._clock(),
+        )
+
+    def _freeze_plan(
+        self,
+        workspace: ResearchRunWorkspace,
+        plan: ResearchRunPlan,
+        *,
+        existing: dict[str, object] | None,
+    ) -> None:
+        stored_payload = _read_json(workspace.plan_path)
+        recorded_digest = _recorded_run_plan_digest(existing)
+        if stored_payload is not None:
+            stored = load_run_plan(stored_payload)
+            if not plans_semantically_equal(stored, plan):
+                raise ResearchRunnerError("stale or tampered research-run Plan")
+        elif recorded_digest is not None:
+            raise ResearchRunnerError("research-run Plan is missing")
+        else:
+            _atomic_json(workspace.plan_path, plan.to_dict())
+            if existing is not None:
+                existing["run_plan_digest"] = plan.semantic_digest()
+        if existing is not None:
+            budgets = _mapping(existing.get("budgets"))
+            for key, allowed in plan.budgets.items():
+                recorded = budgets.get(key)
+                if isinstance(recorded, int) and allowed > recorded:
+                    raise ResearchRunnerError("research-run Plan cannot expand budgets")
+            frozen_count = _mapping(existing.get("followed_wallet_selection")).get("wallet_count")
+            planned_count = plan.selection.get("wallet_count")
+            if (
+                isinstance(frozen_count, int)
+                and isinstance(planned_count, int)
+                and planned_count != frozen_count
+            ):
+                raise ResearchRunnerError("research-run Plan cannot change frozen wallet count")
+
+    def _apply_stop_command(
+        self,
+        workspace: ResearchRunWorkspace,
+        stop: Mapping[str, object],
+        *,
+        lifecycle: str,
+    ) -> None:
+        command_id = str(stop.get("command_id") or "stop")
+        try:
+            ResearchCommandJournal(workspace.root).mark_applied(
+                command_id,
+                observed_result={"lifecycle": lifecycle, "phase": "COLLECTED"},
+                clock=self._clock(),
+            )
+        except ResearchRunCommandError as error:
+            raise ResearchRunnerError(str(error)) from error
+
+    def _admission_lock(self, state_root: Path) -> ExclusiveWriterLock:
+        del state_root
+        return ExclusiveWriterLock(
+            resolve_admission_lock_path(configured=self._admission_lock_path),
+            rejected_message="second resource-consuming research run rejected",
+        )
+
+    def _conflict(
+        self, state_root: Path, error: ResearchWriterLockError
+    ) -> ResearchRunnerConflictError:
+        try:
+            payload = self.status(state_root)
+        except ResearchRunnerError:
+            payload = {
+                "actionable_failure": str(error),
+                "command": "prospective-run",
+                "live_trading_enabled": False,
+                "phase": None,
+                "trading_mode": TradingMode.DATA_ONLY.value,
+            }
+        return ResearchRunnerConflictError(str(error), payload)
 
 
 def _profile_from_manifest(manifest: Mapping[str, object]) -> RunnerProfile:
@@ -717,6 +959,16 @@ def _profile_from_manifest(manifest: Mapping[str, object]) -> RunnerProfile:
         max_bytes=_int_config(config.get("max_bytes"), 10_000_000),
         memory_bytes=_int_config(config.get("memory_bytes"), 8_388_608),
     )
+
+
+def _recorded_run_plan_digest(existing: Mapping[str, object] | None) -> str | None:
+    if existing is None:
+        return None
+    recorded = existing.get("run_plan_digest")
+    if recorded is None:
+        return None
+    text = str(recorded).strip()
+    return text or None
 
 
 def _read_manifest(path: Path) -> dict[str, object]:
@@ -738,8 +990,9 @@ def _read_json(path: Path) -> dict[str, object] | None:
     return payload
 
 
-def _write_manifest(path: Path, payload: Mapping[str, object]) -> None:
-    _atomic_json(path, dict(payload))
+def _write_manifest(path: Path, payload: dict[str, object]) -> None:
+    payload["revision"] = _int_config(payload.get("revision"), 0) + 1
+    _atomic_json(path, payload)
     receipts_dir = path.parent / "receipts"
     receipts = payload.get("receipts")
     _atomic_json(
@@ -914,9 +1167,16 @@ def _compact_status(
     health: Mapping[str, object] | None = None,
     stale_health: bool = False,
     stop_requested: bool = False,
+    command: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     clocks = _mapping(manifest.get("clocks"))
     artifacts = _mapping(manifest.get("artifacts"))
+    stop_command = None
+    if command is not None:
+        stop_command = {
+            "command_id": command.get("command_id"),
+            "disposition": command.get("disposition"),
+        }
     payload = {
         "actionable_failure": _actionable_failure(manifest, stale_health=stale_health),
         "bundle": artifacts.get("bundle"),
@@ -928,8 +1188,10 @@ def _compact_status(
         "phase": manifest.get("phase"),
         "profile": manifest.get("profile"),
         "progress": _mapping(health).get("windows_closed") if health is not None else None,
+        "revision": manifest.get("revision"),
         "run_id": manifest.get("run_id"),
         "stale_health": stale_health,
+        "stop_command": stop_command,
         "stop_requested": stop_requested,
         "storage": _mapping(health).get("storage") if health is not None else None,
         "t0": clocks.get("t0"),

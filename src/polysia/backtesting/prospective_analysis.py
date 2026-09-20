@@ -186,7 +186,7 @@ def open_recorded_experiment_store(
     work = database
     try:
         if sidecars:
-            temporary = TemporaryDirectory(prefix="polysia-research-analysis-")
+            temporary = _analysis_scratch(database)
             work = byte_copy_sqlite(database, Path(temporary.name) / database.name)
             store = ResearchEvidenceStore(work)
             store.initialize()
@@ -196,7 +196,7 @@ def open_recorded_experiment_store(
             try:
                 store.verify_integrity()
             except ResearchEvidenceStoreError:
-                temporary = TemporaryDirectory(prefix="polysia-research-analysis-")
+                temporary = _analysis_scratch(database)
                 work = byte_copy_sqlite(database, Path(temporary.name) / database.name)
                 store = ResearchEvidenceStore(work)
                 store.initialize()
@@ -211,6 +211,19 @@ def open_recorded_experiment_store(
         if temporary is not None:
             temporary.cleanup()
         verify_protected_unchanged(before, after)
+
+
+def _analysis_scratch(database: Path) -> TemporaryDirectory[str]:
+    parent = database.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    size = database.stat().st_size if database.is_file() else 0
+    for companion in (Path(f"{database}-wal"), Path(f"{database}-shm")):
+        if companion.is_file():
+            size += companion.stat().st_size
+    needed = size * 4 + 64 * 1024 * 1024
+    if shutil.disk_usage(parent).free < needed:
+        raise ResearchEvidenceStoreError("insufficient disk capacity for research scratch")
+    return TemporaryDirectory(prefix="polysia-research-analysis-", dir=parent)
 
 
 __all__ = [
