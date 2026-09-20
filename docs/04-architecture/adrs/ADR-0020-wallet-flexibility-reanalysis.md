@@ -19,6 +19,12 @@ uses only distinct `SHADOW_ALPHA` ranks; `SHADOW_STRESS` is not a profitability
 candidate. Resume uses the frozen reconstruction. Requested counts other than
 three are labeled `unverified` capacity, not operationally supported.
 
+CURRENT: A frozen Polycop Plan opens sources only through a factory that
+declares named `wallet_count` and `selection_policy` parameters. Compatibility
+is determined from `inspect.signature` before any call. An incompatible factory
+fails closed without being invoked. A construction `TypeError` is not caught
+and is not retried as a no-argument default top-three selection.
+
 CURRENT: `research prospective-reanalyze` writes an additive analysis directory
 with a separate result identity, provenance, analysis code SHA, and claim class.
 The source Bundle and evidence hashes are verified unchanged. Post-hoc analysis
