@@ -12,6 +12,7 @@ from datetime import timedelta
 
 from polysia.backtesting.prospective_economics import (
     ProspectiveEconomicReport,
+    WalletEconomicReport,
     evaluate_prospective_economics,
 )
 from polysia.domain.copytrading.target_exposure import TargetExposurePolicy
@@ -40,6 +41,7 @@ class RecordedExperimentReplay:
     replayed_event_count: int
     excluded_event_count: int
     economics: ProspectiveEconomicReport
+    wallet_economics: tuple[WalletEconomicReport, ...] = ()
 
 
 def replay_identity(replay: RecordedExperimentReplay) -> tuple[object, ...]:
@@ -56,6 +58,10 @@ def replay_identity(replay: RecordedExperimentReplay) -> tuple[object, ...]:
         replay.replayed_event_count,
         replay.excluded_event_count,
         replay.economics.digest,
+        tuple(
+            (item.leader_alias, item.economics.digest)
+            for item in replay.wallet_economics
+        ),
         len(replay.valid_intervals),
         len(replay.invalid_intervals),
     )
@@ -137,6 +143,22 @@ def replay_recorded_experiment(
             economics=evaluate_prospective_economics(empty, events=()),
         )
     economics = evaluate_prospective_economics(replay, events=snapshots)
+    wallet_economics = _evaluate_wallet_economics(
+        store,
+        run_id=run_id,
+        aliases=tuple(
+            sorted(
+                {
+                    row.leader_alias
+                    for row in replay.evaluations
+                    if row.leader_alias is not None
+                }
+            )
+        ),
+        snapshots=snapshots,
+        policy=policy,
+        markout_tolerance=markout_tolerance,
+    )
     del snapshots
     if not retain_traces:
         replay = _compact_replay_result(replay)
@@ -147,6 +169,7 @@ def replay_recorded_experiment(
         replayed_event_count=replayed_event_count,
         excluded_event_count=total_events - replayed_event_count,
         economics=economics,
+        wallet_economics=wallet_economics,
     )
 
 
@@ -160,6 +183,44 @@ def _collect_snapshots(
             event_kind=ObservationKind.MARKET_STATE,
         )
     )
+
+
+def _evaluate_wallet_economics(
+    store: ResearchEvidenceStore,
+    *,
+    run_id: str,
+    aliases: tuple[str, ...],
+    snapshots: tuple[CanonicalResearchEvent, ...],
+    policy: TargetExposurePolicy | None,
+    markout_tolerance: timedelta,
+) -> tuple[WalletEconomicReport, ...]:
+    reports: list[WalletEconomicReport] = []
+    for alias in aliases:
+        wallet_events = (
+            event
+            for event in store.iter_events(
+                run_id=run_id,
+                interval_validity=IntervalValidity.VALID,
+                event_kind=ObservationKind.WALLET_TRADE,
+            )
+            if event.leader_alias == alias
+        )
+        replay = replay_same_observations(
+            wallet_events,
+            policy=policy,
+            interval_valid=True,
+            snapshots=snapshots,
+            markout_tolerance=markout_tolerance,
+            ordered=True,
+            record_markouts=False,
+        )
+        reports.append(
+            WalletEconomicReport(
+                leader_alias=alias,
+                economics=evaluate_prospective_economics(replay, events=snapshots),
+            )
+        )
+    return tuple(reports)
 
 
 def _count_and_tee(

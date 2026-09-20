@@ -309,6 +309,7 @@ def _bundle_manifest(
             "unknown_by_cause": dict(replay.result.unknown_by_cause),
         },
         "economic": replay.economics.to_dict(),
+        "wallet_economics": [item.to_dict() for item in replay.wallet_economics],
         "limitations": limitations,
         "wallet_selection": _public_wallet_selection(wallet_selection),
     }
@@ -380,6 +381,10 @@ def _verify_published_bundle(
         if declared_target and declared_target != confirmed.result.target_digest:
             raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
         if declared_economic and declared_economic != confirmed.economics.digest:
+            raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
+        declared_wallets = manifest.get("wallet_economics")
+        confirmed_wallets = [item.to_dict() for item in confirmed.wallet_economics]
+        if declared_wallets is not None and declared_wallets != confirmed_wallets:
             raise ResearchEvidenceStoreError("research experiment bundle replay mismatch")
     with operation_scratch(
         path,

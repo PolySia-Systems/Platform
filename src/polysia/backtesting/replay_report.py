@@ -62,6 +62,7 @@ def detailed_replay_payload(
         "unknown_count": result.unknown_count,
         "unknown_by_cause": dict(result.unknown_by_cause),
         "valid_interval_count": len(scoped.valid_intervals),
+        "wallet_economics": [item.to_dict() for item in scoped.wallet_economics],
         "summary": {
             "control_net_pnl": economics.control.to_dict()["net_pnl"],
             "data_canary": economics.data_canary_status,
@@ -84,6 +85,7 @@ def detailed_replay_payload(
             {
                 "control_decision": row.control_decision,
                 "decision_time": row.decision_time.isoformat(),
+                "leader_alias": row.leader_alias,
                 "market_reference": row.market_reference,
                 "outcome_reference": row.outcome_reference,
                 "side": row.side,
@@ -126,6 +128,7 @@ def result_hash(payload: Mapping[str, Any]) -> str:
         "economic_digest": None
         if not isinstance(payload.get("economic"), dict)
         else payload["economic"].get("digest"),
+        "wallet_economics": payload.get("wallet_economics") or [],
         "engine_version": payload.get("engine_version"),
         "experiment_contract_digest": payload.get("experiment_contract_digest"),
         "run_id": payload.get("run_id"),

@@ -25,7 +25,13 @@ from polysia.storage.research_evidence import EVENT_FETCH_CHUNK, ResearchEvidenc
 OBSERVED = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
 
 
-def _wallet(evidence_id: str, *, run_id: str, observed: datetime) -> CanonicalResearchEvent:
+def _wallet(
+    evidence_id: str,
+    *,
+    run_id: str,
+    observed: datetime,
+    leader_alias: str = "pub-one",
+) -> CanonicalResearchEvent:
     return CanonicalResearchEvent(
         evidence_id=evidence_id,
         schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
@@ -42,7 +48,7 @@ def _wallet(evidence_id: str, *, run_id: str, observed: datetime) -> CanonicalRe
         receive_monotonic_ns=1,
         normalize_monotonic_ns=2,
         attribution_status=AttributionStatus.WALLET_ALIASED,
-        leader_alias="pub-one",
+        leader_alias=leader_alias,
         confirmation=ConfirmationStatus.CONFIRMED,
         payload_digest=payload_digest({"id": evidence_id}),
         provenance={},
@@ -144,3 +150,42 @@ def test_experiment_replay_is_deterministic_and_can_drop_traces(tmp_path: Path) 
     assert first.result.evaluations
     assert second.result.evaluations == ()
     assert first.economics.digest == second.economics.digest
+    assert [item.leader_alias for item in first.wallet_economics] == ["pub-one"]
+    assert first.wallet_economics == second.wallet_economics
+
+
+def test_experiment_replay_reports_each_observed_wallet_independently(tmp_path: Path) -> None:
+    store = ResearchEvidenceStore(tmp_path / "research-evidence.sqlite3")
+    run_id = "wallet-economics-run"
+    store.start_or_resume_experiment(
+        requested_run_id=run_id,
+        duration=timedelta(hours=1),
+        max_events=100,
+        max_bytes=10_000_000,
+        code_sha="a" * 40,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(store, run_id=run_id)
+    for index, alias in enumerate(("pub-one", "pub-two")):
+        observed = OBSERVED + timedelta(seconds=index)
+        collector.ingest(_market(f"market-{index}", run_id=run_id, observed=observed))
+        collector.ingest(
+            _wallet(
+                f"wallet-{index}",
+                run_id=run_id,
+                observed=observed,
+                leader_alias=alias,
+            )
+        )
+    collector.close_window(complete=True)
+
+    replay = replay_recorded_experiment(store, run_id=run_id)
+
+    assert [item.leader_alias for item in replay.wallet_economics] == [
+        "pub-one",
+        "pub-two",
+    ]
+    assert [item.economics.eligible_observations for item in replay.wallet_economics] == [
+        1,
+        1,
+    ]
