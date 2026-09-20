@@ -120,7 +120,8 @@ The collector is provider-neutral. Venue translation stays in adapters.
   experiment evidence.
 - Start and resume resolve a versioned `research-run-spec-v1` into an immutable
   `research-run-plan-v1` before T0. Unknown fields, executable expressions,
-  budget expansion, wallet-count changes, tampered Plans, and a missing
+  budget expansion, wallet-count changes, mutable or placeholder code/image
+  identities, tampered Plans, and a missing
   `run-plan.json` on a plan-aware Manifest (`run_plan_digest` present) fail
   closed. Genuine legacy Manifests without `run_plan_digest` may receive an
   additive Plan. Safety (DATA_ONLY, Live disabled) is rechecked at admission
@@ -272,9 +273,13 @@ differences. A behavioral difference with the same declared identity is a
 regression candidate; a declared version/contract/configuration change is an
 expected version change but still reports the behavioral delta.
 `research prospective-reanalyze` writes a separate immutable result directory
-and never overwrites an existing analysis or the source Bundle. Post-hoc
-analysis is `EXPLORATORY` unless a frozen hypothesis id, digest, and
-independent evidence hash are supplied.
+through same-filesystem staging and atomic publication. It never overwrites an
+existing analysis or the source Bundle; a failed pre-publication write leaves
+no final partial directory, so the same analysis id can be retried. New Runner
+Bundles bind the sanitized frozen wallet-selection policy, count, and digest.
+Addresses remain excluded, and legacy evidence lacking those fields reports
+the selection identity as `UNKNOWN`. Post-hoc analysis is `EXPLORATORY` unless
+a frozen hypothesis id, digest, and independent evidence hash are supplied.
 
 The synthetic production-path laboratory is:
 

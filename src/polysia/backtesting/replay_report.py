@@ -270,6 +270,7 @@ def _wallet_selection(payload: Mapping[str, Any]) -> dict[str, object]:
     return {
         "configuration_digest": followed.get("configuration_digest")
         or payload.get("configuration_digest"),
+        "identity_status": followed.get("identity_status") or "UNKNOWN",
         "policy": followed.get("selection_policy") or followed.get("policy"),
         "selection_digest": followed.get("selection_digest"),
         "wallet_count": followed.get("wallet_count"),

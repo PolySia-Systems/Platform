@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from polysia.backtesting.prospective_analysis import (
+    MANIFEST_NAME,
     capture_protected_artifacts,
+    load_bundle_manifest,
     open_recorded_experiment_store,
 )
 from polysia.backtesting.prospective_replay import replay_recorded_experiment
@@ -30,6 +33,7 @@ CLAIM_CONFIRMATORY = "CONFIRMATORY"
 RESULT_NAME = "result.json"
 PROVENANCE_NAME = "provenance.json"
 ANALYSIS_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+IMMUTABLE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HYPOTHESIS_FIELDS = ("hypothesis_id", "digest", "independent_evidence_hash")
 
 
@@ -53,6 +57,10 @@ def write_reanalysis(
     identifier = analysis_id or uuid4().hex
     if ANALYSIS_ID_RE.fullmatch(identifier) is None:
         raise ProspectiveReanalysisError("analysis_id is not a safe directory name")
+    if IMMUTABLE_SHA_RE.fullmatch(analysis_code_sha) is None:
+        raise ProspectiveReanalysisError(
+            "analysis_code_sha must be a lowercase 40-character Git SHA"
+        )
     destination = analysis_dir / identifier
     if destination.exists():
         raise ProspectiveReanalysisError("research reanalysis result already exists")
@@ -88,6 +96,10 @@ def write_reanalysis(
     except ResearchEvidenceStoreError as error:
         raise ProspectiveReanalysisError(str(error)) from error
     generated = (observed or datetime.now(UTC)).astimezone(UTC)
+    wallet_selection = _wallet_selection_identity(
+        bundle_root,
+        configuration_digest=experiment.configuration_digest,
+    )
     provenance = {
         "analysis_code_sha": analysis_code_sha,
         "analysis_id": identifier,
@@ -113,6 +125,7 @@ def write_reanalysis(
         "replay_engine_version": REPLAY_ENGINE_VERSION,
         "source_bundle_sha256": experiment.bundle_sha256,
         "source_evidence_hash": source_hash,
+        "wallet_selection": wallet_selection,
     }
     provenance["provenance_digest"] = digest_payload(provenance)
     result = {
@@ -127,27 +140,39 @@ def write_reanalysis(
         "claim_class": claim_class,
         "provenance_digest": provenance["provenance_digest"],
         "source_bundle_sha256": experiment.bundle_sha256,
-        "wallet_selection": {
-            "configuration_digest": experiment.configuration_digest,
-        },
+        "wallet_selection": wallet_selection,
     }
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    staging = analysis_dir / f".{identifier}.{uuid4().hex}.tmp"
     try:
-        destination.mkdir(parents=True, exist_ok=False)
+        staging.mkdir(exist_ok=False)
     except FileExistsError as error:
-        raise ProspectiveReanalysisError("research reanalysis result already exists") from error
-    _atomic_json(destination / RESULT_NAME, result)
-    _atomic_json(destination / PROVENANCE_NAME, provenance)
-    after = capture_protected_artifacts(database=database, bundle_root=bundle_root)
-    if after.digests != before.digests:
-        raise ProspectiveReanalysisError("protected research evidence artifacts changed")
-    return {
-        "analysis_id": identifier,
-        "claim_class": claim_class,
-        "path": str(destination),
-        "provenance_digest": provenance["provenance_digest"],
-        "result_hash": result["result_hash"],
-        "source_evidence_hash": source_hash,
-    }
+        raise ProspectiveReanalysisError("research reanalysis staging already exists") from error
+    try:
+        _atomic_json(staging / RESULT_NAME, result)
+        _atomic_json(staging / PROVENANCE_NAME, provenance)
+        after = capture_protected_artifacts(database=database, bundle_root=bundle_root)
+        if after.digests != before.digests:
+            raise ProspectiveReanalysisError("protected research evidence artifacts changed")
+        try:
+            staging.rename(destination)
+        except OSError as error:
+            if destination.exists():
+                raise ProspectiveReanalysisError(
+                    "research reanalysis result already exists"
+                ) from error
+            raise
+        return {
+            "analysis_id": identifier,
+            "claim_class": claim_class,
+            "path": str(destination),
+            "provenance_digest": provenance["provenance_digest"],
+            "result_hash": result["result_hash"],
+            "source_evidence_hash": source_hash,
+        }
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def _claim_class(hypothesis: Mapping[str, object] | None) -> str:
@@ -159,6 +184,50 @@ def _claim_class(hypothesis: Mapping[str, object] | None) -> str:
             "confirmatory hypothesis is missing frozen identity or independent evidence"
         )
     return CLAIM_CONFIRMATORY
+
+
+def _wallet_selection_identity(
+    bundle_root: Path | None,
+    *,
+    configuration_digest: str,
+) -> dict[str, object]:
+    unknown: dict[str, object] = {
+        "configuration_digest": configuration_digest,
+        "identity_status": "UNKNOWN",
+    }
+    if bundle_root is None:
+        return unknown
+    manifest_path = bundle_root / MANIFEST_NAME
+    if not manifest_path.is_file():
+        return unknown
+    manifest = load_bundle_manifest(manifest_path)
+    selection = manifest.get("wallet_selection")
+    if not isinstance(selection, Mapping):
+        return unknown
+    status = str(selection.get("identity_status") or "UNKNOWN")
+    if status == "UNKNOWN":
+        return unknown
+    policy = selection.get("selection_policy")
+    digest = selection.get("selection_digest")
+    count = selection.get("wallet_count")
+    if (
+        status != "RECORDED"
+        or not isinstance(policy, str)
+        or not policy.strip()
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+    ):
+        raise ProspectiveReanalysisError("recorded wallet selection identity is invalid")
+    return {
+        "configuration_digest": configuration_digest,
+        "identity_status": "RECORDED",
+        "selection_digest": digest,
+        "selection_policy": policy.strip(),
+        "wallet_count": count,
+    }
 
 
 def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:

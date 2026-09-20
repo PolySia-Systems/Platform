@@ -26,6 +26,8 @@ from polysia.deployment.research_run_contract import (
     DEFAULT_WALLET_COUNT,
     ResearchRunContractError,
     ResearchRunPlan,
+    ResearchRunSpec,
+    load_run_plan,
     parse_research_run_spec,
     plans_semantically_equal,
     resolve_run_plan,
@@ -56,6 +58,30 @@ def test_spec_rejects_unknown_fields_and_executable_expressions() -> None:
         )
 
 
+def test_spec_and_plan_require_immutable_git_shas() -> None:
+    with pytest.raises(ResearchRunContractError, match="40-character Git SHA"):
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": "unknown",
+            }
+        )
+    with pytest.raises(ResearchRunContractError, match="40-character Git SHA"):
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "image_sha": "local",
+            }
+        )
+    with pytest.raises(ResearchRunContractError, match="40-character Git SHA"):
+        resolve_run_plan(ResearchRunSpec(profile="canary", code_sha="unknown"), observed=NOW)
+    payload = _sample_plan().to_dict()
+    payload["code_sha"] = "unknown"
+    with pytest.raises(ResearchRunContractError, match="40-character Git SHA"):
+        load_run_plan(payload)
 def test_identical_inputs_resolve_to_equivalent_semantic_plans() -> None:
     spec = parse_research_run_spec(
         {

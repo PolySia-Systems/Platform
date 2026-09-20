@@ -160,7 +160,11 @@ experiment archive.
 Analyze a published bundle with `prospective-replay` or additive
 `prospective-reanalyze`. Both must leave the source database, manifest,
 checksums, and protected companions byte-for-byte unchanged. Reanalysis writes
-a new directory and refuses to overwrite an existing analysis id. Use
+a complete directory through same-filesystem staging and atomic publication,
+and refuses to overwrite an existing analysis id. A failed pre-publication
+write leaves no final analysis directory and can be retried with the same id.
+New Runner Bundles report the frozen selection policy, count, and digest without
+wallet addresses; legacy evidence reports that identity as `UNKNOWN`. Use
 `--output` for detailed evidence and `--compare` for compact deltas. Prove the
 production path offline with `research prospective-prove`
 before another multi-hour experiment.
@@ -175,6 +179,9 @@ docker compose --profile research run --no-deps research-runner \
   --profile canary \
   --code-sha "$POLYSIA_IMAGE_TAG"
 ```
+
+`--code-sha` and the optional image identity must be exact lowercase
+40-character Git SHAs. Placeholder image tags fail closed before T0.
 
 Status, stop, resume, verify, and result do not start a new experiment:
 

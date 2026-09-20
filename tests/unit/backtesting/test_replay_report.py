@@ -74,10 +74,15 @@ def test_compare_incompatible_source_hash_is_reported_without_causal_inference()
     current["source_hash"] = "c" * 64
     current["run_id"] = "other-run"
     current["wallet_selection"] = {
+        "identity_status": "RECORDED",
         "policy": "polycop-shadow-alpha-configured-v1",
         "wallet_count": 2,
     }
-    baseline["wallet_selection"] = {"policy": "polycop-shadow-alpha-top3-v1", "wallet_count": 3}
+    baseline["wallet_selection"] = {
+        "identity_status": "RECORDED",
+        "policy": "polycop-shadow-alpha-top3-v1",
+        "wallet_count": 3,
+    }
     compared = compare_replay_reports(current, baseline)
     assert compared["classification"] == "incompatible_comparison"
     assert compared["incompatible"] is True
@@ -86,6 +91,25 @@ def test_compare_incompatible_source_hash_is_reported_without_causal_inference()
     assert compared["wallet_selection"]["policy"]["current"] == (
         "polycop-shadow-alpha-configured-v1"
     )
+
+
+def test_compare_reports_unknown_wallet_selection_identity() -> None:
+    current = _report()
+    baseline = _report()
+    current["wallet_selection"] = {
+        "identity_status": "RECORDED",
+        "policy": "polycop-shadow-alpha-top3-v1",
+        "selection_digest": "d" * 64,
+        "wallet_count": 3,
+    }
+    baseline["wallet_selection"] = {"identity_status": "UNKNOWN"}
+
+    compared = compare_replay_reports(current, baseline)
+
+    assert compared["wallet_selection"]["identity_status"] == {
+        "baseline": "UNKNOWN",
+        "current": "RECORDED",
+    }
 
 
 def test_compact_payload_omits_decision_rows() -> None:
