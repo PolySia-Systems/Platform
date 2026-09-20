@@ -120,13 +120,16 @@ The collector is provider-neutral. Venue translation stays in adapters.
   experiment evidence.
 - Start and resume resolve a versioned `research-run-spec-v1` into an immutable
   `research-run-plan-v1` before T0. Unknown fields, executable expressions,
-  budget expansion, wallet-count changes, and tampered Plans fail closed.
-  Safety (DATA_ONLY, Live disabled) is rechecked at admission and cannot be
-  overridden by a Spec. The worker is the only Manifest writer. Stop clients
-  record a command id, content fingerprint, expected revision, and disposition;
-  they must not overwrite the Manifest. Large restore and analysis copies use
-  an operation-owned scratch directory, not the container `/tmp` tmpfs.
-  Off-host Archive transfer remains a separate operator action.
+  budget expansion, wallet-count changes, tampered Plans, and a missing
+  `run-plan.json` on a plan-aware Manifest (`run_plan_digest` present) fail
+  closed. Genuine legacy Manifests without `run_plan_digest` may receive an
+  additive Plan. Safety (DATA_ONLY, Live disabled) is rechecked at admission
+  and cannot be overridden by a Spec. Admission uses one host-wide lock,
+  independent of workspace parent. The worker is the only Manifest writer.
+  Stop clients record a command id, content fingerprint, expected revision,
+  and disposition; they must not overwrite the Manifest. Large restore and
+  analysis copies use an operation-owned scratch directory, not the container
+  `/tmp` tmpfs. Off-host Archive transfer remains a separate operator action.
 - Finalization is memory-bounded. Event reads are chunked. Replay consumes
   valid windows as a stream, holds market snapshots only as long as economics
   needs them, and drops per-observation traces after digests exist. The

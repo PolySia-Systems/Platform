@@ -193,7 +193,12 @@ docker compose --profile research run --rm --no-deps research-runner \
 ```
 
 `research-runner` uses `restart: "no"` so a CLOSED run cannot respawn a new
-experiment. Canary and main starts fail closed before T0 unless a current
+experiment. Start, resume, and verify serialize through one host-wide
+admission lock at `/var/lib/polysia/research-runner-admission` (file
+`research-runner-admission.lock` on the mounted `POLYSIA_STATE_DIR`); distinct
+`--state-root` parents on the same host share that lock. Override only with
+`POLYSIA_RESEARCH_ADMISSION_LOCK` for isolated tests. Canary and main starts
+fail closed before T0 unless a current
 successful Polycop Stage 3 snapshot can supply three distinct `SHADOW_ALPHA`
 wallets under `polycop-shadow-alpha-top3-v1` and the Continuous Shadow 36-hour
 freshness bound. Compose mounts the host wallet-intelligence database into the

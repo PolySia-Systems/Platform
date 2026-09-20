@@ -83,6 +83,23 @@ PLAN_NAME = "run-plan.json"
 STOP_REQUEST_NAME = "stop-request.json"
 RESULT_NAME = "result.json"
 STOP_POLL_SECONDS = 0.1
+ADMISSION_LOCK_ENV = "POLYSIA_RESEARCH_ADMISSION_LOCK"
+HOST_ADMISSION_LOCK = Path("/var/lib/polysia/research-runner-admission")
+
+
+def resolve_admission_lock_path(
+    *,
+    configured: Path | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the host-wide admission lock stem, independent of workspace parent."""
+    if configured is not None:
+        return Path(configured)
+    env = os.environ if environment is None else environment
+    override = str(env.get(ADMISSION_LOCK_ENV) or "").strip()
+    if override:
+        return Path(override)
+    return HOST_ADMISSION_LOCK
 
 
 class ResearchRunnerError(RuntimeError):
@@ -809,10 +826,12 @@ class ResearchExperimentRunner:
                     raise ResearchRunnerError("research database hash mismatch")
             elif strict:
                 raise ResearchRunnerError("research database hash mismatch")
-        recorded_plan = manifest.get("run_plan_digest")
-        if recorded_plan and workspace.plan_path.is_file():
+        recorded_plan = _recorded_run_plan_digest(manifest)
+        if recorded_plan is not None:
+            if not workspace.plan_path.is_file():
+                raise ResearchRunnerError("research-run Plan is missing")
             stored = load_run_plan(_read_json(workspace.plan_path) or {})
-            if stored.semantic_digest() != str(recorded_plan):
+            if stored.semantic_digest() != recorded_plan:
                 raise ResearchRunnerError("research-run Plan digest mismatch")
 
     def _resolve_plan(
@@ -856,17 +875,20 @@ class ResearchExperimentRunner:
         workspace: ResearchRunWorkspace,
         plan: ResearchRunPlan,
         *,
-        existing: Mapping[str, object] | None,
+        existing: dict[str, object] | None,
     ) -> None:
         stored_payload = _read_json(workspace.plan_path)
+        recorded_digest = _recorded_run_plan_digest(existing)
         if stored_payload is not None:
             stored = load_run_plan(stored_payload)
             if not plans_semantically_equal(stored, plan):
                 raise ResearchRunnerError("stale or tampered research-run Plan")
-        elif existing is None or existing.get("clocks") is None:
-            _atomic_json(workspace.plan_path, plan.to_dict())
+        elif recorded_digest is not None:
+            raise ResearchRunnerError("research-run Plan is missing")
         else:
             _atomic_json(workspace.plan_path, plan.to_dict())
+            if existing is not None:
+                existing["run_plan_digest"] = plan.semantic_digest()
         if existing is not None:
             budgets = _mapping(existing.get("budgets"))
             for key, allowed in plan.budgets.items():
@@ -900,9 +922,9 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError(str(error)) from error
 
     def _admission_lock(self, state_root: Path) -> ExclusiveWriterLock:
-        path = self._admission_lock_path or (state_root.parent / "research-runner-admission")
+        del state_root
         return ExclusiveWriterLock(
-            path,
+            resolve_admission_lock_path(configured=self._admission_lock_path),
             rejected_message="second resource-consuming research run rejected",
         )
 
@@ -937,6 +959,16 @@ def _profile_from_manifest(manifest: Mapping[str, object]) -> RunnerProfile:
         max_bytes=_int_config(config.get("max_bytes"), 10_000_000),
         memory_bytes=_int_config(config.get("memory_bytes"), 8_388_608),
     )
+
+
+def _recorded_run_plan_digest(existing: Mapping[str, object] | None) -> str | None:
+    if existing is None:
+        return None
+    recorded = existing.get("run_plan_digest")
+    if recorded is None:
+        return None
+    text = str(recorded).strip()
+    return text or None
 
 
 def _read_manifest(path: Path) -> dict[str, object]:

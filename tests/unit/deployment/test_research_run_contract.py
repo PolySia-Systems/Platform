@@ -8,16 +8,21 @@ from pathlib import Path
 import pytest
 
 from polysia.deployment.research_experiment_runner import (
+    ADMISSION_LOCK_ENV,
+    HOST_ADMISSION_LOCK,
     ResearchExperimentRunner,
     ResearchRunnerError,
+    ResearchRunWorkspace,
     _read_manifest,
     _write_manifest,
+    resolve_admission_lock_path,
 )
 from polysia.deployment.research_run_commands import DISPOSITION_ACCEPTED
 from polysia.deployment.research_run_contract import (
     DEFAULT_SELECTION_POLICY,
     DEFAULT_WALLET_COUNT,
     ResearchRunContractError,
+    ResearchRunPlan,
     parse_research_run_spec,
     plans_semantically_equal,
     resolve_run_plan,
@@ -198,3 +203,92 @@ def test_operation_scratch_stays_off_tmp(tmp_path: Path, monkeypatch: pytest.Mon
     ) as scratch:
         assert scratch.is_relative_to(parent)
         assert "forbidden-tmp" not in str(scratch)
+
+
+def _sample_plan() -> ResearchRunPlan:
+    return resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "run_id": "plan-run",
+            }
+        ),
+        observed=NOW,
+    )
+
+
+def test_admission_lock_default_ignores_workspace_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(ADMISSION_LOCK_ENV, raising=False)
+    runner = ResearchExperimentRunner(source_factory=lambda: None)  # type: ignore[arg-type]
+    left = runner._admission_lock(tmp_path / "alpha" / "run")
+    right = runner._admission_lock(tmp_path / "beta" / "run")
+    expected = HOST_ADMISSION_LOCK.with_name(f"{HOST_ADMISSION_LOCK.name}.lock")
+    assert left.path == right.path == expected
+    assert resolve_admission_lock_path() == HOST_ADMISSION_LOCK
+    assert resolve_admission_lock_path(
+        environment={},
+    ) == HOST_ADMISSION_LOCK
+
+
+def test_admission_lock_env_override_is_shared_across_parents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override = tmp_path / "custom-admission"
+    monkeypatch.setenv(ADMISSION_LOCK_ENV, str(override))
+    runner = ResearchExperimentRunner(source_factory=lambda: None)  # type: ignore[arg-type]
+    left = runner._admission_lock(tmp_path / "alpha" / "run")
+    right = runner._admission_lock(tmp_path / "beta" / "run")
+    expected = override.with_name(f"{override.name}.lock")
+    assert left.path == right.path == expected
+
+
+def test_admission_lock_constructor_overrides_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ADMISSION_LOCK_ENV, str(tmp_path / "from-env"))
+    configured = tmp_path / "from-constructor"
+    runner = ResearchExperimentRunner(
+        source_factory=lambda: None,  # type: ignore[arg-type]
+        admission_lock_path=configured,
+    )
+    lock = runner._admission_lock(tmp_path / "workspace")
+    assert lock.path == configured.with_name(f"{configured.name}.lock")
+
+
+def test_freeze_plan_fails_closed_when_digest_exists_and_file_is_missing(
+    tmp_path: Path,
+) -> None:
+    plan = _sample_plan()
+    workspace = ResearchRunWorkspace(tmp_path / "run")
+    workspace.root.mkdir()
+    runner = ResearchExperimentRunner(source_factory=lambda: None)  # type: ignore[arg-type]
+    existing: dict[str, object] = {
+        "run_plan_digest": plan.semantic_digest(),
+        "clocks": {"t0": "already-started"},
+        "budgets": {},
+        "followed_wallet_selection": {},
+    }
+    with pytest.raises(ResearchRunnerError, match="Plan is missing"):
+        runner._freeze_plan(workspace, plan, existing=existing)
+    assert not workspace.plan_path.is_file()
+
+
+def test_freeze_plan_writes_additively_for_legacy_manifest_without_digest(
+    tmp_path: Path,
+) -> None:
+    plan = _sample_plan()
+    workspace = ResearchRunWorkspace(tmp_path / "run")
+    workspace.root.mkdir()
+    runner = ResearchExperimentRunner(source_factory=lambda: None)  # type: ignore[arg-type]
+    existing: dict[str, object] = {
+        "clocks": {"t0": "already-started"},
+        "budgets": {},
+        "followed_wallet_selection": {},
+    }
+    runner._freeze_plan(workspace, plan, existing=existing)
+    assert workspace.plan_path.is_file()
+    assert existing["run_plan_digest"] == plan.semantic_digest()
