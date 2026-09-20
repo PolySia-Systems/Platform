@@ -39,6 +39,14 @@ reports selection identity as `UNKNOWN`. Comparison reports wallet selection,
 capture range, budgets, analysis version, evidence quality, and Control/Target
 deltas, and does not infer causation.
 
+CURRENT: detailed replay and Bundle manifests include a deterministic
+single-wallet economic breakdown for each sanitized alias observed in valid
+evidence. Each row is replayed independently from the same causal market
+snapshots, rather than attributing a shared portfolio P&L after the fact.
+Selected wallets with no accepted evidence remain absent from the breakdown;
+the public frozen selection count makes the shortfall visible without exposing
+addresses.
+
 ## Consequences
 
 Legacy top-three Runs remain readable with the original policy name and digest

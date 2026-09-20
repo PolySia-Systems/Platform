@@ -315,6 +315,14 @@ It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and
 contract identity, data coverage, fees, slippage, net P&L, exposure, drawdown,
 and open-position valuation status. The raw bundle is never modified.
+The detailed report also replays every sanitized wallet alias actually observed
+in valid evidence as an independent single-wallet portfolio. Each wallet row
+uses the same frozen contract, causal market snapshots, Control and Target
+policies, fees, slippage, terminal valuation, and data-canary rules as the
+combined portfolio. A selected wallet with no accepted observation is not
+given invented economics; the frozen selection count and the number of
+observed wallet rows expose that gap explicitly. Wallet addresses remain
+excluded.
 
 A 20-minute canary uses all deduplicated confirmed wallet observations in
 independently `VALID` windows. `PASS` requires at least 20 eligible observations,

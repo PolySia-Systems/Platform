@@ -472,6 +472,9 @@ def test_prospective_replay_emits_versioned_economic_evidence(tmp_path: Path) ->
     assert payload["experiment_contract"]["version"] == "prospective-economic-v2"
     assert payload["summary"]["economic"] == "INSUFFICIENT_DATA"
     assert payload["decision_evidence"][0]["snapshot_evidence_id"] == "quote"
+    assert payload["decision_evidence"][0]["leader_alias"] == "pub-wallet"
+    assert payload["wallet_economics"][0]["leader_alias"] == "pub-wallet"
+    assert payload["wallet_economics"][0]["economic"]["eligible_observations"] == 1
     assert len(payload["source_database_sha256"]) == 64
     assert "decision_evidence" not in stdout
     assert "control_decisions" not in stdout

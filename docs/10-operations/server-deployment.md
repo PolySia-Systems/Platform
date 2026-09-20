@@ -165,7 +165,11 @@ and refuses to overwrite an existing analysis id. A failed pre-publication
 write leaves no final analysis directory and can be retried with the same id.
 New Runner Bundles report the frozen selection policy, count, and digest without
 wallet addresses; legacy evidence reports that identity as `UNKNOWN`. Use
-`--output` for detailed evidence and `--compare` for compact deltas. Prove the
+the detailed `wallet_economics` rows to compare standalone Control and Target
+results for sanitized aliases that actually produced valid observations. If
+the number of rows is lower than the frozen selection count, report the missing
+activity as insufficient evidence; never infer zero P&L for an unobserved wallet.
+Use `--output` for detailed evidence and `--compare` for compact deltas. Prove the
 production path offline with `research prospective-prove`
 before another multi-hour experiment.
 

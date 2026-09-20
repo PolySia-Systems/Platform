@@ -137,6 +137,20 @@ class ProspectiveEconomicReport:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class WalletEconomicReport:
+    """Standalone economics for one sanitized observed wallet alias."""
+
+    leader_alias: str
+    economics: ProspectiveEconomicReport
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "leader_alias": self.leader_alias,
+            "economic": self.economics.to_dict(),
+        }
+
+
 def evaluate_prospective_economics(
     replay: SameObservationReplay,
     *,
@@ -430,5 +444,6 @@ def _optional_text(value: Decimal | None) -> str | None:
 __all__ = [
     "PolicyEconomicMetrics",
     "ProspectiveEconomicReport",
+    "WalletEconomicReport",
     "evaluate_prospective_economics",
 ]
