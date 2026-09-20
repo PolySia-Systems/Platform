@@ -4,7 +4,7 @@ import typer
 from typer.testing import CliRunner
 
 from polysia import cli
-from polysia.cli_commands import core, live, operations, research
+from polysia.cli_commands import core, developer, live, operations, research
 
 runner = CliRunner()
 
@@ -18,7 +18,15 @@ EXPECTED_NAMESPACES = {
     "wallet-intelligence",
 }
 EXPECTED_COMMANDS = {
-    "system": {"configuration", "health", "observability", "report", "runbook", "status"},
+    "system": {
+        "configuration",
+        "developer-context",
+        "health",
+        "observability",
+        "report",
+        "runbook",
+        "status",
+    },
     "market": {"discover", "stream"},
     "research": {
         "backtest",
@@ -173,6 +181,10 @@ def test_cli_composes_responsibility_owned_commands() -> None:
     command = typer.main.get_command(cli.app)
 
     assert inspect.unwrap(command.commands["system"].commands["health"].callback) is core.health
+    assert (
+        inspect.unwrap(command.commands["system"].commands["developer-context"].callback)
+        is developer.developer_context
+    )
     assert (
         inspect.unwrap(command.commands["research"].commands["evaluate"].callback)
         is research.strategy_evaluation

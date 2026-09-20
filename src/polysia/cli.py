@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import typer
 
-from polysia.cli_commands import core, live, operations, research, wallet_intelligence
+from polysia.cli_commands import core, developer, live, operations, research, wallet_intelligence
 from polysia.control.cli import control_app
 
 app = typer.Typer(
@@ -43,6 +43,7 @@ def main() -> None:
 
 system_app.command("health")(core.health)
 system_app.command("configuration")(core.configuration_status)
+system_app.command("developer-context")(developer.developer_context)
 system_app.command("status")(operations.operator_status)
 system_app.command("report")(operations.operator_report)
 system_app.command("runbook")(operations.operator_runbook)
