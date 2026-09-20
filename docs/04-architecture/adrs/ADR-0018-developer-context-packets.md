@@ -23,6 +23,10 @@ excerpts are dropped for size. Untrusted task text is never copied into the
 packet or rendered output. `next_action` may interpolate only a sanitized
 opaque Issue/PR identifier. Secret files are out of scope.
 
+Cache identity includes the sanitized task reference. Dirty worktrees never
+reuse or publish a cached packet; their file contents can change while Git's
+porcelain path list remains the same.
+
 ## Consequences
 
 Ordinary resume remains the Issue or PR. `docs/README.md` remains the

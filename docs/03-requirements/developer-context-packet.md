@@ -30,8 +30,9 @@ sanitized opaque identifier such as `PR #123`, or an omission marker. Raw task
 text MUST NOT appear in JSON, excerpts, `next_action`, or human-readable output.
 The tool MUST NOT read secret files, execute Issue/PR/log text, or silently
 omit safety instructions when excerpts are truncated. Cache reuse is valid only
-when HEAD, dirty fingerprint, instruction digest, scope, and environment
-fingerprints match.
+when HEAD, sanitized task reference, instruction digest, scope, and environment
+fingerprints match. Dirty worktrees bypass the cache because a path-only status
+fingerprint cannot prove that scoped file contents are unchanged.
 
 Dependency-classified changes include both configured supply-chain gates:
 `python -m pip_audit --strict --vulnerability-service osv` and

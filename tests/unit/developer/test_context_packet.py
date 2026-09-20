@@ -116,6 +116,49 @@ def test_dirty_state_invalidates_cached_packet(tmp_path: Path) -> None:
     assert clean["validation"]["change_map"]["python"] is False
 
 
+def test_cache_is_bound_to_the_opaque_task_reference(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[3]
+    cache = DirectoryPacketCache(tmp_path / "cache")
+    common = {
+        "root": root,
+        "scope": ("docs/README.md",),
+        "git_runner": _git(root),
+        "classify_paths": classify_paths,
+        "cache": cache,
+        "environment": {"TRADING_MODE": "DATA_ONLY", "LIVE_TRADING_ENABLED": "false"},
+    }
+    first = build_context_packet(task_reference="PR #160", now=NOW, **common)
+    second = build_context_packet(
+        task_reference="PR #161",
+        now=NOW.replace(minute=1),
+        **common,
+    )
+
+    assert first["task"]["reference"] == "PR #160"
+    assert second["task"]["reference"] == "PR #161"
+    assert second["generated_at"] != first["generated_at"]
+
+
+def test_dirty_packets_bypass_cache_even_when_changed_paths_are_unchanged(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[3]
+    cache = DirectoryPacketCache(tmp_path / "cache")
+    common = {
+        "root": root,
+        "scope": ("docs/README.md",),
+        "git_runner": _git(root, dirty=" M docs/README.md\n"),
+        "classify_paths": classify_paths,
+        "cache": cache,
+    }
+    first = build_context_packet(now=NOW, **common)
+    second = build_context_packet(now=NOW.replace(minute=1), **common)
+
+    assert first["repository"]["dirty"] is True
+    assert second["generated_at"] != first["generated_at"]
+    assert not cache.directory.exists()
+
+
 def test_untrusted_task_text_never_appears_in_packet_or_text() -> None:
     root = Path(__file__).resolve().parents[3]
     injected = (

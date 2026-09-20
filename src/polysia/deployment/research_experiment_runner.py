@@ -741,6 +741,7 @@ class ResearchExperimentRunner:
             workspace.database_path,
             workspace.bundle_root,
             run_id=run_id,
+            wallet_selection=_mapping(manifest.get("followed_wallet_selection")),
         )
         replay = bundle.replay
         if replay is None:

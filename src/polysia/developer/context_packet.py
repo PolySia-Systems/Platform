@@ -104,15 +104,18 @@ def build_context_packet(
     classified_paths = scope_paths or repository.changed_paths
     change_map = classifier(list(classified_paths))
     env = dict(environment or os.environ)
+    opaque_task = _opaque_task_reference(task_reference)
     invalidation = _invalidation(
         repository,
         scope_paths=scope_paths,
         instruction_paths=discover_instruction_files(root, scope_paths),
         environment=env,
         root=root,
+        task_reference=opaque_task,
     )
     cache_key = _digest(invalidation)
-    if cache is not None:
+    cache_allowed = cache is not None and not repository.dirty
+    if cache_allowed and cache is not None:
         cached = cache.load(cache_key)
         if cached is not None and cached.get("invalidation") == invalidation:
             return cached
@@ -126,7 +129,7 @@ def build_context_packet(
         observed=observed,
         env=env,
     )
-    if cache is not None:
+    if cache_allowed and cache is not None:
         cache.store(cache_key, packet)
     return packet
 
@@ -535,6 +538,7 @@ def _invalidation(
     instruction_paths: tuple[str, ...],
     environment: Mapping[str, str],
     root: Path,
+    task_reference: str | None,
 ) -> dict[str, object]:
     instruction_digest = hashlib.sha256()
     for path in instruction_paths:
@@ -545,6 +549,7 @@ def _invalidation(
         "head": repository.head,
         "dirty_fingerprint": repository.dirty_fingerprint,
         "scope": list(scope_paths),
+        "task_reference": task_reference,
         "instruction_digest": instruction_digest.hexdigest(),
         "python": sys.version.split()[0],
         "TRADING_MODE": environment.get("TRADING_MODE", "DATA_ONLY"),

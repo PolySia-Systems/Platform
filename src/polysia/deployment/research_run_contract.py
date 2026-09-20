@@ -38,6 +38,7 @@ LEGACY_SELECTION_POLICY = "legacy-cli-sources"
 EXECUTABLE_EXPRESSION_RE = re.compile(
     r"(?is)(__import__|\beval\s*\(|\bexec\s*\(|\$\{|\{\{)"
 )
+IMMUTABLE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SPEC_FIELDS = frozenset(
     {
         "code_sha",
@@ -138,13 +139,13 @@ def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
     profile = _require_text(payload.get("profile"), "profile")
     if profile not in {PROFILE_CANARY, PROFILE_MAIN}:
         raise ResearchRunContractError("research-run Spec profile is not supported")
-    code_sha = _require_text(payload.get("code_sha"), "code_sha")
+    code_sha = _require_sha(payload.get("code_sha"), "code_sha")
     image_sha = payload.get("image_sha")
     run_id = payload.get("run_id")
     return ResearchRunSpec(
         profile=profile,
         code_sha=code_sha,
-        image_sha=None if image_sha is None else _require_text(image_sha, "image_sha"),
+        image_sha=None if image_sha is None else _require_sha(image_sha, "image_sha"),
         run_id=None if run_id is None else _require_text(run_id, "run_id"),
         wallet_count=_optional_wallet_count(payload.get("wallet_count")),
     )
@@ -184,6 +185,8 @@ def resolve_run_plan(
     profile: RunnerProfile | None = None,
     observed: datetime | None = None,
 ) -> ResearchRunPlan:
+    code_sha = _require_sha(spec.code_sha, "code_sha")
+    image_sha = code_sha if spec.image_sha is None else _require_sha(spec.image_sha, "image_sha")
     if profile is None:
         resolved = _profile_for_spec(spec)
     else:
@@ -198,8 +201,8 @@ def resolve_run_plan(
     return ResearchRunPlan(
         profile=resolved.name,
         profile_version=resolved.version,
-        code_sha=spec.code_sha,
-        image_sha=spec.image_sha or spec.code_sha,
+        code_sha=code_sha,
+        image_sha=image_sha,
         budgets={
             "duration_seconds": int(resolved.duration.total_seconds()),
             "max_bytes": resolved.max_bytes,
@@ -261,8 +264,8 @@ def load_run_plan(payload: Mapping[str, object]) -> ResearchRunPlan:
     plan = ResearchRunPlan(
         profile=_require_text(payload.get("profile"), "profile"),
         profile_version=_require_text(payload.get("profile_version"), "profile_version"),
-        code_sha=_require_text(payload.get("code_sha"), "code_sha"),
-        image_sha=_require_text(payload.get("image_sha"), "image_sha"),
+        code_sha=_require_sha(payload.get("code_sha"), "code_sha"),
+        image_sha=_require_sha(payload.get("image_sha"), "image_sha"),
         budgets=budgets,
         selection=_object_map(payload.get("selection"), "selection"),
         versions=versions,
@@ -399,6 +402,15 @@ def _require_text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ResearchRunContractError(f"research-run field {field} is required")
     return value.strip()
+
+
+def _require_sha(value: object, field: str) -> str:
+    text = _require_text(value, field)
+    if IMMUTABLE_SHA_RE.fullmatch(text) is None:
+        raise ResearchRunContractError(
+            f"research-run field {field} must be a lowercase 40-character Git SHA"
+        )
+    return text
 
 
 def _int_map(value: object, field: str) -> dict[str, int]:

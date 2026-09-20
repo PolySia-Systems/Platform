@@ -30,6 +30,9 @@ three-wallet Polycop default are unchanged. Control Kernel modules are not
 imported; only the existing local exclusive lock and command-id pattern are
 reused.
 
+Collection and image identities are exact lowercase 40-character Git SHAs.
+Placeholder or mutable values such as `unknown` and `local` fail before T0.
+
 `CLOSED` remains a lifecycle phase. It is not technical PASS, sufficient
 evidence, positive economics, or successful off-host transfer.
 
@@ -37,7 +40,7 @@ evidence, positive economics, or successful off-host transfer.
 
 Legacy `--profile` / `--code-sha` CLI flags build a compatible Spec.
 Unsupported fields, executable expressions, budget expansion, wallet-count
-changes, and tampered Plans fail before T0. Old Runs whose Manifest has no
+changes, mutable code/image identities, and tampered Plans fail before T0. Old Runs whose Manifest has no
 `run_plan_digest` remain readable; a Plan may be written additively from
 frozen Manifest fields and the digest recorded. A plan-aware Run that records
 `run_plan_digest` but is missing `run-plan.json` fails closed. Rollback is

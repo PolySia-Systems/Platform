@@ -27,11 +27,17 @@ and is not retried as a no-argument default top-three selection.
 
 CURRENT: `research prospective-reanalyze` writes an additive analysis directory
 with a separate result identity, provenance, analysis code SHA, and claim class.
-The source Bundle and evidence hashes are verified unchanged. Post-hoc analysis
-is `EXPLORATORY`. `CONFIRMATORY` requires a frozen hypothesis id, digest, and
-independent evidence hash. Comparison reports wallet selection, capture range,
-budgets, analysis version, evidence quality, and Control/Target deltas, and
-does not infer causation.
+It stages the complete result beside the destination, verifies protected source
+evidence again, and atomically publishes the directory. A failed publication
+leaves no final partial identity and the same analysis id is retryable. The
+source Bundle and evidence hashes are verified unchanged. Analysis code identity
+is an exact lowercase 40-character Git SHA. Post-hoc analysis is `EXPLORATORY`.
+`CONFIRMATORY` requires a frozen hypothesis id, digest, and independent evidence
+hash. New Runner Bundles record only the public frozen wallet-selection policy,
+count, and digest; addresses are excluded. Legacy evidence without those fields
+reports selection identity as `UNKNOWN`. Comparison reports wallet selection,
+capture range, budgets, analysis version, evidence quality, and Control/Target
+deltas, and does not infer causation.
 
 ## Consequences
 

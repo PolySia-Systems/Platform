@@ -696,6 +696,17 @@ def test_polycop_resume_keeps_frozen_selection_and_t0(
     attributed = [event for event in events if event.leader_alias in aliases]
     assert attributed
     assert all(event.leader_alias in aliases for event in attributed)
+    bundle_manifest = json.loads(
+        (Path(str(resumed["artifacts"]["bundle"])) / "experiment-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert bundle_manifest["wallet_selection"] == {
+        "identity_status": "RECORDED",
+        "selection_digest": frozen["selection_digest"],
+        "selection_policy": frozen["selection_policy"],
+        "wallet_count": frozen["wallet_count"],
+    }
 
 
 def test_polycop_reconstruction_tampering_fails_closed(

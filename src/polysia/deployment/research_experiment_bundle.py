@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +56,7 @@ def finalize_research_experiment(
     *,
     run_id: str,
     finalized_at: datetime | None = None,
+    wallet_selection: Mapping[str, object] | None = None,
 ) -> ResearchExperimentBundle:
     """Snapshot, restore, replay, and only then mark an experiment FINALIZED."""
 
@@ -148,6 +150,7 @@ def finalize_research_experiment(
             checksum=checksum,
             database_name=database_copy.name,
             verified=verified,
+            wallet_selection=wallet_selection,
         )
         manifest_path = staging / MANIFEST_NAME
         manifest_path.write_text(
@@ -208,6 +211,39 @@ def _replay_is_verified(replay: RecordedExperimentReplay) -> bool:
     return bool(replay.valid_intervals) and replay.replayed_event_count > 0
 
 
+def _public_wallet_selection(selection: Mapping[str, object] | None) -> dict[str, object]:
+    if not selection:
+        return {"identity_status": "UNKNOWN"}
+    values = {
+        "selection_policy": selection.get("selection_policy"),
+        "selection_digest": selection.get("selection_digest"),
+        "wallet_count": selection.get("wallet_count"),
+    }
+    present = {key for key, value in values.items() if value is not None}
+    if not present:
+        return {"identity_status": "UNKNOWN"}
+    if present != set(values):
+        raise ResearchEvidenceStoreError("wallet selection identity is incomplete")
+    policy = values["selection_policy"]
+    digest = values["selection_digest"]
+    count = values["wallet_count"]
+    if not isinstance(policy, str) or not policy.strip():
+        raise ResearchEvidenceStoreError("wallet selection policy is invalid")
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        raise ResearchEvidenceStoreError("wallet selection digest is invalid")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ResearchEvidenceStoreError("wallet selection count is invalid")
+    return {
+        "identity_status": "RECORDED",
+        "selection_digest": digest,
+        "selection_policy": policy.strip(),
+        "wallet_count": count,
+    }
+
+
 def _bundle_manifest(
     *,
     experiment: ResearchExperiment,
@@ -218,6 +254,7 @@ def _bundle_manifest(
     checksum: str,
     database_name: str,
     verified: bool,
+    wallet_selection: Mapping[str, object] | None,
 ) -> dict[str, object]:
     started_at = experiment.started_at
     collection_ends_at = experiment.collection_ends_at
@@ -273,6 +310,7 @@ def _bundle_manifest(
         },
         "economic": replay.economics.to_dict(),
         "limitations": limitations,
+        "wallet_selection": _public_wallet_selection(wallet_selection),
     }
 
 
