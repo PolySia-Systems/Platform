@@ -193,16 +193,13 @@ def render_text(packet: Mapping[str, object]) -> str:
 
 
 def load_classify_paths(root: Path) -> ClassifyPaths:
-    try:
-        from scripts.classify_ci_changes import classify_paths as imported
-
-        return imported
-    except ImportError:
-        pass
     path = root / "scripts" / "classify_ci_changes.py"
     if not path.is_file():
         raise DeveloperContextError("CI change classifier is missing")
-    spec = importlib.util.spec_from_file_location("polysia_developer_classify_ci_changes", path)
+    spec = importlib.util.spec_from_file_location(
+        "polysia_developer_classify_ci_changes",
+        path,
+    )
     if spec is None or spec.loader is None:
         raise DeveloperContextError("CI change classifier could not be loaded")
     module = importlib.util.module_from_spec(spec)
