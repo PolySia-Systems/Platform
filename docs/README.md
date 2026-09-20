@@ -24,7 +24,9 @@ local historical baseline. Do not promote modeled P&L into Live authority.
 
 **Where to go next:** [project status](00-governance/PROJECT_STATUS.md) for
 durable state and [architecture](04-architecture/README.md) to go deeper.
-The previous Helsinki host is retired; do not query it. Historical Stage 4B
+For a disposable, scoped resume briefing use
+`polysia system developer-context`; the packet is a generated view, not
+project truth. The previous Helsinki host is retired; do not query it. Historical Stage 4B
 evidence is the read-only local backup recorded in
 [Target Exposure v1 baseline](18-ai-handoffs/shadow-target-exposure-v1-baseline.md).
 
@@ -49,6 +51,7 @@ evidence is the read-only local backup recorded in
 - [Verified Live state and approved orders](03-requirements/live-verified-state-and-approved-order.md)
 - [Shadow Target Exposure Replay v1](03-requirements/shadow-target-exposure-replay.md)
 - [Prospective research evidence collector](03-requirements/prospective-evidence-collector.md)
+- [Developer context packet](03-requirements/developer-context-packet.md)
 - [Delivery and rollback](10-operations/delivery-and-rollback.md)
 
 ## Standards and governance

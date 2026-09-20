@@ -61,6 +61,25 @@ def test_official_sdk_imports_are_confined_to_polymarket_adapter() -> None:
     assert findings == {}
 
 
+def test_developer_tooling_has_no_trading_authority_dependency() -> None:
+    forbidden_prefixes = (
+        "polysia.execution",
+        "polysia.risk",
+        "polysia.strategies",
+        "polysia.wallet",
+        "polysia.adapters",
+        "polymarket",
+    )
+    findings: dict[str, list[str]] = {}
+    for path in (PACKAGE / "developer").rglob("*.py"):
+        forbidden = sorted(
+            name for name in _imports(path) if name.startswith(forbidden_prefixes)
+        )
+        if forbidden:
+            findings[path.relative_to(ROOT).as_posix()] = forbidden
+    assert findings == {}
+
+
 def test_control_kernel_is_venue_neutral() -> None:
     control_root = PACKAGE / "control"
     forbidden_prefixes = ("polymarket", "polysia.adapters")
