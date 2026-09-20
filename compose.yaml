@@ -177,6 +177,10 @@ services:
       - type: bind
         source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}
         target: /var/lib/polysia
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/data/wallet-intelligence.sqlite3
+        target: /var/lib/polysia/data/wallet-intelligence.sqlite3
+        read_only: true
     healthcheck:
       test:
         - CMD-SHELL
