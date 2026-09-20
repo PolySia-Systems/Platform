@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -47,10 +48,16 @@ LAB_PROFILE = RunnerProfile(
 
 
 @pytest.fixture(autouse=True)
-def isolate_research_admission_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(ADMISSION_LOCK_ENV, str(tmp_path / "research-runner-admission"))
+def isolate_research_admission_lock(tmp_path: Path):
+    previous = os.environ.get(ADMISSION_LOCK_ENV)
+    os.environ[ADMISSION_LOCK_ENV] = str(tmp_path / "research-runner-admission")
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(ADMISSION_LOCK_ENV, None)
+        else:
+            os.environ[ADMISSION_LOCK_ENV] = previous
 
 
 def _runner(clock: CoordinatedClock, work: Path) -> ResearchExperimentRunner:
