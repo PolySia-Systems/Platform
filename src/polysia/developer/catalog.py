@@ -73,6 +73,11 @@ SCOPE_RULES: tuple[tuple[tuple[str, ...], tuple[CatalogHit, ...]], ...] = (
                 "Isolated research-evidence store and Runner orchestration.",
             ),
             CatalogHit(
+                "docs/04-architecture/adrs/ADR-0019-research-run-contracts.md",
+                "adr",
+                "Versioned Spec/Plan, command ownership, and operation-owned scratch.",
+            ),
+            CatalogHit(
                 "docs/10-operations/server-deployment.md",
                 "runbook",
                 "Operator start/resume/finalize for the research Runner.",

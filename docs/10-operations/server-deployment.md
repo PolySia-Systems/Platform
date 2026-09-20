@@ -151,9 +151,9 @@ verified bundle already exists, the command reuses it and does not republish
 evidence. Repeating a successful finalize is idempotent. A run with no valid
 replayable interval writes a failure archive and records `FAILURE_ARCHIVED`;
 never treat that as verified finalization. Invalid windows remain in the
-immutable database and are reported as excluded evidence. The temporary
-restore is staged under the bundle root so a bounded experiment is not
-constrained by the service's small `/tmp` tmpfs. Restarting the collector
+immutable database and are reported as excluded evidence. The temporary restore is staged under the bundle root so a bounded experiment
+is not constrained by the service's small `/tmp` tmpfs. Compatibility analysis
+copies use the same operation-owned parent. Restarting the collector
 then starts the next bounded experiment. Do not treat rotating backups as the
 experiment archive.
 
@@ -181,7 +181,7 @@ docker compose --profile research run --rm --no-deps research-runner \
   research prospective-run status --state-root /var/lib/polysia/research-run
 docker compose --profile research run --rm --no-deps research-runner \
   research prospective-run stop --state-root /var/lib/polysia/research-run \
-  --reason operator_stop
+  --command-id stop --reason operator_stop
 docker compose --profile research run --rm --no-deps research-runner \
   research prospective-run resume --state-root /var/lib/polysia/research-run \
   --profile canary --code-sha "$POLYSIA_IMAGE_TAG"

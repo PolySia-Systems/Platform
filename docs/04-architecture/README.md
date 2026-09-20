@@ -18,6 +18,7 @@ is authoritative; target and future elements are always labeled.
 - [Verified Live state and approved orders](adrs/ADR-0016-verified-live-state-approved-order.md)
 - [Isolated prospective research-evidence store](adrs/ADR-0017-research-evidence-store.md)
 - [Developer context packets](adrs/ADR-0018-developer-context-packets.md)
+- [Contract-driven research runs](adrs/ADR-0019-research-run-contracts.md)
 - [Architecture visualization system](visual-system/README.md)
 - [Diagram index](visual-system/architecture-visualization-index.md)
 

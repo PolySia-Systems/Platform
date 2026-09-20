@@ -712,3 +712,62 @@ def test_polycop_reconstruction_tampering_fails_closed(
         asyncio.run(
             service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="tamper-run")
         )
+
+
+def test_admission_rejects_a_second_resource_consuming_workspace(tmp_path: Path) -> None:
+    from polysia.storage.research_evidence import ExclusiveWriterLock
+
+    lock_path = tmp_path / "research-runner-admission"
+    held = ExclusiveWriterLock(
+        lock_path,
+        rejected_message="second resource-consuming research run rejected",
+    )
+    held.acquire()
+    try:
+        clock = CoordinatedClock()
+        factory, _transport = lab_source_factory(clock)
+        service = ResearchExperimentRunner(
+            source_factory=factory,
+            clock=clock,
+            sleep=clock.sleep,
+            settings_factory=AppSettings,
+            admission_lock_path=lock_path,
+        )
+        with pytest.raises(ResearchRunnerConflictError, match="second resource-consuming"):
+            asyncio.run(
+                service.start(
+                    tmp_path / "one",
+                    profile=LAB_PROFILE,
+                    code_sha=CODE_SHA,
+                    run_id="admit-run",
+                )
+            )
+    finally:
+        held.release()
+
+
+def test_resume_without_plan_file_rewrites_plan_additively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = CoordinatedClock()
+    work = tmp_path / "legacy-plan"
+    service = _runner(clock, work)
+
+    async def crash_after_prepare(
+        workspace: ResearchRunWorkspace, manifest: dict[str, object], **_kwargs: object
+    ) -> dict[str, object]:
+        del workspace, manifest
+        raise ResearchRunnerError("simulated crash after prepare")
+
+    monkeypatch.setattr(service, "_collect", crash_after_prepare)
+    with pytest.raises(ResearchRunnerError, match="simulated crash after prepare"):
+        asyncio.run(
+            service.start(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="legacy-plan-run")
+        )
+    (work / "run-plan.json").unlink()
+    monkeypatch.undo()
+    resumed = asyncio.run(
+        service.resume(work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="legacy-plan-run")
+    )
+    assert resumed["phase"] == "CLOSED"
+    assert (work / "run-plan.json").is_file()

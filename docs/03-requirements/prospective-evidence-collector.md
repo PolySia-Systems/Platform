@@ -118,6 +118,15 @@ The collector is provider-neutral. Venue translation stays in adapters.
   success or positive economics. Canary success does not start the main
   experiment. Backups are recovery points, not a substitute for continuous
   experiment evidence.
+- Start and resume resolve a versioned `research-run-spec-v1` into an immutable
+  `research-run-plan-v1` before T0. Unknown fields, executable expressions,
+  budget expansion, wallet-count changes, and tampered Plans fail closed.
+  Safety (DATA_ONLY, Live disabled) is rechecked at admission and cannot be
+  overridden by a Spec. The worker is the only Manifest writer. Stop clients
+  record a command id, content fingerprint, expected revision, and disposition;
+  they must not overwrite the Manifest. Large restore and analysis copies use
+  an operation-owned scratch directory, not the container `/tmp` tmpfs.
+  Off-host Archive transfer remains a separate operator action.
 - Finalization is memory-bounded. Event reads are chunked. Replay consumes
   valid windows as a stream, holds market snapshots only as long as economics
   needs them, and drops per-observation traces after digests exist. The
@@ -147,9 +156,10 @@ python -m polysia.cli research prospective-health --health-report <path>
 python -m polysia.cli research prospective-health --health-report <path> --require-research-eligible
 python -m polysia.cli research prospective-finalize --database <stopped-db> --run-id <id> --bundle-root <dir>
 python -m polysia.cli research prospective-run start --state-root /var/lib/polysia/research-run --profile canary --code-sha <sha>
+python -m polysia.cli research prospective-run start --state-root /var/lib/polysia/research-run --spec-file <spec.json>
 python -m polysia.cli research prospective-run status --state-root /var/lib/polysia/research-run
 python -m polysia.cli research prospective-run resume --state-root /var/lib/polysia/research-run --profile canary --code-sha <sha>
-python -m polysia.cli research prospective-run stop --state-root /var/lib/polysia/research-run
+python -m polysia.cli research prospective-run stop --state-root /var/lib/polysia/research-run --command-id stop --reason operator_stop
 python -m polysia.cli research prospective-run verify --state-root /var/lib/polysia/research-run --code-sha <analysis-sha>
 python -m polysia.cli research prospective-run result --state-root /var/lib/polysia/research-run
 ```
