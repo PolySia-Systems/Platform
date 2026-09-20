@@ -190,17 +190,53 @@ def compare_replay_reports(
             _nested(baseline, "summary", "target_net_pnl"),
         ),
     }
+    current_source = str(current.get("source_hash") or current.get("source_database_sha256") or "")
+    baseline_source = str(
+        baseline.get("source_hash") or baseline.get("source_database_sha256") or ""
+    )
+    current_run = str(current.get("run_id") or "")
+    baseline_run = str(baseline.get("run_id") or "")
+    incompatible_reasons: list[str] = []
+    if current_source and baseline_source and current_source != baseline_source:
+        incompatible_reasons.append("source_evidence")
+    if current_run and baseline_run and current_run != baseline_run:
+        incompatible_reasons.append("capture_identity")
+    wallet_delta = _mapping_deltas(_wallet_selection(current), _wallet_selection(baseline))
+    captured_delta = {
+        "run_id": _text_delta(current_run, baseline_run),
+        "source_hash": _text_delta(current_source, baseline_source),
+        "time_range": _text_delta(_captured_range(current), _captured_range(baseline)),
+    }
+    budget_delta = _mapping_deltas(
+        _as_mapping(current.get("budgets")),
+        _as_mapping(baseline.get("budgets")),
+    )
+    analysis_delta = {
+        "analysis_id": _text_delta(current.get("analysis_id"), baseline.get("analysis_id")),
+        "claim_class": _text_delta(current.get("claim_class"), baseline.get("claim_class")),
+        "code_sha": _text_delta(
+            current.get("analysis_code_sha") or current.get("code_sha"),
+            baseline.get("analysis_code_sha") or baseline.get("code_sha"),
+        ),
+        "engine_version": _text_delta(current_engine, baseline_engine),
+    }
     first_material = _first_material_difference(decision_deltas, unknown_deltas, economic_deltas)
     behavioral_difference = first_material is not None or any(
         item is not None for item in coverage_deltas.values()
     )
-    if identity_changed:
+    if incompatible_reasons:
+        classification = "incompatible_comparison"
+    elif identity_changed:
         classification = "expected_version_change"
     elif behavioral_difference:
         classification = "regression_candidate"
     else:
         classification = "identical"
     return {
+        "analysis": analysis_delta,
+        "budgets": budget_delta,
+        "captured": captured_delta,
+        "causal_inference": "not_inferred",
         "classification": classification,
         "coverage_deltas": coverage_deltas,
         "decision_deltas": {
@@ -216,12 +252,43 @@ def compare_replay_reports(
         "configuration_digest": {"baseline": baseline_config, "current": current_config},
         "first_material_difference": first_material,
         "identity_changed": identity_changed,
+        "incompatible": bool(incompatible_reasons),
+        "incompatible_reasons": incompatible_reasons,
         "result_hash": {
             "baseline": baseline.get("result_hash") or result_hash(baseline),
             "current": current.get("result_hash") or result_hash(current),
         },
         "unknown_deltas": unknown_deltas,
+        "wallet_selection": wallet_delta,
     }
+
+
+def _wallet_selection(payload: Mapping[str, Any]) -> dict[str, object]:
+    followed = payload.get("followed_wallet_selection") or payload.get("wallet_selection") or {}
+    if not isinstance(followed, dict):
+        return {}
+    return {
+        "configuration_digest": followed.get("configuration_digest")
+        or payload.get("configuration_digest"),
+        "policy": followed.get("selection_policy") or followed.get("policy"),
+        "selection_digest": followed.get("selection_digest"),
+        "wallet_count": followed.get("wallet_count"),
+    }
+
+
+def _captured_range(payload: Mapping[str, Any]) -> str | None:
+    capture = payload.get("capture")
+    if isinstance(capture, dict):
+        started = capture.get("started_at")
+        ended = capture.get("collection_ends_at")
+        if started or ended:
+            return f"{started}/{ended}"
+    lineage = payload.get("evidence_lineage")
+    if isinstance(lineage, dict):
+        ids = lineage.get("valid_interval_ids")
+        if isinstance(ids, list) and ids:
+            return ",".join(str(item) for item in ids)
+    return None
 
 
 def _economic(payload: Mapping[str, Any]) -> Mapping[str, Any]:

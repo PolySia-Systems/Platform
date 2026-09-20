@@ -587,14 +587,14 @@ def lab_source_factory(
     *,
     rows: list[dict[str, Any]] | None = None,
 ) -> tuple[
-    Callable[[], Awaitable[tuple[tuple[Any, ...], dict[str, object]]]],
+    Callable[..., Awaitable[tuple[tuple[Any, ...], dict[str, object]]]],
     ScriptedJsonTransport,
 ]:
     transport = ScriptedJsonTransport(rows_by_call=[rows or _complete_rows(clock)])
     market = _market_source(clock, event=book_event(clock))
     aliases = _aliases()
 
-    async def factory() -> tuple[tuple[Any, ...], dict[str, object]]:
+    async def factory(**_kwargs: object) -> tuple[tuple[Any, ...], dict[str, object]]:
         wallet = DataApiWalletPollSource(
             REST_TRADES_CANDIDATE,
             path="/trades",

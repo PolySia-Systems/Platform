@@ -7,6 +7,7 @@ Not a generic workflow engine and not a Live/Risk/Execution path.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, Protocol
 from uuid import uuid4
 
 from polysia.application.ports.research_evidence import ResearchObservationSource
@@ -66,16 +68,27 @@ from polysia.storage.research_evidence import (
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
-SourceFactory = Callable[
-    [],
-    Awaitable[tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]],
-]
+PreparedSources = tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]
 SourceRebuilder = Callable[
     [Mapping[str, str]],
-    Awaitable[tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]],
+    Awaitable[PreparedSources],
 ]
-PreparedSources = tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]
 SettingsFactory = Callable[[], AppSettings]
+
+
+class SelectionAwareSourceFactory(Protocol):
+    """Factory that can honor a frozen Polycop wallet count and policy."""
+
+    def __call__(
+        self,
+        *,
+        wallet_count: int | None = None,
+        selection_policy: str | None = None,
+    ) -> Awaitable[PreparedSources]:
+        ...
+
+
+SourceFactory = Callable[..., Awaitable[PreparedSources]]
 
 PHASES = ("PREPARED", "COLLECTING", "COLLECTED", "VERIFYING", "CLOSED")
 MANIFEST_NAME = "run-manifest.json"
@@ -100,6 +113,26 @@ def resolve_admission_lock_path(
     if override:
         return Path(override)
     return HOST_ADMISSION_LOCK
+
+
+def source_factory_accepts_selection(factory: Callable[..., Any]) -> bool:
+    """Return True when the factory declares wallet_count and selection_policy."""
+    try:
+        parameters = inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        return False
+    return "wallet_count" in parameters and "selection_policy" in parameters
+
+
+def selection_source_kwargs(plan: ResearchRunPlan) -> dict[str, object]:
+    kwargs: dict[str, object] = {}
+    policy = plan.selection.get("policy")
+    count = plan.selection.get("wallet_count")
+    if isinstance(policy, str) and policy.startswith("polycop-"):
+        kwargs["selection_policy"] = policy
+        if isinstance(count, int) and not isinstance(count, bool):
+            kwargs["wallet_count"] = count
+    return kwargs
 
 
 class ResearchRunnerError(RuntimeError):
@@ -379,7 +412,7 @@ class ResearchExperimentRunner:
                         raise ResearchRunnerError("research run manifest is missing")
                     self._freeze_plan(workspace, plan, existing=None)
                     try:
-                        sources, discovery = await self._source_factory()
+                        sources, discovery = await self._open_sources(plan)
                     except ResearchWalletSelectionError as error:
                         raise ResearchRunnerError(str(error)) from error
                     prepared_sources = (sources, discovery)
@@ -863,6 +896,7 @@ class ResearchExperimentRunner:
             code_sha=code_sha,
             image_sha=image_sha or parsed.image_sha,
             run_id=run_id or parsed.run_id,
+            wallet_count=parsed.wallet_count,
         )
         return resolve_run_plan(
             parsed,
@@ -920,6 +954,16 @@ class ResearchExperimentRunner:
             )
         except ResearchRunCommandError as error:
             raise ResearchRunnerError(str(error)) from error
+
+    async def _open_sources(self, plan: ResearchRunPlan) -> PreparedSources:
+        kwargs = selection_source_kwargs(plan)
+        if not kwargs:
+            return await self._source_factory()
+        if not source_factory_accepts_selection(self._source_factory):
+            raise ResearchRunnerError(
+                "research source factory cannot honor the frozen Polycop selection"
+            )
+        return await self._source_factory(**kwargs)
 
     def _admission_lock(self, state_root: Path) -> ExclusiveWriterLock:
         del state_root
@@ -1081,6 +1125,7 @@ def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
         "wallet_count",
         "wallet_ids",
         "wallet_limit",
+        "selection_reasons",
     ):
         value = discovery.get(key)
         if value is not None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from datetime import UTC, datetime
@@ -16,9 +17,11 @@ from polysia.deployment.research_experiment_runner import (
     _read_manifest,
     _write_manifest,
     resolve_admission_lock_path,
+    source_factory_accepts_selection,
 )
 from polysia.deployment.research_run_commands import DISPOSITION_ACCEPTED
 from polysia.deployment.research_run_contract import (
+    CONFIGURED_SELECTION_POLICY,
     DEFAULT_SELECTION_POLICY,
     DEFAULT_WALLET_COUNT,
     ResearchRunContractError,
@@ -40,7 +43,7 @@ def test_spec_rejects_unknown_fields_and_executable_expressions() -> None:
                 "spec_version": "research-run-spec-v1",
                 "profile": "canary",
                 "code_sha": CODE_SHA,
-                "wallet_count": 10,
+                "extra_field": 10,
             }
         )
     with pytest.raises(ResearchRunContractError, match="executable"):
@@ -81,6 +84,56 @@ def test_identical_inputs_resolve_to_equivalent_semantic_plans() -> None:
     assert left.safety["trading_mode"] == "DATA_ONLY"
     assert left.safety["overridable"] is False
     assert left.economic_contract["entry_budget"] == "5"
+
+
+def test_explicit_wallet_count_uses_configured_policy_without_changing_top3_default() -> None:
+    omitted = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+            }
+        ),
+        observed=NOW,
+    )
+    explicit_three = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "wallet_count": 3,
+            }
+        ),
+        observed=NOW,
+    )
+    configured = resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "wallet_count": 2,
+            }
+        ),
+        observed=NOW,
+    )
+    assert omitted.selection["policy"] == DEFAULT_SELECTION_POLICY
+    assert plans_semantically_equal(omitted, explicit_three)
+    assert configured.selection["policy"] == CONFIGURED_SELECTION_POLICY
+    assert configured.selection["wallet_count"] == 2
+    assert configured.selection["capacity"]["operational_status"] == "unverified"
+    assert omitted.selection["capacity"]["operational_status"] == "validated"
+    with pytest.raises(ResearchRunContractError, match="operationally supported capacity"):
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "wallet_count": 10,
+            }
+        )
 
 
 def test_canary_and_main_budgets_stay_on_declared_profiles() -> None:
@@ -219,6 +272,21 @@ def _sample_plan() -> ResearchRunPlan:
     )
 
 
+def _configured_plan() -> ResearchRunPlan:
+    return resolve_run_plan(
+        parse_research_run_spec(
+            {
+                "spec_version": "research-run-spec-v1",
+                "profile": "canary",
+                "code_sha": CODE_SHA,
+                "run_id": "configured-run",
+                "wallet_count": 2,
+            }
+        ),
+        observed=NOW,
+    )
+
+
 def test_admission_lock_default_ignores_workspace_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -292,3 +360,53 @@ def test_freeze_plan_writes_additively_for_legacy_manifest_without_digest(
     runner._freeze_plan(workspace, plan, existing=existing)
     assert workspace.plan_path.is_file()
     assert existing["run_plan_digest"] == plan.semantic_digest()
+
+
+def test_open_sources_propagates_internal_typeerror_without_fallback() -> None:
+    calls: list[tuple[object, object]] = []
+
+    async def factory(
+        *,
+        wallet_count: int | None = None,
+        selection_policy: str | None = None,
+    ) -> tuple[tuple[object, ...], dict[str, object]]:
+        calls.append((wallet_count, selection_policy))
+        raise TypeError("internal mapping failed")
+
+    runner = ResearchExperimentRunner(source_factory=factory)
+    with pytest.raises(TypeError, match="internal mapping failed"):
+        asyncio.run(runner._open_sources(_configured_plan()))
+    assert calls == [(2, CONFIGURED_SELECTION_POLICY)]
+
+
+def test_open_sources_fails_closed_when_factory_lacks_selection_parameters() -> None:
+    calls: list[str] = []
+
+    async def factory() -> tuple[tuple[object, ...], dict[str, object]]:
+        calls.append("zero-arg")
+        return ((), {})
+
+    runner = ResearchExperimentRunner(source_factory=factory)
+    with pytest.raises(
+        ResearchRunnerError,
+        match="cannot honor the frozen Polycop selection",
+    ):
+        asyncio.run(runner._open_sources(_configured_plan()))
+    assert calls == []
+
+
+def test_open_sources_fails_closed_for_kwargs_only_factory() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def factory(**_kwargs: object) -> tuple[tuple[object, ...], dict[str, object]]:
+        calls.append(dict(_kwargs))
+        return ((), {})
+
+    runner = ResearchExperimentRunner(source_factory=factory)
+    with pytest.raises(
+        ResearchRunnerError,
+        match="cannot honor the frozen Polycop selection",
+    ):
+        asyncio.run(runner._open_sources(_configured_plan()))
+    assert calls == []
+    assert source_factory_accepts_selection(factory) is False

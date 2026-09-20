@@ -154,6 +154,7 @@ python -m polysia.cli research prospective-prove --work-dir artifacts/offline-re
 python -m polysia.cli research prospective-replay --database artifacts/research-evidence.sqlite3 --run-id <id>
 python -m polysia.cli research prospective-replay --database <bundle-db> --run-id <id> --output <details.json>
 python -m polysia.cli research prospective-replay --database <bundle-db> --run-id <id> --compare <baseline.json>
+python -m polysia.cli research prospective-reanalyze --database <bundle-db> --run-id <id> --analysis-dir <dir> --code-sha <analysis-sha> --analysis-id <id>
 python -m polysia.cli research prospective-collect --window-seconds 600
 python -m polysia.cli research prospective-health --health-report <path>
 python -m polysia.cli research prospective-health --health-report <path> --require-research-eligible
@@ -264,9 +265,16 @@ machine-readable summary under 5 KiB. Decision-level and evidence-level
 detail is written only when `--output` is supplied. `--compare` reports
 decision, UNKNOWN, coverage, and economic deltas, the first material
 difference with its evidence ID, and contract/configuration/engine identity.
-A behavioral difference with the same declared identity is a regression
-candidate; a declared version/contract/configuration change is an expected
-version change but still reports the behavioral delta.
+It also reports wallet selection, captured range, budgets, analysis identity,
+and Control/Target results. Incompatible source or capture identity is labeled
+honestly. Comparison does not infer causation or Alpha from unexplained P&L
+differences. A behavioral difference with the same declared identity is a
+regression candidate; a declared version/contract/configuration change is an
+expected version change but still reports the behavioral delta.
+`research prospective-reanalyze` writes a separate immutable result directory
+and never overwrites an existing analysis or the source Bundle. Post-hoc
+analysis is `EXPLORATORY` unless a frozen hypothesis id, digest, and
+independent evidence hash are supplied.
 
 The synthetic production-path laboratory is:
 
@@ -281,13 +289,16 @@ modes must reproduce in seconds or minutes of simulated time. This laboratory
 is the offline proof. The operational Runner is `research prospective-run`
 with versioned `canary` and `main` profiles, one isolated state root, and
 Compose service `research-runner` (`restart: "no"`). Canary and main resolve
-one current Polycop Stage 3 snapshot before T0 using
+one current Polycop Stage 3 snapshot before T0. The default remains
 `polycop-shadow-alpha-top3-v1`: the highest-ranked distinct `SHADOW_ALPHA`
 wallets, bounded at three, with the existing Continuous Shadow 36-hour
-freshness bound (`PT36H`). Missing, stale, inconsistent, or insufficient
+freshness bound (`PT36H`). Spec `wallet_count` 1 or 2 uses
+`polycop-shadow-alpha-configured-v1` and is labeled unverified capacity, not
+operationally supported. Counts above three fail closed. `SHADOW_STRESS` is
+not a profitability candidate. Missing, stale, inconsistent, or insufficient
 selection fails closed before collection. The run freezes
 `selection_run_id`, source snapshot identity, published time, feature/policy/
-ranking versions, selected pools and ranks, selection-policy version, and
+ranking versions, selected pools, ranks, reasons, selection-policy version, and
 selection/reconstruction digests. Resume rebuilds sources from the permission-
 restricted `selection-reconstruction.json` even if Polycop later changes.
 Public-trade discovery remains only for explicit benchmark commands such as

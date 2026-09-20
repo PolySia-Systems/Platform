@@ -23,6 +23,7 @@ from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
 
 POLYCOP_SHADOW_ALPHA_TOP3_V1 = "polycop-shadow-alpha-top3-v1"
+POLYCOP_SHADOW_ALPHA_CONFIGURED_V1 = "polycop-shadow-alpha-configured-v1"
 POLYCOP_SOURCE_ID = "polycop"
 SHADOW_ALPHA_POOL = "SHADOW_ALPHA"
 DEFAULT_WALLET_LIMIT = 3
@@ -56,6 +57,7 @@ class FrozenPolycopFollowSet:
     selection_digest: str
     reconstruction_digest: str
     addresses_by_alias: dict[str, str]
+    reasons: tuple[str, ...]
 
 
 def load_current_polycop_snapshot(
@@ -80,11 +82,35 @@ def resolve_polycop_shadow_alpha_top3(
 ) -> FrozenPolycopFollowSet:
     """Select the highest-ranked distinct SHADOW_ALPHA wallets fail-closed."""
 
+    return resolve_polycop_follow_set(
+        snapshot,
+        now=now,
+        wallet_limit=wallet_limit,
+        maximum_age=maximum_age,
+        policy_version=POLYCOP_SHADOW_ALPHA_TOP3_V1,
+    )
+
+
+def resolve_polycop_follow_set(
+    snapshot: ContinuousSelectionSnapshot,
+    *,
+    now: datetime | None = None,
+    wallet_limit: int = DEFAULT_WALLET_LIMIT,
+    maximum_age: timedelta = MAXIMUM_SELECTION_AGE,
+    policy_version: str | None = None,
+) -> FrozenPolycopFollowSet:
+    """Select highest-ranked distinct SHADOW_ALPHA wallets for a frozen policy."""
+
     observed = now or datetime.now(UTC)
     if observed.tzinfo is None or observed.utcoffset() != timedelta(0):
         raise ResearchWalletSelectionError("selection clock must be timezone-aware UTC")
     if wallet_limit < 1:
         raise ResearchWalletSelectionError("wallet limit must be positive")
+    policy = policy_version or (
+        POLYCOP_SHADOW_ALPHA_TOP3_V1
+        if wallet_limit == DEFAULT_WALLET_LIMIT
+        else POLYCOP_SHADOW_ALPHA_CONFIGURED_V1
+    )
     expected = ContinuousSelectionSnapshot.create(
         source_id=snapshot.source_id,
         selection_run_id=snapshot.selection_run_id,
@@ -116,6 +142,9 @@ def resolve_polycop_shadow_alpha_top3(
     aliases = tuple(sorted(addresses_by_alias))
     wallet_ids = tuple(candidate.wallet_id for candidate in selected)
     ranks = tuple(int(candidate.alpha_rank or 0) for candidate in selected)
+    reasons = tuple(
+        f"highest-ranked distinct SHADOW_ALPHA at alpha_rank={rank}" for rank in ranks
+    )
     public = _canonical_public_payload(
         aliases=aliases,
         feature_set_version=snapshot.feature_set_version,
@@ -130,13 +159,14 @@ def resolve_polycop_shadow_alpha_top3(
         source_snapshot_id=snapshot.source_snapshot_id,
         wallet_ids=wallet_ids,
         wallet_limit=wallet_limit,
+        selection_policy_version=policy,
     )
     reconstruction = _canonical_reconstruction_payload(
         selected_wallets=_selected_wallets(selected, ranked_aliases),
         wallet_ids=wallet_ids,
     )
     return FrozenPolycopFollowSet(
-        policy_version=POLYCOP_SHADOW_ALPHA_TOP3_V1,
+        policy_version=policy,
         selection_run_id=snapshot.selection_run_id,
         source_id=snapshot.source_id,
         source_snapshot_id=snapshot.source_snapshot_id,
@@ -154,6 +184,7 @@ def resolve_polycop_shadow_alpha_top3(
         selection_digest=_digest(public),
         reconstruction_digest=_digest(reconstruction),
         addresses_by_alias=dict(addresses_by_alias),
+        reasons=reasons,
     )
 
 
@@ -172,11 +203,13 @@ def public_selection_payload(selection: FrozenPolycopFollowSet) -> dict[str, obj
         source_snapshot_id=selection.source_snapshot_id,
         wallet_ids=selection.wallet_ids,
         wallet_limit=len(selection.wallet_ids),
+        selection_policy_version=selection.policy_version,
     )
     payload["reconstruction_digest"] = selection.reconstruction_digest
     payload["selection_digest"] = selection.selection_digest
     payload["selection_policy"] = selection.policy_version
     payload["wallet_count"] = len(selection.wallet_ids)
+    payload["selection_reasons"] = list(selection.reasons)
     return payload
 
 
@@ -196,6 +229,7 @@ def reconstruction_payload(selection: FrozenPolycopFollowSet) -> dict[str, objec
     )
     payload["digest"] = selection.reconstruction_digest
     payload["selection_digest"] = selection.selection_digest
+    payload["selection_reasons"] = list(selection.reasons)
     return payload
 
 
@@ -262,6 +296,9 @@ def verify_reconstruction(
         source_snapshot_id=str(public.get("source_snapshot_id") or ""),
         wallet_ids=tuple(ranked_ids),
         wallet_limit=wallet_limit,
+        selection_policy_version=str(
+            public.get("selection_policy_version") or POLYCOP_SHADOW_ALPHA_TOP3_V1
+        ),
     )
     if _string_list(canonical["aliases"]) != _string_list(public.get("aliases")):
         raise ResearchWalletSelectionError("frozen selection aliases are inconsistent")
@@ -329,6 +366,7 @@ def _canonical_public_payload(
     source_snapshot_id: str,
     wallet_ids: tuple[str, ...],
     wallet_limit: int,
+    selection_policy_version: str,
 ) -> dict[str, object]:
     return {
         "aliases": list(aliases),
@@ -340,7 +378,7 @@ def _canonical_public_payload(
         "ranking_version": ranking_version,
         "selected_pools": [SHADOW_ALPHA_POOL],
         "selected_ranks": list(selected_ranks),
-        "selection_policy_version": POLYCOP_SHADOW_ALPHA_TOP3_V1,
+        "selection_policy_version": selection_policy_version,
         "selection_run_id": selection_run_id,
         "snapshot_digest": snapshot_digest,
         "source_id": source_id,
