@@ -196,7 +196,10 @@ docker compose --profile research run --rm --no-deps research-runner \
 experiment. Canary and main starts fail closed before T0 unless a current
 successful Polycop Stage 3 snapshot can supply three distinct `SHADOW_ALPHA`
 wallets under `polycop-shadow-alpha-top3-v1` and the Continuous Shadow 36-hour
-freshness bound. The frozen reconstruction file
+freshness bound. Compose mounts the host wallet-intelligence database into the
+Runner at `/var/lib/polysia/data/wallet-intelligence.sqlite3` as read-only;
+absence of that file prevents the container from starting. The frozen
+reconstruction file
 `selection-reconstruction.json` is permission-restricted and is the resume
 authority; later Polycop rankings must not change an existing run. Do not
 point Canary/Main at public-trade discovery. Preflight refuses to start when

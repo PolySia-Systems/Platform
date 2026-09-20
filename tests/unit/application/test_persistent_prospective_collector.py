@@ -880,6 +880,12 @@ def test_compose_research_runner_is_data_only_and_does_not_restart() -> None:
     assert "cap_drop:" in section
     assert "no-new-privileges:true" in section
     assert "mem_limit: 2g" in section
+    assert (
+        "${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/data/"
+        "wallet-intelligence.sqlite3"
+    ) in section
+    assert "target: /var/lib/polysia/data/wallet-intelligence.sqlite3" in section
+    assert "read_only: true" in section
 
 
 def test_busy_timeout_and_wal_files(tmp_path: Path) -> None:
