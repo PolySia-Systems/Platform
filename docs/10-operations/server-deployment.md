@@ -235,6 +235,14 @@ bundle path and SHA-256 remains an explicit operator action; the Runner does
 not add credentials or a file-transfer subsystem. The main bounded profile
 requires a separate explicit start with `--profile main`.
 
+When a short run must require recent wallet activity, set the Spec
+`selection_policy` to `polycop-shadow-alpha-active-top3-v1`. It remains bounded
+to three `SHADOW_ALPHA` wallets. Its four-hour Data API v2 activity preflight is
+completed and frozen before T0; do not change that window or select wallets
+after observing run economics. If fewer than three candidates are active or the
+preflight source is unavailable, fix the source or wait for a new independent
+window rather than falling back silently to the static top three.
+
 Finalize an active experiment before deploying collector code or configuration
 that would change its recorded SHA or configuration digest.
 

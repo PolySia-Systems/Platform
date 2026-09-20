@@ -6,6 +6,7 @@ Keeps research.py free of venue wiring. Reports are sanitized before print.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -14,10 +15,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from polysia.adapters.polymarket.copytrading_source import UrllibJsonGetTransport
+from polysia.adapters.polymarket.copytrading_source import (
+    JsonGetTransport,
+    UrllibJsonGetTransport,
+)
 from polysia.adapters.polymarket.public import PolymarketPublicAdapter
 from polysia.adapters.polymarket.research_sources import (
     ACTIVITY_SOURCE_ID,
+    DATA_API_V2_ACTIVITY_PATH,
+    DATA_API_V2_TRADES_PATH,
     REST_ACTIVITY_CANDIDATE,
     REST_TRADES_CANDIDATE,
     TRADES_SOURCE_ID,
@@ -25,10 +31,13 @@ from polysia.adapters.polymarket.research_sources import (
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
     TerminalMarketSnapshot,
+    data_api_v2_rows,
     discover_clob_market_fee_schedules,
     discover_market_fee_schedules,
     discover_public_follow_set,
+    public_wallet_alias,
 )
+from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.research_evidence import ResearchObservationSource
 from polysia.application.services.source_benchmark import SourceBenchmarkReport
 from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot
@@ -62,7 +71,7 @@ async def build_public_benchmark(
         sources.append(
             DataApiWalletPollSource(
                 REST_ACTIVITY_CANDIDATE,
-                path="/activity",
+                path=DATA_API_V2_ACTIVITY_PATH,
                 source_id=ACTIVITY_SOURCE_ID,
                 aliases=aliases,
                 transport=transport,
@@ -71,7 +80,7 @@ async def build_public_benchmark(
         sources.append(
             DataApiWalletPollSource(
                 REST_TRADES_CANDIDATE,
-                path="/trades",
+                path=DATA_API_V2_TRADES_PATH,
                 source_id=TRADES_SOURCE_ID,
                 aliases=aliases,
                 transport=transport,
@@ -125,6 +134,7 @@ async def build_persistent_runner_sources(
     selection_policy: str | None = None,
 ) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
     from polysia.deployment.research_run_contract import (
+        ACTIVE_SELECTION_POLICY,
         CONFIGURED_SELECTION_POLICY,
         DEFAULT_SELECTION_POLICY,
         DEFAULT_WALLET_COUNT,
@@ -134,6 +144,7 @@ async def build_persistent_runner_sources(
         load_current_polycop_snapshot,
         public_selection_payload,
         reconstruction_payload,
+        resolve_polycop_active_follow_set,
         resolve_polycop_follow_set,
         resolve_polycop_shadow_alpha_top3,
     )
@@ -146,7 +157,21 @@ async def build_persistent_runner_sources(
     )
     snapshot = load_current_polycop_snapshot(database or DEFAULT_SELECTION_DATABASE)
     observed = now or datetime.now(UTC)
-    if policy == DEFAULT_SELECTION_POLICY:
+    transport = UrllibJsonGetTransport()
+    activity_evidence: dict[str, object] | None = None
+    if policy == ACTIVE_SELECTION_POLICY:
+        counts, activity_evidence = await _measure_recent_alpha_activity(
+            snapshot.candidates,
+            transport=transport,
+            observed=observed,
+        )
+        selection = resolve_polycop_active_follow_set(
+            snapshot,
+            counts,
+            now=observed,
+            wallet_limit=count,
+        )
+    elif policy == DEFAULT_SELECTION_POLICY:
         selection = resolve_polycop_shadow_alpha_top3(
             snapshot, now=observed, wallet_limit=count
         )
@@ -158,14 +183,87 @@ async def build_persistent_runner_sources(
             policy_version=policy,
         )
     sources, discovery = await build_persistent_sources_from_aliases(
-        selection.addresses_by_alias
+        selection.addresses_by_alias,
+        transport=transport,
     )
     discovery.update(public_selection_payload(selection))
     discovery["_reconstruction"] = reconstruction_payload(selection)
     discovery["_restricted_aliases"] = dict(selection.addresses_by_alias)
     discovery["discovery_status"] = "polycop_shadow_alpha"
     discovery["selection_mode"] = selection.policy_version
+    if activity_evidence is not None:
+        discovery["activity_preflight"] = activity_evidence
     return sources, discovery
+
+
+async def _measure_recent_alpha_activity(
+    candidates: tuple[object, ...],
+    *,
+    transport: JsonGetTransport,
+    observed: datetime,
+    lookback: timedelta = timedelta(hours=4),
+    candidate_limit: int = 50,
+) -> tuple[dict[str, int], dict[str, object]]:
+    from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
+    from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
+
+    candidates_by_wallet: dict[str, ProtectedShadowCandidate] = {}
+    for candidate in sorted(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, ProtectedShadowCandidate)
+            and "SHADOW_ALPHA" in candidate.pools
+            and candidate.alpha_rank is not None
+        ),
+        key=lambda item: (int(item.alpha_rank or 0), item.wallet_id),
+    ):
+        candidates_by_wallet.setdefault(candidate.wallet_id, candidate)
+    ranked = tuple(candidates_by_wallet.values())[:candidate_limit]
+    if len(ranked) < 3:
+        raise ResearchWalletSelectionError(
+            "activity preflight requires three SHADOW_ALPHA candidates"
+        )
+    start = observed - lookback
+
+    async def measure(candidate: ProtectedShadowCandidate) -> tuple[str, int, str, int]:
+        payload = await transport.get_json(
+            "https://data-api.polymarket.com",
+            DATA_API_V2_TRADES_PATH,
+            {
+                "user": candidate.address,
+                "limit": 1000,
+                "start": int(start.timestamp()),
+                "end": int(observed.timestamp()),
+                "taker_only": False,
+            },
+            purpose=LeaderReadPurpose.DISCOVERY,
+        )
+        rows = data_api_v2_rows(payload)
+        return (
+            candidate.wallet_id,
+            len(rows),
+            public_wallet_alias(candidate.address),
+            int(candidate.alpha_rank or 0),
+        )
+
+    measured = await asyncio.gather(*(measure(candidate) for candidate in ranked))
+    counts = {wallet_id: count for wallet_id, count, _alias, _rank in measured}
+    public_rows = [
+        {"alpha_rank": rank, "event_count": count, "wallet_alias": alias}
+        for _wallet_id, count, alias, rank in measured
+    ]
+    evidence = {
+        "candidate_count": len(measured),
+        "lookback_ends_at": observed.isoformat(),
+        "lookback_seconds": int(lookback.total_seconds()),
+        "rows": public_rows,
+        "source": "polymarket:data-api-v2:trades",
+    }
+    evidence["digest"] = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return counts, evidence
 
 
 async def build_persistent_sources_from_aliases(
@@ -256,7 +354,7 @@ async def build_persistent_sources_from_aliases(
         sources.append(
             DataApiWalletPollSource(
                 REST_TRADES_CANDIDATE,
-                path="/trades",
+                path=DATA_API_V2_TRADES_PATH,
                 source_id=TRADES_SOURCE_ID,
                 aliases=aliases,
                 transport=transport,
@@ -266,7 +364,7 @@ async def build_persistent_sources_from_aliases(
         sources.append(
             DataApiWalletPollSource(
                 REST_ACTIVITY_CANDIDATE,
-                path="/activity",
+                path=DATA_API_V2_ACTIVITY_PATH,
                 source_id=ACTIVITY_SOURCE_ID,
                 aliases=aliases,
                 transport=transport,

@@ -9,6 +9,7 @@ import pytest
 from polysia.adapters.polymarket.request_scheduling import TradesSourceUnavailableError
 from polysia.adapters.polymarket.research_sources import (
     ACTIVITY_SOURCE_ID,
+    DATA_API_V2_TRADES_PATH,
     REST_ACTIVITY_CANDIDATE,
     USER_CHANNEL_CANDIDATE,
     DataApiWalletPollSource,
@@ -17,6 +18,7 @@ from polysia.adapters.polymarket.research_sources import (
     OfficialMarketStreamSource,
     TerminalMarketSnapshot,
     _normalize_wallet_row,
+    data_api_v2_rows,
     discover_clob_market_fee_schedules,
     discover_followed_markets,
     discover_public_follow_set,
@@ -33,6 +35,24 @@ from polysia.domain.research_evidence.models import (
 
 WALLET = "0x1111111111111111111111111111111111111111"
 OBSERVED = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+
+
+def _v2(rows: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "data": rows,
+        "pagination": {
+            "has_more": False,
+            "limit": len(rows),
+            "next_cursor": None,
+            "offset": 0,
+        },
+    }
+
+
+def test_v2_envelope_accepts_documented_null_miss_and_rejects_wrong_shape() -> None:
+    assert data_api_v2_rows({"data": None}) == []
+    with pytest.raises(TypeError, match="list of objects"):
+        data_api_v2_rows({"data": {"proxy_wallet": WALLET}})
 
 
 class _BoundedClock:
@@ -95,10 +115,11 @@ class WalletRoutingTransport:
         *,
         purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
     ) -> object:
-        del base_url, path, purpose
+        del base_url, purpose
+        assert path == "/v2/trades"
         wallet = str(params["user"])
         self.calls.append(wallet)
-        return self.payloads[wallet]
+        return _v2(self.payloads[wallet])  # type: ignore[arg-type]
 
 
 class SequencedTransport:
@@ -117,8 +138,8 @@ class SequencedTransport:
     ) -> object:
         del base_url, params, purpose
         self.calls.append(path)
-        if path == "/trades":
-            return next(self._trades)
+        if path == "/v2/trades":
+            return _v2(next(self._trades))  # type: ignore[arg-type]
         return self._markets[path]
 
 
@@ -201,6 +222,55 @@ async def test_wallet_poll_source_aliases_and_does_not_emit_addresses() -> None:
     assert WALLET not in events[0].leader_alias
     assert events[0].attribution_status is AttributionStatus.WALLET_ALIASED
     assert "user" not in events[0].provenance
+
+
+@pytest.mark.asyncio
+async def test_wallet_poll_source_accepts_v2_envelope_and_uses_v2_parameters() -> None:
+    transport = RoutingTransport(
+        {
+            DATA_API_V2_TRADES_PATH: _v2(
+                [
+                    {
+                        "proxy_wallet": WALLET,
+                        "side": "BUY",
+                        "price": "0.51",
+                        "size": "2",
+                        "timestamp": int(OBSERVED.timestamp()),
+                        "condition_id": "0x" + "a" * 64,
+                        "token_id": "token-1",
+                        "transaction_hash": "0x" + "b" * 64,
+                    }
+                ]
+            )
+        }
+    )
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=transport,
+        clock=_BoundedClock(),
+        monotonic_ns=lambda: 10,
+        sleep=_noop_sleep,
+        poll_interval_seconds=1,
+    )
+
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=5),
+        )
+    ]
+
+    assert events
+    assert events[0].outcome_reference == "token-1"
+    _, path, params = transport.calls[0]
+    assert path == DATA_API_V2_TRADES_PATH
+    assert params["taker_only"] is False
+    assert "takerOnly" not in params
+    assert "offset" not in params
 
 
 @pytest.mark.asyncio
@@ -605,12 +675,14 @@ def test_wallet_observation_identity_preserves_distinct_wallet_attribution() -> 
 @pytest.mark.asyncio
 async def test_public_discovery_and_unavailable_user_channel() -> None:
     transport = FakeTransport(
-        [
+        _v2(
+            [
             {
-                "proxyWallet": WALLET,
-                "asset": "token-1",
+                "proxy_wallet": WALLET,
+                "token_id": "token-1",
             }
-        ]
+            ]
+        )
     )
     aliases, tokens = await discover_public_follow_set(transport, wallet_limit=2)
     assert public_wallet_alias(WALLET) in aliases
@@ -625,12 +697,14 @@ async def test_followed_market_discovery_matches_wallet_source_lookback() -> Non
     condition = "0x" + "a" * 64
     transport = RoutingTransport(
         {
-            "/trades": [
-                {
-                    "asset": "token-1",
-                    "conditionId": condition,
-                }
-            ]
+            "/v2/trades": _v2(
+                [
+                    {
+                        "token_id": "token-1",
+                        "condition_id": condition,
+                    }
+                ]
+            )
         }
     )
 

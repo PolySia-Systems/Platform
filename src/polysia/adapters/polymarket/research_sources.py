@@ -50,17 +50,19 @@ TRADES_SOURCE_ID = "polymarket:data-api:trades"
 MARKET_STREAM_SOURCE_ID = "polymarket:clob:market-stream"
 TERMINAL_SETTLEMENT_SOURCE_ID = "polymarket:gamma:terminal-settlement"
 USER_CHANNEL_SOURCE_ID = "polymarket:clob:user-stream"
+DATA_API_V2_TRADES_PATH = "/v2/trades"
+DATA_API_V2_ACTIVITY_PATH = "/v2/activity"
 
 REST_ACTIVITY_CANDIDATE = SourceCandidate(
     candidate_id="rest_activity",
-    display_name="Data API /activity REST poll (current baseline)",
+    display_name="Data API v2 /activity REST poll (current baseline)",
     kind="wallet_event",
     wallet_attributable=True,
     status=SourceCandidateStatus.MEASURED,
 )
 REST_TRADES_CANDIDATE = SourceCandidate(
     candidate_id="rest_trades",
-    display_name="Data API /trades REST poll",
+    display_name="Data API v2 /trades REST poll",
     kind="wallet_event",
     wallet_attributable=True,
     status=SourceCandidateStatus.MEASURED,
@@ -133,6 +135,48 @@ def public_wallet_alias(wallet: str) -> str:
     return f"pub-{digest}"
 
 
+def data_api_v2_rows(payload: object) -> list[dict[str, Any]]:
+    """Validate a Data API v2 envelope and adapt its rows to v1 field names.
+
+    Downstream canonicalization remains unchanged while the public read boundary
+    follows the current cursor/envelope contract.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise TypeError("Data API v2 response is not an object")
+    data = payload.get("data")
+    if data is None:
+        return []
+    if not isinstance(data, list) or any(not isinstance(row, Mapping) for row in data):
+        raise TypeError("Data API v2 data is not a list of objects")
+    return [_canonical_data_api_v2_row(row) for row in data]
+
+
+def _wallet_rows(payload: object, *, path: str) -> list[dict[str, Any]]:
+    if path.startswith("/v2/"):
+        return data_api_v2_rows(payload)
+    if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
+        raise TypeError("wallet source response is not a list of objects")
+    return payload
+
+
+def _canonical_data_api_v2_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    adapted = dict(row)
+    aliases = {
+        "condition_id": "conditionId",
+        "event_slug": "eventSlug",
+        "outcome_index": "outcomeIndex",
+        "proxy_wallet": "proxyWallet",
+        "token_id": "asset",
+        "transaction_hash": "transactionHash",
+        "usdc_size": "usdcSize",
+    }
+    for current, legacy in aliases.items():
+        if current in row:
+            adapted[legacy] = row[current]
+    return adapted
+
+
 class DataApiWalletPollSource:
     """Poll one official public wallet-attributable REST surface."""
 
@@ -199,7 +243,7 @@ class DataApiWalletPollSource:
                 receive_ns = self._monotonic_ns()
                 purpose = (
                     LeaderReadPurpose.RECOVERY
-                    if self._recovery_required and self._path == "/trades"
+                    if self._recovery_required and self._path.endswith("/trades")
                     else LeaderReadPurpose.DISCOVERY
                 )
                 try:
@@ -209,10 +253,7 @@ class DataApiWalletPollSource:
                         self._params(wallet, start=window_start, end=window_end),
                         purpose=purpose,
                     )
-                    if not isinstance(payload, list) or any(
-                        not isinstance(row, dict) for row in payload
-                    ):
-                        raise TypeError("wallet source response is not a list of objects")
+                    rows = _wallet_rows(payload, path=self._path)
                 except (
                     PolymarketCopyTradingSourceError,
                     TradesSourceUnavailableError,
@@ -263,7 +304,6 @@ class DataApiWalletPollSource:
                 self._last_successful_request_at = observed
                 self._failure_class = None
                 self._retry_at = None
-                rows = payload
                 self._last_request_outcome = (
                     "recovered" if recovered else ("success_events" if rows else "success_empty")
                 )
@@ -314,16 +354,18 @@ class DataApiWalletPollSource:
         params: dict[str, str | int | bool] = {
             "user": wallet,
             "limit": self._page_limit,
-            "offset": 0,
             "start": int(start.timestamp()),
             "end": int(end.timestamp()),
         }
-        if self._path == "/activity":
+        is_v2 = self._path.startswith("/v2/")
+        if not is_v2:
+            params["offset"] = 0
+        if self._path.endswith("/activity"):
             params["type"] = "TRADE"
-            params["sortBy"] = "TIMESTAMP"
-            params["sortDirection"] = "ASC"
+            params["sort_by" if is_v2 else "sortBy"] = "TIMESTAMP"
+            params["sort_direction" if is_v2 else "sortDirection"] = "ASC"
         else:
-            params["takerOnly"] = False
+            params["taker_only" if is_v2 else "takerOnly"] = False
         return params
 
 
@@ -1045,18 +1087,15 @@ async def discover_public_follow_set(
 
     payload = await transport.get_json(
         DATA_API_BASE_URL,
-        "/trades",
-        {"limit": page_limit, "offset": 0, "takerOnly": False},
+        DATA_API_V2_TRADES_PATH,
+        {"limit": page_limit, "taker_only": False},
         purpose=LeaderReadPurpose.DISCOVERY,
     )
-    if not isinstance(payload, list):
-        return {}, ()
+    rows = data_api_v2_rows(payload)
     aliases: dict[str, str] = {}
     tokens: list[str] = []
     seen_tokens: set[str] = set()
-    for row in payload:
-        if not isinstance(row, dict):
-            continue
+    for row in rows:
         wallet = row.get("proxyWallet")
         token = row.get("asset")
         if isinstance(wallet, str) and _WALLET_PATTERN.fullmatch(wallet):
@@ -1122,22 +1161,17 @@ async def discover_followed_markets(
     for wallet in aliases.values():
         payload = await transport.get_json(
             DATA_API_BASE_URL,
-            "/trades",
+            DATA_API_V2_TRADES_PATH,
             {
                 "user": wallet,
                 "limit": page_limit,
-                "offset": 0,
                 "start": int(start.timestamp()),
                 "end": int(now.timestamp()),
-                "takerOnly": False,
+                "taker_only": False,
             },
             purpose=LeaderReadPurpose.DISCOVERY,
         )
-        if not isinstance(payload, list):
-            continue
-        for row in payload:
-            if not isinstance(row, dict):
-                continue
+        for row in data_api_v2_rows(payload):
             token = row.get("asset")
             condition = row.get("conditionId")
             if (

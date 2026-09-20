@@ -898,6 +898,7 @@ class ResearchExperimentRunner:
             image_sha=image_sha or parsed.image_sha,
             run_id=run_id or parsed.run_id,
             wallet_count=parsed.wallet_count,
+            selection_policy=parsed.selection_policy,
         )
         return resolve_run_plan(
             parsed,
@@ -1127,6 +1128,7 @@ def _discovery_selection(discovery: Mapping[str, object]) -> dict[str, object]:
         "wallet_ids",
         "wallet_limit",
         "selection_reasons",
+        "activity_preflight",
     ):
         value = discovery.get(key)
         if value is not None:

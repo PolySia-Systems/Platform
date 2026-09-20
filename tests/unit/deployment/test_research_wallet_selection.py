@@ -10,12 +10,14 @@ from polysia.adapters.polymarket.research_sources import public_wallet_alias
 from polysia.application.ports.continuous_shadow import ContinuousSelectionSnapshot
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.deployment.research_wallet_selection import (
+    POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1,
     POLYCOP_SHADOW_ALPHA_CONFIGURED_V1,
     POLYCOP_SHADOW_ALPHA_TOP3_V1,
     ResearchWalletSelectionError,
     load_current_polycop_snapshot,
     public_selection_payload,
     reconstruction_payload,
+    resolve_polycop_active_follow_set,
     resolve_polycop_follow_set,
     resolve_polycop_shadow_alpha_top3,
     verify_reconstruction,
@@ -131,6 +133,29 @@ def test_configured_count_keeps_stress_out_of_profitability_selection() -> None:
     assert selection.reasons[0].startswith("highest-ranked distinct SHADOW_ALPHA")
 
 
+def test_activity_aware_selection_prefers_recent_active_alpha_wallets() -> None:
+    selection = resolve_polycop_active_follow_set(
+        _alpha_snapshot(),
+        {"w1": 1, "w2": 12, "w3": 0, "w4": 25, "w-stress": 100},
+        now=NOW,
+    )
+
+    assert selection.policy_version == POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1
+    assert selection.wallet_ids == ("w4", "w2", "w1")
+    assert selection.selected_ranks == (4, 2, 1)
+    assert public_wallet_alias(WALLET_STRESS) not in selection.addresses_by_alias
+    assert selection.reasons[0] == "recent-active SHADOW_ALPHA event_count=25 alpha_rank=4"
+
+
+def test_activity_aware_selection_requires_three_active_alpha_wallets() -> None:
+    with pytest.raises(ResearchWalletSelectionError, match="recent-active"):
+        resolve_polycop_active_follow_set(
+            _alpha_snapshot(),
+            {"w1": 1, "w2": 12, "w3": 0, "w4": 0},
+            now=NOW,
+        )
+
+
 def test_missing_snapshot_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(ResearchWalletSelectionError, match="unavailable"):
         load_current_polycop_snapshot(tmp_path / "missing.sqlite3")
@@ -213,6 +238,67 @@ def test_runner_sources_do_not_fall_back_to_public_discovery(
     assert "0x1111111111111111111111111111111111111111" not in str(
         {key: value for key, value in discovery.items() if not str(key).startswith("_")}
     )
+
+
+def test_runner_activity_policy_freezes_recent_active_alpha_wallets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.cli_commands import research_evidence_cli
+    from polysia.deployment.research_run_contract import ACTIVE_SELECTION_POLICY
+
+    activity = {WALLET_1: 1, WALLET_2: 12, WALLET_3: 0, WALLET_4: 25}
+
+    class ActivityTransport:
+        async def get_json(
+            self,
+            _base_url: str,
+            path: str,
+            params: dict[str, str | int | bool],
+            **_kwargs: object,
+        ) -> object:
+            assert path == "/v2/trades"
+            count = activity.get(str(params["user"]), 0)
+            return {
+                "data": [{"proxy_wallet": params["user"]}] * count,
+                "pagination": {"has_more": False, "next_cursor": None},
+            }
+
+    async def fake_builder(aliases: dict[str, str], **_kwargs: object):
+        return (), {
+            "followed_aliases": sorted(aliases),
+            "market_tokens": [],
+            "required_source_ids": [],
+            "optional_source_ids": [],
+            "unavailable": [],
+        }
+
+    monkeypatch.setattr(research_evidence_cli, "UrllibJsonGetTransport", ActivityTransport)
+    monkeypatch.setattr(
+        research_evidence_cli,
+        "build_persistent_sources_from_aliases",
+        fake_builder,
+    )
+    monkeypatch.setattr(
+        "polysia.deployment.research_wallet_selection.load_current_polycop_snapshot",
+        lambda _database: _alpha_snapshot(),
+    )
+
+    sources, discovery = asyncio.run(
+        research_evidence_cli.build_persistent_runner_sources(
+            database=Path("unused.sqlite3"),
+            now=NOW,
+            selection_policy=ACTIVE_SELECTION_POLICY,
+        )
+    )
+
+    assert sources == ()
+    assert discovery["selection_policy"] == POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1
+    assert discovery["wallet_ids"] == ["w4", "w2", "w1"]
+    preflight = discovery["activity_preflight"]
+    assert isinstance(preflight, dict)
+    assert preflight["candidate_count"] == 4
+    assert preflight["source"] == "polymarket:data-api-v2:trades"
+    assert len(str(preflight["digest"])) == 64
 
 
 def test_public_benchmark_discovery_remains_available(

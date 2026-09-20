@@ -20,8 +20,8 @@ market WebSocket is never treated as a wallet identity source.
 
 | Candidate | Kind | Public? | Role |
 |---|---|---|---|
-| `rest_activity` | wallet event | yes | current REST `/activity` poll baseline |
-| `rest_trades` | wallet event | yes | second official REST `/trades` poll |
+| `rest_activity` | wallet event | yes | current REST v2 `/activity` poll baseline |
+| `rest_trades` | wallet event | yes | second official REST v2 `/trades` poll |
 | `clob_market_ws` | market state | yes | official CLOB market WebSocket |
 | `clob_user_ws` | wallet event | no | UNAVAILABLE; authenticated credentials are required and are not searched |
 
@@ -306,10 +306,24 @@ selection fails closed before collection. The run freezes
 ranking versions, selected pools, ranks, reasons, selection-policy version, and
 selection/reconstruction digests. Resume rebuilds sources from the permission-
 restricted `selection-reconstruction.json` even if Polycop later changes.
+An operator may explicitly select `polycop-shadow-alpha-active-top3-v1` for a
+new Canary or Main run. Before T0, it measures only recent public trade counts
+for at most the highest-ranked 50 distinct `SHADOW_ALPHA` candidates over the
+fixed preceding four-hour window, then freezes the three candidates with the
+highest counts (alpha rank and wallet id are deterministic tie-breakers). It
+does not use P&L or any observation after T0. Fewer than three active candidates,
+an unavailable v2 source, or an inconsistent snapshot fails closed. The
+sanitized activity evidence, window, source, and digest become part of the
+frozen run evidence. The legacy top-three policy remains unchanged for existing
+Specs and runs.
 Public-trade discovery remains only for explicit benchmark commands such as
 `research-collector` and `prospective-benchmark`. Compact logs and public
 reports keep hashed aliases; raw addresses stay in the restricted
 reconstruction file. Canary success does not start the main experiment.
+
+Prospective public wallet reads use the official Data API v2 trade/activity
+envelopes and snake-case request contract. Stable internal source ids and
+canonical event fields remain unchanged so existing evidence stays readable.
 
 It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and
