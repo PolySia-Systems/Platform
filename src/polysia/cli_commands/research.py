@@ -1046,5 +1046,7 @@ def _load_run_spec(path: Path | None) -> dict[str, object] | None:
         "image_sha": parsed.image_sha,
         "profile": parsed.profile,
         "run_id": parsed.run_id,
+        "selection_policy": parsed.selection_policy,
         "spec_version": parsed.spec_version,
+        "wallet_count": parsed.wallet_count,
     }

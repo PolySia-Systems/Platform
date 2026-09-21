@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from polysia.application.services.prospective_collector import ProspectiveCollector
 from polysia.cli import app
+from polysia.cli_commands.research import _load_run_spec
 from polysia.domain.research_evidence.models import (
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
@@ -22,6 +23,29 @@ from polysia.monitoring.real_data_shadow_run import RealDataShadowMetrics, RealD
 from polysia.storage.research_evidence import ResearchEvidenceStore
 
 runner = CliRunner()
+
+
+def test_run_spec_loader_preserves_wallet_selection_contract(tmp_path: Path) -> None:
+    spec = tmp_path / "run-spec.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "code_sha": "a" * 40,
+                "profile": "canary",
+                "run_id": "activity-aware",
+                "selection_policy": "polycop-shadow-alpha-active-top3-v1",
+                "spec_version": "research-run-spec-v1",
+                "wallet_count": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = _load_run_spec(spec)
+
+    assert loaded is not None
+    assert loaded["selection_policy"] == "polycop-shadow-alpha-active-top3-v1"
+    assert loaded["wallet_count"] == 3
 
 
 def _real_data_shadow_report() -> RealDataShadowRunReport:
