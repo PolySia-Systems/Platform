@@ -272,7 +272,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python scripts/dependency_locks.py lock-sync-validate --artifact "$RUNNER_TEMP/scheduled-locks"
-          BRANCH="codex/scheduled-lock-refresh-$(date -u +%Y%m%d)"
+          DAY="$(date -u +%Y%m%d)"
+          BRANCH="codex/scheduled-lock-refresh-${DAY}"
           python scripts/dependency_locks.py classify-from-locks \
             --actor "github-actions[bot]" \
             --head-branch "$BRANCH" \
@@ -280,14 +281,23 @@ jobs:
             --base-root . > "$RUNNER_TEMP/decision.json"
           ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['action'])")
           REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['reason'])")
-          cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt
-          cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
-          git add locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt
-          git commit -m "chore(deps): refresh transitive pip locks"
-          git push origin "$BRANCH"
+          git fetch origin "+refs/heads/codex/scheduled-lock-refresh-*:refs/remotes/origin/codex/scheduled-lock-refresh-*"
+          python scripts/dependency_locks.py collect-scheduled-branches --output "$RUNNER_TEMP/scheduled-candidates.json"
+          python scripts/dependency_locks.py plan-scheduled-publish \
+            --day "$DAY" \
+            --artifact "$RUNNER_TEMP/scheduled-locks" \
+            --candidates "$RUNNER_TEMP/scheduled-candidates.json" > "$RUNNER_TEMP/plan.json"
+          PLAN_ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['action'])")
+          PLAN_BRANCH=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['branch'])")
+          PLAN_SHA=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['sha'])")
+          PLAN_PR=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['pull_request'])")
+          DELETE_ON_FAIL=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['delete_on_failed_open'])")
+          PLAN_REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['reason'])")
+          echo "scheduled publication plan: $PLAN_ACTION $PLAN_BRANCH $PLAN_REASON"
+          if [ "$PLAN_ACTION" = "stop" ]; then
+            echo "$PLAN_REASON" >&2
+            exit 1
+          fi
           PR_BODY=$(printf '%s\n' \
             "## Summary" \
             "" \
@@ -296,8 +306,39 @@ jobs:
             "" \
             "## Test plan" \
             "- [ ] CI Gate green")
-          PR_URL=$(gh pr create --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY")
-          gh workflow run ci.yml --ref "$BRANCH"
+          if [ "$PLAN_ACTION" = "create_branch" ]; then
+            cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt
+            cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout -b "$PLAN_BRANCH"
+            git add locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt
+            git commit -m "chore(deps): refresh transitive pip locks"
+            CREATED_SHA="$(git rev-parse HEAD)"
+            git push origin "HEAD:refs/heads/$PLAN_BRANCH"
+            if ! PR_URL=$(gh pr create --head "$PLAN_BRANCH" --base main --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY"); then
+              PR_COUNT=$(gh pr list --head "$PLAN_BRANCH" --state all --json number --jq 'length')
+              REMOTE_SHA="$(git ls-remote origin "refs/heads/$PLAN_BRANCH" | cut -f1)"
+              if [ "$DELETE_ON_FAIL" = "true" ] && python scripts/dependency_locks.py scheduled-branch-delete-allowed --branch "$PLAN_BRANCH" --head "$REMOTE_SHA" --expected "$CREATED_SHA" --pull-request-count "$PR_COUNT" --delete-requested; then
+                git push origin --delete "$PLAN_BRANCH"
+                echo "removed orphan $PLAN_BRANCH at $CREATED_SHA after pull request creation failed" >&2
+              else
+                echo "left $PLAN_BRANCH in place because it has a pull request or its head is not the generated commit" >&2
+              fi
+              exit 1
+            fi
+            gh workflow run ci.yml --ref "$PLAN_BRANCH"
+          elif [ "$PLAN_ACTION" = "open_pull_request" ]; then
+            if ! PR_URL=$(gh pr create --head "$PLAN_BRANCH" --base main --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY"); then
+              echo "pull request creation failed for existing $PLAN_BRANCH at $PLAN_SHA; branch was not deleted" >&2
+              exit 1
+            fi
+            gh workflow run ci.yml --ref "$PLAN_BRANCH"
+          else
+            PR_URL=$(gh pr view "$PLAN_PR" --json url --jq .url)
+            echo "reusing scheduled pull request $PR_URL without creating another branch"
+            exit 0
+          fi
           if [ "$ACTION" = "auto_merge" ]; then
             gh pr edit "$PR_URL" --add-label "risk:auto-merge,deps:development"
             gh pr merge "$PR_URL" --auto --merge
