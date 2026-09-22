@@ -9,15 +9,16 @@ from pathlib import Path
 from typing import Any
 
 from polysia.bus.events import MarketDataEvent
-from polysia.config.settings import TradingMode
+from polysia.domain.market import MarketDetails
 from polysia.execution.intents import ApprovedOrderIntent
-from polysia.execution.order_state import OrderStatus, PaperOrder
+from polysia.execution.order_state import OrderStatus
 from polysia.execution.paper_broker import PaperBroker
+from polysia.execution.paper_context import paper_risk_context
 from polysia.orderbook.book import LocalOrderBook
 from polysia.orderbook.builder import BookBuilder
 from polysia.portfolio.pnl import calculate_portfolio_pnl
 from polysia.portfolio.positions import PositionLedger
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskEngine
 from polysia.risk.limits import RiskLimits
 from polysia.strategies.base import BaseStrategy, StrategyContext
 
@@ -113,8 +114,10 @@ class BacktestEngine:
         strategy: BaseStrategy,
         config: BacktestConfig | None = None,
         allow_crossed_books: bool = False,
+        market: MarketDetails | None = None,
     ) -> None:
         self._strategy = strategy
+        self._market = market
         self._config = config or BacktestConfig()
         self._builder = BookBuilder(allow_crossed=allow_crossed_books)
         self._ledger = PositionLedger(cash=self._config.initial_cash)
@@ -154,12 +157,10 @@ class BacktestEngine:
             for intent in intents:
                 decision = self._risk_engine.evaluate(
                     intent,
-                    RiskContext(
-                        trading_mode=TradingMode.PAPER,
-                        current_position=self._ledger.get(intent.token_id).size,
-                        current_market_position=self._ledger.get(intent.token_id).size,
-                        daily_pnl=self._ledger.realized_pnl,
-                        open_orders_count=_open_order_count(self._broker.orders.values()),
+                    paper_risk_context(
+                        ledger=self._ledger,
+                        token_id=intent.token_id,
+                        orders=self._broker.orders.values(),
                         market_data_age_ms=0,
                     ),
                 )
@@ -184,7 +185,11 @@ class BacktestEngine:
                     risk_reason=decision.reason,
                     approved_at=event.received_at,
                 )
-                paper_order = self._broker.submit_limit_order(approved, book)
+                paper_order = self._broker.submit_limit_order(
+                    approved,
+                    book,
+                    self._market,
+                )
                 orders.append(
                     BacktestOrderRecord(
                         event_index=event_index,
@@ -308,15 +313,6 @@ def _intent_to_dict(intent: Any) -> dict[str, object]:
         "strategy_id": intent.strategy_id,
         "token_id": intent.token_id,
     }
-
-
-def _open_order_count(orders: Iterable[PaperOrder]) -> int:
-    open_statuses = {
-        OrderStatus.ACCEPTED,
-        OrderStatus.NEW,
-        OrderStatus.PARTIALLY_FILLED,
-    }
-    return sum(1 for order in orders if order.status in open_statuses)
 
 
 def _mark_price(book: LocalOrderBook) -> Decimal | None:

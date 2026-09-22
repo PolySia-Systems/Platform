@@ -39,10 +39,7 @@ from polysia.backtesting.replay import (
 from polysia.bus.events import market_data_event_to_dict
 from polysia.bus.in_memory_bus import InMemoryEventBus
 from polysia.cli_commands import print_error_and_exit
-from polysia.config.settings import (
-    AppSettings,
-    TradingMode,
-)
+from polysia.config.settings import AppSettings
 from polysia.config.status import build_configuration_status
 from polysia.config.structured_logging import configure_logging
 from polysia.domain.market import (
@@ -51,13 +48,11 @@ from polysia.domain.market import (
 )
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.paper_broker import PaperBroker
+from polysia.execution.paper_context import paper_risk_context
 from polysia.orderbook.book import LocalOrderBook
 from polysia.portfolio.pnl import calculate_portfolio_pnl
 from polysia.portfolio.positions import PositionLedger
-from polysia.risk.checks import (
-    RiskContext,
-    RiskEngine,
-)
+from polysia.risk.checks import RiskEngine
 from polysia.risk.limits import RiskLimits
 from polysia.strategies.base import StrategyContext
 
@@ -454,10 +449,10 @@ async def _paper_trade(
     for intent in intents:
         decision = risk_engine.evaluate(
             intent,
-            RiskContext(
-                trading_mode=TradingMode.PAPER,
-                current_position=ledger.get(intent.token_id).size,
-                current_market_position=ledger.get(intent.token_id).size,
+            paper_risk_context(
+                ledger=ledger,
+                token_id=intent.token_id,
+                orders=broker.orders.values(),
                 market_data_age_ms=0,
                 edge=min_edge,
             ),

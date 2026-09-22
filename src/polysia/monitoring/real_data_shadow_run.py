@@ -17,17 +17,17 @@ from polysia.adapters.polymarket.public import (
 from polysia.adapters.polymarket.stream import MarketStream, MarketStreamConfig, MarketStreamError
 from polysia.bus.events import MarketDataEvent
 from polysia.bus.in_memory_bus import InMemoryEventBus
-from polysia.config.settings import AppSettings, TradingMode
+from polysia.config.settings import AppSettings
 from polysia.domain.market import MarketDetails, MarketSummary
 from polysia.execution.intents import ApprovedOrderIntent
-from polysia.execution.order_state import OrderStatus
 from polysia.execution.paper_broker import PaperBroker
+from polysia.execution.paper_context import paper_risk_context
 from polysia.orderbook.book import LocalOrderBook
 from polysia.orderbook.builder import BookBuilder
 from polysia.orderbook.validators import OrderBookValidationError
 from polysia.portfolio.pnl import calculate_portfolio_pnl
 from polysia.portfolio.positions import PositionLedger
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskEngine
 from polysia.strategies.base import BaseStrategy, StrategyContext
 from polysia.strategies.passive_market_maker import PassiveMarketMakerStrategy
 from polysia.strategies.stale_price import StalePriceStrategy
@@ -364,16 +364,12 @@ async def _simulate_events(
         intents = await strategy.on_market_event(event, context)
         strategy_intents += len(intents)
         for intent in intents:
-            position = ledger.get(intent.token_id)
             decision = risk_engine.evaluate(
                 intent,
-                RiskContext(
-                    trading_mode=TradingMode.PAPER,
-                    live_trading_enabled=False,
-                    current_position=position.size,
-                    current_market_position=position.size,
-                    daily_pnl=ledger.realized_pnl,
-                    open_orders_count=_open_paper_order_count(broker),
+                paper_risk_context(
+                    ledger=ledger,
+                    token_id=intent.token_id,
+                    orders=broker.orders.values(),
                     market_data_age_ms=_event_age_ms(event, clock()),
                 ),
             )
@@ -387,6 +383,7 @@ async def _simulate_events(
                         approved_at=clock(),
                     ),
                     book,
+                    market,
                 )
             else:
                 risk_denied += 1
@@ -518,14 +515,6 @@ def _is_active_btc_5m_candidate(market: MarketSummary) -> bool:
     if end_date.tzinfo is None:
         end_date = end_date.replace(tzinfo=UTC)
     return end_date > datetime.now(UTC) + timedelta(seconds=45)
-
-
-def _open_paper_order_count(broker: PaperBroker) -> int:
-    return sum(
-        1
-        for order in broker.orders.values()
-        if order.status in {OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}
-    )
 
 
 def _event_age_ms(event: MarketDataEvent, now: datetime) -> int:

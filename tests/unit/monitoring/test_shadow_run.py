@@ -43,13 +43,13 @@ async def test_shadow_run_mocked_stream_is_healthy_and_paper_only() -> None:
         clock=fixed_clock,
     )
 
-    assert report.classification == "SHADOW_HEALTHY"
+    assert report.classification == "SHADOW_DEGRADED"
     assert report.metrics.stream_health == "mocked_public_stream"
     assert report.metrics.event_count == 4
     assert report.metrics.orderbook_updates == 4
     assert report.metrics.strategy_intent_count > 0
     assert report.metrics.risk_approval_count > 0
-    assert report.metrics.paper_fill_count > 0
+    assert report.metrics.paper_fill_count == 0
     assert report.metrics.live_broker_used is False
     assert len(report.samples) == 4
 
@@ -117,7 +117,7 @@ async def test_shadow_run_reports_and_timeseries_are_sanitized() -> None:
     html_report = render_shadow_run_html(report)
     timeseries = render_shadow_run_timeseries_jsonl(report)
 
-    assert json.loads(json_report)["classification"] == "SHADOW_HEALTHY"
+    assert json.loads(json_report)["classification"] == "SHADOW_DEGRADED"
     assert markdown_report.startswith("# PolySia — Polymarket Adapter — Shadow Run")
     assert html_report.startswith("<!doctype html>")
     assert len(timeseries.splitlines()) == 2

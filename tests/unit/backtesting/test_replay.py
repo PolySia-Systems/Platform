@@ -13,6 +13,7 @@ from polysia.backtesting.replay import (
     load_market_data_events_jsonl,
     market_data_event_from_dict,
 )
+from polysia.domain.market import MarketDetails, MarketFeeSchedule
 from polysia.strategies.passive_market_maker import (
     PassiveMarketMakerConfig,
     PassiveMarketMakerStrategy,
@@ -88,6 +89,7 @@ async def test_backtest_engine_replays_buy_fill_and_pnl() -> None:
     engine = BacktestEngine(
         strategy=strategy,
         config=BacktestConfig(initial_cash=Decimal("100"), max_order_notional=Decimal("10")),
+        market=MarketDetails(id="paper-test", fee_schedule=MarketFeeSchedule(enabled=False)),
     )
 
     result = await engine.run([event])

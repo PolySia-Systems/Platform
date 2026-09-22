@@ -6,12 +6,19 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
+from polysia.domain.copytrading.continuous_shadow import (
+    ZERO,
+    calculate_taker_fee_amount,
+    consume_book_levels,
+)
+from polysia.domain.market import MarketDetails
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.order_state import OrderStatus, PaperFill, PaperOrder
 from polysia.orderbook.book import LocalOrderBook
 from polysia.portfolio.positions import PositionLedger
 
 Clock = Callable[[], datetime]
+PAPER_FILL_ECONOMICS_VERSION = "paper-limit-walk-v1"
 
 
 def utc_now() -> datetime:
@@ -20,7 +27,7 @@ def utc_now() -> datetime:
 
 @dataclass(slots=True)
 class PaperBroker:
-    """Conservative paper broker that never calls live trading APIs."""
+    """Paper limit broker. It never calls live trading APIs or discovers fees."""
 
     ledger: PositionLedger
     clock: Clock = utc_now
@@ -32,6 +39,7 @@ class PaperBroker:
         self,
         approved_intent: ApprovedOrderIntent,
         orderbook: LocalOrderBook,
+        market: MarketDetails | None = None,
     ) -> PaperOrder:
         created_at = self.clock()
         order = PaperOrder(
@@ -48,62 +56,103 @@ class PaperBroker:
             return self._reject(order, "orderbook token_id does not match approved intent")
 
         if approved_intent.side == "BUY":
-            self._handle_buy(order, orderbook)
+            self._handle_buy(order, orderbook, market)
         else:
-            self._handle_sell(order, orderbook)
+            self._handle_sell(order, orderbook, market)
 
         self._audit("order_state", order=order)
         return order
 
-    def _handle_buy(self, order: PaperOrder, orderbook: LocalOrderBook) -> None:
-        best_ask = orderbook.best_ask
-        if best_ask is None or order.approved_intent.price < best_ask:
+    def _handle_buy(
+        self,
+        order: PaperOrder,
+        orderbook: LocalOrderBook,
+        market: MarketDetails | None,
+    ) -> None:
+        levels = _crossing_levels(
+            orderbook,
+            side="BUY",
+            limit_price=order.approved_intent.price,
+        )
+        if not levels:
             order.status = OrderStatus.ACCEPTED
             order.reason = "resting buy order; price below best ask"
             return
-
-        fill_size = min(order.remaining_size, orderbook.ask_depth)
-        if fill_size <= Decimal("0"):
+        consumed, notional = consume_book_levels(
+            levels,
+            requested_size=order.remaining_size,
+            already_consumed={},
+        )
+        if not consumed or notional <= ZERO:
             order.status = OrderStatus.ACCEPTED
             order.reason = "resting buy order; no ask depth"
             return
-
-        required_cash = best_ask * fill_size
-        if required_cash > self.ledger.cash:
+        fee = _verified_level_fee(market, consumed)
+        if fee is None:
+            self._reject(order, "market_specific_fee_provenance_unknown")
+            return
+        if notional + fee > self.ledger.cash:
             self._reject(order, "insufficient paper cash")
             return
+        self._fill(order, consumed=consumed, notional=notional, fee=fee)
 
-        self._fill(order, price=best_ask, size=fill_size)
-
-    def _handle_sell(self, order: PaperOrder, orderbook: LocalOrderBook) -> None:
-        best_bid = orderbook.best_bid
-        if best_bid is None or order.approved_intent.price > best_bid:
+    def _handle_sell(
+        self,
+        order: PaperOrder,
+        orderbook: LocalOrderBook,
+        market: MarketDetails | None,
+    ) -> None:
+        levels = _crossing_levels(
+            orderbook,
+            side="SELL",
+            limit_price=order.approved_intent.price,
+        )
+        if not levels:
             order.status = OrderStatus.ACCEPTED
             order.reason = "resting sell order; price above best bid"
             return
-
-        fill_size = min(order.remaining_size, orderbook.bid_depth)
-        if fill_size <= Decimal("0"):
+        consumed, notional = consume_book_levels(
+            levels,
+            requested_size=order.remaining_size,
+            already_consumed={},
+        )
+        if not consumed or notional <= ZERO:
             order.status = OrderStatus.ACCEPTED
             order.reason = "resting sell order; no bid depth"
             return
-
+        filled = sum((size for _, size in consumed), ZERO)
         position = self.ledger.get(order.approved_intent.token_id)
-        if fill_size > position.size:
+        if filled > position.size:
             self._reject(order, "insufficient paper position")
             return
+        fee = _verified_level_fee(market, consumed)
+        if fee is None:
+            self._reject(order, "market_specific_fee_provenance_unknown")
+            return
+        if fee > notional:
+            self._reject(order, "verified fee exceeds sell notional")
+            return
+        self._fill(order, consumed=consumed, notional=notional, fee=fee)
 
-        self._fill(order, price=best_bid, size=fill_size)
-
-    def _fill(self, order: PaperOrder, *, price: Decimal, size: Decimal) -> None:
+    def _fill(
+        self,
+        order: PaperOrder,
+        *,
+        consumed: tuple[tuple[Decimal, Decimal], ...],
+        notional: Decimal,
+        fee: Decimal,
+    ) -> None:
+        filled = sum((size for _, size in consumed), ZERO)
+        price = notional / filled
         fill = PaperFill(
             fill_id=f"fill-{uuid4().hex}",
             order_id=order.order_id,
             token_id=order.approved_intent.token_id,
             side=order.approved_intent.side,
             price=price,
-            size=size,
+            size=filled,
             created_at=self.clock(),
+            fee=fee,
         )
         order.add_fill(fill)
         self.fills.append(fill)
@@ -119,6 +168,7 @@ class PaperBroker:
 
     def _audit(self, event: str, *, order: PaperOrder, fill: PaperFill | None = None) -> None:
         record: dict[str, object] = {
+            "economics": PAPER_FILL_ECONOMICS_VERSION,
             "event": event,
             "order_id": order.order_id,
             "status": order.status.value,
@@ -132,7 +182,57 @@ class PaperBroker:
             "timestamp": self.clock().isoformat(),
         }
         if fill is not None:
+            record["fill_fee"] = str(fill.fee)
             record["fill_id"] = fill.fill_id
             record["fill_price"] = str(fill.price)
             record["fill_size"] = str(fill.size)
         self.audit_log.append(record)
+
+
+def _crossing_levels(
+    book: LocalOrderBook,
+    *,
+    side: str,
+    limit_price: Decimal,
+) -> tuple[tuple[Decimal, Decimal], ...]:
+    if side == "BUY":
+        return tuple(
+            (level.price, level.size) for level in book.asks if level.price <= limit_price
+        )
+    return tuple((level.price, level.size) for level in book.bids if level.price >= limit_price)
+
+
+def _verified_level_fee(
+    market: MarketDetails | None,
+    consumed: tuple[tuple[Decimal, Decimal], ...],
+) -> Decimal | None:
+    """Sum per-level taker fees when provenance matches verified shadow rules."""
+
+    if market is None or market.fee_schedule is None:
+        return None
+    schedule = market.fee_schedule
+    if not schedule.enabled:
+        return ZERO
+    if (
+        schedule.rate is None
+        or schedule.exponent is None
+        or schedule.rate < ZERO
+        or schedule.exponent < ZERO
+        or schedule.taker_only is not True
+    ):
+        return None
+    total = ZERO
+    for price, size in consumed:
+        amount = calculate_taker_fee_amount(
+            price=price,
+            size=size,
+            rate=schedule.rate,
+            exponent=schedule.exponent,
+        )
+        if amount is None:
+            return None
+        total += amount
+    return total
+
+
+__all__ = ["PAPER_FILL_ECONOMICS_VERSION", "PaperBroker"]

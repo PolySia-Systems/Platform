@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -316,20 +317,12 @@ def walk_order_book(
         (max(ZERO, level.size - already_consumed.get(level.price, ZERO)) for level in levels),
         ZERO,
     )
-    remaining = requested_size
-    notional = ZERO
-    consumed: list[tuple[Decimal, Decimal]] = []
-    for level in levels:
-        if remaining <= ZERO:
-            break
-        level_available = max(ZERO, level.size - already_consumed.get(level.price, ZERO))
-        take = min(remaining, level_available)
-        if take <= ZERO:
-            continue
-        consumed.append((level.price, take))
-        notional += level.price * take
-        remaining -= take
-    filled = requested_size - remaining
+    consumed, notional = consume_book_levels(
+        tuple((level.price, level.size) for level in levels),
+        requested_size=requested_size,
+        already_consumed=already_consumed,
+    )
+    filled = sum((size for _, size in consumed), ZERO)
     follower_price = None if filled == ZERO else notional / filled
     top_price = None if not levels else levels[0].price
     midpoint = book.midpoint
@@ -357,6 +350,32 @@ def walk_order_book(
         depth_impact=depth_impact,
         consumed=tuple(consumed),
     )
+
+
+def consume_book_levels(
+    levels: Sequence[tuple[Decimal, Decimal]],
+    *,
+    requested_size: Decimal,
+    already_consumed: Mapping[Decimal, Decimal],
+) -> tuple[tuple[tuple[Decimal, Decimal], ...], Decimal]:
+    """Consume size from best-first levels. Return consumed pairs and gross notional."""
+
+    if requested_size <= ZERO:
+        raise ValueError("requested_size must be positive")
+    remaining = requested_size
+    notional = ZERO
+    consumed: list[tuple[Decimal, Decimal]] = []
+    for price, size in levels:
+        if remaining <= ZERO:
+            break
+        level_available = max(ZERO, size - already_consumed.get(price, ZERO))
+        take = min(remaining, level_available)
+        if take <= ZERO:
+            continue
+        consumed.append((price, take))
+        notional += price * take
+        remaining -= take
+    return tuple(consumed), notional
 
 
 def quote_is_fresh(
@@ -446,6 +465,7 @@ __all__ = [
     "adverse_price_drift_exceeded",
     "calculate_verified_taker_fee",
     "calculate_taker_fee_amount",
+    "consume_book_levels",
     "follower_accepts_pool",
     "mark_freshness",
     "quote_is_fresh",

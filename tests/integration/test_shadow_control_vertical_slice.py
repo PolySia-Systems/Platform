@@ -50,7 +50,7 @@ def test_cli_shadow_control_pause_resume_vertical_slice(tmp_path: Path) -> None:
     assert resume_apply["observation"]["observed_state"] == "RUNNING"
 
     running = _shadow_run(database_path, tmp_path / "running")
-    assert running["classification"] == "SHADOW_HEALTHY"
+    assert running["classification"] == "SHADOW_DEGRADED"
     running_report = json.loads(
         (tmp_path / "running" / "shadow_run.json").read_text(encoding="utf-8")
     )
@@ -58,7 +58,7 @@ def test_cli_shadow_control_pause_resume_vertical_slice(tmp_path: Path) -> None:
     assert running_report["control_revision"] == 2
     assert running_report["metrics"]["strategy_intent_count"] > 0
     assert running_report["metrics"]["risk_approval_count"] > 0
-    assert running_report["metrics"]["paper_fill_count"] > 0
+    assert running_report["metrics"]["paper_fill_count"] == 0
     assert running_report["metrics"]["live_broker_used"] is False
 
     status = runner.invoke(

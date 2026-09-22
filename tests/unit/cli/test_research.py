@@ -287,7 +287,7 @@ def test_shadow_run_command_writes_sanitized_reports(monkeypatch, tmp_path: Path
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
-    assert payload["classification"] == "SHADOW_HEALTHY"
+    assert payload["classification"] == "SHADOW_DEGRADED"
     assert (output_dir / "shadow_run.json").is_file()
     assert (output_dir / "shadow_run.md").is_file()
     assert (output_dir / "shadow_run.html").is_file()
