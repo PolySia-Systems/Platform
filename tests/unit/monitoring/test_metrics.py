@@ -124,6 +124,7 @@ def test_portfolio_metrics_summarize_pnl() -> None:
                 "side": "BUY",
                 "price": Decimal("0.40"),
                 "size": Decimal("5"),
+                "fee": Decimal("0"),
             },
         )()
     )
