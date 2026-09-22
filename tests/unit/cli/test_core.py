@@ -136,9 +136,10 @@ def test_paper_trade_command_runs_local_simulation() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
-    assert payload["orders"][0]["order"]["status"] == "FILLED"
+    assert payload["orders"][0]["order"]["status"] == "REJECTED"
+    assert payload["orders"][0]["order"]["reason"] == "market_specific_fee_provenance_unknown"
     assert payload["orders"][0]["order"]["side"] == "BUY"
-    assert payload["positions"]["token-1"]["size"] == "1"
+    assert payload["positions"] == {}
 
 
 def test_paper_trade_command_supports_passive_market_maker() -> None:
@@ -215,8 +216,10 @@ def test_backtest_jsonl_command_replays_local_file(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["events_processed"] == 1
-    assert payload["fills_created"] == 1
-    assert payload["positions"]["token-1"]["size"] == "1"
+    assert payload["fills_created"] == 0
+    assert payload["orders"][0]["order"]["status"] == "REJECTED"
+    assert payload["orders"][0]["order"]["reason"] == "market_specific_fee_provenance_unknown"
+    assert payload["positions"] == {}
 
 
 def test_backtest_jsonl_command_supports_passive_market_maker(tmp_path: Path) -> None:

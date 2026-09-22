@@ -101,7 +101,7 @@ async def test_real_data_shadow_run_exercises_public_paper_workflow(
     assert report.metrics.strategy_intent_count > 0
     assert report.metrics.risk_approval_count > 0
     assert report.metrics.paper_order_count > 0
-    assert report.metrics.paper_fill_count > 0
+    assert report.metrics.paper_fill_count == 0
     assert report.metrics.live_broker_used is False
     assert risk_engine.calls > 0
 

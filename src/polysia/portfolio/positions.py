@@ -23,6 +23,7 @@ class PositionLedger:
     cash: Decimal
     positions: dict[str, Position] = field(default_factory=dict)
     realized_pnl: Decimal = ZERO
+    fees: Decimal = ZERO
 
     def get(self, token_id: str) -> Position:
         return self.positions.get(token_id, Position(token_id=token_id))
@@ -40,7 +41,8 @@ class PositionLedger:
         if new_size <= ZERO:
             raise ValueError("buy fill produced non-positive position size")
         new_avg_price = ((current.avg_price * current.size) + (fill.price * fill.size)) / new_size
-        self.cash -= fill.price * fill.size
+        self.fees += fill.fee
+        self.cash -= fill.price * fill.size + fill.fee
         updated = Position(token_id=fill.token_id, size=new_size, avg_price=new_avg_price)
         self.positions[fill.token_id] = updated
         return updated
@@ -49,7 +51,8 @@ class PositionLedger:
         current = self.get(fill.token_id)
         if fill.size > current.size:
             raise ValueError("sell fill exceeds current position")
-        self.cash += fill.price * fill.size
+        self.fees += fill.fee
+        self.cash += fill.price * fill.size - fill.fee
         self.realized_pnl += (fill.price - current.avg_price) * fill.size
         remaining_size = current.size - fill.size
         updated = Position(

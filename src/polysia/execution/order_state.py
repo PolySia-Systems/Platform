@@ -72,10 +72,12 @@ class PaperFill:
     price: Decimal
     size: Decimal
     created_at: datetime
+    fee: Decimal = Decimal("0")
 
     def to_dict(self) -> dict[str, object]:
         return {
             "created_at": _datetime_to_text(self.created_at),
+            "fee": str(self.fee),
             "fill_id": self.fill_id,
             "order_id": self.order_id,
             "price": str(self.price),

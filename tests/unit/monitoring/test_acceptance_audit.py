@@ -43,12 +43,12 @@ async def test_acceptance_audit_runs_mocked_shadow_without_live() -> None:
         clock=fixed_clock,
     )
 
-    assert report.final_result == "READY_FOR_TINY_LIVE"
+    assert report.final_result == "READY_FOR_SHADOW"
     assert report.metrics.total_events_received == 3
     assert report.metrics.orderbook_update_count == 3
     assert report.metrics.strategy_intent_count > 0
     assert report.metrics.risk_approved_count > 0
-    assert report.metrics.paper_fill_count > 0
+    assert report.metrics.paper_fill_count == 0
     assert _check_by_name(report.shadow_checks, "no-live-broker").status == "pass"
 
 

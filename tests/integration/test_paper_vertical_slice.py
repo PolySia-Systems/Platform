@@ -7,6 +7,7 @@ import pytest
 
 from polysia.bus.events import MarketDataEvent
 from polysia.config.settings import TradingMode
+from polysia.domain.market import MarketDetails, MarketFeeSchedule
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.order_state import OrderStatus
 from polysia.execution.paper_broker import PaperBroker
@@ -71,7 +72,11 @@ async def test_market_event_to_reconciliation_paper_vertical_slice() -> None:
         approved_at=NOW,
     )
     ledger = PositionLedger(cash=Decimal("10"))
-    order = PaperBroker(ledger=ledger, clock=lambda: NOW).submit_limit_order(approved, book)
+    order = PaperBroker(ledger=ledger, clock=lambda: NOW).submit_limit_order(
+        approved,
+        book,
+        MarketDetails(id="paper-test", fee_schedule=MarketFeeSchedule(enabled=False)),
+    )
 
     assert order.status == OrderStatus.FILLED
     assert ledger.get("instrument").size == Decimal("2")

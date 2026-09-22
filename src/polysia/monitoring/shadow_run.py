@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from polysia.bus.events import MarketDataEvent
-from polysia.config.settings import AppSettings, TradingMode
+from polysia.config.settings import AppSettings
 from polysia.control.models import (
     DesiredStateRevision,
     ObservedOperationalState,
@@ -22,10 +22,11 @@ from polysia.control.models import (
 from polysia.control.shadow_runtime import STALE_PRICE_SHADOW_TARGET, ShadowIntentBoundary
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.paper_broker import PaperBroker
+from polysia.execution.paper_context import paper_risk_context
 from polysia.orderbook.book import LocalOrderBook
 from polysia.portfolio.pnl import calculate_portfolio_pnl
 from polysia.portfolio.positions import PositionLedger
-from polysia.risk.checks import RiskContext, RiskEngine
+from polysia.risk.checks import RiskEngine
 from polysia.strategies.base import BaseStrategy, StrategyContext
 from polysia.strategies.passive_market_maker import PassiveMarketMakerStrategy
 from polysia.strategies.stale_price import StalePriceStrategy
@@ -530,16 +531,12 @@ async def _run_mocked_public_shadow(
         orders_before = len(broker.orders)
         fills_before = len(broker.fills)
         for intent in intents:
-            position = ledger.get(intent.token_id)
             decision = risk_engine.evaluate(
                 intent,
-                RiskContext(
-                    trading_mode=TradingMode.PAPER,
-                    live_trading_enabled=False,
-                    current_position=position.size,
-                    current_market_position=position.size,
-                    daily_pnl=ledger.realized_pnl,
-                    open_orders_count=len(broker.orders),
+                paper_risk_context(
+                    ledger=ledger,
+                    token_id=intent.token_id,
+                    orders=broker.orders.values(),
                     market_data_age_ms=0,
                 ),
             )
