@@ -60,10 +60,14 @@ CURRENT capabilities:
   are not profitability evidence and do not authorize trading.
 - Stage 4B Continuous Shadow is a bounded experimental portfolio and ledger
   on its own store. It is not the TARGET OMS, allocator, or execution router.
-- Research Replay can reconstruct the frozen Helsinki-final backup and compare
+- Research Replay can reconstruct the frozen local historical backup and compare
   Current Control with Target Exposure v1 without Live, Risk, or Execution
-  authority. See
+  authority. The Helsinki host that produced that backup is retired. See
   [Target Exposure Replay](../03-requirements/shadow-target-exposure-replay.md).
+- [ADR-0018](../04-architecture/adrs/ADR-0018-developer-context-packets.md),
+  [ADR-0019](../04-architecture/adrs/ADR-0019-research-run-contracts.md), and
+  [ADR-0020](../04-architecture/adrs/ADR-0020-wallet-flexibility-reanalysis.md)
+  are CURRENT repository capabilities. Their decisions stay in those ADRs.
 - A provider-neutral prospective collector and public source benchmark persist
   canonical research evidence in an isolated SQLite store. Schema v2 preserves
   distinct wallet observations of a shared source trade; replay isolates each
@@ -93,32 +97,35 @@ FUTURE unless an approved document proves otherwise.
 
 The first persistent prospective-collector observation proved service and WAL
 durability but also exposed required Wallet-source recovery and evidence-
-retention gaps. The durable correction is implemented in current code; host
-deployment and a fresh bounded experiment must be verified by runtime query.
-Earlier dated deployment, restart, backup, restore, storage, and replay evidence
-remains in [Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
+retention gaps. The durable correction is implemented in current code. A fresh
+bounded experiment requires a separately authorized runtime query. This
+document does not record a replacement host. Earlier dated deployment, restart,
+backup, restore, storage, and replay evidence remains in
+[Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
 
-**Next task:** deploy the exact green current SHA to Helsinki in DATA_ONLY,
-run the frozen 20-minute economic-data canary, and only after `PASS` finish one
-bounded four-hour bundle and deterministic economic evaluation. Preserve
-`UNKNOWN`; do not access Nuremberg without separate authorization.
+**Next task:** do not deploy to Helsinki or query it. The host is retired. No
+current research or Live runtime is authorized by this document. Operational
+SHA, health, and restart counts are available only through a separately
+authorized runtime query in the
+[server deployment runbook](../10-operations/server-deployment.md#current-operational-truth).
+Do not access Nuremberg without separate authorization.
 
 Blockers and limitations:
 
 - Encrypted off-host backups and external alert delivery are unfinished.
 - Branch-protection policy remains governance debt.
-- Risk/Execution and Stage 4B accounting hardening are merged in Git. They
-  were not a live Helsinki dependency after host retirement.
+- Risk/Execution and Stage 4B accounting hardening are merged in Git. That is
+  a repository fact, not a claim about a live host.
 - One bounded profitable LIVE-004 round trip is statistically meaningless.
 - Modeled Stage 4B P&L remains negative on Current Control and is not a
   promotion decision. Target Exposure v1 is a PARTIAL research Replay with
   UNKNOWN marks, not Alpha and not Live readiness.
-- No production Live host is currently authorized. Helsinki DATA_ONLY monitor
-  plus the Compose `research` collector are the authorized research runtime.
+- No production Live host is currently authorized. Helsinki is retired and is
+  not a research runtime.
 
-Next milestones: keep the immutable local backup as the historical source of
-truth; run the persistent collector on Helsinki DATA_ONLY; observe public
-collection without claiming Alpha; handle branch protection through a
+Next milestones: keep the immutable local backup as historical evidence;
+repository research contracts remain CURRENT in Git; any fresh collection
+requires a separately authorized runtime. Handle branch protection through a
 separate governance task. Do not access Nuremberg.
 
 ## Audited runtime snapshot
