@@ -12,7 +12,8 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ from scripts.dependency_policy import (  # noqa: E402
     EXPECTED_REPOSITORY,
     PYPROJECT,
     RUNTIME_LOCK,
+    SCHEDULED_BRANCH_PREFIX,
     DependencyChange,
     RiskDecision,
     changed_lock_packages,
@@ -540,6 +542,205 @@ def validate_lock_artifact(directory: Path) -> None:
             raise RuntimeError("unexpected build backend in lock-sync artifact")
 
 
+@dataclass(frozen=True)
+class ScheduledRefreshBranch:
+    name: str
+    sha: str
+    runtime_text: str
+    dev_text: str
+    pull_request_numbers: tuple[str, ...] = ()
+
+
+def plan_scheduled_lock_publication(
+    *,
+    day: str,
+    runtime_text: str,
+    dev_text: str,
+    branches: Sequence[ScheduledRefreshBranch],
+) -> dict[str, str | bool]:
+    """Choose one idempotent publication action for a validated lock refresh."""
+    if len(day) != 8 or not day.isdigit():
+        raise ValueError("scheduled refresh day must be YYYYMMDD")
+    preferred = f"{SCHEDULED_BRANCH_PREFIX}{day}"
+    named = [branch for branch in branches if branch.name == preferred]
+    if len(named) > 1:
+        raise ValueError(f"duplicate scheduled branch state for {preferred}")
+    preferred_branch = named[0] if named else None
+    preferred_matches = preferred_branch is not None and _same_lock_text(
+        preferred_branch,
+        runtime_text,
+        dev_text,
+    )
+    if preferred_branch is not None and not preferred_matches:
+        return _publication_plan(
+            action="stop",
+            branch=preferred,
+            sha=preferred_branch.sha,
+            pull_request="",
+            delete_on_failed_open=False,
+            reason="existing scheduled branch does not match the validated locks",
+        )
+    identical = [
+        branch
+        for branch in branches
+        if branch.name.startswith(SCHEDULED_BRANCH_PREFIX)
+        and _same_lock_text(branch, runtime_text, dev_text)
+    ]
+    open_requests = [
+        branch
+        for branch in branches
+        if branch.name.startswith(SCHEDULED_BRANCH_PREFIX) and branch.pull_request_numbers
+    ]
+    if open_requests:
+        identical_open = [branch for branch in open_requests if branch in identical]
+        chosen = identical_open[0] if identical_open else open_requests[0]
+        return _publication_plan(
+            action="reuse",
+            branch=chosen.name,
+            sha=chosen.sha,
+            pull_request=chosen.pull_request_numbers[0],
+            delete_on_failed_open=False,
+            reason="an open scheduled refresh pull request already exists",
+        )
+    if identical:
+        chosen = preferred_branch if preferred_branch in identical else identical[0]
+        return _publication_plan(
+            action="open_pull_request",
+            branch=chosen.name,
+            sha=chosen.sha,
+            pull_request="",
+            delete_on_failed_open=False,
+            reason="validated locks already exist on a branch with no pull request",
+        )
+    return _publication_plan(
+        action="create_branch",
+        branch=preferred,
+        sha="",
+        pull_request="",
+        delete_on_failed_open=True,
+        reason="create the daily scheduled lock branch",
+    )
+
+
+def scheduled_branch_delete_allowed(
+    *,
+    branch: str,
+    head_sha: str,
+    expected_sha: str,
+    pull_request_count: int,
+    delete_requested: bool,
+) -> bool:
+    """Return whether a failed publication may delete this exact orphan branch."""
+    return bool(
+        delete_requested
+        and pull_request_count == 0
+        and bool(expected_sha)
+        and head_sha == expected_sha
+        and branch.startswith(SCHEDULED_BRANCH_PREFIX)
+    )
+
+
+def _same_lock_text(branch: ScheduledRefreshBranch, runtime_text: str, dev_text: str) -> bool:
+    return branch.runtime_text == runtime_text and branch.dev_text == dev_text
+
+
+def _publication_plan(
+    *,
+    action: str,
+    branch: str,
+    sha: str,
+    pull_request: str,
+    delete_on_failed_open: bool,
+    reason: str,
+) -> dict[str, str | bool]:
+    return {
+        "action": action,
+        "branch": branch,
+        "sha": sha,
+        "pull_request": pull_request,
+        "delete_on_failed_open": delete_on_failed_open,
+        "reason": reason,
+    }
+
+
+def collect_scheduled_refresh_branches() -> list[dict[str, object]]:
+    """Read fetched scheduled-refresh branches and their open pull requests."""
+    listing = subprocess.check_output(
+        (
+            "git",
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname)",
+            "refs/remotes/origin/codex/scheduled-lock-refresh-*",
+        ),
+        text=True,
+        encoding="utf-8",
+    )
+    rows: list[dict[str, object]] = []
+    for line in listing.splitlines():
+        if not line.strip():
+            continue
+        ref, sha = line.split()
+        name = ref.removeprefix("origin/")
+        runtime = subprocess.check_output(
+            ("git", "show", f"{sha}:locks/requirements-runtime-py314.txt"),
+            text=True,
+            encoding="utf-8",
+        )
+        development = subprocess.check_output(
+            ("git", "show", f"{sha}:locks/requirements-dev-py314.txt"),
+            text=True,
+            encoding="utf-8",
+        )
+        listed = subprocess.check_output(
+            (
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                name,
+                "--state",
+                "open",
+                "--json",
+                "number",
+            ),
+            text=True,
+            encoding="utf-8",
+        )
+        pull_requests = json.loads(listed)
+        rows.append(
+            {
+                "name": name,
+                "sha": sha,
+                "runtime_text": runtime,
+                "dev_text": development,
+                "pull_request_numbers": [str(item["number"]) for item in pull_requests],
+            }
+        )
+    return rows
+
+
+def _scheduled_branches(payload: object) -> tuple[ScheduledRefreshBranch, ...]:
+    if not isinstance(payload, list):
+        raise ValueError("scheduled branch candidates must be a list")
+    branches: list[ScheduledRefreshBranch] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            raise ValueError("scheduled branch candidate must be an object")
+        numbers = item.get("pull_request_numbers") or ()
+        if not isinstance(numbers, list | tuple):
+            raise ValueError("pull request numbers must be a list")
+        branches.append(
+            ScheduledRefreshBranch(
+                name=str(item["name"]),
+                sha=str(item["sha"]),
+                runtime_text=str(item["runtime_text"]),
+                dev_text=str(item["dev_text"]),
+                pull_request_numbers=tuple(str(number) for number in numbers),
+            )
+        )
+    return tuple(branches)
+
+
 def commit_files_to_branch(
     *,
     repository: str,
@@ -788,6 +989,18 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     from_locks.add_argument("--artifact", required=True)
     from_locks.add_argument("--base-root", default=".")
     from_locks.add_argument("--security-update", action="store_true")
+    collect = sub.add_parser("collect-scheduled-branches")
+    collect.add_argument("--output", required=True)
+    publish = sub.add_parser("plan-scheduled-publish")
+    publish.add_argument("--day", required=True)
+    publish.add_argument("--artifact", required=True)
+    publish.add_argument("--candidates", required=True)
+    delete = sub.add_parser("scheduled-branch-delete-allowed")
+    delete.add_argument("--branch", required=True)
+    delete.add_argument("--head", required=True)
+    delete.add_argument("--expected", required=True)
+    delete.add_argument("--pull-request-count", required=True, type=int)
+    delete.add_argument("--delete-requested", action="store_true")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -906,6 +1119,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                 security_update=arguments.security_update,
             )
             return _emit_decision(decision)
+        if arguments.command == "collect-scheduled-branches":
+            Path(arguments.output).write_text(
+                json.dumps(collect_scheduled_refresh_branches()),
+                encoding="utf-8",
+            )
+            return 0
+        if arguments.command == "plan-scheduled-publish":
+            artifact = Path(arguments.artifact)
+            validate_lock_artifact(artifact)
+            candidates = json.loads(Path(arguments.candidates).read_text(encoding="utf-8"))
+            plan = plan_scheduled_lock_publication(
+                day=arguments.day,
+                runtime_text=_read_text(_artifact_file(artifact, RUNTIME_LOCK)),
+                dev_text=_read_text(_artifact_file(artifact, DEV_LOCK)),
+                branches=_scheduled_branches(candidates),
+            )
+            print(json.dumps(plan, indent=2, sort_keys=True))
+            return 0
+        if arguments.command == "scheduled-branch-delete-allowed":
+            allowed = scheduled_branch_delete_allowed(
+                branch=arguments.branch,
+                head_sha=arguments.head,
+                expected_sha=arguments.expected,
+                pull_request_count=arguments.pull_request_count,
+                delete_requested=arguments.delete_requested,
+            )
+            print("true" if allowed else "false")
+            return 0 if allowed else 2
     except subprocess.CalledProcessError as exc:
         sys.stderr.write(exc.stderr or exc.stdout or str(exc))
         return 1

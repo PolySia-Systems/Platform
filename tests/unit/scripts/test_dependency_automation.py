@@ -3,13 +3,16 @@ from __future__ import annotations
 from yaml import safe_load
 
 from scripts.dependency_locks import (
+    ScheduledRefreshBranch,
     approved_sdk_versions,
     assert_sdk_pins_synchronized,
     check_pip_locks,
     classify_lock_sync_intent,
     declared_sdk_version,
     generate_pip_locks,
+    plan_scheduled_lock_publication,
     repository_root,
+    scheduled_branch_delete_allowed,
 )
 from scripts.dependency_policy import (
     DEV_LOCK,
@@ -257,6 +260,103 @@ def test_dependency_automation_workflow_registers_push_and_dispatch() -> None:
     )
     loaded = safe_load(text)
     assert loaded["name"] == "Dependency automation"
+
+
+def test_scheduled_publication_reuses_an_existing_validated_branch_or_pr() -> None:
+    locks = ScheduledRefreshBranch(
+        name="codex/scheduled-lock-refresh-20260921",
+        sha="2e85a28324d58a981b5130f701558dde7c6c2b5c",
+        runtime_text="runtime-lock",
+        dev_text="dev-lock",
+    )
+    created = plan_scheduled_lock_publication(
+        day="20260922",
+        runtime_text="runtime-lock",
+        dev_text="dev-lock",
+        branches=(),
+    )
+    assert created["action"] == "create_branch"
+    assert created["branch"] == "codex/scheduled-lock-refresh-20260922"
+    assert created["delete_on_failed_open"] is True
+
+    existing = plan_scheduled_lock_publication(
+        day="20260922",
+        runtime_text="runtime-lock",
+        dev_text="dev-lock",
+        branches=(locks,),
+    )
+    assert existing["action"] == "open_pull_request"
+    assert existing["branch"] == locks.name
+    assert existing["sha"] == locks.sha
+    assert existing["delete_on_failed_open"] is False
+
+    published = ScheduledRefreshBranch(
+        name=locks.name,
+        sha=locks.sha,
+        runtime_text=locks.runtime_text,
+        dev_text=locks.dev_text,
+        pull_request_numbers=("164",),
+    )
+    reused = plan_scheduled_lock_publication(
+        day="20260922",
+        runtime_text="runtime-lock",
+        dev_text="dev-lock",
+        branches=(published,),
+    )
+    assert reused["action"] == "reuse"
+    assert reused["pull_request"] == "164"
+    assert reused["delete_on_failed_open"] is False
+
+
+def test_scheduled_publication_does_not_replace_a_different_branch_head() -> None:
+    different = ScheduledRefreshBranch(
+        name="codex/scheduled-lock-refresh-20260922",
+        sha="abc123",
+        runtime_text="other-runtime",
+        dev_text="other-dev",
+    )
+    plan = plan_scheduled_lock_publication(
+        day="20260922",
+        runtime_text="runtime-lock",
+        dev_text="dev-lock",
+        branches=(different,),
+    )
+    assert plan["action"] == "stop"
+    assert plan["sha"] == "abc123"
+    assert plan["delete_on_failed_open"] is False
+
+
+def test_failed_publication_deletes_only_the_exact_new_orphan() -> None:
+    branch = "codex/scheduled-lock-refresh-20260922"
+    created = "a" * 40
+    assert scheduled_branch_delete_allowed(
+        branch=branch,
+        head_sha=created,
+        expected_sha=created,
+        pull_request_count=0,
+        delete_requested=True,
+    )
+    assert not scheduled_branch_delete_allowed(
+        branch=branch,
+        head_sha=created,
+        expected_sha=created,
+        pull_request_count=1,
+        delete_requested=True,
+    )
+    assert not scheduled_branch_delete_allowed(
+        branch=branch,
+        head_sha="b" * 40,
+        expected_sha=created,
+        pull_request_count=0,
+        delete_requested=True,
+    )
+    assert not scheduled_branch_delete_allowed(
+        branch=branch,
+        head_sha=created,
+        expected_sha=created,
+        pull_request_count=0,
+        delete_requested=False,
+    )
 
 
 def test_version_policy_helpers() -> None:
