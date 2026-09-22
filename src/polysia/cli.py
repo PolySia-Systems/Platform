@@ -8,7 +8,10 @@ from polysia.cli_commands import core, developer, live, operations, research, wa
 from polysia.control.cli import control_app
 
 app = typer.Typer(
-    help="PolySia — Polymarket-first trading platform.",
+    help=(
+        "PolySia — risk-controlled trading and prediction-market platform. "
+        "Polymarket is the first venue adapter, not the platform identity."
+    ),
     no_args_is_help=True,
 )
 system_app = typer.Typer(help="Inspect local system and operator state.", no_args_is_help=True)

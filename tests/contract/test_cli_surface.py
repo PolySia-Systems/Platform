@@ -164,6 +164,10 @@ def test_root_help_hides_compatibility_aliases() -> None:
     result = runner.invoke(cli.app, ["--help"])
 
     assert result.exit_code == 0
+    help_text = " ".join(result.stdout.split())
+    assert "risk-controlled trading and prediction-market platform" in help_text
+    assert "Polymarket is the first venue adapter, not the platform identity" in help_text
+    assert "Polymarket-first" not in help_text
     for namespace in EXPECTED_NAMESPACES:
         assert namespace in result.stdout
     for legacy_name in EXPECTED_LEGACY_ALIASES:
