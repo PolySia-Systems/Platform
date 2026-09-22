@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from polysia.domain.copytrading.continuous_shadow import calculate_taker_fee_amount
-from polysia.domain.market import MarketDetails, MarketFeeSchedule
+from polysia.domain.market import MarketDetails, MarketFeeSchedule, MarketOutcomeSummary
 from polysia.execution.intents import ApprovedOrderIntent, OrderIntent
 from polysia.execution.order_state import OrderStatus
 from polysia.execution.paper_broker import PAPER_FILL_ECONOMICS_VERSION, PaperBroker
@@ -229,3 +229,104 @@ def test_paper_broker_sums_per_level_fees_and_keeps_gross_vwap() -> None:
     assert context.current_position == Decimal("2")
     assert context.current_market_position == Decimal("2")
     assert context.open_orders_count == 0
+
+
+def _binary_market(*, closed: bool, yes: str, no: str) -> MarketDetails:
+    return MarketDetails(
+        id="paper-test",
+        closed=closed,
+        outcomes=(
+            MarketOutcomeSummary(label="Yes", token_id="token-1", price=Decimal(yes)),
+            MarketOutcomeSummary(label="No", token_id="token-2", price=Decimal(no)),
+        ),
+    )
+
+
+def test_paper_broker_leaves_an_open_market_unresolved() -> None:
+    ledger = PositionLedger(cash=Decimal("100"))
+    ledger.positions["token-1"] = Position(
+        token_id="token-1",
+        size=Decimal("2"),
+        avg_price=Decimal("0.40"),
+    )
+    broker = PaperBroker(ledger=ledger)
+
+    result = broker.settle(MarketDetails(id="paper-test", closed=False))
+
+    assert result.status == "UNRESOLVED"
+    assert ledger.cash == Decimal("100")
+    assert ledger.get("token-1").size == Decimal("2")
+    assert broker.audit_log == []
+
+
+def test_paper_broker_backlog_keeps_position_and_cancels_resting_order() -> None:
+    ledger = PositionLedger(cash=Decimal("100"))
+    ledger.positions["token-1"] = Position(
+        token_id="token-1",
+        size=Decimal("2"),
+        avg_price=Decimal("0.40"),
+    )
+    broker = PaperBroker(ledger=ledger)
+    resting = broker.submit_limit_order(make_approved_intent(price="0.10", size="1"), make_book())
+    assert resting.status == OrderStatus.ACCEPTED
+
+    result = broker.settle(_binary_market(closed=True, yes="0.90", no="0.10"))
+
+    assert result.status == "BACKLOG"
+    assert result.cancelled_order_ids == (resting.order_id,)
+    assert resting.status == OrderStatus.CANCELLED
+    assert ledger.cash == Decimal("100")
+    assert ledger.realized_pnl == Decimal("0")
+    assert ledger.get("token-1").size == Decimal("2")
+    assert broker.audit_log[-1]["economics"] == "paper-settlement-v1"
+
+
+def test_paper_broker_settles_verified_tokens_and_ignores_others() -> None:
+    ledger = PositionLedger(cash=Decimal("100"), fees=Decimal("0.05"))
+    ledger.positions["token-1"] = Position(
+        token_id="token-1",
+        size=Decimal("4"),
+        avg_price=Decimal("0.40"),
+    )
+    ledger.positions["token-other"] = Position(
+        token_id="token-other",
+        size=Decimal("3"),
+        avg_price=Decimal("0.20"),
+    )
+    broker = PaperBroker(ledger=ledger)
+    resting = broker.submit_limit_order(make_approved_intent(price="0.10", size="1"), make_book())
+
+    result = broker.settle(_binary_market(closed=True, yes="1", no="0"))
+    second = broker.settle(_binary_market(closed=True, yes="1", no="0"))
+
+    assert result.status == "APPLIED"
+    assert result.settled_tokens == ("token-1",)
+    assert result.cash_delta == Decimal("4")
+    assert ledger.cash == Decimal("104")
+    assert ledger.realized_pnl == Decimal("2.40")
+    assert ledger.fees == Decimal("0.05")
+    assert ledger.get("token-1").size == Decimal("0")
+    assert ledger.get("token-other").size == Decimal("3")
+    assert resting.status == OrderStatus.CANCELLED
+    assert second.status == "APPLIED"
+    assert second.cash_delta == Decimal("0")
+    assert ledger.cash == Decimal("104")
+    assert broker.audit_log[-1]["economics"] == "paper-settlement-v1"
+    assert sum(1 for row in broker.audit_log if row["event"] == "settlement") == 1
+
+
+def test_paper_broker_rejects_every_new_order_on_a_closed_execution_market() -> None:
+    ledger = PositionLedger(cash=Decimal("100"))
+    broker = PaperBroker(ledger=ledger)
+    market = MarketDetails(
+        id="paper-test",
+        closed=True,
+        fee_schedule=MarketFeeSchedule(enabled=False),
+    )
+
+    order = broker.submit_limit_order(make_approved_intent(), make_book(), market)
+
+    assert order.status == OrderStatus.REJECTED
+    assert order.reason == "market_closed"
+    assert ledger.cash == Decimal("100")
+    assert ledger.positions == {}

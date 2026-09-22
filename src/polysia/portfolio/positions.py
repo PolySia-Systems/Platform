@@ -6,6 +6,7 @@ from decimal import Decimal
 from polysia.execution.order_state import PaperFill
 
 ZERO = Decimal("0")
+ONE = Decimal("1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,23 @@ class PositionLedger:
 
     def get(self, token_id: str) -> Position:
         return self.positions.get(token_id, Position(token_id=token_id))
+
+    def settle_resolution(self, token_id: str, price: Decimal) -> Decimal | None:
+        """Close one open position at a verified 0 or 1 price.
+
+        Fees already charged on fills stay unchanged. A missing position is a no-op.
+        """
+
+        if price not in {ZERO, ONE}:
+            raise ValueError("settlement price must be 0 or 1")
+        current = self.positions.get(token_id)
+        if current is None or current.size <= ZERO:
+            return None
+        realized = (price - current.avg_price) * current.size
+        self.cash += price * current.size
+        self.realized_pnl += realized
+        self.positions.pop(token_id, None)
+        return realized
 
     def apply_fill(self, fill: PaperFill) -> Position:
         if fill.side == "BUY":

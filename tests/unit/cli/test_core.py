@@ -220,6 +220,7 @@ def test_backtest_jsonl_command_replays_local_file(tmp_path: Path) -> None:
     assert payload["orders"][0]["order"]["status"] == "REJECTED"
     assert payload["orders"][0]["order"]["reason"] == "market_specific_fee_provenance_unknown"
     assert payload["positions"] == {}
+    assert payload["settlement_status"] == "UNRESOLVED"
 
 
 def test_backtest_jsonl_command_supports_passive_market_maker(tmp_path: Path) -> None:

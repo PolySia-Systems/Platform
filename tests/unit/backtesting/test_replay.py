@@ -13,7 +13,7 @@ from polysia.backtesting.replay import (
     load_market_data_events_jsonl,
     market_data_event_from_dict,
 )
-from polysia.domain.market import MarketDetails, MarketFeeSchedule
+from polysia.domain.market import MarketDetails, MarketFeeSchedule, MarketOutcomeSummary
 from polysia.strategies.passive_market_maker import (
     PassiveMarketMakerConfig,
     PassiveMarketMakerStrategy,
@@ -104,6 +104,7 @@ async def test_backtest_engine_replays_buy_fill_and_pnl() -> None:
     assert payload["positions"] == {"token-1": {"avg_price": "0.50", "size": "1"}}
     assert payload["portfolio"]["total_equity"] == "99.95"
     assert payload["orders"][0]["order"]["status"] == "FILLED"
+    assert payload["settlement_status"] == "UNRESOLVED"
 
 
 @pytest.mark.asyncio
@@ -153,3 +154,68 @@ async def test_backtest_engine_runs_passive_market_maker_without_live_calls() ->
     assert payload["fills_created"] == 0
     assert payload["orders"][0]["order"]["status"] == "ACCEPTED"
     assert payload["positions"] == {}
+    assert payload["settlement_status"] == "UNRESOLVED"
+
+
+def _terminal_market(market_id: str) -> MarketDetails:
+    return MarketDetails(
+        id=market_id,
+        closed=True,
+        outcomes=(
+            MarketOutcomeSummary(label="Yes", token_id="token-1", price=Decimal("1")),
+            MarketOutcomeSummary(label="No", token_id="token-2", price=Decimal("0")),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_backtest_settles_only_a_matching_terminal_market_after_fills() -> None:
+    event = market_data_event_from_dict(book_event())
+    strategy = StalePriceStrategy(
+        config=StalePriceStrategyConfig(
+            min_edge=Decimal("0.01"),
+            order_size=Decimal("1"),
+        )
+    )
+    execution = MarketDetails(id="paper-test", fee_schedule=MarketFeeSchedule(enabled=False))
+    engine = BacktestEngine(
+        strategy=strategy,
+        config=BacktestConfig(initial_cash=Decimal("100"), max_order_notional=Decimal("10")),
+        market=execution,
+        terminal_market=_terminal_market("paper-test"),
+    )
+
+    result = await engine.run([event])
+    payload = result.to_dict()
+
+    assert payload["fills_created"] == 1
+    assert payload["orders"][0]["order"]["status"] == "FILLED"
+    assert payload["settlement_status"] == "APPLIED"
+    assert payload["positions"] == {}
+    assert payload["final_cash"] == "100.50"
+    assert payload["realized_pnl"] == "0.50"
+
+
+@pytest.mark.asyncio
+async def test_backtest_ignores_a_terminal_market_with_a_different_id() -> None:
+    event = market_data_event_from_dict(book_event())
+    strategy = StalePriceStrategy(
+        config=StalePriceStrategyConfig(
+            min_edge=Decimal("0.01"),
+            order_size=Decimal("1"),
+        )
+    )
+    engine = BacktestEngine(
+        strategy=strategy,
+        config=BacktestConfig(initial_cash=Decimal("100"), max_order_notional=Decimal("10")),
+        market=MarketDetails(id="paper-test", fee_schedule=MarketFeeSchedule(enabled=False)),
+        terminal_market=_terminal_market("other-market"),
+    )
+
+    result = await engine.run([event])
+    payload = result.to_dict()
+
+    assert payload["settlement_status"] == "UNRESOLVED"
+    assert payload["fills_created"] == 1
+    assert payload["final_cash"] == "99.50"
+    assert payload["positions"] == {"token-1": {"avg_price": "0.50", "size": "1"}}

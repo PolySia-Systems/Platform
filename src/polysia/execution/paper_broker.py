@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import uuid4
 
 from polysia.domain.copytrading.continuous_shadow import (
@@ -12,6 +13,7 @@ from polysia.domain.copytrading.continuous_shadow import (
     consume_book_levels,
 )
 from polysia.domain.market import MarketDetails
+from polysia.domain.market.settlement import verified_settlement_prices
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.order_state import OrderStatus, PaperFill, PaperOrder
 from polysia.orderbook.book import LocalOrderBook
@@ -19,10 +21,24 @@ from polysia.portfolio.positions import PositionLedger
 
 Clock = Callable[[], datetime]
 PAPER_FILL_ECONOMICS_VERSION = "paper-limit-walk-v1"
+PAPER_SETTLEMENT_ECONOMICS_VERSION = "paper-settlement-v1"
+PaperSettlementStatus = Literal["UNRESOLVED", "BACKLOG", "APPLIED"]
+_RESTING = {OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class PaperSettlement:
+    """Result of one terminal settlement attempt. Missing evidence changes nothing."""
+
+    status: PaperSettlementStatus
+    cash_delta: Decimal = ZERO
+    realized_delta: Decimal = ZERO
+    settled_tokens: tuple[str, ...] = ()
+    cancelled_order_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -52,6 +68,9 @@ class PaperBroker:
         self.orders[order.order_id] = order
         self._audit("order_new", order=order)
 
+        if market is not None and market.closed is True:
+            return self._reject(order, "market_closed")
+
         if orderbook.token_id != approved_intent.token_id:
             return self._reject(order, "orderbook token_id does not match approved intent")
 
@@ -62,6 +81,69 @@ class PaperBroker:
 
         self._audit("order_state", order=order)
         return order
+
+    def settle(self, market: MarketDetails | None) -> PaperSettlement:
+        """Apply terminal 0/1 evidence. The execution market is not read here."""
+
+        if market is None or market.closed is not True:
+            return PaperSettlement(status="UNRESOLVED")
+        prices = verified_settlement_prices(market)
+        if prices is None:
+            cancelled = self._cancel_resting(
+                {
+                    outcome.token_id
+                    for outcome in market.outcomes
+                    if outcome.token_id is not None
+                }
+            )
+            result = PaperSettlement(status="BACKLOG", cancelled_order_ids=tuple(cancelled))
+            if cancelled:
+                self._audit_settlement(result, market_id=market.id)
+            return result
+        cash_before = self.ledger.cash
+        realized_before = self.ledger.realized_pnl
+        settled = [
+            token_id
+            for token_id, price in prices.items()
+            if self.ledger.settle_resolution(token_id, price) is not None
+        ]
+        cancelled = self._cancel_resting(set(prices))
+        result = PaperSettlement(
+            status="APPLIED",
+            cash_delta=self.ledger.cash - cash_before,
+            realized_delta=self.ledger.realized_pnl - realized_before,
+            settled_tokens=tuple(settled),
+            cancelled_order_ids=tuple(cancelled),
+        )
+        if settled or cancelled:
+            self._audit_settlement(result, market_id=market.id)
+        return result
+
+    def _cancel_resting(self, token_ids: set[str]) -> tuple[str, ...]:
+        cancelled: list[str] = []
+        for order in self.orders.values():
+            if order.status not in _RESTING or order.approved_intent.token_id not in token_ids:
+                continue
+            order.status = OrderStatus.CANCELLED
+            order.reason = "terminal market closed"
+            order.updated_at = self.clock()
+            cancelled.append(order.order_id)
+        return tuple(cancelled)
+
+    def _audit_settlement(self, result: PaperSettlement, *, market_id: str) -> None:
+        self.audit_log.append(
+            {
+                "cancelled_order_ids": list(result.cancelled_order_ids),
+                "cash_delta": str(result.cash_delta),
+                "economics": PAPER_SETTLEMENT_ECONOMICS_VERSION,
+                "event": "settlement",
+                "market_id": market_id,
+                "realized_delta": str(result.realized_delta),
+                "settled_tokens": list(result.settled_tokens),
+                "status": result.status,
+                "timestamp": self.clock().isoformat(),
+            }
+        )
 
     def _handle_buy(
         self,
@@ -235,4 +317,9 @@ def _verified_level_fee(
     return total
 
 
-__all__ = ["PAPER_FILL_ECONOMICS_VERSION", "PaperBroker"]
+__all__ = [
+    "PAPER_FILL_ECONOMICS_VERSION",
+    "PAPER_SETTLEMENT_ECONOMICS_VERSION",
+    "PaperBroker",
+    "PaperSettlement",
+]

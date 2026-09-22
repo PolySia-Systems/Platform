@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from polysia.domain.copytrading.models import LeaderTradeAction
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
+from polysia.domain.market.settlement import verified_settlement_prices
 
 ZERO = Decimal("0")
 ONE = Decimal("1")
@@ -386,21 +387,6 @@ def quote_is_fresh(
 ) -> bool:
     age = evaluated_at - book.timestamp
     return timedelta(0) <= age <= timedelta(milliseconds=maximum_age_ms)
-
-
-def verified_settlement_prices(market: MarketDetails | None) -> dict[str, Decimal] | None:
-    """Accept final settlement only from an explicitly closed 0/1 outcome set."""
-
-    if market is None or market.closed is not True or len(market.outcomes) < 2:
-        return None
-    prices: dict[str, Decimal] = {}
-    for outcome in market.outcomes:
-        if outcome.token_id is None or outcome.price not in {ZERO, ONE}:
-            return None
-        prices[outcome.token_id] = outcome.price
-    if len(prices) != len(market.outcomes) or sum(prices.values(), ZERO) != ONE:
-        return None
-    return prices
 
 
 def follower_accepts_pool(kind: ContinuousPortfolioKind, pool_class: str) -> bool:

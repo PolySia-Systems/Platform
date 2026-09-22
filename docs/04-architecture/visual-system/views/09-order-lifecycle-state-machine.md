@@ -128,6 +128,13 @@ Intent and risk are lifecycle pre-states, not values of the current order enum.
 is owned by the paper broker. Venue response/checkpoint phases are persistent
 workflow evidence, not new canonical `OrderStatus` enum values.
 
+CURRENT paper settlement support is separate from that enum. After replay,
+Paper can void resting orders and close held inventory only when a distinct
+terminal `MarketDetails` is supplied and passes the existing closed 0/1 gate.
+Missing terminal evidence stays unresolved. The CLI does not supply that
+evidence. This is deterministic settlement support, not a completed lifecycle
+and not Live readiness.
+
 ## Review trigger
 
 The canonical order enum, venue acknowledgement model, cancellation semantics, expiry, or recovery behavior changes.

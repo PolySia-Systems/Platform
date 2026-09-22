@@ -12,7 +12,7 @@ from polysia.bus.events import MarketDataEvent
 from polysia.domain.market import MarketDetails
 from polysia.execution.intents import ApprovedOrderIntent
 from polysia.execution.order_state import OrderStatus
-from polysia.execution.paper_broker import PaperBroker
+from polysia.execution.paper_broker import PaperBroker, PaperSettlement
 from polysia.execution.paper_context import paper_risk_context
 from polysia.orderbook.book import LocalOrderBook
 from polysia.orderbook.builder import BookBuilder
@@ -76,6 +76,7 @@ class BacktestResult:
     last_books: dict[str, dict[str, object]]
     orders: tuple[BacktestOrderRecord, ...] = field(default_factory=tuple)
     audit_log: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    settlement_status: str = "UNRESOLVED"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -101,6 +102,7 @@ class BacktestResult:
             "realized_pnl": str(self.realized_pnl),
             "rejected_orders": self.rejected_orders,
             "risk_rejections": self.risk_rejections,
+            "settlement_status": self.settlement_status,
             "status": "ok",
         }
 
@@ -115,9 +117,11 @@ class BacktestEngine:
         config: BacktestConfig | None = None,
         allow_crossed_books: bool = False,
         market: MarketDetails | None = None,
+        terminal_market: MarketDetails | None = None,
     ) -> None:
         self._strategy = strategy
         self._market = market
+        self._terminal_market = terminal_market
         self._config = config or BacktestConfig()
         self._builder = BookBuilder(allow_crossed=allow_crossed_books)
         self._ledger = PositionLedger(cash=self._config.initial_cash)
@@ -208,6 +212,7 @@ class BacktestEngine:
             intents_generated=intents_generated,
             risk_rejections=risk_rejections,
             orders=tuple(orders),
+            settlement=self._settle_terminal(),
         )
 
     def _build_result(
@@ -217,6 +222,7 @@ class BacktestEngine:
         intents_generated: int,
         risk_rejections: int,
         orders: tuple[BacktestOrderRecord, ...],
+        settlement: PaperSettlement,
     ) -> BacktestResult:
         mark_prices: dict[str, Decimal] = {}
         for token_id, book in self._latest_books.items():
@@ -255,7 +261,15 @@ class BacktestEngine:
             },
             orders=orders,
             audit_log=tuple(self._broker.audit_log),
+            settlement_status=settlement.status,
         )
+
+    def _settle_terminal(self) -> PaperSettlement:
+        terminal = self._terminal_market
+        execution = self._market
+        if terminal is None or execution is None or terminal.id != execution.id:
+            return PaperSettlement(status="UNRESOLVED")
+        return self._broker.settle(terminal)
 
 
 def load_market_data_events_jsonl(
