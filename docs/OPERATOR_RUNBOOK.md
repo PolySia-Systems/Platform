@@ -1,7 +1,9 @@
 # PolySia — Polymarket Adapter — Operator Runbook
 
-This runbook defines the safe operating order for the local Polymarket trading
-system. Runtime-generated runbooks are available with:
+This runbook defines the safe operating order for the Polymarket adapter.
+PolySia is the risk-controlled trading and prediction-market platform;
+Polymarket is its first venue adapter, not the platform identity.
+Runtime-generated runbooks are available with:
 
 ```powershell
 python -m polysia.cli system runbook
