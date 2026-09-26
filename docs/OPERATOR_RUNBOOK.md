@@ -84,8 +84,13 @@ python -m polysia.cli research backtest --input .\events.jsonl --strategy stale-
 python -m polysia.cli research backtest --input .\events.jsonl --strategy passive-market-maker --min-edge 0.05
 ```
 
-Continue only when risk decisions, fills, positions, and PnL are explainable and
-reproducible.
+These examples check strategy, Risk, and Paper wiring. `paper-trade` is marked
+not economically ready, and backtests without recorded fee evidence reject
+fills with unknown fees. For economic interpretation, supply the
+[versioned recorded fee and terminal evidence](10-operations/paper-backtest-economics.md)
+with `research backtest --evidence EVIDENCE.json`. Continue only when risk
+decisions, fills, positions, fees, and P&L are explainable and reproducible;
+missing terminal evidence remains unresolved.
 
 ## Reporting
 
