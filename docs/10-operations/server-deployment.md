@@ -242,6 +242,13 @@ completed and frozen before T0; do not change that window or select wallets
 after observing run economics. If fewer than three candidates are active or the
 preflight source is unavailable, fix the source or wait for a new independent
 window rather than falling back silently to the static top three.
+The preflight requires complete cursor coverage for every measured candidate;
+`recent activity has insufficient coverage` blocks T0. During collection,
+`incomplete_window` source controls indicate that no partial page set was
+accepted. Confirmed empty reads require a complete terminal v2 page with an
+explicit empty `data` array; `success_filtered` means rows were read but none
+were eligible for the prospective interval. A budget or later-page failure
+needs a successful recovery walk before counting that window as covered.
 
 Finalize an active experiment before deploying collector code or configuration
 that would change its recorded SHA or configuration digest.

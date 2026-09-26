@@ -31,11 +31,12 @@ from polysia.adapters.polymarket.research_sources import (
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
     TerminalMarketSnapshot,
-    data_api_v2_rows,
     discover_clob_market_fee_schedules,
     discover_market_fee_schedules,
     discover_public_follow_set,
+    fetch_data_api_v2_window,
     public_wallet_alias,
+    unique_wallet_rows,
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.research_evidence import ResearchObservationSource
@@ -227,22 +228,39 @@ async def _measure_recent_alpha_activity(
     start = observed - lookback
 
     async def measure(candidate: ProtectedShadowCandidate) -> tuple[str, int, str, int]:
-        payload = await transport.get_json(
-            "https://data-api.polymarket.com",
-            DATA_API_V2_TRADES_PATH,
-            {
-                "user": candidate.address,
-                "limit": 1000,
-                "start": int(start.timestamp()),
-                "end": int(observed.timestamp()),
-                "taker_only": False,
-            },
-            purpose=LeaderReadPurpose.DISCOVERY,
-        )
-        rows = data_api_v2_rows(payload)
+        try:
+            rows = await fetch_data_api_v2_window(
+                transport,
+                DATA_API_V2_TRADES_PATH,
+                {
+                    "user": candidate.address,
+                    "limit": 1000,
+                    "start": int(start.timestamp()),
+                    "end": int(observed.timestamp()),
+                    "taker_only": False,
+                },
+                purpose=LeaderReadPurpose.DISCOVERY,
+            )
+        except (OSError, TimeoutError, TypeError, ValueError) as error:
+            raise ResearchWalletSelectionError(
+                "recent activity has insufficient coverage"
+            ) from error
+        for row in rows:
+            wallet = row.get("proxyWallet")
+            timestamp = row.get("timestamp")
+            if (
+                not isinstance(wallet, str)
+                or wallet.casefold() != candidate.address.casefold()
+                or isinstance(timestamp, bool)
+                or not isinstance(timestamp, int)
+                or not int(start.timestamp()) <= timestamp <= int(observed.timestamp())
+            ):
+                raise ResearchWalletSelectionError(
+                    "recent activity has insufficient coverage"
+                )
         return (
             candidate.wallet_id,
-            len(rows),
+            len(unique_wallet_rows(rows)),
             public_wallet_alias(candidate.address),
             int(candidate.alpha_rank or 0),
         )

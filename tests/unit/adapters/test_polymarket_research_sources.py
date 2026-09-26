@@ -3,17 +3,20 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from polysia.adapters.polymarket.request_scheduling import TradesSourceUnavailableError
 from polysia.adapters.polymarket.research_sources import (
     ACTIVITY_SOURCE_ID,
+    DATA_API_V2_ACTIVITY_PATH,
     DATA_API_V2_TRADES_PATH,
     REST_ACTIVITY_CANDIDATE,
     USER_CHANNEL_CANDIDATE,
     DataApiWalletPollSource,
     FollowedMarketDiscovery,
+    IncompleteWalletWindowError,
     MarketDiscoverySnapshot,
     OfficialMarketStreamSource,
     TerminalMarketSnapshot,
@@ -22,6 +25,7 @@ from polysia.adapters.polymarket.research_sources import (
     discover_clob_market_fee_schedules,
     discover_followed_markets,
     discover_public_follow_set,
+    fetch_data_api_v2_window,
     public_wallet_alias,
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
@@ -29,9 +33,12 @@ from polysia.domain.events import MarketDataEvent
 from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot, OrderBookLevel
 from polysia.domain.research_evidence.models import (
     AttributionStatus,
+    IntervalValidity,
     ObservationKind,
+    ResearchInterval,
     SourceCandidateStatus,
 )
+from polysia.storage.research_evidence import ResearchEvidenceStore
 
 WALLET = "0x1111111111111111111111111111111111111111"
 OBSERVED = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
@@ -49,8 +56,11 @@ def _v2(rows: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
-def test_v2_envelope_accepts_documented_null_miss_and_rejects_wrong_shape() -> None:
-    assert data_api_v2_rows({"data": None}) == []
+def test_v2_feed_requires_explicit_array_data() -> None:
+    for payload in ({}, {"data": None}):
+        with pytest.raises(TypeError, match="missing"):
+            data_api_v2_rows(payload)
+    assert data_api_v2_rows(_v2([])) == []
     with pytest.raises(TypeError, match="list of objects"):
         data_api_v2_rows({"data": {"proxy_wallet": WALLET}})
 
@@ -100,6 +110,126 @@ class RoutingTransport:
         del purpose
         self.calls.append((base_url, path, params))
         return self.payloads[path]
+
+
+class CursorTransport:
+    def __init__(self, pages: list[object]) -> None:
+        self.pages = iter(pages)
+        self.calls: list[dict[str, str | int | bool]] = []
+
+    async def get_json(
+        self,
+        base_url: str,
+        path: str,
+        params: dict[str, str | int | bool],
+        *,
+        purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+    ) -> object:
+        del base_url, path, purpose
+        self.calls.append(dict(params))
+        result = next(self.pages)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def _page(rows: list[dict[str, object]], cursor: str | None) -> dict[str, object]:
+    return {
+        "data": rows,
+        "pagination": {"has_more": cursor is not None, "next_cursor": cursor},
+    }
+
+
+def _trade(trade_id: str, timestamp: int = int(OBSERVED.timestamp())) -> dict[str, object]:
+    return {
+        "id": trade_id,
+        "proxy_wallet": WALLET,
+        "timestamp": timestamp,
+        "side": "BUY",
+        "price": "0.5",
+        "size": "1",
+        "condition_id": "0x" + "a" * 64,
+        "token_id": "token-1",
+        "transaction_hash": "0x" + trade_id * 64,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH])
+async def test_v2_window_walk_keeps_filters_and_page_two_timestamp_ties(
+    path: str,
+) -> None:
+    transport = CursorTransport(
+        [_page([_trade("a")], "next"), _page([_trade("b"), _trade("a")], None)]
+    )
+    params: dict[str, str | int | bool] = {
+        "user": WALLET,
+        "start": 1,
+        "end": int(OBSERVED.timestamp()),
+        "limit": 1,
+    }
+    if path == DATA_API_V2_ACTIVITY_PATH:
+        params.update({"type": "TRADE", "sort_by": "TIMESTAMP", "sort_direction": "ASC"})
+    rows = await fetch_data_api_v2_window(transport, path, params)
+    assert [row["id"] for row in rows] == ["a", "b", "a"]
+    assert transport.calls == [params, {**params, "cursor": "next"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pages", "expected"),
+    [
+        ([_page([_trade("a")], "next"), OSError("later page")], OSError),
+        ([_page([_trade("a")], "next"), {"data": None}], TypeError),
+        ([_page([_trade("a")], "next"), {"data": []}], TypeError),
+        (
+            [
+                _page([_trade("a")], "next"),
+                {"data": [], "pagination": {"has_more": False, "next_cursor": "wrong"}},
+            ],
+            TypeError,
+        ),
+        ([_page([_trade("a")], "next"), _page([], "next")], IncompleteWalletWindowError),
+        ([_page([_trade("a")], "next")], IncompleteWalletWindowError),
+    ],
+)
+async def test_v2_window_never_returns_partial_pages(
+    pages: list[object], expected: type[Exception]
+) -> None:
+    transport = CursorTransport(pages)
+    with pytest.raises(expected):
+        await fetch_data_api_v2_window(
+            transport,
+            DATA_API_V2_TRADES_PATH,
+            {"user": WALLET},
+            max_pages=1 if len(pages) == 1 else 20,
+        )
+
+
+@pytest.mark.asyncio
+async def test_v2_window_budget_and_confirmed_empty() -> None:
+    assert (
+        await fetch_data_api_v2_window(
+            CursorTransport([_page([], None)]), DATA_API_V2_TRADES_PATH, {"user": WALLET}
+        )
+        == []
+    )
+    with pytest.raises(IncompleteWalletWindowError, match="budget_exhausted"):
+        await fetch_data_api_v2_window(
+            CursorTransport([_page([], "more")]),
+            DATA_API_V2_TRADES_PATH,
+            {"user": WALLET},
+            max_requests=1,
+        )
+    ticks = iter((0.0, 0.0, 2.0))
+    with pytest.raises(IncompleteWalletWindowError, match="time_budget"):
+        await fetch_data_api_v2_window(
+            CursorTransport([_page([_trade("a")], None)]),
+            DATA_API_V2_TRADES_PATH,
+            {"user": WALLET},
+            max_elapsed_seconds=1.0,
+            monotonic=lambda: next(ticks),
+        )
 
 
 class WalletRoutingTransport:
@@ -274,6 +404,140 @@ async def test_wallet_poll_source_accepts_v2_envelope_and_uses_v2_parameters() -
 
 
 @pytest.mark.asyncio
+async def test_wallet_poll_emits_page_two_ties_once_in_timestamp_order() -> None:
+    clock = AdvancingClock()
+    transport = CursorTransport(
+        [
+            _page([_trade("late", int(OBSERVED.timestamp()) + 1)], "next"),
+            _page(
+                [
+                    _trade("early"),
+                    _trade("tie", int(OBSERVED.timestamp()) + 1),
+                    _trade("late", int(OBSERVED.timestamp()) + 1),
+                ],
+                None,
+            ),
+        ]
+    )
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=transport,
+        clock=clock,
+        sleep=clock.sleep,
+        poll_interval_seconds=1,
+    )
+    events = [
+        event async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
+    ]
+    assert [event.source_time for event in events] == [
+        OBSERVED,
+        OBSERVED + timedelta(seconds=1),
+        OBSERVED + timedelta(seconds=1),
+    ]
+    assert len({event.evidence_id for event in events}) == 3
+    assert source.health_snapshot()["last_request_outcome"] == "success_events"
+
+
+@pytest.mark.asyncio
+async def test_wallet_poll_later_page_failure_keeps_window_incomplete(
+    tmp_path: Path,
+) -> None:
+    clock = AdvancingClock()
+    transport = CursorTransport([_page([_trade("first")], "next"), OSError("lost")])
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=transport,
+        clock=clock,
+        sleep=clock.sleep,
+        poll_interval_seconds=1,
+    )
+    events = [
+        event async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
+    ]
+    assert len(events) == 1
+    assert events[0].event_kind is ObservationKind.CONTROL
+    assert source.health_snapshot()["last_successful_request_at"] is None
+    assert source.health_snapshot()["last_request_outcome"] == "transient_error"
+    store = ResearchEvidenceStore(tmp_path / "evidence.sqlite3")
+    store.persist_interval(
+        ResearchInterval(
+            interval_id="window-1",
+            started_at=OBSERVED,
+            ended_at=None,
+            validity=IntervalValidity.OPEN,
+            reason="open",
+            code_sha=None,
+            configuration_digest=None,
+            policy_version="test-v1",
+        )
+    )
+    store.persist_event(events[0], interval_id="window-1")
+    assert store.watermark(ACTIVITY_SOURCE_ID)[0] is None
+
+
+@pytest.mark.asyncio
+async def test_wallet_poll_does_not_publish_earlier_alias_on_later_alias_failure() -> None:
+    clock = AdvancingClock()
+    transport = CursorTransport([_page([_trade("first")], None), OSError("second wallet")])
+    second_wallet = "0x" + "2" * 40
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET,
+                 public_wallet_alias(second_wallet): second_wallet},
+        transport=transport,
+        clock=clock,
+        sleep=clock.sleep,
+        poll_interval_seconds=1,
+    )
+    events = [event async for event in source.run(
+        run_id="r1", deadline=OBSERVED + timedelta(seconds=1)
+    )]
+    assert len(events) == 1
+    assert events[0].event_kind is ObservationKind.CONTROL
+    assert source.health_snapshot()["last_successful_request_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_wallet_poll_retries_failed_window_before_advancing() -> None:
+    clock = AdvancingClock()
+    transport = CursorTransport(
+        [
+            _page([_trade("first")], "lost"),
+            OSError("later page failed"),
+            _page([_trade("first"), _trade("second", int(OBSERVED.timestamp()) + 1)], None),
+        ]
+    )
+    source = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=transport,
+        clock=clock,
+        sleep=clock.sleep,
+        poll_interval_seconds=1,
+    )
+    events = [
+        event async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=2))
+    ]
+    assert [event.event_kind for event in events] == [
+        ObservationKind.CONTROL,
+        ObservationKind.WALLET_TRADE,
+        ObservationKind.WALLET_TRADE,
+    ]
+    assert transport.calls[0]["start"] == transport.calls[2]["start"]
+    assert source.health_snapshot()["last_request_outcome"] == "recovered"
+
+
+@pytest.mark.asyncio
 async def test_wallet_poll_source_does_not_emit_pre_run_backlog() -> None:
     transport = FakeTransport(
         [
@@ -367,8 +631,7 @@ async def test_market_stream_is_not_wallet_attributable() -> None:
         monotonic_ns=lambda: 5,
     )
     events = [
-        event
-        async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
+        event async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
     ]
     assert events[0].event_kind is ObservationKind.MARKET_STATE
     assert events[0].attribution_status is AttributionStatus.NOT_APPLICABLE
@@ -414,8 +677,7 @@ async def test_market_book_emits_side_aware_depth_and_fee_evidence() -> None:
         },
     )
     events = [
-        event
-        async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
+        event async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
     ]
 
     assert len(events) == 3
@@ -569,10 +831,7 @@ async def test_terminal_snapshot_uses_resolved_settlement_when_book_is_closed() 
     assert len(events) == 1
     assert events[0].price is None
     assert events[0].provenance["settlement_price"] == "0"
-    assert (
-        events[0].provenance["settlement_evidence_version"]
-        == "official-terminal-settlement-v1"
-    )
+    assert events[0].provenance["settlement_evidence_version"] == "official-terminal-settlement-v1"
     health = source.health_snapshot()
     assert health["terminal_snapshot_requested"] == 1
     assert health["terminal_snapshot_captured"] == 1
@@ -677,10 +936,10 @@ async def test_public_discovery_and_unavailable_user_channel() -> None:
     transport = FakeTransport(
         _v2(
             [
-            {
-                "proxy_wallet": WALLET,
-                "token_id": "token-1",
-            }
+                {
+                    "proxy_wallet": WALLET,
+                    "token_id": "token-1",
+                }
             ]
         )
     )

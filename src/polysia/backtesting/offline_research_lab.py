@@ -90,6 +90,7 @@ class CoordinatedClock:
 @dataclass
 class ScriptedJsonTransport:
     rows_by_call: list[list[dict[str, Any]]] | None = None
+    v2_pages: bool = False
     failures_remaining: int = 0
     calls: int = 0
     purposes: list[str] = field(default_factory=list)
@@ -101,8 +102,8 @@ class ScriptedJsonTransport:
         params: Mapping[str, str | int | bool],
         *,
         purpose: object = None,
-    ) -> list[dict[str, Any]]:
-        del base_url, path, params
+    ) -> Any:
+        del base_url
         self.calls += 1
         self.purposes.append(getattr(purpose, "value", str(purpose)))
         if self.failures_remaining > 0:
@@ -116,7 +117,19 @@ class ScriptedJsonTransport:
         if self.rows_by_call is None:
             return []
         index = min(self.calls - 1, len(self.rows_by_call) - 1)
-        return list(self.rows_by_call[index])
+        rows = list(self.rows_by_call[index])
+        if self.v2_pages and path == "/v2/trades":
+            midpoint = len(rows) // 2
+            cursor = params.get("cursor")
+            page = rows[midpoint:] if cursor == "lab-page-2" else rows[:midpoint]
+            return {
+                "data": page,
+                "pagination": {
+                    "has_more": cursor is None,
+                    "next_cursor": "lab-page-2" if cursor is None else None,
+                },
+            }
+        return rows
 
 
 class ScriptedMarketStream:
@@ -586,18 +599,21 @@ def lab_source_factory(
     clock: CoordinatedClock,
     *,
     rows: list[dict[str, Any]] | None = None,
+    v2_pages: bool = False,
 ) -> tuple[
     Callable[..., Awaitable[tuple[tuple[Any, ...], dict[str, object]]]],
     ScriptedJsonTransport,
 ]:
-    transport = ScriptedJsonTransport(rows_by_call=[rows or _complete_rows(clock)])
+    transport = ScriptedJsonTransport(
+        rows_by_call=[rows or _complete_rows(clock)], v2_pages=v2_pages
+    )
     market = _market_source(clock, event=book_event(clock))
     aliases = _aliases()
 
     async def factory(**_kwargs: object) -> tuple[tuple[Any, ...], dict[str, object]]:
         wallet = DataApiWalletPollSource(
             REST_TRADES_CANDIDATE,
-            path="/trades",
+            path="/v2/trades" if v2_pages else "/trades",
             source_id=TRADES_SOURCE_ID,
             aliases=aliases,
             transport=transport,

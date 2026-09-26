@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, replace
@@ -144,12 +145,79 @@ def data_api_v2_rows(payload: object) -> list[dict[str, Any]]:
 
     if not isinstance(payload, Mapping):
         raise TypeError("Data API v2 response is not an object")
-    data = payload.get("data")
-    if data is None:
-        return []
+    if "data" not in payload or payload["data"] is None:
+        raise TypeError("Data API v2 feed data is missing")
+    data = payload["data"]
     if not isinstance(data, list) or any(not isinstance(row, Mapping) for row in data):
         raise TypeError("Data API v2 data is not a list of objects")
     return [_canonical_data_api_v2_row(row) for row in data]
+
+
+class IncompleteWalletWindowError(ValueError):
+    """A bounded public feed walk cannot establish complete coverage."""
+
+
+async def fetch_data_api_v2_window(
+    transport: JsonGetTransport,
+    path: str,
+    params: Mapping[str, str | int | bool],
+    *,
+    purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
+    max_pages: int = 20,
+    max_requests: int = 20,
+    max_elapsed_seconds: float = 30.0,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> list[dict[str, Any]]:
+    """Return a complete frozen keyset window, or no rows at all.
+
+    The feed cursor contains the seek anchor, not the filters. Keep the original
+    user/window/filter parameters identical on every page.
+    """
+
+    if path not in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
+        raise ValueError("unsupported Data API v2 feed")
+    if max_pages <= 0 or max_requests <= 0 or max_elapsed_seconds <= 0:
+        raise ValueError("Data API v2 walk budgets must be positive")
+    started = monotonic()
+    rows: list[dict[str, Any]] = []
+    seen_cursors: set[str] = set()
+    cursor: str | None = None
+    page_count = 0
+    request_count = 0
+    while True:
+        if page_count >= max_pages or request_count >= max_requests:
+            raise IncompleteWalletWindowError("page_or_request_budget_exhausted")
+        if monotonic() - started >= max_elapsed_seconds:
+            raise IncompleteWalletWindowError("time_budget_exhausted")
+        request_params = dict(params)
+        if cursor is not None:
+            request_params["cursor"] = cursor
+        request_count += 1
+        payload = await transport.get_json(DATA_API_BASE_URL, path, request_params, purpose=purpose)
+        if monotonic() - started >= max_elapsed_seconds:
+            raise IncompleteWalletWindowError("time_budget_exhausted")
+        page_rows = data_api_v2_rows(payload)
+        assert isinstance(payload, Mapping)
+        pagination = payload.get("pagination")
+        if not isinstance(pagination, Mapping):
+            raise TypeError("Data API v2 pagination is missing")
+        has_more = pagination.get("has_more")
+        next_cursor = pagination.get("next_cursor")
+        if not isinstance(has_more, bool) or not (
+            next_cursor is None or isinstance(next_cursor, str) and next_cursor
+        ):
+            raise TypeError("Data API v2 pagination is malformed")
+        if has_more != (next_cursor is not None):
+            raise TypeError("Data API v2 pagination is inconsistent")
+        page_count += 1
+        rows.extend(page_rows)
+        if next_cursor is None:
+            break
+        if next_cursor in seen_cursors:
+            raise IncompleteWalletWindowError("repeated_cursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    return rows
 
 
 def _wallet_rows(payload: object, *, path: str) -> list[dict[str, Any]]:
@@ -177,6 +245,28 @@ def _canonical_data_api_v2_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return adapted
 
 
+def unique_wallet_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Count the same trade identity once across page boundaries."""
+
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[object, ...]] = set()
+    for row in rows:
+        identity = (
+            row.get("id") or row.get("tradeId"),
+            row.get("transactionHash"),
+            row.get("conditionId"),
+            row.get("asset"),
+            row.get("timestamp"),
+            row.get("side"),
+            str(row.get("price")),
+            str(row.get("size")),
+        )
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(row)
+    return unique
+
+
 class DataApiWalletPollSource:
     """Poll one official public wallet-attributable REST surface."""
 
@@ -201,6 +291,8 @@ class DataApiWalletPollSource:
             raise ValueError("poll_interval_seconds must be positive")
         if initial_delay_seconds < 0:
             raise ValueError("initial_delay_seconds must not be negative")
+        if page_limit <= 0 or page_limit > 1000:
+            raise ValueError("page_limit must be within [1, 1000]")
         self.candidate = candidate
         self._path = path
         self._source_id = source_id
@@ -222,6 +314,9 @@ class DataApiWalletPollSource:
         self._recovery_required = False
         self._recovery_count = 0
         self._bootstrap_rows_skipped = 0
+        self._completed_ends: dict[str, datetime] = {}
+        self._last_complete_row_count: int | None = None
+        self._last_eligible_event_count: int | None = None
 
     async def run(
         self,
@@ -238,93 +333,126 @@ class DataApiWalletPollSource:
         backoff = 1.0
         while self._clock() < deadline:
             window_end = self._clock()
-            window_start = window_end - timedelta(minutes=30)
-            for alias, wallet in self._aliases.items():
-                receive_ns = self._monotonic_ns()
-                purpose = (
-                    LeaderReadPurpose.RECOVERY
-                    if self._recovery_required and self._path.endswith("/trades")
-                    else LeaderReadPurpose.DISCOVERY
-                )
-                try:
-                    payload = await self._transport.get_json(
-                        DATA_API_BASE_URL,
-                        self._path,
-                        self._params(wallet, start=window_start, end=window_end),
-                        purpose=purpose,
+            receive_ns = self._monotonic_ns()
+            purpose = (
+                LeaderReadPurpose.RECOVERY
+                if self._recovery_required and self._path.endswith("/trades")
+                else LeaderReadPurpose.DISCOVERY
+            )
+            batch: list[tuple[str, str, list[dict[str, Any]]]] = []
+            try:
+                for alias, wallet in self._aliases.items():
+                    previous_end = self._completed_ends.get(alias)
+                    window_start = (
+                        previous_end - timedelta(seconds=1)
+                        if previous_end is not None
+                        else collection_started - timedelta(minutes=30)
                     )
-                    rows = _wallet_rows(payload, path=self._path)
-                except (
-                    PolymarketCopyTradingSourceError,
-                    TradesSourceUnavailableError,
-                    HTTPError,
-                    URLError,
-                    OSError,
-                    TimeoutError,
-                    ValueError,
-                    TypeError,
-                ) as error:
-                    observed = self._clock()
-                    failure_class, retry_at = _sanitized_source_failure(
-                        error,
-                        observed_at=observed,
-                        fallback_seconds=backoff,
-                    )
-                    self._availability = "unavailable"
-                    self._last_request_outcome = "transient_error"
-                    self._last_failure_at = observed
-                    self._failure_class = failure_class
-                    self._retry_at = retry_at
-                    if isinstance(error, TradesSourceUnavailableError):
-                        self._recovery_required = True
-                    yield _error_event(
-                        source_id=self._source_id,
-                        run_id=run_id,
-                        observed_time=observed,
-                        receive_ns=receive_ns,
-                        normalize_ns=self._monotonic_ns(),
-                        reason="transport_error",
-                        failure_class=failure_class,
-                        retry_at=retry_at,
-                        request_purpose=purpose,
-                    )
-                    remaining = (deadline - self._clock()).total_seconds()
-                    if remaining <= 0:
-                        return
-                    await self._sleep(min(backoff, remaining))
-                    backoff = min(backoff * 2, 30.0)
-                    continue
+                    params = self._params(wallet, start=window_start, end=window_end)
+                    if self._path.startswith("/v2/"):
+                        rows = await fetch_data_api_v2_window(
+                            self._transport, self._path, params, purpose=purpose
+                        )
+                    else:
+                        payload = await self._transport.get_json(
+                            DATA_API_BASE_URL, self._path, params, purpose=purpose
+                        )
+                        rows = _wallet_rows(payload, path=self._path)
+                    batch.append((alias, wallet, rows))
+            except (
+                PolymarketCopyTradingSourceError,
+                TradesSourceUnavailableError,
+                HTTPError,
+                URLError,
+                OSError,
+                TimeoutError,
+                ValueError,
+                TypeError,
+            ) as error:
                 observed = self._clock()
-                normalize_ns = self._monotonic_ns()
-                recovered = purpose is LeaderReadPurpose.RECOVERY
-                if recovered:
-                    self._recovery_count += 1
-                self._recovery_required = False
-                self._availability = "available"
-                self._last_successful_request_at = observed
-                self._failure_class = None
-                self._retry_at = None
-                self._last_request_outcome = (
-                    "recovered" if recovered else ("success_events" if rows else "success_empty")
+                failure_class, retry_at = _sanitized_source_failure(
+                    error, observed_at=observed, fallback_seconds=backoff
                 )
-                if rows:
-                    self._last_successful_event_at = observed
+                self._availability = "unavailable"
+                self._last_request_outcome = (
+                    "incomplete_window"
+                    if isinstance(error, (IncompleteWalletWindowError, TypeError))
+                    else "transient_error"
+                )
+                self._last_failure_at = observed
+                self._failure_class = failure_class
+                self._retry_at = retry_at
+                self._recovery_required = True
+                yield _error_event(
+                    source_id=self._source_id,
+                    run_id=run_id,
+                    observed_time=observed,
+                    receive_ns=receive_ns,
+                    normalize_ns=self._monotonic_ns(),
+                    reason="incomplete_window",
+                    failure_class=failure_class,
+                    retry_at=retry_at,
+                    request_purpose=purpose,
+                )
+                remaining = (deadline - self._clock()).total_seconds()
+                if remaining <= 0:
+                    return
+                await self._sleep(min(backoff, remaining))
+                backoff = min(backoff * 2, 30.0)
+                continue
+
+            observed = self._clock()
+            normalize_ns = self._monotonic_ns()
+            normalized: list[CanonicalResearchEvent] = []
+            for alias, wallet, rows in batch:
                 rows.sort(key=_row_timestamp)
                 for row in rows:
                     source_time = _optional_timestamp(row.get("timestamp"))
                     if source_time is not None and source_time < collection_started:
                         self._bootstrap_rows_skipped += 1
                         continue
-                    yield _normalize_wallet_row(
-                        row,
-                        source_id=self._source_id,
-                        alias=alias,
-                        expected_wallet=wallet,
-                        run_id=run_id,
-                        observed_time=observed,
-                        receive_ns=receive_ns,
-                        normalize_ns=normalize_ns,
+                    normalized.append(
+                        _normalize_wallet_row(
+                            row,
+                            source_id=self._source_id,
+                            alias=alias,
+                            expected_wallet=wallet,
+                            run_id=run_id,
+                            observed_time=observed,
+                            receive_ns=receive_ns,
+                            normalize_ns=normalize_ns,
+                        )
                     )
+            normalized.sort(key=lambda event: event.source_time or datetime.min.replace(tzinfo=UTC))
+            seen_events: set[str] = set()
+            for event in normalized:
+                if event.evidence_id not in seen_events:
+                    seen_events.add(event.evidence_id)
+                    yield event
+            for alias, _, _ in batch:
+                self._completed_ends[alias] = window_end
+            recovered = purpose is LeaderReadPurpose.RECOVERY
+            if recovered:
+                self._recovery_count += 1
+            self._recovery_required = False
+            self._availability = "available"
+            self._last_successful_request_at = observed
+            self._failure_class = None
+            self._retry_at = None
+            raw_count = sum(len(rows) for _, _, rows in batch)
+            self._last_complete_row_count = raw_count
+            self._last_eligible_event_count = len(seen_events)
+            self._last_request_outcome = (
+                "recovered"
+                if recovered
+                else (
+                    "success_events" if seen_events
+                    else "success_empty" if raw_count == 0
+                    else "success_filtered"
+                )
+            )
+            if normalized:
+                self._last_successful_event_at = observed
             remaining = (deadline - self._clock()).total_seconds()
             if remaining <= 0:
                 break
@@ -342,6 +470,8 @@ class DataApiWalletPollSource:
             "retry_at": _optional_time(self._retry_at),
             "recovery_count": self._recovery_count,
             "bootstrap_rows_skipped": self._bootstrap_rows_skipped,
+            "last_complete_row_count": self._last_complete_row_count,
+            "last_eligible_event_count": self._last_eligible_event_count,
         }
 
     def _params(
@@ -485,9 +615,7 @@ class OfficialMarketStreamSource:
         subscription = bus.subscribe()
         stream = self._new_market_stream(bus)
         runner = asyncio.create_task(stream.run())
-        next_discovery_at = self._clock() + timedelta(
-            seconds=self._discovery_interval_seconds
-        )
+        next_discovery_at = self._clock() + timedelta(seconds=self._discovery_interval_seconds)
         next_snapshot_at = self._clock()
         try:
             async with subscription:
@@ -619,9 +747,7 @@ class OfficialMarketStreamSource:
         if changed:
             retained = tuple(token for token in self._token_ids if token in desired)
             added = tuple(
-                token
-                for token in snapshot.token_markets
-                if token and token not in current
+                token for token in snapshot.token_markets if token and token not in current
             )
             self._token_ids = (*retained, *added)[:500]
         self._token_markets = {
@@ -631,9 +757,7 @@ class OfficialMarketStreamSource:
         }
         known = set(self._token_ids)
         self._fee_schedules = {
-            token: schedule
-            for token, schedule in self._fee_schedules.items()
-            if token in known
+            token: schedule for token, schedule in self._fee_schedules.items() if token in known
         }
         self._fee_schedules.update(
             {
@@ -702,20 +826,16 @@ class OfficialMarketStreamSource:
         events, requested, books, missing, capped = captured
         selected = dict(list(token_markets.items())[: self._terminal_snapshot_limit])
         captured_tokens = {
-            item.outcome_reference
-            for item in events
-            if item.outcome_reference is not None
+            item.outcome_reference for item in events if item.outcome_reference is not None
         }
         settlement_events: tuple[CanonicalResearchEvent, ...] = ()
         if self._terminal_settlement_fetcher is not None and missing:
             unresolved = {
-                token: market
-                for token, market in selected.items()
-                if token not in captured_tokens
+                token: market for token, market in selected.items() if token not in captured_tokens
             }
             try:
                 settlements = await self._terminal_settlement_fetcher(unresolved)
-            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+            except OSError, RuntimeError, TimeoutError, TypeError, ValueError:
                 settlements = {}
             settlement_events = tuple(
                 self._settlement_event(
@@ -803,7 +923,7 @@ class OfficialMarketStreamSource:
         selected = dict(list(token_markets.items())[: self._terminal_snapshot_limit])
         try:
             snapshot = await self._terminal_snapshot_fetcher(selected)
-        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+        except OSError, RuntimeError, TimeoutError, TypeError, ValueError:
             return None
         self._fee_schedules.update(snapshot.fee_schedules)
         self._token_markets.update(selected)
@@ -1041,8 +1161,7 @@ class OfficialMarketStreamSource:
                     "side": side,
                 }
             ),
-            "source_sequence": event.payload.get("hash")
-            or event.payload.get("timestamp"),
+            "source_sequence": event.payload.get("hash") or event.payload.get("timestamp"),
             "source_event_type": event.event_type,
         }
         return CanonicalResearchEvent(
@@ -1063,9 +1182,7 @@ class OfficialMarketStreamSource:
             attribution_status=AttributionStatus.NOT_APPLICABLE,
             leader_alias=None,
             confirmation=(
-                ConfirmationStatus.CONFIRMED
-                if complete
-                else ConfirmationStatus.UNCONFIRMED
+                ConfirmationStatus.CONFIRMED if complete else ConfirmationStatus.UNCONFIRMED
             ),
             payload_digest=payload_digest(identity),
             provenance=provenance,
@@ -1148,8 +1265,8 @@ async def discover_followed_markets(
     window instead of an arbitrary prefix of historical tokens.
     """
 
-    if page_limit <= 0 or page_limit > 10_000:
-        raise ValueError("page_limit must be within [1, 10000]")
+    if page_limit <= 0 or page_limit > 1000:
+        raise ValueError("page_limit must be within [1, 1000]")
     if token_limit <= 0 or token_limit > 500:
         raise ValueError("token_limit must be within [1, 500]")
     if lookback.total_seconds() <= 0:
@@ -1159,8 +1276,8 @@ async def discover_followed_markets(
     start = now - lookback
     candidates: dict[str, tuple[int, str]] = {}
     for wallet in aliases.values():
-        payload = await transport.get_json(
-            DATA_API_BASE_URL,
+        rows = await fetch_data_api_v2_window(
+            transport,
             DATA_API_V2_TRADES_PATH,
             {
                 "user": wallet,
@@ -1171,15 +1288,10 @@ async def discover_followed_markets(
             },
             purpose=LeaderReadPurpose.DISCOVERY,
         )
-        for row in data_api_v2_rows(payload):
+        for row in rows:
             token = row.get("asset")
             condition = row.get("conditionId")
-            if (
-                isinstance(token, str)
-                and token
-                and isinstance(condition, str)
-                and condition
-            ):
+            if isinstance(token, str) and token and isinstance(condition, str) and condition:
                 observed = _row_timestamp(row)
                 current = candidates.get(token)
                 if current is None or observed > current[0]:
@@ -1189,8 +1301,7 @@ async def discover_followed_markets(
         key=lambda item: (-item[1][0], item[0]),
     )
     return {
-        token: timestamp_and_condition[1]
-        for token, timestamp_and_condition in ranked[:token_limit]
+        token: timestamp_and_condition[1] for token, timestamp_and_condition in ranked[:token_limit]
     }
 
 
@@ -1298,15 +1409,12 @@ class FollowedMarketDiscovery:
         pending = {
             token: condition
             for token, condition in self._token_markets.items()
-            if token not in self._fee_schedules
-            and self._fee_retry_at.get(token, now) <= now
+            if token not in self._fee_schedules and self._fee_retry_at.get(token, now) <= now
         }
         resolved = await discover_clob_market_fee_schedules(self._transport, pending)
         self._fee_schedules.update(resolved)
         retry_at = now + timedelta(minutes=1)
-        self._fee_retry_at.update(
-            {token: retry_at for token in pending if token not in resolved}
-        )
+        self._fee_retry_at.update({token: retry_at for token in pending if token not in resolved})
         return MarketDiscoverySnapshot(
             token_markets=dict(self._token_markets),
             fee_schedules=dict(self._fee_schedules),
@@ -1534,6 +1642,8 @@ def _sanitized_source_failure(
     if isinstance(error, (TimeoutError, URLError, OSError)):
         return "network_transport", observed_at + timedelta(seconds=fallback_seconds)
     if isinstance(error, (ValueError, TypeError)):
+        if isinstance(error, IncompleteWalletWindowError):
+            return str(error), observed_at + timedelta(seconds=fallback_seconds)
         return "invalid_response", observed_at + timedelta(seconds=fallback_seconds)
     return "source_transport", observed_at + timedelta(seconds=fallback_seconds)
 
@@ -1569,7 +1679,7 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return None
     try:
         result = Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
     if not result.is_finite() or result <= Decimal("0"):
         return None

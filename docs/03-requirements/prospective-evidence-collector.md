@@ -324,6 +324,17 @@ reconstruction file. Canary success does not start the main experiment.
 Prospective public wallet reads use the official Data API v2 trade/activity
 envelopes and snake-case request contract. Stable internal source ids and
 canonical event fields remain unchanged so existing evidence stays readable.
+Each selected-wallet Trades/Activity poll freezes its UTC start/end filters and
+walks every opaque v2 cursor within 20-page, 20-logical-request, and 30-second
+budgets per wallet window.
+No page is published until the entire window is confirmed. Missing/null feed
+`data`, malformed pagination, repeated cursors, later-page errors, and exhausted
+budgets record incomplete coverage; only an explicit empty `data` array at the
+end of a complete walk is a confirmed empty read. A failed window keeps its
+prior completion boundary for recovery, including timestamp ties. The pre-T0
+activity policy counts deduplicated events across the same complete bounded
+walk and rejects admission with insufficient coverage if any candidate walk
+cannot finish. Existing frozen selections and bundles are not rewritten.
 
 It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and
