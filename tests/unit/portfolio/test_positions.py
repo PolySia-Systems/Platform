@@ -1,8 +1,11 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
 from polysia.portfolio.positions import Position, PositionLedger
+
+SETTLED_AT = datetime(2026, 1, 2, tzinfo=UTC)
 
 
 def test_settle_resolution_pays_winner_and_books_inventory_pnl() -> None:
@@ -13,12 +16,13 @@ def test_settle_resolution_pays_winner_and_books_inventory_pnl() -> None:
         avg_price=Decimal("0.40"),
     )
 
-    realized = ledger.settle_resolution("yes", Decimal("1"))
+    realized = ledger.settle_resolution("yes", Decimal("1"), at=SETTLED_AT)
 
     assert realized == Decimal("2.40")
     assert ledger.cash == Decimal("14")
     assert ledger.realized_pnl == Decimal("2.40")
     assert ledger.fees == Decimal("0.25")
+    assert ledger.daily_net_pnl(SETTLED_AT) == Decimal("2.40")
     assert "yes" not in ledger.positions
 
 
@@ -30,12 +34,13 @@ def test_settle_resolution_closes_loser_without_extra_cash() -> None:
         avg_price=Decimal("0.40"),
     )
 
-    realized = ledger.settle_resolution("no", Decimal("0"))
+    realized = ledger.settle_resolution("no", Decimal("0"), at=SETTLED_AT)
 
     assert realized == Decimal("-1.60")
     assert ledger.cash == Decimal("6")
     assert ledger.realized_pnl == Decimal("-1.60")
     assert ledger.fees == Decimal("0.10")
+    assert ledger.daily_net_pnl(SETTLED_AT) == Decimal("-1.60")
     assert "no" not in ledger.positions
 
 
@@ -46,12 +51,12 @@ def test_settle_resolution_is_idempotent_and_rejects_non_binary_prices() -> None
         size=Decimal("1"),
         avg_price=Decimal("0.20"),
     )
-    ledger.settle_resolution("yes", Decimal("1"))
+    ledger.settle_resolution("yes", Decimal("1"), at=SETTLED_AT)
     cash = ledger.cash
     realized = ledger.realized_pnl
 
-    assert ledger.settle_resolution("yes", Decimal("1")) is None
+    assert ledger.settle_resolution("yes", Decimal("1"), at=SETTLED_AT) is None
     assert ledger.cash == cash
     assert ledger.realized_pnl == realized
     with pytest.raises(ValueError, match="0 or 1"):
-        ledger.settle_resolution("yes", Decimal("0.5"))
+        ledger.settle_resolution("yes", Decimal("0.5"), at=SETTLED_AT)

@@ -30,6 +30,7 @@ from polysia.adapters.polymarket.stream import (
     MarketStreamConfig,
     MarketStreamError,
 )
+from polysia.backtesting.paper_evidence import PAPER_EVIDENCE_VERSION, load_paper_replay_evidence
 from polysia.backtesting.replay import (
     BacktestConfig,
     BacktestEngine,
@@ -323,6 +324,9 @@ def paper_trade(
 
 def backtest_jsonl(
     input_path: Annotated[Path, typer.Option("--input", help="JSONL market event file.")],
+    evidence_path: Annotated[
+        Path | None, typer.Option("--evidence", help="Versioned recorded Paper economics JSON.")
+    ] = None,
     strategy: Annotated[str, typer.Option("--strategy")] = "stale-price",
     initial_cash: Annotated[str, typer.Option("--initial-cash")] = "100",
     order_size: Annotated[str, typer.Option("--order-size")] = "1",
@@ -341,6 +345,7 @@ def backtest_jsonl(
         payload = asyncio.run(
             _backtest_jsonl(
                 input_path=input_path,
+                evidence_path=evidence_path,
                 strategy=strategy,
                 initial_cash=cli_support.parse_decimal(initial_cash, "initial_cash"),
                 order_size=cli_support.parse_decimal(order_size, "order_size"),
@@ -370,6 +375,7 @@ def backtest_jsonl(
 async def _backtest_jsonl(
     *,
     input_path: Path,
+    evidence_path: Path | None,
     strategy: str,
     initial_cash: Decimal,
     order_size: Decimal,
@@ -380,7 +386,17 @@ async def _backtest_jsonl(
     max_open_orders: int,
     max_events: int | None,
 ) -> dict[str, object]:
-    events = load_market_data_events_jsonl(input_path, max_events=max_events)
+    if evidence_path is not None and max_events is not None:
+        raise ReplayError("recorded economics cannot be used with truncated --max-events")
+    events = load_market_data_events_jsonl(
+        input_path,
+        max_events=max_events,
+        require_aware_clock=evidence_path is not None,
+    )
+    evidence = (
+        load_paper_replay_evidence(evidence_path, events)
+        if evidence_path is not None else None
+    )
     strategy_instance = cli_support.build_research_strategy(
         strategy=strategy,
         order_size=order_size,
@@ -395,9 +411,21 @@ async def _backtest_jsonl(
             max_position_per_market=max_position_per_market,
             max_open_orders=max_open_orders,
         ),
+        evidence=evidence,
     )
     result = await engine.run(events)
-    return result.to_dict()
+    payload = result.to_dict()
+    payload["economics_status"] = (
+        "NOT_READY_MISSING_RECORDED_FEES"
+        if evidence is None
+        else "RECORDED_SETTLED"
+        if result.settlement_status == "APPLIED"
+        else "RECORDED_UNRESOLVED_TERMINAL"
+    )
+    payload["evidence_schema_version"] = (
+        None if evidence is None else PAPER_EVIDENCE_VERSION
+    )
+    return payload
 
 
 async def _paper_trade(
@@ -430,6 +458,7 @@ async def _paper_trade(
     if not intents:
         return {
             "book": book.snapshot(),
+            "economics_status": "NOT_READY_MISSING_FEE_AND_TERMINAL_EVIDENCE",
             "intents": [],
             "orders": [],
             "portfolio": None,
@@ -444,7 +473,7 @@ async def _paper_trade(
             max_position_per_market=order_size,
         )
     )
-    broker = PaperBroker(ledger=ledger)
+    broker = PaperBroker(ledger=ledger, clock=lambda: market_event.received_at)
     orders = []
     for intent in intents:
         decision = risk_engine.evaluate(
@@ -454,6 +483,7 @@ async def _paper_trade(
                 token_id=intent.token_id,
                 orders=broker.orders.values(),
                 market_data_age_ms=0,
+                as_of=market_event.received_at,
                 edge=min_edge,
             ),
         )
@@ -472,7 +502,7 @@ async def _paper_trade(
             intent=intent,
             approved_size=decision.adjusted_size,
             risk_reason=decision.reason,
-            approved_at=datetime.now(UTC),
+            approved_at=market_event.received_at,
         )
         order = broker.submit_limit_order(approved, book)
         orders.append(
@@ -491,12 +521,18 @@ async def _paper_trade(
     return {
         "book": book.snapshot(),
         "cash": str(ledger.cash),
+        "economics_status": "NOT_READY_MISSING_FEE_AND_TERMINAL_EVIDENCE",
         "orders": orders,
         "portfolio": {
+            "cash": str(pnl.cash),
+            "fees": str(pnl.fees),
+            "gross_pnl": str(pnl.gross_pnl),
             "gross_market_value": str(pnl.gross_market_value),
+            "net_pnl": str(pnl.net_pnl),
             "realized_pnl": str(pnl.realized_pnl),
             "total_equity": str(pnl.total_equity),
             "unrealized_pnl": str(pnl.unrealized_pnl),
+            "valuation_complete": pnl.valuation_complete,
         },
         "positions": {
             position_token_id: {

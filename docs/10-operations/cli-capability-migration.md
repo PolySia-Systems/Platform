@@ -144,7 +144,7 @@ the `control` group is unchanged.
 | `discover-markets` | Preserve public SDK discovery | README, runbook, evidence register | Active-market discovery | C, CON | README, RUNBOOK | None tracked | READ | R1 |
 | `stream-market` | Preserve normalized stream options | Operator runbook | Bounded normalized event stream | C, CON | RUNBOOK | None tracked | READ | R1 |
 | `paper-trade` | Preserve deterministic local simulation | README and runbook | Strategy-to-Risk-to-paper execution | C, CON | README, RUNBOOK | None tracked | LOCAL | R1 |
-| `backtest-jsonl` | Preserve JSONL replay options | Operator runbook | Local replay through risk and paper broker | C, CON | RUNBOOK | None tracked | LOCAL | R1 |
+| `backtest-jsonl` | Preserve JSONL replay options | [Recorded Paper economics runbook](paper-backtest-economics.md) | Local replay through risk and paper broker with optional versioned market/token fee and terminal evidence | C, CON | RUNBOOK | None tracked | LOCAL | R1 |
 | `live-open-orders` | Preserve acknowledgement and redaction | Operator runbook and tests | Authenticated open-order read | L, S, CON | RUNBOOK | None tracked | READ | R1 |
 | `live-account-status` | Preserve signer/funder redaction | Connectivity procedure | Sanitized authenticated account status | L, CON | LIVE | None tracked | READ | R1 |
 | `live-cancel-order` | Preserve dry-run default and acknowledgement | Safety tests | Single-order cancellation | S, CON | Migration matrix | None tracked | MUTATION | R1 |

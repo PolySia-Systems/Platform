@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from polysia.backtesting.paper_evidence import PaperReplayEvidence
 from polysia.bus.events import MarketDataEvent
 from polysia.domain.market import MarketDetails
 from polysia.execution.intents import ApprovedOrderIntent
@@ -71,6 +72,8 @@ class BacktestResult:
     rejected_orders: int
     final_cash: Decimal
     realized_pnl: Decimal
+    fees: Decimal
+    net_pnl: Decimal
     portfolio: dict[str, object]
     positions: dict[str, dict[str, str]]
     last_books: dict[str, dict[str, object]]
@@ -84,6 +87,7 @@ class BacktestResult:
             "events_processed": self.events_processed,
             "fills_created": self.fills_created,
             "final_cash": str(self.final_cash),
+            "fees": str(self.fees),
             "intents_generated": self.intents_generated,
             "last_books": self.last_books,
             "orders": [
@@ -100,6 +104,7 @@ class BacktestResult:
             "portfolio": self.portfolio,
             "positions": self.positions,
             "realized_pnl": str(self.realized_pnl),
+            "net_pnl": str(self.net_pnl),
             "rejected_orders": self.rejected_orders,
             "risk_rejections": self.risk_rejections,
             "settlement_status": self.settlement_status,
@@ -118,14 +123,23 @@ class BacktestEngine:
         allow_crossed_books: bool = False,
         market: MarketDetails | None = None,
         terminal_market: MarketDetails | None = None,
+        evidence: PaperReplayEvidence | None = None,
     ) -> None:
+        if evidence is not None and (market is not None or terminal_market is not None):
+            raise ValueError("recorded evidence cannot be combined with direct market inputs")
         self._strategy = strategy
-        self._market = market
-        self._terminal_market = terminal_market
+        self._evidence = evidence
+        self._market = market or (
+            MarketDetails(id=evidence.market_id) if evidence is not None else None
+        )
+        self._terminal_market = (
+            evidence.terminal_market if evidence is not None else terminal_market
+        )
         self._config = config or BacktestConfig()
         self._builder = BookBuilder(allow_crossed=allow_crossed_books)
         self._ledger = PositionLedger(cash=self._config.initial_cash)
-        self._broker = PaperBroker(ledger=self._ledger)
+        self._event_clock: datetime | None = None
+        self._broker = PaperBroker(ledger=self._ledger, clock=self._now)
         self._risk_engine = RiskEngine(
             limits=RiskLimits(
                 max_order_notional=self._config.max_order_notional,
@@ -143,6 +157,12 @@ class BacktestEngine:
         risk_rejections = 0
 
         for event_index, event in enumerate(events):
+            if event.received_at.tzinfo is None or event.received_at.utcoffset() is None:
+                raise ReplayError("market event clock must be timezone-aware")
+            event_time = event.received_at.astimezone(UTC)
+            if self._event_clock is not None and event_time < self._event_clock:
+                raise ReplayError("market events must be ordered by replay clock")
+            self._event_clock = event_time
             events_processed += 1
             book = self._builder.apply(event)
             self._latest_books[event.token_id] = book
@@ -166,6 +186,7 @@ class BacktestEngine:
                         token_id=intent.token_id,
                         orders=self._broker.orders.values(),
                         market_data_age_ms=0,
+                        as_of=event_time,
                     ),
                 )
                 if not decision.approved or decision.adjusted_size is None:
@@ -192,7 +213,9 @@ class BacktestEngine:
                 paper_order = self._broker.submit_limit_order(
                     approved,
                     book,
-                    self._market,
+                    self._evidence.market_at(intent.token_id, event_time)
+                    if self._evidence is not None
+                    else self._market,
                 )
                 orders.append(
                     BacktestOrderRecord(
@@ -242,12 +265,18 @@ class BacktestEngine:
             ),
             final_cash=self._ledger.cash,
             realized_pnl=self._ledger.realized_pnl,
+            fees=self._ledger.fees,
+            net_pnl=pnl.net_pnl,
             portfolio={
                 "cash": str(pnl.cash),
+                "fees": str(pnl.fees),
+                "gross_pnl": str(pnl.gross_pnl),
                 "gross_market_value": str(pnl.gross_market_value),
+                "net_pnl": str(pnl.net_pnl),
                 "realized_pnl": str(pnl.realized_pnl),
                 "total_equity": str(pnl.total_equity),
                 "unrealized_pnl": str(pnl.unrealized_pnl),
+                "valuation_complete": pnl.valuation_complete,
             },
             positions={
                 token_id: {
@@ -267,15 +296,28 @@ class BacktestEngine:
     def _settle_terminal(self) -> PaperSettlement:
         terminal = self._terminal_market
         execution = self._market
-        if terminal is None or execution is None or terminal.id != execution.id:
+        if (
+            terminal is None
+            or execution is None
+            or terminal.id != execution.id
+            or self._event_clock is None
+        ):
             return PaperSettlement(status="UNRESOLVED")
+        if self._evidence is not None and self._evidence.terminal_observed_at is not None:
+            self._event_clock = self._evidence.terminal_observed_at
         return self._broker.settle(terminal)
+
+    def _now(self) -> datetime:
+        if self._event_clock is None:
+            raise ReplayError("paper replay clock is not initialized")
+        return self._event_clock
 
 
 def load_market_data_events_jsonl(
     path: Path,
     *,
     max_events: int | None = None,
+    require_aware_clock: bool = False,
 ) -> list[MarketDataEvent]:
     events: list[MarketDataEvent] = []
     try:
@@ -293,14 +335,18 @@ def load_market_data_events_jsonl(
             raise ReplayError(f"invalid JSON on line {line_number}") from error
         if not isinstance(raw_event, dict):
             raise ReplayError(f"line {line_number} must be a JSON object")
-        events.append(market_data_event_from_dict(raw_event))
+        events.append(
+            market_data_event_from_dict(raw_event, require_aware_clock=require_aware_clock)
+        )
         if max_events is not None and len(events) >= max_events:
             break
 
     return events
 
 
-def market_data_event_from_dict(data: Mapping[str, Any]) -> MarketDataEvent:
+def market_data_event_from_dict(
+    data: Mapping[str, Any], *, require_aware_clock: bool = False
+) -> MarketDataEvent:
     source = data.get("source", "polymarket")
     if source != "polymarket":
         raise ReplayError(f"unsupported event source {source!r}")
@@ -310,7 +356,9 @@ def market_data_event_from_dict(data: Mapping[str, Any]) -> MarketDataEvent:
         source="polymarket",
         event_type=event_type,
         token_id=token_id,
-        received_at=_parse_datetime(data.get("received_at"), "received_at"),
+        received_at=_parse_datetime(
+            data.get("received_at"), "received_at", require_aware=require_aware_clock
+        ),
         exchange_ts=_parse_optional_datetime(data.get("exchange_ts"), "exchange_ts"),
         payload=_dict_field(data.get("payload"), "payload"),
         raw_payload=_dict_field(data.get("raw_payload", {}), "raw_payload"),
@@ -348,7 +396,9 @@ def _dict_field(value: object, field_name: str) -> dict[str, Any]:
     return value
 
 
-def _parse_datetime(value: object, field_name: str) -> datetime:
+def _parse_datetime(
+    value: object, field_name: str, *, require_aware: bool = False
+) -> datetime:
     if not isinstance(value, str) or not value:
         raise ReplayError(f"event field {field_name!r} must be an ISO datetime string")
     try:
@@ -356,6 +406,8 @@ def _parse_datetime(value: object, field_name: str) -> datetime:
     except ValueError as error:
         raise ReplayError(f"event field {field_name!r} is not a valid ISO datetime") from error
     if parsed.tzinfo is None:
+        if require_aware:
+            raise ReplayError(f"event field {field_name!r} must include a UTC offset")
         parsed = parsed.replace(tzinfo=UTC)
     return parsed
 

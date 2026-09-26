@@ -77,6 +77,17 @@ def test_load_market_data_events_jsonl_rejects_bad_json(tmp_path) -> None:
         load_market_data_events_jsonl(path)
 
 
+def test_recorded_economics_requires_explicit_event_clock_offset(tmp_path) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps({
+        **book_event(), "received_at": "2026-01-01T00:00:00",
+    }), encoding="utf-8")
+
+    assert load_market_data_events_jsonl(path)[0].received_at.tzinfo is UTC
+    with pytest.raises(ReplayError, match="UTC offset"):
+        load_market_data_events_jsonl(path, require_aware_clock=True)
+
+
 @pytest.mark.asyncio
 async def test_backtest_engine_replays_buy_fill_and_pnl() -> None:
     event = market_data_event_from_dict(book_event())
@@ -129,6 +140,18 @@ async def test_backtest_engine_records_risk_rejection() -> None:
     assert payload["orders_created"] == 0
     assert payload["orders"][0]["order"] is None
     assert "exceeds max_order_notional" in payload["orders"][0]["risk_decision"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_backtest_engine_rejects_out_of_order_event_clock() -> None:
+    earlier = market_data_event_from_dict(book_event())
+    later = market_data_event_from_dict({
+        **book_event(), "received_at": "2026-01-01T00:00:01+00:00",
+    })
+    engine = BacktestEngine(strategy=StalePriceStrategy(config=StalePriceStrategyConfig()))
+
+    with pytest.raises(ReplayError, match="ordered"):
+        await engine.run([later, earlier])
 
 
 @pytest.mark.asyncio
