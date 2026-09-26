@@ -45,8 +45,9 @@ For a fee-enabled market, replace `fee_schedule` with
 `{"enabled": true, "rate": "0.10", "exponent": "1", "taker_only": true}`
 using the values recorded for that market and token. A verified fee-free
 schedule needs explicit `enabled: false`. Unknown, partial, or ambiguous fee
-evidence is rejected. Each token with market events needs a fee snapshot at or
-before its first event; later snapshots apply only to later events. Event rows
+evidence is rejected. Each token with market events needs a fee snapshot
+strictly before its first event; later snapshots apply only to later events. Equal-time
+observations are rejected because their order cannot be established. Event rows
 must be ordered by their timezone-aware replay clock. All event tokens and fee
 snapshots must match the declared market/token set and cutoff. The operator
 must retain the source records named by `source_id`; the JSON alone does not

@@ -44,7 +44,7 @@ class PaperReplayEvidence:
         causal = [
             snapshot
             for snapshot in self.fee_snapshots
-            if snapshot.token_id == token_id and snapshot.observed_at <= at.astimezone(UTC)
+            if snapshot.token_id == token_id and snapshot.observed_at < at.astimezone(UTC)
         ]
         return None if not causal else max(causal, key=lambda item: item.observed_at).market
 
@@ -135,7 +135,7 @@ def load_paper_replay_evidence(
             raise PaperEvidenceError("terminal market_id does not match")
         _text(terminal["source_id"], "terminal source_id")
         terminal_observed_at = _time(terminal["observed_at"], "terminal observed_at")
-        if terminal_observed_at < max(event_times) or terminal_observed_at > cutoff_at:
+        if terminal_observed_at <= max(event_times) or terminal_observed_at > cutoff_at:
             raise PaperEvidenceError("terminal evidence is outside the replay interval")
         if terminal["closed"] is not True:
             raise PaperEvidenceError("terminal evidence is not closed")
