@@ -579,7 +579,9 @@ def _two_wallet_snapshot() -> ContinuousSelectionSnapshot:
     )
 
 
-def _polycop_lab_runner(clock: CoordinatedClock) -> ResearchExperimentRunner:
+def _polycop_lab_runner(
+    clock: CoordinatedClock, *, v2_pages: bool = False
+) -> ResearchExperimentRunner:
     from datetime import UTC, datetime
 
     from polysia.deployment.research_wallet_selection import (
@@ -588,7 +590,7 @@ def _polycop_lab_runner(clock: CoordinatedClock) -> ResearchExperimentRunner:
         resolve_polycop_shadow_alpha_top3,
     )
 
-    factory, _transport = lab_source_factory(clock)
+    factory, _transport = lab_source_factory(clock, v2_pages=v2_pages)
     selection = resolve_polycop_shadow_alpha_top3(
         _two_wallet_snapshot(),
         now=datetime(2026, 1, 1, 1, tzinfo=UTC),
@@ -619,6 +621,33 @@ def _polycop_lab_runner(clock: CoordinatedClock) -> ResearchExperimentRunner:
     service._factory_calls = factory_calls  # type: ignore[attr-defined]
     service._selection = selection  # type: ignore[attr-defined]
     return service
+
+
+def test_selected_wallet_v2_pages_reach_stored_evidence_and_replay(tmp_path: Path) -> None:
+    from polysia.backtesting.prospective_replay import (
+        replay_identity,
+        replay_recorded_experiment,
+    )
+
+    clock = CoordinatedClock()
+    work = tmp_path / "selected-wallet-v2"
+    service = _polycop_lab_runner(clock, v2_pages=True)
+    result = asyncio.run(service.start(
+        work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="selected-wallet-v2"
+    ))
+    assert result["phase"] == "CLOSED"
+    store = ResearchEvidenceStore(work / "research-evidence.sqlite3", read_only=True)
+    wallet_events = [
+        event for event in store.load_events(run_id="selected-wallet-v2")
+        if event.leader_alias is not None
+    ]
+    assert wallet_events
+    assert all(event.source_event_id is not None for event in wallet_events)
+    assert {event.leader_alias for event in wallet_events} == set(service._selection.aliases)
+    first = replay_recorded_experiment(store, run_id="selected-wallet-v2")
+    second = replay_recorded_experiment(store, run_id="selected-wallet-v2")
+    assert first.replayed_event_count >= len(wallet_events)
+    assert replay_identity(first) == replay_identity(second)
 
 
 def test_missing_polycop_selection_fails_before_t0(tmp_path: Path) -> None:

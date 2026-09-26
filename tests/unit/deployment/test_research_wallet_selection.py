@@ -259,7 +259,11 @@ def test_runner_activity_policy_freezes_recent_active_alpha_wallets(
             assert path == "/v2/trades"
             count = activity.get(str(params["user"]), 0)
             return {
-                "data": [{"proxy_wallet": params["user"]}] * count,
+                "data": [
+                    {"proxy_wallet": params["user"], "id": str(index),
+                     "timestamp": int(NOW.timestamp())}
+                    for index in range(count)
+                ],
                 "pagination": {"has_more": False, "next_cursor": None},
             }
 
@@ -299,6 +303,64 @@ def test_runner_activity_policy_freezes_recent_active_alpha_wallets(
     assert preflight["candidate_count"] == 4
     assert preflight["source"] == "polymarket:data-api-v2:trades"
     assert len(str(preflight["digest"])) == 64
+
+
+def test_activity_preflight_counts_all_pages_once_and_fails_on_incomplete() -> None:
+    from polysia.cli_commands.research_evidence_cli import _measure_recent_alpha_activity
+
+    candidates = _alpha_snapshot().candidates
+
+    class PagedTransport:
+        def __init__(self, fail: bool = False) -> None:
+            self.fail = fail
+            self.calls: list[dict[str, str | int | bool]] = []
+
+        async def get_json(
+            self,
+            _base_url: str,
+            _path: str,
+            params: dict[str, str | int | bool],
+            **_kwargs: object,
+        ) -> object:
+            self.calls.append(dict(params))
+            if params["user"] == WALLET_1:
+                if "cursor" not in params:
+                    return {
+                        "data": [{"id": "a", "transaction_hash": "tx-a",
+                                  "proxy_wallet": WALLET_1, "timestamp": int(NOW.timestamp())}],
+                        "pagination": {"has_more": True, "next_cursor": "next"},
+                    }
+                if self.fail:
+                    return {"data": None, "pagination": {"has_more": False}}
+                return {
+                    "data": [
+                        {"id": "a", "transaction_hash": "tx-a",
+                         "proxy_wallet": WALLET_1, "timestamp": int(NOW.timestamp())},
+                        {"id": "b", "transaction_hash": "tx-b",
+                         "proxy_wallet": WALLET_1, "timestamp": int(NOW.timestamp())},
+                    ],
+                    "pagination": {"has_more": False, "next_cursor": None},
+                }
+            return {
+                "data": [{"id": "one", "transaction_hash": "tx-one",
+                          "proxy_wallet": params["user"],
+                          "timestamp": int(NOW.timestamp())}],
+                "pagination": {"has_more": False, "next_cursor": None},
+            }
+
+    transport = PagedTransport()
+    counts, evidence = asyncio.run(_measure_recent_alpha_activity(
+        candidates, transport=transport, observed=NOW
+    ))
+    assert counts["w1"] == 2
+    assert evidence["lookback_ends_at"] == NOW.isoformat()
+    first, second = [call for call in transport.calls if call["user"] == WALLET_1]
+    assert second == {**first, "cursor": "next"}
+
+    with pytest.raises(ResearchWalletSelectionError, match="insufficient coverage"):
+        asyncio.run(_measure_recent_alpha_activity(
+            candidates, transport=PagedTransport(fail=True), observed=NOW
+        ))
 
 
 def test_public_benchmark_discovery_remains_available(
