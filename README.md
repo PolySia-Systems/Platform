@@ -117,7 +117,11 @@ polysia research paper-trade --token-id YOUR_TOKEN_ID --order-size 1
 ```
 
 `market discover` uses public venue data. `research paper-trade` uses a
-deterministic local simulation and does not call Live trading APIs. Commands
+deterministic local simulation and does not call Live trading APIs. Its output
+is marked not economically ready because the demo has no recorded fee or
+terminal evidence. `research backtest --input EVENTS.jsonl --evidence EVIDENCE.json`
+accepts [versioned, recorded Paper economics evidence](docs/10-operations/paper-backtest-economics.md).
+Commands
 that read an authenticated account or can mutate external state have
 additional explicit gates; their presence does not grant authorization to use
 them. See the [CLI capability migration](docs/10-operations/cli-capability-migration.md)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 from decimal import Decimal
 
 from polysia.config.settings import TradingMode
@@ -23,12 +24,13 @@ def paper_risk_context(
     token_id: str,
     orders: Iterable[PaperOrder],
     market_data_age_ms: int,
+    as_of: datetime,
     edge: Decimal | None = None,
 ) -> RiskContext:
     """Build a Paper RiskContext from ledger inventory and open paper orders.
 
-    ``daily_pnl`` is sell-side realized inventory P&L. Fees stay on the ledger
-    and in cash. Unrealized marks are not included.
+    ``daily_pnl`` is UTC-day gross realized inventory P&L less fees incurred
+    on that day. Unrealized marks remain outside the Risk loss comparison.
     """
 
     position = ledger.get(token_id).size
@@ -37,7 +39,7 @@ def paper_risk_context(
         live_trading_enabled=False,
         current_position=position,
         current_market_position=position,
-        daily_pnl=ledger.realized_pnl,
+        daily_pnl=ledger.daily_net_pnl(as_of),
         open_orders_count=sum(
             1 for order in orders if order.status in OPEN_PAPER_ORDER_STATUSES
         ),

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from polysia.config.settings import AppSettings, TradingMode
+from polysia.execution.order_state import PaperFill
 from polysia.monitoring.metrics import (
     build_operator_status,
     build_orderbook_metrics,
@@ -115,19 +116,11 @@ def test_orderbook_metrics_summarize_local_book() -> None:
 
 def test_portfolio_metrics_summarize_pnl() -> None:
     ledger = PositionLedger(cash=Decimal("10"))
-    ledger.apply_fill(
-        type(
-            "Fill",
-            (),
-            {
-                "token_id": "token-1",
-                "side": "BUY",
-                "price": Decimal("0.40"),
-                "size": Decimal("5"),
-                "fee": Decimal("0"),
-            },
-        )()
-    )
+    ledger.apply_fill(PaperFill(
+        fill_id="fixture-fill", order_id="fixture-order", token_id="token-1",
+        side="BUY", price=Decimal("0.40"), size=Decimal("5"),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC), fee=Decimal("0"),
+    ))
 
     metrics = build_portfolio_metrics(ledger, {"token-1": Decimal("0.50")}).to_dict()
 

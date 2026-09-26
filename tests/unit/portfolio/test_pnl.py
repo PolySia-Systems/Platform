@@ -26,6 +26,7 @@ def test_calculate_portfolio_pnl_returns_equity_components() -> None:
             "token-1": Position(token_id="token-1", size=Decimal("10"), avg_price=Decimal("0.40")),
         },
         realized_pnl=Decimal("1"),
+        fees=Decimal("0.20"),
     )
 
     pnl = calculate_portfolio_pnl(ledger, {"token-1": Decimal("0.50")})
@@ -34,4 +35,8 @@ def test_calculate_portfolio_pnl_returns_equity_components() -> None:
     assert pnl.gross_market_value == Decimal("5.00")
     assert pnl.realized_pnl == Decimal("1")
     assert pnl.unrealized_pnl == Decimal("1.00")
+    assert pnl.gross_pnl == Decimal("2.00")
+    assert pnl.fees == Decimal("0.20")
+    assert pnl.net_pnl == Decimal("1.80")
     assert pnl.total_equity == Decimal("100.00")
+    assert pnl.valuation_complete is True

@@ -102,10 +102,11 @@ class PaperBroker:
             return result
         cash_before = self.ledger.cash
         realized_before = self.ledger.realized_pnl
+        settled_at = self.clock()
         settled = [
             token_id
             for token_id, price in prices.items()
-            if self.ledger.settle_resolution(token_id, price) is not None
+            if self.ledger.settle_resolution(token_id, price, at=settled_at) is not None
         ]
         cancelled = self._cancel_resting(set(prices))
         result = PaperSettlement(

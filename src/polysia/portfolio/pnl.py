@@ -13,8 +13,12 @@ class PortfolioPnL:
     cash: Decimal
     realized_pnl: Decimal
     unrealized_pnl: Decimal
+    gross_pnl: Decimal
+    fees: Decimal
+    net_pnl: Decimal
     gross_market_value: Decimal
     total_equity: Decimal
+    valuation_complete: bool
 
 
 def calculate_unrealized_pnl(
@@ -53,6 +57,10 @@ def calculate_portfolio_pnl(
         cash=ledger.cash,
         realized_pnl=ledger.realized_pnl,
         unrealized_pnl=unrealized_pnl,
+        gross_pnl=ledger.realized_pnl + unrealized_pnl,
+        fees=ledger.fees,
+        net_pnl=ledger.realized_pnl + unrealized_pnl - ledger.fees,
         gross_market_value=gross_market_value,
         total_equity=ledger.cash + gross_market_value,
+        valuation_complete=all(token_id in mark_prices for token_id in ledger.positions),
     )

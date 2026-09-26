@@ -371,6 +371,7 @@ async def _simulate_events(
                     token_id=intent.token_id,
                     orders=broker.orders.values(),
                     market_data_age_ms=_event_age_ms(event, clock()),
+                    as_of=clock(),
                 ),
             )
             if decision.approved and decision.adjusted_size is not None:

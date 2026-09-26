@@ -132,6 +132,18 @@ async def test_backtest_engine_records_risk_rejection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_backtest_engine_rejects_out_of_order_event_clock() -> None:
+    earlier = market_data_event_from_dict(book_event())
+    later = market_data_event_from_dict({
+        **book_event(), "received_at": "2026-01-01T00:00:01+00:00",
+    })
+    engine = BacktestEngine(strategy=StalePriceStrategy(config=StalePriceStrategyConfig()))
+
+    with pytest.raises(ReplayError, match="ordered"):
+        await engine.run([later, earlier])
+
+
+@pytest.mark.asyncio
 async def test_backtest_engine_runs_passive_market_maker_without_live_calls() -> None:
     event = market_data_event_from_dict(book_event())
     strategy = PassiveMarketMakerStrategy(

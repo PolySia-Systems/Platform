@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from polysia.domain.copytrading.continuous_shadow import calculate_taker_fee_amount
@@ -10,7 +10,10 @@ from polysia.execution.order_state import OrderStatus
 from polysia.execution.paper_broker import PAPER_FILL_ECONOMICS_VERSION, PaperBroker
 from polysia.execution.paper_context import paper_risk_context
 from polysia.orderbook.book import LocalOrderBook
+from polysia.portfolio.pnl import calculate_portfolio_pnl
 from polysia.portfolio.positions import Position, PositionLedger
+from polysia.risk.checks import RiskEngine
+from polysia.risk.limits import RiskLimits
 
 
 def fee_free_market() -> MarketDetails:
@@ -223,12 +226,68 @@ def test_paper_broker_sums_per_level_fees_and_keeps_gross_vwap() -> None:
         token_id="token-1",
         orders=broker.orders.values(),
         market_data_age_ms=0,
+        as_of=ledger.last_event_at or datetime(2026, 1, 1, tzinfo=UTC),
     )
-    assert context.daily_pnl == ledger.realized_pnl
-    assert context.daily_pnl == Decimal("0")
+    assert context.daily_pnl == ledger.realized_pnl - ledger.fees
+    assert context.daily_pnl == -level_fee
     assert context.current_position == Decimal("2")
     assert context.current_market_position == Decimal("2")
     assert context.open_orders_count == 0
+
+
+def test_fee_only_loss_reaches_risk_engine_after_partial_fill() -> None:
+    now = datetime(2026, 1, 1, 23, 59, 59, tzinfo=UTC)
+    ledger = PositionLedger(cash=Decimal("100"))
+    broker = PaperBroker(ledger=ledger, clock=lambda: now)
+    order = broker.submit_limit_order(
+        make_approved_intent(size="5"), make_book(ask_size="2"), enabled_fee_market()
+    )
+    assert order.status == OrderStatus.PARTIALLY_FILLED
+    assert order.filled_size == Decimal("2")
+    assert len(order.fills) == 1
+    assert ledger.realized_pnl == Decimal("0")
+    assert ledger.fees == order.fills[0].fee > Decimal("0")
+    context = paper_risk_context(
+        ledger=ledger, token_id="token-1", orders=broker.orders.values(),
+        market_data_age_ms=0, as_of=now,
+    )
+    assert context.daily_pnl == -ledger.fees
+    decision = RiskEngine(limits=RiskLimits(max_daily_loss=Decimal("0"))).evaluate(
+        make_approved_intent(size="1").intent, context
+    )
+    assert decision.approved is False
+    assert "daily pnl" in decision.reason
+
+
+def test_round_trip_and_utc_day_boundary_charge_each_fee_once() -> None:
+    first_day = datetime(2026, 1, 1, 23, 59, 59, tzinfo=UTC)
+    now = [first_day]
+    ledger = PositionLedger(cash=Decimal("100"))
+    broker = PaperBroker(ledger=ledger, clock=lambda: now[0])
+    buy = broker.submit_limit_order(
+        make_approved_intent(size="2"), make_book(), enabled_fee_market()
+    )
+    buy_fee = buy.fills[0].fee
+    now[0] = first_day + timedelta(seconds=2)
+    sell = broker.submit_limit_order(
+        make_approved_intent(side="SELL", price="0.49", size="2"),
+        make_book(), enabled_fee_market(),
+    )
+    sell_fee = sell.fills[0].fee
+    gross = (Decimal("0.49") - Decimal("0.52")) * Decimal("2")
+    assert ledger.positions == {}
+    assert ledger.realized_pnl == gross
+    assert ledger.fees == buy_fee + sell_fee
+    assert ledger.cash == Decimal("100") + gross - buy_fee - sell_fee
+    assert ledger.daily_net_pnl(first_day) == -buy_fee
+    assert ledger.daily_net_pnl(now[0]) == gross - sell_fee
+    assert ledger.daily_net_pnl(first_day) + ledger.daily_net_pnl(now[0]) == (
+        ledger.realized_pnl - ledger.fees
+    )
+    portfolio = calculate_portfolio_pnl(ledger, {})
+    assert portfolio.gross_pnl == gross
+    assert portfolio.net_pnl == gross - buy_fee - sell_fee
+    assert portfolio.cash == portfolio.total_equity == Decimal("100") + portfolio.net_pnl
 
 
 def _binary_market(*, closed: bool, yes: str, no: str) -> MarketDetails:

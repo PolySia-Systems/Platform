@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from polysia.backtesting.paper_evidence import PaperReplayEvidence
 from polysia.bus.events import MarketDataEvent
 from polysia.domain.market import MarketDetails
 from polysia.execution.intents import ApprovedOrderIntent
@@ -71,6 +72,8 @@ class BacktestResult:
     rejected_orders: int
     final_cash: Decimal
     realized_pnl: Decimal
+    fees: Decimal
+    net_pnl: Decimal
     portfolio: dict[str, object]
     positions: dict[str, dict[str, str]]
     last_books: dict[str, dict[str, object]]
@@ -84,6 +87,7 @@ class BacktestResult:
             "events_processed": self.events_processed,
             "fills_created": self.fills_created,
             "final_cash": str(self.final_cash),
+            "fees": str(self.fees),
             "intents_generated": self.intents_generated,
             "last_books": self.last_books,
             "orders": [
@@ -100,6 +104,7 @@ class BacktestResult:
             "portfolio": self.portfolio,
             "positions": self.positions,
             "realized_pnl": str(self.realized_pnl),
+            "net_pnl": str(self.net_pnl),
             "rejected_orders": self.rejected_orders,
             "risk_rejections": self.risk_rejections,
             "settlement_status": self.settlement_status,
@@ -118,14 +123,23 @@ class BacktestEngine:
         allow_crossed_books: bool = False,
         market: MarketDetails | None = None,
         terminal_market: MarketDetails | None = None,
+        evidence: PaperReplayEvidence | None = None,
     ) -> None:
+        if evidence is not None and (market is not None or terminal_market is not None):
+            raise ValueError("recorded evidence cannot be combined with direct market inputs")
         self._strategy = strategy
-        self._market = market
-        self._terminal_market = terminal_market
+        self._evidence = evidence
+        self._market = market or (
+            MarketDetails(id=evidence.market_id) if evidence is not None else None
+        )
+        self._terminal_market = (
+            evidence.terminal_market if evidence is not None else terminal_market
+        )
         self._config = config or BacktestConfig()
         self._builder = BookBuilder(allow_crossed=allow_crossed_books)
         self._ledger = PositionLedger(cash=self._config.initial_cash)
-        self._broker = PaperBroker(ledger=self._ledger)
+        self._event_clock: datetime | None = None
+        self._broker = PaperBroker(ledger=self._ledger, clock=self._now)
         self._risk_engine = RiskEngine(
             limits=RiskLimits(
                 max_order_notional=self._config.max_order_notional,
@@ -143,6 +157,12 @@ class BacktestEngine:
         risk_rejections = 0
 
         for event_index, event in enumerate(events):
+            if event.received_at.tzinfo is None or event.received_at.utcoffset() is None:
+                raise ReplayError("market event clock must be timezone-aware")
+            event_time = event.received_at.astimezone(UTC)
+            if self._event_clock is not None and event_time < self._event_clock:
+                raise ReplayError("market events must be ordered by replay clock")
+            self._event_clock = event_time
             events_processed += 1
             book = self._builder.apply(event)
             self._latest_books[event.token_id] = book
@@ -166,6 +186,7 @@ class BacktestEngine:
                         token_id=intent.token_id,
                         orders=self._broker.orders.values(),
                         market_data_age_ms=0,
+                        as_of=event_time,
                     ),
                 )
                 if not decision.approved or decision.adjusted_size is None:
@@ -192,7 +213,9 @@ class BacktestEngine:
                 paper_order = self._broker.submit_limit_order(
                     approved,
                     book,
-                    self._market,
+                    self._evidence.market_at(intent.token_id, event_time)
+                    if self._evidence is not None
+                    else self._market,
                 )
                 orders.append(
                     BacktestOrderRecord(
@@ -242,12 +265,18 @@ class BacktestEngine:
             ),
             final_cash=self._ledger.cash,
             realized_pnl=self._ledger.realized_pnl,
+            fees=self._ledger.fees,
+            net_pnl=pnl.net_pnl,
             portfolio={
                 "cash": str(pnl.cash),
+                "fees": str(pnl.fees),
+                "gross_pnl": str(pnl.gross_pnl),
                 "gross_market_value": str(pnl.gross_market_value),
+                "net_pnl": str(pnl.net_pnl),
                 "realized_pnl": str(pnl.realized_pnl),
                 "total_equity": str(pnl.total_equity),
                 "unrealized_pnl": str(pnl.unrealized_pnl),
+                "valuation_complete": pnl.valuation_complete,
             },
             positions={
                 token_id: {
@@ -267,9 +296,21 @@ class BacktestEngine:
     def _settle_terminal(self) -> PaperSettlement:
         terminal = self._terminal_market
         execution = self._market
-        if terminal is None or execution is None or terminal.id != execution.id:
+        if (
+            terminal is None
+            or execution is None
+            or terminal.id != execution.id
+            or self._event_clock is None
+        ):
             return PaperSettlement(status="UNRESOLVED")
+        if self._evidence is not None and self._evidence.terminal_observed_at is not None:
+            self._event_clock = self._evidence.terminal_observed_at
         return self._broker.settle(terminal)
+
+    def _now(self) -> datetime:
+        if self._event_clock is None:
+            raise ReplayError("paper replay clock is not initialized")
+        return self._event_clock
 
 
 def load_market_data_events_jsonl(

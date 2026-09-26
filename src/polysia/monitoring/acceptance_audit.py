@@ -293,6 +293,7 @@ async def _run_shadow_production(
                     token_id=intent.token_id,
                     orders=broker.orders.values(),
                     market_data_age_ms=0,
+                    as_of=clock(),
                 ),
             )
             if decision.approved and decision.adjusted_size is not None:
