@@ -317,6 +317,7 @@ def load_market_data_events_jsonl(
     path: Path,
     *,
     max_events: int | None = None,
+    require_aware_clock: bool = False,
 ) -> list[MarketDataEvent]:
     events: list[MarketDataEvent] = []
     try:
@@ -334,14 +335,18 @@ def load_market_data_events_jsonl(
             raise ReplayError(f"invalid JSON on line {line_number}") from error
         if not isinstance(raw_event, dict):
             raise ReplayError(f"line {line_number} must be a JSON object")
-        events.append(market_data_event_from_dict(raw_event))
+        events.append(
+            market_data_event_from_dict(raw_event, require_aware_clock=require_aware_clock)
+        )
         if max_events is not None and len(events) >= max_events:
             break
 
     return events
 
 
-def market_data_event_from_dict(data: Mapping[str, Any]) -> MarketDataEvent:
+def market_data_event_from_dict(
+    data: Mapping[str, Any], *, require_aware_clock: bool = False
+) -> MarketDataEvent:
     source = data.get("source", "polymarket")
     if source != "polymarket":
         raise ReplayError(f"unsupported event source {source!r}")
@@ -351,7 +356,9 @@ def market_data_event_from_dict(data: Mapping[str, Any]) -> MarketDataEvent:
         source="polymarket",
         event_type=event_type,
         token_id=token_id,
-        received_at=_parse_datetime(data.get("received_at"), "received_at"),
+        received_at=_parse_datetime(
+            data.get("received_at"), "received_at", require_aware=require_aware_clock
+        ),
         exchange_ts=_parse_optional_datetime(data.get("exchange_ts"), "exchange_ts"),
         payload=_dict_field(data.get("payload"), "payload"),
         raw_payload=_dict_field(data.get("raw_payload", {}), "raw_payload"),
@@ -389,7 +396,9 @@ def _dict_field(value: object, field_name: str) -> dict[str, Any]:
     return value
 
 
-def _parse_datetime(value: object, field_name: str) -> datetime:
+def _parse_datetime(
+    value: object, field_name: str, *, require_aware: bool = False
+) -> datetime:
     if not isinstance(value, str) or not value:
         raise ReplayError(f"event field {field_name!r} must be an ISO datetime string")
     try:
@@ -397,6 +406,8 @@ def _parse_datetime(value: object, field_name: str) -> datetime:
     except ValueError as error:
         raise ReplayError(f"event field {field_name!r} is not a valid ISO datetime") from error
     if parsed.tzinfo is None:
+        if require_aware:
+            raise ReplayError(f"event field {field_name!r} must include a UTC offset")
         parsed = parsed.replace(tzinfo=UTC)
     return parsed
 

@@ -388,7 +388,11 @@ async def _backtest_jsonl(
 ) -> dict[str, object]:
     if evidence_path is not None and max_events is not None:
         raise ReplayError("recorded economics cannot be used with truncated --max-events")
-    events = load_market_data_events_jsonl(input_path, max_events=max_events)
+    events = load_market_data_events_jsonl(
+        input_path,
+        max_events=max_events,
+        require_aware_clock=evidence_path is not None,
+    )
     evidence = (
         load_paper_replay_evidence(evidence_path, events)
         if evidence_path is not None else None
