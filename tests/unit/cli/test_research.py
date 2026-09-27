@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from polysia.application.services.prospective_collector import ProspectiveCollector
 from polysia.cli import app
 from polysia.cli_commands.research import _load_run_spec
+from polysia.deployment.research_run_contract import parse_research_run_spec
 from polysia.domain.research_evidence.models import (
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
@@ -46,6 +47,32 @@ def test_run_spec_loader_preserves_wallet_selection_contract(tmp_path: Path) -> 
     assert loaded is not None
     assert loaded["selection_policy"] == "polycop-shadow-alpha-active-top3-v1"
     assert loaded["wallet_count"] == 3
+    assert "runtime" not in loaded
+
+
+def test_run_spec_loader_preserves_v2_runtime_for_runner(tmp_path: Path) -> None:
+    spec = tmp_path / "run-spec-v2.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "code_sha": "a" * 40,
+                "profile": "canary",
+                "spec_version": "research-run-spec-v2",
+                "wallet_count": 3,
+                "selection_policy": "polycop-shadow-alpha-active-top3-v1",
+                "runtime": {"poll_interval_seconds": 3, "overlap_seconds": 60},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = _load_run_spec(spec)
+
+    assert loaded is not None
+    assert loaded["runtime"] == parse_research_run_spec(
+        json.loads(spec.read_text(encoding="utf-8"))
+    ).runtime
+    assert parse_research_run_spec(loaded).runtime == loaded["runtime"]
 
 
 def _real_data_shadow_report() -> RealDataShadowRunReport:
