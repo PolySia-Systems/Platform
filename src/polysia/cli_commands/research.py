@@ -1039,7 +1039,10 @@ def prospective_run_result(
 def _load_run_spec(path: Path | None) -> dict[str, object] | None:
     if path is None:
         return None
-    from polysia.deployment.research_run_contract import parse_research_run_spec
+    from polysia.deployment.research_run_contract import (
+        RUNTIME_SPEC_VERSION,
+        parse_research_run_spec,
+    )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -1053,4 +1056,5 @@ def _load_run_spec(path: Path | None) -> dict[str, object] | None:
         "selection_policy": parsed.selection_policy,
         "spec_version": parsed.spec_version,
         "wallet_count": parsed.wallet_count,
+        **({"runtime": parsed.runtime} if parsed.spec_version == RUNTIME_SPEC_VERSION else {}),
     }
