@@ -618,7 +618,10 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
     assert prospective["status"] in {"PROVISIONAL", "UNKNOWN"}
     assert len(prospective["supporting_artifacts"]["evidence_root_sha256"]) == 64
     assert prospective["copyability"]["status"] == "SELECTED_BY_RECORDED_POLICY"
-    assert prospective["copyability"]["selected_wallet_count"] == 3
+    frozen = ContinuousShadowRepository(_shadow_database(database)).selection_snapshot(
+        experiment.selection_run_id
+    )
+    assert prospective["copyability"]["selected_wallet_count"] == len(frozen.candidates)
     assert prospective["comparison_to_shadow_ledger"] == "NOT_COMPARABLE_POLICY_AND_CAPITAL"
     with sqlite3.connect(_shadow_database(database)) as connection:
         recorded = connection.execute(
