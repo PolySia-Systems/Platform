@@ -155,7 +155,7 @@ Transient source-unavailable and market-read failures use the same bounded
 persistent-loop retry behavior. Persistence, lease-integrity, and unexpected
 failures remain fail-closed and may terminate the worker for systemd recovery.
 
-Schema v6 remains standalone in `continuous-shadow.sqlite3`. Current valuation
+Schema v8 remains standalone in `continuous-shadow.sqlite3`. Current valuation
 is mutable position state (`observed_at`, `source_at`, `state_changed_at`,
 price, mark status, freshness, source age, last observed poll). Mark history is
 appended only for a canonical Decimal price, mark status, relevant quantity, or

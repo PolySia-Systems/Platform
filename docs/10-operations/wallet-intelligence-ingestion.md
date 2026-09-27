@@ -667,7 +667,7 @@ validation failures have separate sanitized codes. Do not reduce the floor to
 force a backup through: provision space or perform approved legacy cleanup.
 
 Integrity, foreign keys, schema and accounting validation run on the completed
-snapshots, not the live writer. Schema-v6 Shadow validation uses the canonical
+snapshots, not the live writer. Schema-v8 Shadow validation uses the canonical
 Decimal invariant evaluator without constructing a full historical report.
 The stores are sequential consistent snapshots, not a cross-database transaction.
 
