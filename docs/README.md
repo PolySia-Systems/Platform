@@ -26,8 +26,10 @@ local historical baseline. Do not promote modeled P&L into Live authority.
 durable state and [architecture](04-architecture/README.md) to go deeper.
 For a disposable, scoped resume briefing use
 `polysia system developer-context`; the packet is a generated view, not
-project truth. The previous Helsinki host is retired; do not query it. Historical Stage 4B
-evidence is the read-only local backup recorded in
+project truth. A bounded, owner-authorized Helsinki `DATA_ONLY` run is recorded
+in [the dated acceptance evidence](18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md).
+Query the host for current state only within an authorized operational task.
+The earlier frozen Stage 4B backup remains documented in
 [Target Exposure v1 baseline](18-ai-handoffs/shadow-target-exposure-v1-baseline.md).
 
 ## Durable project truth
