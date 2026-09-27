@@ -452,6 +452,8 @@ services:
       - "${POLYSIA_CONTINUOUS_SHADOW_OVERLAP_SECONDS:-30}"
       - --maximum-selection-age-hours
       - "${POLYSIA_CONTINUOUS_SHADOW_SELECTION_MAX_AGE_HOURS:-36}"
+      - --runtime-spec
+      - /var/lib/polysia/config/continuous-shadow-runtime.json
       - --loop
     user: "10001:10001"
     read_only: true
@@ -464,6 +466,10 @@ services:
       - type: bind
         source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/reports
         target: /var/lib/polysia/reports/wallet-intelligence
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/config
+        target: /var/lib/polysia/config
+        read_only: true
     cap_drop:
       - ALL
     security_opt:

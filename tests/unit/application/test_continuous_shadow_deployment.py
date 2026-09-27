@@ -19,6 +19,10 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert "/var/lib/polysia/data/wallet-intelligence.sqlite3" in section
     assert "/var/lib/polysia/data/continuous-shadow.sqlite3" in section
     assert "--maximum-selection-age-hours" in section
+    assert "--runtime-spec" in section
+    assert "/var/lib/polysia/config/continuous-shadow-runtime.json" in section
+    assert "/wallet-intelligence/config" in section
+    assert "read_only: true" in section
     assert "--loop" in section
     assert "continuous-shadow.json" in section
     assert "container_name: polysia-shadow-portfolio-worker" in section
@@ -35,6 +39,11 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
         / "polysia-wallet-intelligence-shadow-portfolio.service"
     ).read_text(encoding="utf-8")
     assert "Type=simple" in service
+    assert "EnvironmentFile=/etc/polysia/image.env" in service
+    assert (
+        "ExecStartPre=/usr/bin/test -r "
+        "/var/lib/polysia/wallet-intelligence/config/continuous-shadow-runtime.json"
+    ) in service
     assert "Restart=on-failure" in service
     assert "compose --profile wallet-intelligence up --abort-on-container-exit" in service
     assert (
@@ -44,6 +53,10 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert "rm -fs --timeout" not in service
     assert "compose run" not in service
     assert "tiny-execute" not in service
+    pipeline = (
+        ROOT / "deploy" / "systemd" / "polysia-wallet-intelligence.service"
+    ).read_text(encoding="utf-8")
+    assert "EnvironmentFile=/etc/polysia/image.env" in pipeline
 
 
 def test_fast_timer_is_additive_and_stage4a_ten_minute_timer_is_preserved() -> None:
