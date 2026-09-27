@@ -55,6 +55,7 @@ from polysia.application.services.continuous_shadow_failures import (
     FAILURE_STAGE_UNEXPECTED,
     classify_continuous_shadow_failure,
 )
+from polysia.application.services.continuous_shadow_opportunity import opportunity_payload
 from polysia.config.structured_logging import get_logger
 from polysia.domain.copytrading import LeaderTradeAction, LeaderTradeEvent
 from polysia.domain.copytrading.continuous_shadow import (
@@ -206,6 +207,13 @@ class ContinuousShadowService:
     def start(self, source_id: str) -> ContinuousShadowExperiment:
         self._initialize_store()
         selection = self._candidate_port.current_snapshot(source_id)
+        if (
+            self._config.wallet_count is not None
+            and len(selection.candidates) != self._config.wallet_count
+        ):
+            raise ContinuousShadowError(
+                "Selected wallet count differs from the frozen runtime specification."
+            )
         return self._store.start_experiment(
             selection=selection,
             config=self._config,
@@ -324,10 +332,79 @@ class ContinuousShadowService:
         if experiment.lifecycle is ContinuousShadowLifecycle.FINALIZED:
             raise ContinuousShadowError("Finalized Continuous Shadow cannot accept polls.")
         if experiment.config.to_dict() != self._config.to_dict():
+            if experiment.config.runtime_version == "continuous-shadow-runtime-legacy-v0":
+                raise ContinuousShadowError(
+                    "Existing legacy Shadow period needs a controlled lifecycle "
+                    "decision before activating the new runtime contract."
+                )
             raise ContinuousShadowError(
                 "Continuous Shadow runtime config differs from the versioned experiment."
             )
         self._guard_accounting(experiment)
+        event_count, storage_bytes = self._store.period_usage(experiment.experiment_id)
+        if (
+            self._config.period_max_storage_bytes > 0
+            and storage_bytes >= self._config.period_max_storage_bytes
+        ):
+            raise ContinuousShadowError(
+                "Continuous Shadow period storage limit reached; preserve evidence and drain "
+                "or finalize through the existing lifecycle."
+            )
+        age = self._now() - experiment.started_at
+        period_expired = self._config.period_duration_seconds > 0 and (
+            event_count >= self._config.period_max_events
+            or age >= timedelta(seconds=self._config.period_duration_seconds)
+        )
+        if period_expired:
+            if experiment.lifecycle is ContinuousShadowLifecycle.RUNNING:
+                experiment = self._store.transition(
+                    experiment.experiment_id,
+                    lifecycle=ContinuousShadowLifecycle.DRAINING,
+                    transitioned_at=self._now(),
+                )
+            open_count = self._store.open_position_count(experiment.experiment_id)
+            pending_count = self._store.pending_observation_count(experiment.experiment_id)
+            if open_count == 0 and pending_count == 0:
+                try:
+                    next_selection = self._candidate_port.current_snapshot(source_id)
+                except ContinuousSelectionUnavailableError as error:
+                    raise ContinuousShadowError(
+                        "A fresh selected cohort is required to roll a flat period."
+                    ) from error
+                if not (
+                    next_selection.published_at <= self._now()
+                    and self._now() - next_selection.published_at <= self._maximum_selection_age
+                ):
+                    raise ContinuousShadowError(
+                        "A fresh selected cohort is required to roll a flat period."
+                    )
+                if (
+                    self._config.wallet_count is not None
+                    and len(next_selection.candidates) != self._config.wallet_count
+                ):
+                    raise ContinuousShadowError(
+                        "Next selected cohort violates the frozen wallet count."
+                    )
+                self._store.transition(
+                    experiment.experiment_id,
+                    lifecycle=ContinuousShadowLifecycle.FINALIZED,
+                    transitioned_at=self._now(),
+                )
+                experiment = self._store.start_experiment(
+                    selection=next_selection,
+                    config=self._config,
+                    started_at=self._now(),
+                )
+                event_count, storage_bytes = self._store.period_usage(
+                    experiment.experiment_id
+                )
+            elif event_count >= self._config.period_max_events or age >= timedelta(
+                seconds=self._config.period_duration_seconds + 3_600
+            ):
+                raise ContinuousShadowError(
+                    "Continuous Shadow period limit reached with open positions or "
+                    "unadmitted observations; preserve evidence for controlled resolution."
+                )
         with self._latency_span(
             "application", "candidate_lookup", parent_span_id=root_span_id
         ):
@@ -337,12 +414,25 @@ class ContinuousShadowService:
                 selection = self._store.last_known_selection(experiment.experiment_id)
             current_candidates = selection.candidates
             retained = self._store.retained_candidates(experiment.experiment_id)
+            initial_selection = self._store.selection_snapshot(experiment.selection_run_id)
+            if {(item.wallet_id, item.pools) for item in current_candidates} != {
+                (item.wallet_id, item.pools) for item in initial_selection.candidates
+            }:
+                if experiment.lifecycle is ContinuousShadowLifecycle.RUNNING:
+                    experiment = self._store.transition(
+                        experiment.experiment_id,
+                        lifecycle=ContinuousShadowLifecycle.DRAINING,
+                        transitioned_at=self._now(),
+                    )
+                selection = initial_selection
+                current_candidates = selection.candidates
         candidates = _merge_candidates(current_candidates, retained)
         if not candidates:
             raise ContinuousShadowError("Continuous Shadow has no candidates to poll.")
         window_end = self._now().replace(microsecond=0)
         selection_fresh = (
-            selection.published_at <= window_end
+            experiment.lifecycle is ContinuousShadowLifecycle.RUNNING
+            and selection.published_at <= window_end
             and window_end - selection.published_at <= self._maximum_selection_age
         )
         with self._latency_span("application", "db_read", parent_span_id=root_span_id):
@@ -415,6 +505,14 @@ class ContinuousShadowService:
             with self._latency_span("application", "db_read", parent_span_id=root_span_id):
                 seen = self._store.seen_event_ids(tuple(event.event_id for event in eligible))
                 new_events = tuple(event for event in eligible if event.event_id not in seen)
+                if (
+                    self._config.period_max_events > 0
+                    and event_count + len(new_events) > self._config.period_max_events
+                ):
+                    raise ContinuousShadowError(
+                        "Continuous Shadow period event limit would be exceeded; "
+                        "no new event was admitted."
+                    )
                 duplicate_count = source_duplicates + len(eligible) - len(new_events)
                 portfolios = _mutable_portfolios(
                     self._store.portfolios(experiment.experiment_id),
@@ -542,6 +640,18 @@ class ContinuousShadowService:
                 settlement_backlog_count=settlement_backlog_count,
                 request_telemetry=_safe_mapping(source, "request_telemetry"),
                 admission_completed_at=admission_completed_at,
+                opportunities=tuple(
+                    opportunity_payload(
+                        event,
+                        admission_at=admission_completed_at,
+                        decision_at=evaluated_at,
+                        selection_digest=selection.digest,
+                        config=self._config.to_dict(),
+                        market=markets.get(event.market_reference),
+                        book=books.get(event.outcome_reference),
+                    )
+                    for event in new_events
+                ),
             )
             stage = FAILURE_STAGE_PERSIST
             with self._latency_span("application", "persistence", parent_span_id=root_span_id):
@@ -678,7 +788,7 @@ class ContinuousShadowService:
                             candidate.wallet_id,
                             start_at=window_start,
                             end_at=window_end,
-                            page_size=500,
+                            page_size=self._config.source_page_size,
                             checkpoint=checkpoint,
                             purpose=LeaderReadPurpose.DISCOVERY,
                         )

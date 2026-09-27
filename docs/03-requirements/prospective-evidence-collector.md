@@ -136,6 +136,13 @@ The collector is provider-neutral. Venue translation stays in adapters.
   and disposition; they must not overwrite the Manifest. Large restore and
   analysis copies use an operation-owned scratch directory, not the container
   `/tmp` tmpfs. Off-host Archive transfer remains a separate operator action.
+  New runs may instead use `research-run-spec-v2` / `research-run-plan-v2` to
+  freeze a validated per-wallet v2 source cadence, cursor page/request/time
+  budget, bounded overlap, and existing economic policy reference. Source
+  creation and restart reconstruction must consume the same Plan runtime.
+  Version 1 Plans and old bundles retain their original semantics and digest.
+  Reporting remains on demand; the v2 retention field is fixed at 30 days
+  and does not add an automatic deletion path.
 - Finalization is memory-bounded. Event reads are chunked. Replay consumes
   valid windows as a stream, holds market snapshots only as long as economics
   needs them, and drops per-observation traces after digests exist. The

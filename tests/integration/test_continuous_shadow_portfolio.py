@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -610,6 +610,28 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
     assert results["polls"]["duplicate_count"] == 2
     assert results["event_journal"]["duplicate_processing_count"] == 0
     assert results["event_journal"]["processing_status"] == {"PROCESSED": 2}
+    prospective = ContinuousShadowRepository(_shadow_database(database)).opportunity_report(
+        experiment.experiment_id
+    )
+    assert prospective["opportunity_count"] == 2
+    assert prospective["journal_event_count"] == 2
+    assert prospective["status"] in {"PROVISIONAL", "UNKNOWN"}
+    assert len(prospective["supporting_artifacts"]["evidence_root_sha256"]) == 64
+    assert prospective["copyability"]["status"] == "SELECTED_BY_RECORDED_POLICY"
+    frozen = ContinuousShadowRepository(_shadow_database(database)).selection_snapshot(
+        experiment.selection_run_id
+    )
+    assert prospective["copyability"]["selected_wallet_count"] == len(frozen.candidates)
+    assert prospective["comparison_to_shadow_ledger"] == "NOT_COMPARABLE_POLICY_AND_CAPITAL"
+    with sqlite3.connect(_shadow_database(database)) as connection:
+        recorded = connection.execute(
+            "SELECT evidence_json FROM continuous_shadow_opportunities ORDER BY event_id"
+        ).fetchall()
+    assert len(recorded) == 2
+    assert all(
+        json.loads(row[0])["admission_at"] <= json.loads(row[0])["decision_at"]
+        for row in recorded
+    )
     assert results["event_journal"]["first_source_event_at"] == buy.executed_at.isoformat().replace(
         "+00:00", "Z"
     )
@@ -660,12 +682,214 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         shadow_backup.backup_path,
         working_directory=tmp_path / "restore",
     )
-    assert shadow_restored.validation.schema_version == 7
+    assert shadow_restored.validation.schema_version == 8
     assert shadow_restored.validation.experiment_count == 1
     assert shadow_restored.validation.poll_count == 3
     assert shadow_restored.validation.event_count == 2
     assert shadow_restored.validation.ledger_count == 8
     assert shadow_restored.validation.ledger_balanced is True
+
+
+@pytest.mark.asyncio
+async def test_period_event_limit_preserves_prior_accounting_and_open_positions(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    config = ContinuousShadowConfig(maximum_quote_age_ms=60_000, period_max_events=1)
+    service = _service(database, scenario, _MarketPort(clock), clock, config=config)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    wallet = candidates[0].wallet_id
+    scenario.events[wallet] = [
+        _EventSpec("bounded-buy", LeaderTradeAction.BUY,
+                   NOW + timedelta(seconds=30), Decimal("0.40"))
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    scenario.events[wallet].append(
+        _EventSpec("bounded-sell", LeaderTradeAction.SELL,
+                   NOW + timedelta(seconds=90), Decimal("0.60"))
+    )
+    clock.value += timedelta(minutes=1)
+    with pytest.raises(ContinuousShadowError, match="period limit"):
+        await service.poll("polycop")
+    repository = ContinuousShadowRepository(_shadow_database(database))
+    assert repository.period_usage(experiment.experiment_id)[0] == 1
+    with sqlite3.connect(_shadow_database(database)) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_opportunities"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_ledger WHERE event_id = 'bounded-sell'"
+        ).fetchone()[0] == 0
+    service.drain("polycop")
+    with pytest.raises(ContinuousShadowStoreError, match="open positions"):
+        service.finalize("polycop")
+
+
+@pytest.mark.asyncio
+async def test_opportunity_and_financial_commit_roll_back_together(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec("atomic-buy", LeaderTradeAction.BUY,
+                   NOW + timedelta(seconds=30), Decimal("0.40"))
+    ]
+    shadow = _shadow_database(database)
+    with sqlite3.connect(shadow) as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_financial_commit BEFORE INSERT ON continuous_shadow_ledger "
+            "BEGIN SELECT RAISE(ABORT, 'fixture ledger failure'); END"
+        )
+    clock.value = NOW + timedelta(minutes=2)
+    with pytest.raises(ContinuousShadowError, match="failed safely"):
+        await service.poll("polycop")
+    with sqlite3.connect(shadow) as connection:
+        for table in (
+            "continuous_shadow_opportunities", "continuous_shadow_event_journal",
+            "continuous_shadow_ledger",
+        ):
+            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        connection.execute("DROP TRIGGER fail_financial_commit")
+    assert ContinuousShadowRepository(shadow).watermark(experiment.experiment_id) is None
+    clock.value += timedelta(seconds=1)
+    recovered = await _service(database, scenario, _MarketPort(clock), clock).poll("polycop")
+    assert recovered.new_event_count == 1
+    with sqlite3.connect(shadow) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_opportunities"
+        ).fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_period_duration_enters_bounded_drain_without_resetting_inventory(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    config = ContinuousShadowConfig(
+        maximum_quote_age_ms=60_000, period_duration_seconds=3_600
+    )
+    service = _service(database, scenario, _MarketPort(clock), clock, config=config)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec("period-buy", LeaderTradeAction.BUY,
+                   NOW + timedelta(seconds=30), Decimal("0.40"))
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    await service.poll("polycop")
+    clock.value = NOW + timedelta(hours=1, minutes=1)
+    outcome = await service.poll("polycop")
+    assert outcome.experiment.lifecycle.value == "DRAINING"
+    assert outcome.follower_exposure > 0
+    repository = ContinuousShadowRepository(_shadow_database(database))
+    assert repository.period_usage(experiment.experiment_id)[0] == 1
+    with pytest.raises(ContinuousShadowStoreError, match="open positions"):
+        service.finalize("polycop")
+
+
+@pytest.mark.asyncio
+async def test_flat_period_rollover_preserves_finalized_evidence(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    config = ContinuousShadowConfig(period_duration_seconds=3_600)
+    service = _service(database, scenario, _MarketPort(clock), clock, config=config)
+    old = service.start("polycop")
+    clock.value = NOW + timedelta(hours=1, minutes=1)
+    outcome = await service.poll("polycop")
+    assert outcome.experiment.experiment_id != old.experiment_id
+    repository = ContinuousShadowRepository(_shadow_database(database))
+    assert repository.active_experiment("polycop") is not None
+    with sqlite3.connect(_shadow_database(database)) as connection:
+        assert connection.execute(
+            "SELECT lifecycle FROM continuous_shadow_experiments WHERE experiment_id = ?",
+            (old.experiment_id,),
+        ).fetchone() == ("FINALIZED",)
+
+
+@pytest.mark.asyncio
+async def test_membership_change_drains_old_cohort_without_resetting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    old = service.start("polycop")
+    initial = service._candidate_port.current_snapshot("polycop")
+    replacement = ContinuousSelectionSnapshot.create(
+        source_id=initial.source_id,
+        selection_run_id="different-membership-run",
+        source_snapshot_id="different-membership-source",
+        feature_set_version=initial.feature_set_version,
+        policy_id=initial.policy_id,
+        policy_version=initial.policy_version,
+        ranking_version=initial.ranking_version,
+        published_at=NOW,
+        candidates=initial.candidates[:1],
+    )
+    monkeypatch.setattr(service._candidate_port, "current_snapshot", lambda _source: replacement)
+    scenario.events[initial.candidates[0].wallet_id] = [
+        _EventSpec("cohort-buy", LeaderTradeAction.BUY,
+                   NOW + timedelta(seconds=30), Decimal("0.40"))
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    outcome = await service.poll("polycop")
+    assert outcome.experiment.experiment_id == old.experiment_id
+    assert outcome.experiment.lifecycle.value == "DRAINING"
+    assert outcome.simulated_count == 0
+    with sqlite3.connect(_shadow_database(database)) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_ledger WHERE event_id = 'cohort-buy'"
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_pool_change_drains_frozen_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    service = _service(database, _Scenario(), _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    initial = service._candidate_port.current_snapshot("polycop")
+    first = initial.candidates[0]
+    pools = ("STRESS",) if first.pools != ("STRESS",) else ("ALPHA",)
+    replacement = ContinuousSelectionSnapshot.create(
+        source_id=initial.source_id,
+        selection_run_id="changed-pool-run",
+        source_snapshot_id="changed-pool-source",
+        feature_set_version=initial.feature_set_version,
+        policy_id=initial.policy_id,
+        policy_version=initial.policy_version,
+        ranking_version=initial.ranking_version,
+        published_at=NOW,
+        candidates=(replace(first, pools=pools), *initial.candidates[1:]),
+    )
+    monkeypatch.setattr(service._candidate_port, "current_snapshot", lambda _source: replacement)
+    clock.value = NOW + timedelta(minutes=2)
+    outcome = await service.poll("polycop")
+    assert outcome.experiment.experiment_id == experiment.experiment_id
+    assert outcome.experiment.lifecycle.value == "DRAINING"
 
 
 @pytest.mark.asyncio
@@ -705,6 +929,26 @@ async def test_verified_settlement_closes_cross_run_positions_and_allows_finaliz
     assert finalized.lifecycle.value == "FINALIZED"
     assert results["open_position_count"] == 0
     assert results["accounting"]["ledger_balanced"] is True
+    prospective = ContinuousShadowRepository(
+        _shadow_database(database)
+    ).opportunity_report(experiment.experiment_id)
+    cutoff = datetime.fromisoformat(str(prospective["report_cutoff"]).replace("Z", "+00:00"))
+    assert cutoff == clock.value
+    assert prospective["report"]["control"]["valuation_status"] == "MEASURED"
+    with sqlite3.connect(_shadow_database(database)) as connection:
+        mark = connection.execute(
+            "SELECT rowid, mark_price FROM continuous_shadow_position_marks "
+            "WHERE mark_status = 'VERIFIED_SETTLEMENT' LIMIT 1"
+        ).fetchone()
+        assert mark is not None
+        connection.execute(
+            "UPDATE continuous_shadow_position_marks SET mark_price = ? WHERE rowid = ?",
+            ("0" if mark[1] == "1" else "1", mark[0]),
+        )
+    with pytest.raises(ContinuousShadowStoreError, match="Conflicting verified settlement"):
+        ContinuousShadowRepository(_shadow_database(database)).opportunity_report(
+            experiment.experiment_id
+        )
 
 
 @pytest.mark.asyncio

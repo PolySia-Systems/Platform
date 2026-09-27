@@ -220,6 +220,7 @@ class _ReplaySnapshotIndex:
         max_age: timedelta,
         acquisition_max_delay: timedelta,
         entry_budget: Decimal,
+        require_related_snapshot: bool = False,
     ) -> tuple[ExecutionEvidence | None, str | None, bool, datetime]:
         if max_age.total_seconds() < 0 or acquisition_max_delay.total_seconds() < 0:
             raise ValueError("execution evidence time bounds must not be negative")
@@ -251,6 +252,8 @@ class _ReplaySnapshotIndex:
             snapshot = timeline.events[index]
             if snapshot.market_reference != observation.market_reference:
                 continue
+            if require_related_snapshot and snapshot.related_evidence_id != observation.evidence_id:
+                continue
             evidence, reason, decision_time = _execution_from_snapshot(
                 snapshot,
                 observation=observation,
@@ -263,6 +266,8 @@ class _ReplaySnapshotIndex:
         for index in range(mid, future_right):
             snapshot = timeline.events[index]
             if snapshot.market_reference != observation.market_reference:
+                continue
+            if require_related_snapshot and snapshot.related_evidence_id != observation.evidence_id:
                 continue
             evidence, reason, decision_time = _execution_from_snapshot(
                 snapshot,
@@ -450,6 +455,7 @@ def replay_same_observations(
     ),
     ordered: bool = False,
     record_markouts: bool = True,
+    require_related_execution_snapshot: bool = False,
 ) -> SameObservationReplay:
     """Consume one observation stream for Current Control and Target Exposure."""
 
@@ -507,6 +513,7 @@ def replay_same_observations(
             max_age=execution_evidence_max_age,
             acquisition_max_delay=execution_evidence_acquisition_max_delay,
             entry_budget=policy.entry_budget,
+            require_related_snapshot=require_related_execution_snapshot,
         )
         if mapped:
             mapped_count += 1

@@ -203,6 +203,15 @@ docker compose --profile wallet-intelligence run --rm \
   --limit 100
 ```
 
+Add `--prospective` to that snapshot command for the new Control/Target
+opportunity replay. It reads all admitted opportunities and may take longer
+than the historical `results(limit=100)` measurement below. The JSON keeps
+process/source health separate from prospective `status`, canary reasons,
+per-wallet/portfolio economics, code/configuration identity, and report
+cutoff. It labels comparison with the Stage 4B ledger `NOT_COMPARABLE` when
+policy or capital differs. A missing fee, causal quote, or liquidation leaves
+the economic result UNKNOWN; Market-only/Placebo remain unsupported.
+
 Consumers use `candidate_status='SELECTED' ORDER BY candidate_rank`. Ranking is
 source score descending, source rank ascending, presence ratio descending, and
 canonical `wallet_id` ascending. The last field is the stable tie-break. The
@@ -305,19 +314,20 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
-## Continuous Shadow Portfolio / standalone schema v7
+## Continuous Shadow Portfolio / standalone schema v8
 
 Stage 4B is additive to the immutable Stage 4A windows above. It persists a
 first-seen journal, cross-run inventory, independent Wallet portfolios, a labeled
 mixed baseline follower, independent Alpha and Stress followers, market-specific
 official fees, current valuation, change-driven marks, settlement, and Decimal
-ledger evidence. Schema v7 keeps Stage 4B as the only runtime writer of
+ledger evidence. Schema v8 keeps Stage 4B as the only runtime writer of
 `continuous-shadow.sqlite3`, stores current marks on positions, and adds
-first-observation `PENDING` rows for incomplete v2 cursor walks. These rows
+first-observation `PENDING` rows for incomplete v2 cursor walks and immutable
+digested opportunities before dependent financial rows. Pending rows
 carry no fill, fee, ledger, or watermark authority; admission occurs only after
-the available-page walk completes. A v6 file migrates additively at startup;
+the available-page walk completes. A v5–v7 file migrates additively at startup;
 take and restore-check a backup before updating because an older binary cannot
-read v7. Stage 4A
+read v8. Stage 4A
 remains in `wallet-intelligence.sqlite3`. ADR-0015 owns the lifecycle bounds.
 Its complete contract is
 `docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.
@@ -371,6 +381,40 @@ docker compose --profile wallet-intelligence run --rm \
   --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
   --database /var/lib/polysia/data/continuous-shadow.sqlite3
 ```
+
+For a new v8 period, provide the same reviewed runtime Spec to
+`portfolio-start` and `portfolio-sync`. This is an example shape, not a
+measured production configuration; replace the SHA with the exact running
+image commit after approval. `source_mode` is `per-wallet-v2` only.
+
+```json
+{
+  "runtime_version": "continuous-shadow-runtime-v1",
+  "source_mode": "per-wallet-v2",
+  "code_sha": "<exact 40-character lowercase image commit>",
+  "wallet_count": 3,
+  "poll_interval_seconds": 60,
+  "source_page_size": 500,
+  "source_max_pages": 20,
+  "source_max_requests": 20,
+  "source_timeout_seconds": 30,
+  "maximum_pages_per_wallet": 40,
+  "period_duration_seconds": 14400,
+  "period_max_events": 10000,
+  "period_max_storage_bytes": 1073741824
+}
+```
+
+Pass the JSON path as `--runtime-spec <reviewed-file>` to both commands.
+The effective configuration is stored in the experiment. A changed Spec is
+rejected while its period is active. The v8 worker rejects an active legacy
+period until a controlled drain/finalize decision is made; the older cutover
+statement above does not authorize discarding its inventory. A flat period
+with no pending observations can roll to a fresh cohort. Open positions keep
+exits and settlement during a bounded drain. Event/storage exhaustion or
+unresolved positions/pending observations requires operator resolution; a
+new period never resets an open book. Historical opportunity and ledger rows
+are not covered by mark-history pruning.
 
 History pruning and compact copies are explicit Stage 4B maintenance. Stop the
 worker first. Create and restore-check a recovery bundle, then prune through the

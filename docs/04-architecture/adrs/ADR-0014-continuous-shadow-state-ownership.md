@@ -73,3 +73,15 @@ bundle. This does not authorize Live trading or claim production readiness.
 - PostgreSQL, a queue, or microservices now: no measured need justifies the
   operational complexity.
 - Copying only current positions: loses auditability and restart continuity.
+
+## Additive prospective evidence (2026-09-27)
+
+CURRENT: standalone schema v8 adds immutable per-event opportunity JSON and
+its SHA-256 digest. The Stage 4B writer inserts it before journal,
+evaluations, ledger and checkpoint publication in the same SQLite transaction.
+This is still one financial writer and no cross-database transaction. The
+read-only prospective adapter uses the existing Research replay on a verified
+snapshot, and never replaces Shadow's ledger or historical replay contract.
+Schema v5–v7 files migrate additively; older binaries cannot read v8, so
+rollback after migration requires the verified pre-upgrade backup and an
+explicit decision about post-upgrade evidence.

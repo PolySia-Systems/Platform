@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ from polysia.application.ports.continuous_shadow import (
     ShadowInvariantView,
 )
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
+from polysia.backtesting.shadow_opportunity_replay import replay_shadow_opportunities
 from polysia.domain.copytrading import LeaderTradeAction
 from polysia.domain.copytrading.continuous_shadow import (
     FOLLOWER_KIND_SPECS,
@@ -53,7 +55,7 @@ from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLI
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
-CONTINUOUS_SHADOW_SCHEMA_VERSION = 7
+CONTINUOUS_SHADOW_SCHEMA_VERSION = 8
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
@@ -383,8 +385,22 @@ class ContinuousShadowRepository:
                     existing.bankroll_version,
                 )
                 if actual != expected or existing.config.to_dict() != config.to_dict():
+                    if existing.config.runtime_version == "continuous-shadow-runtime-legacy-v0":
+                        raise ContinuousShadowStoreError(
+                            "Legacy Shadow period needs controlled drain/finalize before "
+                            "the v1 runtime can start."
+                        )
                     raise ContinuousShadowStoreError(
                         "An active Continuous Shadow experiment uses different versions."
+                    )
+                initial_wallets = {
+                    (item.wallet_id, item.pools)
+                    for item in self.selection_snapshot(existing.selection_run_id).candidates
+                }
+                if initial_wallets != {(item.wallet_id, item.pools) for item in candidates}:
+                    raise ContinuousShadowStoreError(
+                        "Wallet membership or pool assignment changed; drain and finalize "
+                        "the active period first."
                     )
                 connection.commit()
                 return existing
@@ -500,6 +516,15 @@ class ContinuousShadowRepository:
                 if open_count:
                     raise ContinuousShadowStoreError(
                         "Continuous Shadow cannot finalize with open positions."
+                    )
+                pending_count = int(connection.execute(
+                    "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
+                    "WHERE experiment_id = ? AND admission_state = 'PENDING'",
+                    (experiment_id,),
+                ).fetchone()[0])
+                if pending_count:
+                    raise ContinuousShadowStoreError(
+                        "Continuous Shadow cannot finalize with unadmitted observations."
                     )
             column = (
                 "draining_at"
@@ -941,6 +966,24 @@ class ContinuousShadowRepository:
                 )
                 else Decimal("100"),
             )
+            if completion.opportunities is not None:
+                for opportunity in completion.opportunities:
+                    encoded = json.dumps(
+                        opportunity, sort_keys=True, separators=(",", ":")
+                    )
+                    connection.execute(
+                        "INSERT INTO continuous_shadow_opportunities "
+                        "(event_id, experiment_id, poll_run_id, evidence_json, "
+                        "evidence_digest, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            str(opportunity["event_id"]),
+                            experiment.experiment_id,
+                            poll_run_id,
+                            encoded,
+                            hashlib.sha256(encoded.encode()).hexdigest(),
+                            _iso(completed_at),
+                        ),
+                    )
             for event, pools in completion.events:
                 connection.execute(
                     "INSERT INTO continuous_shadow_event_journal "
@@ -1818,6 +1861,7 @@ class ContinuousShadowRepository:
             }
             for row in candidate_rows
         }
+
         follower_ids = {"follower", "follower-alpha", "follower-stress"}
         wallet_evaluations = [
             row for row in evaluation_rows if str(row["portfolio_id"]) not in follower_ids
@@ -2194,6 +2238,269 @@ class ContinuousShadowRepository:
                 )[:limit]
             ],
         }
+
+    def opportunity_report(self, experiment_id: str) -> dict[str, object]:
+        """Replay an explicit snapshot on demand; never on the polling hot path."""
+
+        connection = self._connect(read_only=True)
+        try:
+            experiment = connection.execute(
+                "SELECT lifecycle, selection_run_id, policy_version, cost_model_version, "
+                "config_json "
+                "FROM continuous_shadow_experiments WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()
+            if experiment is None:
+                raise ContinuousShadowStoreError("Continuous Shadow experiment is unavailable.")
+            selection = connection.execute(
+                "SELECT policy_id, policy_version, ranking_version, source_snapshot_id, "
+                "candidate_count, digest FROM continuous_shadow_selection_snapshots "
+                "WHERE selection_run_id = ?",
+                (str(experiment["selection_run_id"]),),
+            ).fetchone()
+            if selection is None:
+                raise ContinuousShadowStoreError("Frozen copyability selection is unavailable.")
+            rows = connection.execute(
+                "SELECT o.event_id, o.poll_run_id, o.evidence_json, o.evidence_digest, "
+                "p.selection_snapshot_digest, p.completed_at "
+                "FROM continuous_shadow_opportunities o "
+                "JOIN continuous_shadow_poll_runs p ON p.poll_run_id = o.poll_run_id "
+                "WHERE o.experiment_id = ? AND p.experiment_id = ? "
+                "AND p.status = 'succeeded' ORDER BY o.recorded_at, o.event_id",
+                (experiment_id, experiment_id),
+            ).fetchall()
+            journal_count = int(connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_event_journal j "
+                "JOIN continuous_shadow_poll_runs p ON p.poll_run_id = j.first_poll_run_id "
+                "WHERE p.experiment_id = ?", (experiment_id,)
+            ).fetchone()[0])
+            latest_poll = connection.execute(
+                "SELECT completed_at FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? AND status = 'succeeded' "
+                "ORDER BY completed_at DESC LIMIT 1", (experiment_id,)
+            ).fetchone()
+            poll_coverage = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? GROUP BY status", (experiment_id,)
+            ).fetchall()
+            pending_count = int(connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
+                "WHERE experiment_id = ? AND admission_state = 'PENDING'",
+                (experiment_id,),
+            ).fetchone()[0])
+            settlement_rows = connection.execute(
+                "SELECT DISTINCT m.market_reference, m.outcome_reference, "
+                "m.mark_price, m.marked_at, m.poll_run_id, p.completed_at "
+                "FROM continuous_shadow_position_marks m "
+                "JOIN continuous_shadow_poll_runs p ON p.poll_run_id = m.poll_run_id "
+                "WHERE m.experiment_id = ? AND p.experiment_id = ? "
+                "AND p.status = 'succeeded' AND m.mark_status = 'VERIFIED_SETTLEMENT' "
+                "AND EXISTS (SELECT 1 FROM continuous_shadow_ledger l "
+                "WHERE l.experiment_id = m.experiment_id "
+                "AND l.poll_run_id = m.poll_run_id "
+                "AND l.portfolio_id = m.portfolio_id "
+                "AND l.market_reference = m.market_reference "
+                "AND l.outcome_reference = m.outcome_reference "
+                "AND l.entry_type = 'SETTLEMENT') "
+                "ORDER BY m.marked_at, m.market_reference, m.outcome_reference",
+                (experiment_id, experiment_id),
+            ).fetchall()
+        finally:
+            connection.close()
+        evidence: list[dict[str, object]] = []
+        configured = json.loads(str(experiment["config_json"]))
+        encoded_config = json.dumps(configured, sort_keys=True, separators=(",", ":"))
+        expected_config_digest = hashlib.sha256(encoded_config.encode()).hexdigest()
+        for row in rows:
+            encoded = str(row["evidence_json"])
+            if hashlib.sha256(encoded.encode()).hexdigest() != row["evidence_digest"]:
+                raise ContinuousShadowStoreError("Shadow opportunity digest mismatch.")
+            payload = json.loads(encoded)
+            if not isinstance(payload, dict) or payload.get("event_id") != row["event_id"]:
+                raise ContinuousShadowStoreError("Shadow opportunity identity mismatch.")
+            if payload.get("config_digest") != expected_config_digest:
+                raise ContinuousShadowStoreError("Shadow opportunity config digest mismatch.")
+            if payload.get("code_sha") != configured.get("code_sha"):
+                raise ContinuousShadowStoreError("Shadow opportunity code identity mismatch.")
+            if payload.get("selection_digest") != row["selection_snapshot_digest"]:
+                raise ContinuousShadowStoreError("Shadow opportunity selection digest mismatch.")
+            if (
+                payload.get("policy_version") != experiment["policy_version"]
+                or payload.get("cost_model_version") != experiment["cost_model_version"]
+            ):
+                raise ContinuousShadowStoreError("Shadow opportunity policy identity mismatch.")
+            if _datetime(str(payload.get("decision_at"))) > _datetime(
+                str(row["completed_at"])
+            ):
+                raise ContinuousShadowStoreError("Shadow opportunity decision follows commit.")
+            payload["poll_run_id"] = str(row["poll_run_id"])
+            evidence.append(payload)
+        reasons: list[str] = []
+        if len(evidence) != journal_count:
+            reasons.append("opportunity_evidence_missing_for_admitted_events")
+        if pending_count:
+            reasons.append("unadmitted_first_observations")
+        settlements: list[dict[str, str]] = []
+        settlement_prices: dict[tuple[str, str], str] = {}
+        for row in settlement_rows:
+            price = str(row["mark_price"])
+            if price not in {"0", "1"} or _datetime(str(row["marked_at"])) > _datetime(
+                str(row["completed_at"])
+            ):
+                raise ContinuousShadowStoreError("Verified settlement evidence is malformed.")
+            key = (str(row["market_reference"]), str(row["outcome_reference"]))
+            if key in settlement_prices and settlement_prices[key] != price:
+                raise ContinuousShadowStoreError("Conflicting verified settlement prices.")
+            settlement_prices[key] = price
+            settlements.append({
+                "market_reference": str(row["market_reference"]),
+                "outcome_reference": str(row["outcome_reference"]),
+                "price": price,
+                "observed_at": str(row["marked_at"]),
+                "poll_run_id": str(row["poll_run_id"]),
+            })
+        if not evidence:
+            reasons.append("no_admitted_opportunities")
+        config_digests = {str(item["config_digest"]) for item in evidence}
+        selection_digests = {str(item["selection_digest"]) for item in evidence}
+        code_shas = {str(item.get("code_sha") or "UNKNOWN") for item in evidence}
+        if len(config_digests) > 1:
+            reasons.append("configuration_changed_within_period")
+        if len(code_shas) != 1 or "UNKNOWN" in code_shas:
+            reasons.append("code_identity_unverified")
+        replay = replay_shadow_opportunities(
+            tuple(evidence), experiment_id=experiment_id, settlements=tuple(settlements)
+        )
+        result = replay["report"]
+        if not isinstance(result, dict):
+            raise ContinuousShadowStoreError("Prospective report is malformed.")
+        if result["data_canary_status"] != "PASS":
+            reasons.append("prospective_data_canary_not_passed")
+        excluded = replay["excluded_execution_evidence"]
+        if isinstance(excluded, dict) and excluded:
+            reasons.append("some_execution_evidence_excluded")
+        if int(result["unknown_observations"]) > 0:
+            reasons.append("unknown_economic_observations")
+        control = result["control"]
+        target = result["target"]
+        if not isinstance(control, dict) or not isinstance(target, dict):
+            raise ContinuousShadowStoreError("Prospective economic metrics are malformed.")
+        if control.get("net_pnl") is None or target.get("net_pnl") is None:
+            reasons.append("incomplete_terminal_valuation")
+        next_actions = []
+        if "unadmitted_first_observations" in reasons:
+            next_actions.append("recover the bounded source window before finalization")
+        if "opportunity_evidence_missing_for_admitted_events" in reasons:
+            next_actions.append("inspect the verified backup and schema migration")
+        if "code_identity_unverified" in reasons:
+            next_actions.append("start a new period with the verified image SHA")
+        if "prospective_data_canary_not_passed" in reasons:
+            next_actions.append("collect sufficient causal opportunities and fee/depth evidence")
+        if "incomplete_terminal_valuation" in reasons:
+            next_actions.append("obtain causal executable bids or verified terminal settlement")
+        blocking = set(reasons) - {
+            "some_execution_evidence_excluded", "unknown_economic_observations"
+        }
+        evidence_root = hashlib.sha256(json.dumps({
+            "opportunities": sorted(str(row["evidence_digest"]) for row in rows),
+            "settlements": settlements,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        status = (
+            "UNKNOWN" if blocking else
+            "FINAL" if experiment["lifecycle"] == "FINALIZED" and not reasons
+            else "PROVISIONAL"
+        )
+        return {
+            **replay,
+            "status": status,
+            "reasons": reasons,
+            "report_cutoff": max(
+                (
+                    *(str(item["decision_at"]) for item in evidence),
+                    *(item["observed_at"] for item in settlements),
+                ),
+                default=None,
+            ),
+            "source_poll_cutoff": None if latest_poll is None else str(latest_poll[0]),
+            "supporting_artifacts": {
+                "snapshot_database": str(self._path),
+                "evidence_root_sha256": evidence_root,
+                "opportunity_poll_run_ids": sorted({str(row["poll_run_id"]) for row in rows}),
+                "settlement_poll_run_ids": sorted({item["poll_run_id"] for item in settlements}),
+            },
+            "experiment_id": experiment_id,
+            "policy_version": str(experiment["policy_version"]),
+            "cost_model_version": str(experiment["cost_model_version"]),
+            "config_digests": sorted(config_digests),
+            "selection_digests": sorted(selection_digests),
+            "journal_event_count": journal_count,
+            "source_coverage": {
+                "scope": "bounded_available_v2_pages_not_upstream_ground_truth",
+                "polls": {str(row["status"]): int(row["count"]) for row in poll_coverage},
+                "pending_first_observations": pending_count,
+            },
+            "copyability": {
+                "status": "SELECTED_BY_RECORDED_POLICY",
+                "policy_id": str(selection["policy_id"]),
+                "policy_version": str(selection["policy_version"]),
+                "ranking_version": str(selection["ranking_version"]),
+                "selection_run_id": str(experiment["selection_run_id"]),
+                "source_snapshot_id": str(selection["source_snapshot_id"]),
+                "selection_digest": str(selection["digest"]),
+                "selected_wallet_count": int(selection["candidate_count"]),
+                "score_scope": "selection_provenance_only; scores_not_in_shadow_store",
+            },
+            "next_actions": next_actions,
+            "wallets": {
+                wallet: replay_shadow_opportunities(
+                    tuple(item for item in evidence if item["wallet_id"] == wallet),
+                    experiment_id=experiment_id,
+                    settlements=tuple(settlements),
+                )["report"]
+                for wallet in sorted({str(item["wallet_id"]) for item in evidence})
+            },
+            "code_sha": next(iter(code_shas)) if len(code_shas) == 1 else "UNKNOWN",
+            "comparison_to_shadow_ledger": "NOT_COMPARABLE_POLICY_AND_CAPITAL",
+        }
+
+    def period_usage(self, experiment_id: str) -> tuple[int, int]:
+        connection = self._connect(read_only=True)
+        try:
+            count = int(connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_event_journal j "
+                "JOIN continuous_shadow_poll_runs p ON p.poll_run_id = j.first_poll_run_id "
+                "WHERE p.experiment_id = ?", (experiment_id,)
+            ).fetchone()[0])
+        finally:
+            connection.close()
+        bytes_used = sum(
+            path.stat().st_size for path in (
+                self._path,
+                Path(str(self._path) + "-wal"),
+            ) if path.exists()
+        )
+        return count, bytes_used
+
+    def open_position_count(self, experiment_id: str) -> int:
+        connection = self._connect(read_only=True)
+        try:
+            return int(connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_positions "
+                "WHERE experiment_id = ?", (experiment_id,)
+            ).fetchone()[0])
+        finally:
+            connection.close()
+
+    def pending_observation_count(self, experiment_id: str) -> int:
+        connection = self._connect(read_only=True)
+        try:
+            return int(connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
+                "WHERE experiment_id = ? AND admission_state = 'PENDING'",
+                (experiment_id,),
+            ).fetchone()[0])
+        finally:
+            connection.close()
 
     def _upsert_selection_snapshot(
         self,
@@ -2820,8 +3127,12 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     if version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
         _upsert_lifecycle_policy(connection)
         return
+    if version == 7:
+        _migrate_schema_v7_to_v8(connection)
+        return
     if version == 6:
         _migrate_schema_v6_to_v7(connection)
+        _migrate_schema_v7_to_v8(connection)
         return
     if version != 5:
         raise ContinuousShadowStoreError(
@@ -2829,6 +3140,28 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
         )
     _migrate_schema_v5_to_v6(connection)
     _migrate_schema_v6_to_v7(connection)
+    _migrate_schema_v7_to_v8(connection)
+
+
+def _migrate_schema_v7_to_v8(connection: sqlite3.Connection) -> None:
+    initialized_at = connection.execute(
+        "SELECT initialized_at FROM continuous_shadow_metadata"
+    ).fetchone()[0]
+    connection.execute(
+        "CREATE TABLE continuous_shadow_metadata_v8 ("
+        "schema_version INTEGER PRIMARY KEY CHECK(schema_version = 8), "
+        "initialized_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_metadata_v8 (schema_version, initialized_at) "
+        "VALUES (8, ?)",
+        (initialized_at,),
+    )
+    connection.execute("DROP TABLE continuous_shadow_metadata")
+    connection.execute(
+        "ALTER TABLE continuous_shadow_metadata_v8 RENAME TO continuous_shadow_metadata"
+    )
+    connection.commit()
 
 
 def _migrate_schema_v6_to_v7(connection: sqlite3.Connection) -> None:
@@ -3137,6 +3470,12 @@ def _validate_completion(completion: ContinuousPollCompletion) -> None:
     if len(event_ids) != len(set(event_ids)):
         raise ContinuousShadowStoreError("Continuous Shadow journal events are duplicated.")
     known = set(event_ids)
+    if completion.opportunities is not None:
+        opportunity_ids = [str(item.get("event_id", "")) for item in completion.opportunities]
+        if len(opportunity_ids) != len(set(opportunity_ids)) or set(opportunity_ids) != known:
+            raise ContinuousShadowStoreError(
+                "Continuous Shadow opportunities must cover every admitted event exactly once."
+            )
     if any(item.event_id not in known for item in completion.evaluations):
         raise ContinuousShadowStoreError("Continuous Shadow evaluation lacks journal evidence.")
     evaluation_keys = [
@@ -3349,6 +3688,21 @@ def _config(value: object) -> ContinuousShadowConfig:
                 else Decimal(str(value["price_drift_max_ratio"]))
             ),
             negative_cache_ttl_seconds=int(value.get("negative_cache_ttl_seconds", 21_600)),
+            poll_interval_seconds=int(value.get("poll_interval_seconds", 60)),
+            maximum_pages_per_wallet=int(value.get("maximum_pages_per_wallet", 40)),
+            source_page_size=int(value.get("source_page_size", 500)),
+            source_max_pages=int(value.get("source_max_pages", 20)),
+            source_max_requests=int(value.get("source_max_requests", 20)),
+            source_timeout_seconds=int(value.get("source_timeout_seconds", 30)),
+            maximum_selection_age_hours=int(value.get("maximum_selection_age_hours", 36)),
+            period_duration_seconds=int(value.get("period_duration_seconds", 0)),
+            period_max_events=int(value.get("period_max_events", 0)),
+            period_max_storage_bytes=int(value.get("period_max_storage_bytes", 0)),
+            code_sha=None if value.get("code_sha") is None else str(value["code_sha"]),
+            runtime_version=str(
+                value.get("runtime_version", "continuous-shadow-runtime-legacy-v0")
+            ),
+            wallet_count=None if value.get("wallet_count") is None else int(value["wallet_count"]),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ContinuousShadowStoreError("Continuous Shadow config is invalid.") from error

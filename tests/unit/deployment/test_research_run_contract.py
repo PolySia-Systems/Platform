@@ -17,6 +17,7 @@ from polysia.deployment.research_experiment_runner import (
     _read_manifest,
     _write_manifest,
     resolve_admission_lock_path,
+    selection_source_kwargs,
     source_factory_accepts_selection,
 )
 from polysia.deployment.research_run_commands import DISPOSITION_ACCEPTED
@@ -57,6 +58,54 @@ def test_spec_rejects_unknown_fields_and_executable_expressions() -> None:
                 "code_sha": "${__import__('os').system('x')}",
             }
         )
+
+
+@pytest.mark.parametrize("wallet_count", [1, 3])
+def test_v2_runtime_is_frozen_with_supported_wallet_counts(wallet_count: int) -> None:
+    spec = parse_research_run_spec({
+        "spec_version": "research-run-spec-v2",
+        "profile": "canary",
+        "code_sha": CODE_SHA,
+        "wallet_count": wallet_count,
+        "runtime": {
+            "source_mode": "per-wallet-v2",
+            "poll_interval_seconds": 3,
+            "max_pages": 12,
+            "max_requests": 12,
+            "overlap_seconds": 60,
+        },
+    })
+    plan = resolve_run_plan(spec, observed=NOW)
+    assert plan.plan_version == "research-run-plan-v2"
+    assert plan.runtime is not None
+    assert plan.runtime["overlap_seconds"] == 60
+    assert selection_source_kwargs(plan)["runtime"] == plan.runtime
+    assert load_run_plan(plan.to_dict()).semantic_digest() == plan.semantic_digest()
+    changed = resolve_run_plan(
+        ResearchRunSpec(
+            profile="canary", code_sha=CODE_SHA, wallet_count=wallet_count,
+            spec_version="research-run-spec-v2",
+            runtime={"overlap_seconds": 90},
+        ),
+        observed=NOW,
+    )
+    assert not plans_semantically_equal(plan, changed)
+
+
+@pytest.mark.parametrize("runtime", [
+    {"source_mode": "global-v2"},
+    {"max_pages": 21, "max_requests": 20},
+    {"economic_policy_version": "unknown"},
+    {"unused": 1},
+])
+def test_v2_runtime_rejects_unsupported_values(runtime: dict[str, object]) -> None:
+    with pytest.raises(ResearchRunContractError):
+        parse_research_run_spec({
+            "spec_version": "research-run-spec-v2",
+            "profile": "canary",
+            "code_sha": CODE_SHA,
+            "runtime": runtime,
+        })
 
 
 def test_spec_and_plan_require_immutable_git_shas() -> None:
@@ -451,6 +500,42 @@ def test_open_sources_propagates_internal_typeerror_without_fallback() -> None:
     with pytest.raises(TypeError, match="internal mapping failed"):
         asyncio.run(runner._open_sources(_configured_plan()))
     assert calls == [(2, CONFIGURED_SELECTION_POLICY)]
+
+
+def test_open_sources_passes_frozen_v2_runtime_to_composition() -> None:
+    seen: dict[str, object] = {}
+
+    async def factory(
+        *, wallet_count: int | None = None,
+        selection_policy: str | None = None,
+        runtime: dict[str, object] | None = None,
+    ) -> tuple[tuple[object, ...], dict[str, object]]:
+        seen.update({"wallet_count": wallet_count, "selection_policy": selection_policy,
+                     "runtime": runtime})
+        return ((), {})
+
+    plan = resolve_run_plan(ResearchRunSpec(
+        profile="canary", code_sha=CODE_SHA, wallet_count=2,
+        spec_version="research-run-spec-v2", runtime={"overlap_seconds": 90},
+    ), observed=NOW)
+    asyncio.run(ResearchExperimentRunner(source_factory=factory)._open_sources(plan))
+    assert seen["wallet_count"] == 2
+    assert seen["runtime"] == plan.runtime
+
+
+def test_v2_runtime_rejects_factory_that_cannot_apply_it() -> None:
+    async def factory(
+        *, wallet_count: int | None = None, selection_policy: str | None = None,
+    ) -> tuple[tuple[object, ...], dict[str, object]]:
+        del wallet_count, selection_policy
+        return ((), {})
+
+    plan = resolve_run_plan(ResearchRunSpec(
+        profile="canary", code_sha=CODE_SHA,
+        spec_version="research-run-spec-v2", runtime={},
+    ), observed=NOW)
+    with pytest.raises(ResearchRunnerError, match="cannot honor frozen runtime"):
+        asyncio.run(ResearchExperimentRunner(source_factory=factory)._open_sources(plan))
 
 
 def test_open_sources_fails_closed_when_factory_lacks_selection_parameters() -> None:

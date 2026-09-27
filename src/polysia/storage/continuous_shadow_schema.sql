@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 7),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 8),
     initialized_at TEXT NOT NULL
 );
 
@@ -68,6 +68,20 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_experiments (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_active
     ON continuous_shadow_experiments(source_id)
     WHERE lifecycle IN ('RUNNING', 'DRAINING');
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_opportunities (
+    event_id TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL,
+    poll_run_id TEXT NOT NULL,
+    evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+    evidence_digest TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    recorded_at TEXT NOT NULL,
+    FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id),
+    FOREIGN KEY(poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_continuous_shadow_opportunity_period
+    ON continuous_shadow_opportunities(experiment_id, recorded_at, event_id);
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_candidates (
     experiment_id TEXT NOT NULL,

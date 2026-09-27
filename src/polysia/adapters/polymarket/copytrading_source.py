@@ -254,11 +254,21 @@ class PolymarketCopyTradingSource:
         transport: JsonGetTransport | None = None,
         clock: Clock | None = None,
         market_scope: PolymarketMarketScope = PolymarketMarketScope.BTC_15M,
+        max_pages: int = 20,
+        max_requests: int = 20,
+        max_elapsed_seconds: int = 30,
     ) -> None:
+        if not 1 <= max_pages <= max_requests <= 100:
+            raise ValueError("Data API cursor page/request budgets are invalid")
+        if not 1 <= max_elapsed_seconds <= 60:
+            raise ValueError("Data API cursor time budget is invalid")
         self._leaders = _validated_leaders(leaders)
         self._transport = transport or UrllibJsonGetTransport()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._market_scope = market_scope
+        self._max_pages = max_pages
+        self._max_requests = max_requests
+        self._max_elapsed_seconds = max_elapsed_seconds
         self._market_cache: dict[str, dict[str, _VerifiedMarket]] = {}
         self._market_by_condition: dict[str, _VerifiedMarket] = {}
         self._pending_observer: Callable[[tuple[str, ...], datetime], None] | None = None
@@ -292,7 +302,7 @@ class PolymarketCopyTradingSource:
                 "Legacy offset checkpoint cannot resume a v2 cursor window."
             )
 
-        deadline_monotonic = time.monotonic() + 30.0
+        deadline_monotonic = time.monotonic() + self._max_elapsed_seconds
         rows = await fetch_data_api_v2_window(
             self._transport,
             DATA_API_V2_TRADES_PATH,
@@ -304,6 +314,9 @@ class PolymarketCopyTradingSource:
                 "limit": page_size,
             },
             purpose=purpose,
+            max_pages=self._max_pages,
+            max_requests=self._max_requests,
+            max_elapsed_seconds=self._max_elapsed_seconds,
             deadline_monotonic=deadline_monotonic,
             on_page=lambda page_rows: self._capture_pending_page(
                 page_rows, expected_wallet=wallet

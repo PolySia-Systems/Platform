@@ -460,7 +460,7 @@ def test_schema_v5_to_current_is_idempotent(tmp_path: Path) -> None:
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 7
+        ).fetchone()[0] == 8
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(continuous_shadow_positions)")

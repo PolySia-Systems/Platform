@@ -300,7 +300,7 @@ def test_continuous_shadow_backup_restores_independently(tmp_path: Path) -> None
 
     assert backup.backup_path.name.startswith("continuous-shadow-")
     assert restored.sha256 == backup.sha256
-    assert restored.validation.schema_version == 7
+    assert restored.validation.schema_version == 8
     assert restored.validation.experiment_count == 0
     assert restored.validation.ledger_balanced is True
 

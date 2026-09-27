@@ -20,10 +20,67 @@ from polysia.cli import app
 from polysia.cli_commands.wallet_intelligence import (
     _ACCOUNTING_STOP_FAILURES,
     _RETRYABLE_PERSISTENT_SHADOW_FAILURES,
+    _load_continuous_shadow_runtime_spec,
 )
+from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("wallet_count", [1, 3])
+def test_shadow_runtime_spec_freezes_supported_count_and_budgets(
+    tmp_path: Path, wallet_count: int
+) -> None:
+    path = tmp_path / "runtime.json"
+    path.write_text(json.dumps({
+        "runtime_version": "continuous-shadow-runtime-v1",
+        "source_mode": "per-wallet-v2",
+        "code_sha": "a" * 40,
+        "wallet_count": wallet_count,
+        "poll_interval_seconds": 90,
+        "maximum_pages_per_wallet": 12,
+        "source_max_pages": 8,
+        "source_max_requests": 9,
+        "period_duration_seconds": 7200,
+        "period_max_events": 500,
+    }), encoding="utf-8")
+    config = _load_continuous_shadow_runtime_spec(path, ContinuousShadowConfig())
+    assert config.wallet_count == wallet_count
+    assert config.poll_interval_seconds == 90
+    assert config.maximum_pages_per_wallet == 12
+    assert config.source_max_pages == 8
+    assert config.to_dict()["code_sha"] == "a" * 40
+
+
+@pytest.mark.parametrize("field,value", [
+    ("wallet_count", 4),
+    ("period_duration_seconds", 0),
+    ("source_mode", "global-v2"),
+    ("unknown", 1),
+])
+def test_shadow_runtime_spec_rejects_unsupported_changes(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    path = tmp_path / "runtime.json"
+    path.write_text(json.dumps({
+        "runtime_version": "continuous-shadow-runtime-v1",
+        "source_mode": "per-wallet-v2",
+        "code_sha": "a" * 40,
+        field: value,
+    }), encoding="utf-8")
+    with pytest.raises(ValueError):
+        _load_continuous_shadow_runtime_spec(path, ContinuousShadowConfig())
+
+
+def test_shadow_runtime_spec_requires_code_identity(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.json"
+    path.write_text(json.dumps({
+        "runtime_version": "continuous-shadow-runtime-v1",
+        "source_mode": "per-wallet-v2",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="requires the running code SHA"):
+        _load_continuous_shadow_runtime_spec(path, ContinuousShadowConfig())
 
 
 def test_capacity_counts_nested_bundles_and_legacy_files_but_not_staging(

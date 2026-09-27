@@ -237,3 +237,49 @@ an incomplete valuation as reconciled.
 - Report-time fill filters remain descriptive/non-stateful. Full portfolio
   Replay is the separate Target Exposure research path in
   [`shadow-target-exposure-replay.md`](shadow-target-exposure-replay.md).
+
+## Additive prospective period contract (2026-09-27)
+
+CURRENT for newly started periods: a validated
+`continuous-shadow-runtime-v1` Spec may freeze code SHA, selected wallet count
+(1–3), polling cadence, v2 cursor page/request/time budgets, selection age,
+period duration, event cap, and storage cap. The effective configuration is
+stored with each experiment and cannot change in place. The supplied SHA is
+checked against the running image identity before activation. Wallet counts
+one and two are software supported; measured operational capacity remains
+unverified. Historical period configuration is read as legacy and cannot be
+silently changed by the new worker.
+
+Schema v8 stores one digested causal opportunity per admitted event, including
+Shadow-rejected and UNKNOWN evaluations. The opportunity is committed before
+dependent financial rows in the same poll transaction. A failed poll leaves
+no new financial effect; pending first observations remain nonfinancial.
+The read-only `portfolio-results --prospective` path uses the existing
+Research Control/Target replay over all recorded opportunities. It requires
+related, causal book and fee evidence; repeated use of one recorded book
+depth, stale/future books, missing fees, and unverified code are explicit
+UNKNOWN causes. Its policies and initial capital differ from the Stage 4B
+ledger, so it does not claim ledger parity. Open inventory without sufficient
+liquidation or terminal evidence has UNKNOWN net P&L.
+Verified terminal marks enter this report only when the same committed poll
+contains the matching settlement ledger entry. They value prospective open
+inventory once; the prospective policies do not claim Shadow ledger settlement
+parity. Changing a selected wallet's pool assignment also drains the frozen
+period before a new assignment can take effect.
+The report includes the frozen Polycop selection policy and digest as
+copyability provenance; scores are not duplicated in the Shadow store.
+
+Period duration causes DRAINING. A flat period with no unadmitted observations
+can finalize and roll to a fresh selected cohort; prior evidence remains in
+the old period. Open positions continue exits and verified settlement during
+the bounded drain grace. Event/storage caps or expired grace with unresolved
+inventory stop the worker safely; no reset or automatic deletion is allowed.
+Finalize rejects open positions and pending observations. A legacy active
+period requires a controlled lifecycle decision before the new runtime
+contract can be activated. Reporting is on an explicit verified database
+snapshot, never on every poll. Existing mark-history maintenance retains its
+separate 30-day policy; opportunity and ledger evidence are not auto-pruned.
+
+This supports causal prospective comparison only. Market-only and Placebo
+controls remain unsupported, and no short period establishes profitability
+or authorizes Live operation.

@@ -69,10 +69,7 @@ from polysia.storage.research_evidence import (
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
 PreparedSources = tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]
-SourceRebuilder = Callable[
-    [Mapping[str, str]],
-    Awaitable[PreparedSources],
-]
+SourceRebuilder = Callable[..., Awaitable[PreparedSources]]
 SettingsFactory = Callable[[], AppSettings]
 
 
@@ -84,6 +81,7 @@ class SelectionAwareSourceFactory(Protocol):
         *,
         wallet_count: int | None = None,
         selection_policy: str | None = None,
+        runtime: Mapping[str, object] | None = None,
     ) -> Awaitable[PreparedSources]:
         ...
 
@@ -132,6 +130,8 @@ def selection_source_kwargs(plan: ResearchRunPlan) -> dict[str, object]:
         kwargs["selection_policy"] = policy
         if isinstance(count, int) and not isinstance(count, bool):
             kwargs["wallet_count"] = count
+    if plan.runtime is not None:
+        kwargs["runtime"] = dict(plan.runtime)
     return kwargs
 
 
@@ -406,7 +406,7 @@ class ResearchExperimentRunner:
                     if str(manifest.get("phase")) == "CLOSED":
                         return self.result(state_root)
                     if str(manifest.get("phase")) in {"PREPARED", "COLLECTING"}:
-                        prepared_sources = await self._restore_sources(workspace, manifest)
+                        prepared_sources = await self._restore_sources(workspace, manifest, plan)
                 else:
                     if validate_existing:
                         raise ResearchRunnerError("research run manifest is missing")
@@ -542,6 +542,10 @@ class ResearchExperimentRunner:
             "revision": 0,
             "run_id": run_id,
             "run_plan_digest": plan.semantic_digest(),
+            **(
+                {"runtime_configuration": dict(plan.runtime)}
+                if plan.runtime is not None else {}
+            ),
             "service_policy_version": SERVICE_POLICY_VERSION,
             "trading_mode": TradingMode.DATA_ONLY.value,
         }
@@ -556,6 +560,7 @@ class ResearchExperimentRunner:
         self,
         workspace: ResearchRunWorkspace,
         manifest: Mapping[str, object],
+        plan: ResearchRunPlan,
     ) -> PreparedSources:
         reconstruction = _read_reconstruction(workspace)
         public = _mapping(manifest.get("followed_wallet_selection"))
@@ -572,7 +577,14 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError(str(error)) from error
         if self._source_rebuilder is None:
             raise ResearchRunnerError("frozen wallet source rebuilder is missing")
-        sources, discovery = await self._source_rebuilder(aliases)
+        if plan.runtime is not None:
+            if "runtime" not in inspect.signature(self._source_rebuilder).parameters:
+                raise ResearchRunnerError("source rebuilder cannot honor frozen runtime")
+            sources, discovery = await self._source_rebuilder(
+                aliases, runtime=dict(plan.runtime)
+            )
+        else:
+            sources, discovery = await self._source_rebuilder(aliases)
         return sources, discovery
 
     async def _continue(
@@ -899,6 +911,8 @@ class ResearchExperimentRunner:
             run_id=run_id or parsed.run_id,
             wallet_count=parsed.wallet_count,
             selection_policy=parsed.selection_policy,
+            spec_version=parsed.spec_version,
+            runtime=parsed.runtime,
         )
         return resolve_run_plan(
             parsed,
@@ -926,6 +940,8 @@ class ResearchExperimentRunner:
             if existing is not None:
                 existing["run_plan_digest"] = plan.semantic_digest()
         if existing is not None:
+            if plan.runtime is not None and existing.get("runtime_configuration") != plan.runtime:
+                raise ResearchRunnerError("research-run runtime differs from frozen Manifest")
             budgets = _mapping(existing.get("budgets"))
             for key, allowed in plan.budgets.items():
                 recorded = budgets.get(key)
@@ -965,6 +981,10 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError(
                 "research source factory cannot honor the frozen Polycop selection"
             )
+        if plan.runtime is not None and "runtime" not in inspect.signature(
+            self._source_factory
+        ).parameters:
+            raise ResearchRunnerError("source factory cannot honor frozen runtime")
         return await self._source_factory(**kwargs)
 
     def _admission_lock(self, state_root: Path) -> ExclusiveWriterLock:
