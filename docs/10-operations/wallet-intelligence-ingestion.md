@@ -379,7 +379,8 @@ deployment. Existing experiments continue after extraction.
 docker compose --profile wallet-intelligence run --rm \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-start \
   --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
-  --database /var/lib/polysia/data/continuous-shadow.sqlite3
+  --database /var/lib/polysia/data/continuous-shadow.sqlite3 \
+  --runtime-spec /var/lib/polysia/config/continuous-shadow-runtime.json
 ```
 
 For a new v8 period, provide the same reviewed runtime Spec to
@@ -405,7 +406,17 @@ image commit after approval. `source_mode` is `per-wallet-v2` only.
 }
 ```
 
-Pass the JSON path as `--runtime-spec <reviewed-file>` to both commands.
+Store the reviewed JSON at
+`/var/lib/polysia/wallet-intelligence/config/continuous-shadow-runtime.json`
+with directory mode `0700`, file mode `0600`, and UID/GID `10001`.
+The worker mounts this directory read-only and always passes the same file
+as `--runtime-spec`; a missing file prevents activation. The daily candidate
+pipeline and persistent worker systemd units require
+`/etc/polysia/image.env` containing only
+`POLYSIA_IMAGE_TAG=<exact approved image SHA>` (root-owned, mode `0600`).
+For manual `docker compose run` commands, export that same tag in the operator
+shell. Do not put credentials in either runtime file.
+Pass the JSON path as `--runtime-spec <reviewed-file>` to manual start and sync.
 The effective configuration is stored in the experiment. A changed Spec is
 rejected while its period is active. The v8 worker rejects an active legacy
 period until a controlled drain/finalize decision is made; the older cutover

@@ -8,6 +8,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/polysia
+EnvironmentFile=/etc/polysia/image.env
 ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm wallet-intelligence-sync
 TimeoutStartSec=30min
 NoNewPrivileges=true
