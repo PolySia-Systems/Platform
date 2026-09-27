@@ -45,3 +45,17 @@ changes, mutable code/image identities, and tampered Plans fail before T0. Old R
 frozen Manifest fields and the digest recorded. A plan-aware Run that records
 `run_plan_digest` but is missing `run-plan.json` fails closed. Rollback is
 revert of this ADR and the contract/command/scratch modules.
+
+## Additive runtime contract (2026-09-27)
+
+CURRENT: `research-run-spec-v2` resolves to `research-run-plan-v2` when a
+validated `runtime` object is supplied. The Plan freezes the per-wallet v2
+source mode, cadence, page/request/time budgets, overlap, and the existing
+`target-exposure-v1` reference in its semantic digest. The actual source
+factory and restart rebuilder receive those values; a factory that cannot
+honor them fails admission. Wallet counts remain bounded to 1–3; the
+activity-aware policy still requires exactly three. One or two wallets are
+software supported, not measured operational capacity. Reporting remains
+on demand; v2 records `retention_days=30` but adds no automatic deletion.
+The v2 contract rejects unsupported changes to those fields. Version 1 Plans
+and closed bundles retain their original payloads and digests.

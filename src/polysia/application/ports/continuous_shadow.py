@@ -221,6 +221,7 @@ class ContinuousPollCompletion:
     settlement_backlog_count: int
     request_telemetry: dict[str, object]
     admission_completed_at: datetime | None = None
+    opportunities: tuple[dict[str, object], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,6 +413,12 @@ class ContinuousShadowStorePort(Protocol):
     ) -> ContinuousSelectionSnapshot: ...
 
     def watermark(self, experiment_id: str) -> datetime | None: ...
+
+    def period_usage(self, experiment_id: str) -> tuple[int, int]: ...
+
+    def open_position_count(self, experiment_id: str) -> int: ...
+
+    def pending_observation_count(self, experiment_id: str) -> int: ...
 
     def seen_event_ids(self, event_ids: tuple[str, ...]) -> set[str]: ...
 

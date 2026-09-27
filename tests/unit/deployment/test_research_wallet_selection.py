@@ -391,3 +391,45 @@ def test_public_benchmark_discovery_remains_available(
     _sources, discovery = asyncio.run(research_evidence_cli.build_persistent_public_sources())
     assert discovery["selection_mode"] == "public-discovery"
     assert discovery["discovery_status"] == "measured"
+
+
+def test_actual_persistent_source_composition_uses_frozen_cursor_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.cli_commands import research_evidence_cli
+    from polysia.deployment.research_run_contract import ResearchRunSpec, resolve_run_plan
+
+    class NoNetworkDiscovery:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def refresh(self) -> None:
+            return None
+
+    async def no_fees(_tokens: tuple[str, ...]) -> dict[str, object]:
+        return {}
+
+    monkeypatch.setattr(
+        "polysia.adapters.polymarket.research_sources.FollowedMarketDiscovery",
+        NoNetworkDiscovery,
+    )
+    monkeypatch.setattr(research_evidence_cli, "discover_market_fee_schedules", no_fees)
+    plan = resolve_run_plan(ResearchRunSpec(
+        profile="canary", code_sha="a" * 40,
+        spec_version="research-run-spec-v2",
+        runtime={"poll_interval_seconds": 3, "max_pages": 7,
+                 "max_requests": 9, "overlap_seconds": 90},
+    ), observed=NOW)
+    sources, _discovery = asyncio.run(
+        research_evidence_cli.build_persistent_sources_from_aliases(
+            {public_wallet_alias(WALLET_1): WALLET_1},
+            transport=object(),  # No request runs during source composition.
+            runtime=plan.runtime,
+        )
+    )
+    assert len(sources) == 3
+    for source in sources[:2]:
+        assert source._poll_interval_seconds == 3
+        assert source._max_pages == 7
+        assert source._max_requests == 9
+        assert source._overlap_seconds == 90

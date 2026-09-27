@@ -187,6 +187,31 @@ docker compose --profile research run --no-deps research-runner \
 `--code-sha` and the optional image identity must be exact lowercase
 40-character Git SHAs. Placeholder image tags fail closed before T0.
 
+For a new run requiring supported source adjustments, use the same reviewed
+`--spec-file` on start and resume. A v2 Spec may contain the following runtime
+object beside `spec_version`, `profile`, `code_sha`, `wallet_count`, and
+`selection_policy`:
+
+```json
+{
+  "source_mode": "per-wallet-v2",
+  "poll_interval_seconds": 3,
+  "page_limit": 50,
+  "max_pages": 20,
+  "max_requests": 20,
+  "request_timeout_seconds": 30,
+  "overlap_seconds": 60,
+  "report_interval_seconds": 0,
+  "retention_days": 30,
+  "economic_policy_version": "target-exposure-v1"
+}
+```
+
+The full Spec must use `research-run-spec-v2`; its Plan digest freezes these
+values. Report interval zero means on-demand reporting. Retention does not
+trigger automatic deletion. Per-wallet v2 is the only admitted source mode;
+one or two wallets remain unverified operational capacity.
+
 Status, stop, resume, verify, and result do not start a new experiment:
 
 ```bash

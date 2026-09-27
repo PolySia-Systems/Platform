@@ -46,7 +46,7 @@ def test_stage4b_schema_is_standalone_and_idempotent(tmp_path: Path) -> None:
     with sqlite3.connect(shadow) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 7
+        ).fetchone()[0] == 8
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'dynamic_shadow_metadata'"
         ).fetchone() is None
@@ -76,11 +76,56 @@ def test_v6_pending_observation_migration_is_additive(tmp_path: Path) -> None:
     with sqlite3.connect(shadow) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 7
+        ).fetchone()[0] == 8
+
+
+def test_v7_opportunity_migration_is_additive_and_idempotent(tmp_path: Path) -> None:
+    shadow = tmp_path / "continuous-shadow.sqlite3"
+    repository = ContinuousShadowRepository(shadow)
+    repository.initialize()
+    with sqlite3.connect(shadow) as connection:
+        connection.execute("DROP TABLE continuous_shadow_opportunities")
+        created_at = connection.execute(
+            "SELECT initialized_at FROM continuous_shadow_metadata"
+        ).fetchone()[0]
+        connection.execute("DROP TABLE continuous_shadow_metadata")
+        connection.execute(
+            "CREATE TABLE continuous_shadow_metadata ("
+            "schema_version INTEGER PRIMARY KEY CHECK(schema_version = 7), "
+            "initialized_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO continuous_shadow_metadata VALUES (7, ?)", (created_at,)
+        )
+    repository.initialize()
+    repository.initialize()
+    with sqlite3.connect(shadow) as connection:
+        assert connection.execute(
+            "SELECT schema_version FROM continuous_shadow_metadata"
+        ).fetchone()[0] == 8
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'continuous_shadow_pending_observations'"
         ).fetchone() == (1,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'continuous_shadow_opportunities'"
+        ).fetchone() is not None
+
+
+def test_legacy_active_configuration_does_not_inherit_new_period_limits() -> None:
+    from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+    from polysia.storage.continuous_shadow import _config
+
+    old = ContinuousShadowConfig().to_dict()
+    for key in (
+        "runtime_version", "period_duration_seconds", "period_max_events",
+        "period_max_storage_bytes", "code_sha", "wallet_count",
+    ):
+        old.pop(key)
+    restored = _config(old)
+    assert restored.runtime_version == "continuous-shadow-runtime-legacy-v0"
+    assert restored.period_duration_seconds == 0
+    assert restored.period_max_events == 0
 
 
 def test_legacy_schema_requires_offline_split_migration(tmp_path: Path) -> None:
@@ -111,7 +156,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
 
     result = migrate_continuous_shadow_database(legacy, destination)
 
-    assert result.schema_version == 7
+    assert result.schema_version == 8
     assert result.experiment_id == "exp-1"
     assert result.ledger_balanced is True
     assert result.table_counts["continuous_shadow_experiments"] == 1
@@ -126,7 +171,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
     with sqlite3.connect(destination) as target:
         assert target.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 7
+        ).fetchone()[0] == 8
         assert target.execute(
             "SELECT COUNT(*) FROM continuous_shadow_leases"
         ).fetchone()[0] == 0
@@ -144,7 +189,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
     with sqlite3.connect(destination) as upgraded:
         assert upgraded.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 7
+        ).fetchone()[0] == 8
         columns = {
             row[1]
             for row in upgraded.execute("PRAGMA table_info(continuous_shadow_positions)")

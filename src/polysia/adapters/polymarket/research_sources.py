@@ -194,6 +194,9 @@ class DataApiWalletPollSource:
         initial_delay_seconds: float = 0.0,
         page_limit: int = 50,
         overlap_seconds: int = 30,
+        max_pages: int = 20,
+        max_requests: int = 20,
+        request_timeout_seconds: int = 30,
         clock: Clock | None = None,
         monotonic_ns: MonotonicNs | None = None,
         sleep: Sleeper = asyncio.sleep,
@@ -208,6 +211,10 @@ class DataApiWalletPollSource:
             raise ValueError("page_limit must be within [1, 1000]")
         if not 0 <= overlap_seconds <= 300:
             raise ValueError("overlap_seconds must be within [0, 300]")
+        if not 1 <= max_pages <= 100 or not max_pages <= max_requests <= 100:
+            raise ValueError("Data API page and request budgets are invalid")
+        if not 1 <= request_timeout_seconds <= 60:
+            raise ValueError("request_timeout_seconds must be within [1, 60]")
         self.candidate = candidate
         self._path = path
         self._source_id = source_id
@@ -217,6 +224,9 @@ class DataApiWalletPollSource:
         self._initial_delay_seconds = initial_delay_seconds
         self._page_limit = page_limit
         self._overlap_seconds = overlap_seconds
+        self._max_pages = max_pages
+        self._max_requests = max_requests
+        self._request_timeout_seconds = request_timeout_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic_ns = monotonic_ns or _perf_ns
         self._sleep = sleep
@@ -334,7 +344,9 @@ class DataApiWalletPollSource:
                             self._path,
                             params,
                             purpose=purpose,
-                            max_elapsed_seconds=min(30.0, remaining),
+                            max_pages=self._max_pages,
+                            max_requests=self._max_requests,
+                            max_elapsed_seconds=min(self._request_timeout_seconds, remaining),
                             deadline_monotonic=hard_deadline,
                             on_page=capture_page,
                         )

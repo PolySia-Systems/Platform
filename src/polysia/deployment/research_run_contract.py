@@ -30,6 +30,8 @@ from polysia.domain.research_evidence.replay import REPLAY_ENGINE_VERSION
 
 SPEC_VERSION = "research-run-spec-v1"
 PLAN_VERSION = "research-run-plan-v1"
+RUNTIME_SPEC_VERSION = "research-run-spec-v2"
+RUNTIME_PLAN_VERSION = "research-run-plan-v2"
 DEFAULT_SELECTION_POLICY = "polycop-shadow-alpha-top3-v1"
 CONFIGURED_SELECTION_POLICY = "polycop-shadow-alpha-configured-v1"
 ACTIVE_SELECTION_POLICY = "polycop-shadow-alpha-active-top3-v1"
@@ -51,6 +53,12 @@ SPEC_FIELDS = frozenset(
         "wallet_count",
     }
 )
+RUNTIME_SPEC_FIELDS = SPEC_FIELDS | {"runtime"}
+RUNTIME_FIELDS = frozenset({
+    "source_mode", "poll_interval_seconds", "page_limit", "max_pages",
+    "max_requests", "request_timeout_seconds", "overlap_seconds",
+    "report_interval_seconds", "retention_days", "economic_policy_version",
+})
 PLAN_SEMANTIC_KEYS = (
     "budgets",
     "code_sha",
@@ -82,6 +90,7 @@ class ResearchRunSpec:
     wallet_count: int | None = None
     selection_policy: str | None = None
     spec_version: str = SPEC_VERSION
+    runtime: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +108,10 @@ class ResearchRunPlan:
     run_id: str | None = None
     generated_at: str | None = None
     plan_version: str = PLAN_VERSION
+    runtime: dict[str, object] | None = None
 
     def semantic_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "budgets": dict(self.budgets),
             "code_sha": self.code_sha,
             "collector_policy_version": self.versions["collector_policy_version"],
@@ -117,6 +127,9 @@ class ResearchRunPlan:
             "selection": dict(self.selection),
             "service_policy_version": self.versions["service_policy_version"],
         }
+        if self.plan_version == RUNTIME_PLAN_VERSION:
+            payload["runtime"] = dict(self.runtime or {})
+        return payload
 
     def semantic_digest(self) -> str:
         return canonical_digest(self.semantic_payload())
@@ -130,13 +143,14 @@ class ResearchRunPlan:
 
 
 def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
-    unknown = sorted(set(payload) - SPEC_FIELDS)
+    version = _require_text(payload.get("spec_version"), "spec_version")
+    allowed = RUNTIME_SPEC_FIELDS if version == RUNTIME_SPEC_VERSION else SPEC_FIELDS
+    unknown = sorted(set(payload) - allowed)
     if unknown:
         raise ResearchRunContractError(
             "unsupported research-run Spec field: " + ", ".join(unknown)
         )
-    version = _require_text(payload.get("spec_version"), "spec_version")
-    if version != SPEC_VERSION:
+    if version not in {SPEC_VERSION, RUNTIME_SPEC_VERSION}:
         raise ResearchRunContractError("research-run Spec version is not supported")
     _reject_executable(payload)
     profile = _require_text(payload.get("profile"), "profile")
@@ -152,6 +166,11 @@ def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
         run_id=None if run_id is None else _require_text(run_id, "run_id"),
         wallet_count=_optional_wallet_count(payload.get("wallet_count")),
         selection_policy=_optional_selection_policy(payload.get("selection_policy")),
+        spec_version=version,
+        runtime=(
+            _runtime_config(payload.get("runtime"))
+            if version == RUNTIME_SPEC_VERSION else None
+        ),
     )
 
 
@@ -202,6 +221,11 @@ def resolve_run_plan(
     generated = (observed or datetime.now(UTC)).astimezone(UTC)
     official = resolved.name in {PROFILE_CANARY, PROFILE_MAIN}
     selection = _selection_contract(spec, official=official)
+    if spec.spec_version not in {SPEC_VERSION, RUNTIME_SPEC_VERSION}:
+        raise ResearchRunContractError("research-run Spec version is not supported")
+    if spec.spec_version == SPEC_VERSION and spec.runtime is not None:
+        raise ResearchRunContractError("research-run v1 cannot carry runtime overrides")
+    runtime = _runtime_config(spec.runtime) if spec.spec_version == RUNTIME_SPEC_VERSION else None
     return ResearchRunPlan(
         profile=resolved.name,
         profile_version=resolved.version,
@@ -237,18 +261,24 @@ def resolve_run_plan(
         economic_contract=_decimal_safe(CONTRACT_V1.to_dict()),
         run_id=spec.run_id,
         generated_at=_utc_text(generated),
+        plan_version=(
+            RUNTIME_PLAN_VERSION if spec.spec_version == RUNTIME_SPEC_VERSION else PLAN_VERSION
+        ),
+        runtime=runtime,
     )
 
 
 def load_run_plan(payload: Mapping[str, object]) -> ResearchRunPlan:
     extra = {"generated_at", "run_id", "semantic_digest"}
-    unknown = sorted(set(payload) - set(PLAN_SEMANTIC_KEYS) - extra)
+    version = str(payload.get("plan_version"))
+    allowed = set(PLAN_SEMANTIC_KEYS) | ({"runtime"} if version == RUNTIME_PLAN_VERSION else set())
+    unknown = sorted(set(payload) - allowed - extra)
     if unknown:
         raise ResearchRunContractError(
             "unsupported research-run Plan field: " + ", ".join(unknown)
         )
     _reject_executable(payload)
-    if str(payload.get("plan_version")) != PLAN_VERSION:
+    if version not in {PLAN_VERSION, RUNTIME_PLAN_VERSION}:
         raise ResearchRunContractError("research-run Plan version is not supported")
     versions = {
         "collector_policy_version": _require_text(
@@ -282,6 +312,11 @@ def load_run_plan(payload: Mapping[str, object]) -> ResearchRunPlan:
         generated_at=None
         if payload.get("generated_at") is None
         else str(payload.get("generated_at")),
+        plan_version=version,
+        runtime=(
+            _runtime_config(payload.get("runtime"))
+            if version == RUNTIME_PLAN_VERSION else None
+        ),
     )
     declared = payload.get("semantic_digest")
     if declared is not None and str(declared) != plan.semantic_digest():
@@ -389,6 +424,52 @@ def _optional_selection_policy(value: object) -> str | None:
     if policy not in allowed:
         raise ResearchRunContractError("research-run selection_policy is not supported")
     return policy
+
+
+def _runtime_config(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ResearchRunContractError("research-run v2 runtime must be an object")
+    unknown = sorted(set(value) - RUNTIME_FIELDS)
+    if unknown:
+        raise ResearchRunContractError(
+            "unsupported research-run runtime field: " + ", ".join(unknown)
+        )
+    defaults: dict[str, object] = {
+        "source_mode": "per-wallet-v2",
+        "poll_interval_seconds": 2,
+        "page_limit": 50,
+        "max_pages": 20,
+        "max_requests": 20,
+        "request_timeout_seconds": 30,
+        "overlap_seconds": 30,
+        "report_interval_seconds": 0,
+        "retention_days": 30,
+        "economic_policy_version": "target-exposure-v1",
+    }
+    result = defaults | value
+    if result["source_mode"] != "per-wallet-v2":
+        raise ResearchRunContractError("only per-wallet-v2 is an admitted source mode")
+    if result["economic_policy_version"] != "target-exposure-v1":
+        raise ResearchRunContractError("economic policy version is not supported")
+    limits = {
+        "poll_interval_seconds": (1, 60),
+        "page_limit": (1, 500),
+        "max_pages": (1, 100),
+        "max_requests": (1, 100),
+        "request_timeout_seconds": (1, 60),
+        "overlap_seconds": (30, 300),
+        "report_interval_seconds": (0, 0),
+        "retention_days": (30, 30),
+    }
+    for key, (minimum, maximum) in limits.items():
+        item = _require_int(result[key], f"runtime.{key}")
+        if not minimum <= item <= maximum:
+            raise ResearchRunContractError(
+                f"runtime.{key} must be within [{minimum}, {maximum}]"
+            )
+    if int(str(result["max_requests"])) < int(str(result["max_pages"])):
+        raise ResearchRunContractError("runtime.max_requests must cover runtime.max_pages")
+    return result
 
 
 def _profile_for_spec(spec: ResearchRunSpec) -> RunnerProfile:

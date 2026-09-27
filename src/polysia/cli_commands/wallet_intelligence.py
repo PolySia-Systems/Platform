@@ -6,6 +6,7 @@ import signal
 import sqlite3
 import time
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -699,28 +700,37 @@ def portfolio_start(
     overlap_seconds: Annotated[
         int, typer.Option("--overlap-seconds", min=0, max=300)
     ] = 30,
+    runtime_spec: Annotated[
+        Path | None,
+        typer.Option("--runtime-spec", help="Versioned Shadow period configuration JSON."),
+    ] = None,
 ) -> None:
     """Start or idempotently reuse one versioned continuous Shadow experiment."""
     try:
         _require_continuous_shadow_safety()
+        config = _continuous_shadow_config(
+            wallet_bankroll=wallet_bankroll,
+            follower_bankroll=follower_bankroll,
+            maximum_event_notional=maximum_event_notional,
+            wallet_maximum_exposure=wallet_maximum_exposure,
+            follower_maximum_exposure=follower_maximum_exposure,
+            follower_maximum_wallet_exposure=follower_maximum_wallet_exposure,
+            follower_maximum_market_exposure=follower_maximum_market_exposure,
+            follower_maximum_positions=follower_maximum_positions,
+            maximum_forward_delay_ms=maximum_forward_delay_ms,
+            maximum_quote_age_ms=maximum_quote_age_ms,
+            initial_lookback_minutes=initial_lookback_minutes,
+            overlap_seconds=overlap_seconds,
+        )
+        if runtime_spec is not None:
+            config = _load_continuous_shadow_runtime_spec(runtime_spec, config)
+        _verify_continuous_shadow_code(config)
         service = _continuous_shadow_service(
             source,
             source_database,
             database,
-            config=_continuous_shadow_config(
-                wallet_bankroll=wallet_bankroll,
-                follower_bankroll=follower_bankroll,
-                maximum_event_notional=maximum_event_notional,
-                wallet_maximum_exposure=wallet_maximum_exposure,
-                follower_maximum_exposure=follower_maximum_exposure,
-                follower_maximum_wallet_exposure=follower_maximum_wallet_exposure,
-                follower_maximum_market_exposure=follower_maximum_market_exposure,
-                follower_maximum_positions=follower_maximum_positions,
-                maximum_forward_delay_ms=maximum_forward_delay_ms,
-                maximum_quote_age_ms=maximum_quote_age_ms,
-                initial_lookback_minutes=initial_lookback_minutes,
-                overlap_seconds=overlap_seconds,
-            ),
+            config=config,
+            maximum_selection_age=timedelta(hours=config.maximum_selection_age_hours),
         )
         experiment = service.start(_source(source).source_id)
     except (
@@ -728,6 +738,7 @@ def portfolio_start(
         ContinuousShadowStoreError,
         CandidateStoreError,
         ValueError,
+        OSError,
     ) as error:
         _emit_continuous_shadow_failure(error)
     typer.echo(
@@ -788,6 +799,10 @@ def portfolio_sync(
     maximum_selection_age_hours: Annotated[
         int, typer.Option("--maximum-selection-age-hours", min=1, max=168)
     ] = 36,
+    runtime_spec: Annotated[
+        Path | None,
+        typer.Option("--runtime-spec", help="Versioned Shadow period configuration JSON."),
+    ] = None,
     loop: Annotated[
         bool,
         typer.Option(
@@ -799,25 +814,32 @@ def portfolio_sync(
     """Poll new leader trades and atomically advance persistent Shadow portfolios."""
     try:
         _require_continuous_shadow_safety()
+        config = _continuous_shadow_config(
+            wallet_bankroll=wallet_bankroll,
+            follower_bankroll=follower_bankroll,
+            maximum_event_notional=maximum_event_notional,
+            wallet_maximum_exposure=wallet_maximum_exposure,
+            follower_maximum_exposure=follower_maximum_exposure,
+            follower_maximum_wallet_exposure=follower_maximum_wallet_exposure,
+            follower_maximum_market_exposure=follower_maximum_market_exposure,
+            follower_maximum_positions=follower_maximum_positions,
+            maximum_forward_delay_ms=maximum_forward_delay_ms,
+            maximum_quote_age_ms=maximum_quote_age_ms,
+            initial_lookback_minutes=initial_lookback_minutes,
+            overlap_seconds=overlap_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            maximum_selection_age_hours=maximum_selection_age_hours,
+        )
+        if runtime_spec is not None:
+            config = _load_continuous_shadow_runtime_spec(runtime_spec, config)
+        _verify_continuous_shadow_code(config)
+        poll_interval_seconds = config.poll_interval_seconds
         service = _continuous_shadow_service(
             source,
             source_database,
             database,
-            config=_continuous_shadow_config(
-                wallet_bankroll=wallet_bankroll,
-                follower_bankroll=follower_bankroll,
-                maximum_event_notional=maximum_event_notional,
-                wallet_maximum_exposure=wallet_maximum_exposure,
-                follower_maximum_exposure=follower_maximum_exposure,
-                follower_maximum_wallet_exposure=follower_maximum_wallet_exposure,
-                follower_maximum_market_exposure=follower_maximum_market_exposure,
-                follower_maximum_positions=follower_maximum_positions,
-                maximum_forward_delay_ms=maximum_forward_delay_ms,
-                maximum_quote_age_ms=maximum_quote_age_ms,
-                initial_lookback_minutes=initial_lookback_minutes,
-                overlap_seconds=overlap_seconds,
-            ),
-            maximum_selection_age=timedelta(hours=maximum_selection_age_hours),
+            config=config,
+            maximum_selection_age=timedelta(hours=config.maximum_selection_age_hours),
         )
         source_id = _source(source).source_id
         if not loop:
@@ -906,6 +928,7 @@ def portfolio_sync(
         CandidatePipelineLeaseLostError,
         CandidateStoreError,
         ValueError,
+        OSError,
     ) as error:
         if isinstance(error, ContinuousShadowError):
             classified = classify_continuous_shadow_failure(
@@ -1063,6 +1086,10 @@ def portfolio_results(
     ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
     experiment_id: Annotated[str | None, typer.Option("--experiment-id")] = None,
     limit: Annotated[int, typer.Option("--limit", min=1, max=10_000)] = 100,
+    prospective: Annotated[
+        bool,
+        typer.Option("--prospective", help="Replay durable opportunities on this snapshot."),
+    ] = False,
 ) -> None:
     """Read cumulative evidence from a snapshot without initializing or writing storage."""
     try:
@@ -1075,6 +1102,8 @@ def portfolio_results(
                 )
             experiment_id = experiment.experiment_id
         payload = repository.results(experiment_id, limit=limit)
+        if prospective:
+            payload["prospective"] = repository.opportunity_report(experiment_id)
     except (
         ContinuousShadowStoreError,
         CandidateStoreError,
@@ -1584,9 +1613,13 @@ def _continuous_shadow_service(
         lambda leaders: PolymarketCopyTradingSource(
             leaders,
             market_scope=PolymarketMarketScope.ALL_VERIFIED,
+            max_pages=config.source_max_pages,
+            max_requests=config.source_max_requests,
+            max_elapsed_seconds=config.source_timeout_seconds,
         ),
         PolymarketPublicAdapter(),
         config=config,
+        maximum_pages_per_wallet=config.maximum_pages_per_wallet,
         maximum_selection_age=maximum_selection_age,
         latency_recorder=recorder,
     )
@@ -1680,6 +1713,8 @@ def _continuous_shadow_config(
     maximum_quote_age_ms: int,
     initial_lookback_minutes: int,
     overlap_seconds: int,
+    poll_interval_seconds: int = 60,
+    maximum_selection_age_hours: int = 36,
 ) -> ContinuousShadowConfig:
     return ContinuousShadowConfig(
         wallet_bankroll=_decimal_option(wallet_bankroll, "wallet-bankroll"),
@@ -1706,7 +1741,70 @@ def _continuous_shadow_config(
         maximum_quote_age_ms=maximum_quote_age_ms,
         initial_lookback_minutes=initial_lookback_minutes,
         overlap_seconds=overlap_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        maximum_selection_age_hours=maximum_selection_age_hours,
     )
+
+
+def _load_continuous_shadow_runtime_spec(
+    path: Path, base: ContinuousShadowConfig
+) -> ContinuousShadowConfig:
+    """Apply one validated period override; the effective config is persisted at start."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Continuous Shadow runtime Spec must be a JSON object")
+    allowed = {
+        "runtime_version", "source_mode", "code_sha", "wallet_count",
+        "poll_interval_seconds", "maximum_pages_per_wallet",
+        "maximum_selection_age_hours", "period_duration_seconds",
+        "period_max_events", "period_max_storage_bytes", "policy_version",
+        "source_page_size", "source_max_pages", "source_max_requests",
+        "source_timeout_seconds",
+        "cost_model_version", "bankroll_version",
+    }
+    unknown = set(payload) - allowed
+    if unknown:
+        raise ValueError(
+            "Unsupported Continuous Shadow runtime field: " + ", ".join(sorted(unknown))
+        )
+    if payload.get("runtime_version") != "continuous-shadow-runtime-v1":
+        raise ValueError("Continuous Shadow runtime Spec version is unsupported")
+    if payload.get("source_mode") != "per-wallet-v2":
+        raise ValueError("Only per-wallet-v2 is an admitted Shadow source mode")
+    if "code_sha" not in payload:
+        raise ValueError("Continuous Shadow runtime Spec requires the running code SHA")
+    for field in ("policy_version", "cost_model_version", "bankroll_version"):
+        if field in payload and payload[field] != getattr(base, field):
+            raise ValueError(f"Continuous Shadow {field} is not a supported policy")
+    numeric = (
+        "wallet_count", "poll_interval_seconds", "maximum_pages_per_wallet",
+        "maximum_selection_age_hours", "period_duration_seconds",
+        "period_max_events", "period_max_storage_bytes",
+        "source_page_size", "source_max_pages", "source_max_requests",
+        "source_timeout_seconds",
+    )
+    for field in numeric:
+        if field in payload and (
+            isinstance(payload[field], bool) or not isinstance(payload[field], int)
+        ):
+            raise ValueError(f"Continuous Shadow {field} must be an integer")
+    options = {field: payload[field] for field in numeric if field in payload}
+    if "code_sha" in payload:
+        if not isinstance(payload["code_sha"], str):
+            raise ValueError("Continuous Shadow code_sha must be a Git SHA string")
+        options["code_sha"] = payload["code_sha"]
+    return replace(base, **options)
+
+
+def _verify_continuous_shadow_code(config: ContinuousShadowConfig) -> None:
+    if config.code_sha is None:
+        return
+    actual = load_runtime_identity(venue_id="polymarket").deploy_sha
+    if actual != config.code_sha:
+        raise ValueError(
+            "Continuous Shadow runtime code SHA does not match the running image."
+        )
 
 
 def _require_continuous_shadow_safety() -> None:

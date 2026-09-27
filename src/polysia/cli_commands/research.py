@@ -802,6 +802,7 @@ def _research_runner() -> ResearchExperimentRunner:
         *,
         wallet_count: int | None = None,
         selection_policy: str | None = None,
+        runtime: Mapping[str, object] | None = None,
         **_kwargs: object,
     ) -> tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]:
         del _kwargs
@@ -809,14 +810,17 @@ def _research_runner() -> ResearchExperimentRunner:
             return await build_persistent_runner_sources(
                 wallet_count=wallet_count,
                 selection_policy=selection_policy,
+                runtime=runtime,
             )
         except ResearchWalletSelectionError as error:
             raise ResearchRunnerError(str(error)) from error
 
     async def rebuild_sources(
         aliases: Mapping[str, str],
+        *,
+        runtime: Mapping[str, object] | None = None,
     ) -> tuple[tuple[ResearchObservationSource, ...], Mapping[str, object]]:
-        return await build_persistent_sources_from_aliases(aliases)
+        return await build_persistent_sources_from_aliases(aliases, runtime=runtime)
 
     return ResearchExperimentRunner(
         source_factory=source_factory,

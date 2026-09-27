@@ -137,6 +137,7 @@ async def build_persistent_runner_sources(
     now: datetime | None = None,
     wallet_count: int | None = None,
     selection_policy: str | None = None,
+    runtime: Mapping[str, object] | None = None,
 ) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
     from polysia.deployment.research_run_contract import (
         ACTIVE_SELECTION_POLICY,
@@ -190,6 +191,7 @@ async def build_persistent_runner_sources(
     sources, discovery = await build_persistent_sources_from_aliases(
         selection.addresses_by_alias,
         transport=transport,
+        runtime=runtime,
     )
     discovery.update(public_selection_payload(selection))
     discovery["_reconstruction"] = reconstruction_payload(selection)
@@ -293,6 +295,7 @@ async def build_persistent_sources_from_aliases(
     *,
     transport: UrllibJsonGetTransport | None = None,
     discovered_tokens: tuple[str, ...] = (),
+    runtime: Mapping[str, object] | None = None,
 ) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
     transport = transport or UrllibJsonGetTransport()
     public_adapter = PolymarketPublicAdapter()
@@ -372,6 +375,14 @@ async def build_persistent_sources_from_aliases(
     )
     snapshot_fee_cache.update(fee_schedules)
     sources: list[ResearchObservationSource] = []
+    source_runtime: dict[str, Any] = {} if runtime is None else {
+        "poll_interval_seconds": float(str(runtime["poll_interval_seconds"])),
+        "page_limit": int(str(runtime["page_limit"])),
+        "max_pages": int(str(runtime["max_pages"])),
+        "max_requests": int(str(runtime["max_requests"])),
+        "request_timeout_seconds": int(str(runtime["request_timeout_seconds"])),
+        "overlap_seconds": int(str(runtime["overlap_seconds"])),
+    }
     if aliases:
         sources.append(
             DataApiWalletPollSource(
@@ -381,6 +392,7 @@ async def build_persistent_sources_from_aliases(
                 aliases=aliases,
                 transport=transport,
                 initial_delay_seconds=_PERSISTENT_MARKET_WARMUP_SECONDS,
+                **source_runtime,
             )
         )
         sources.append(
@@ -391,6 +403,7 @@ async def build_persistent_sources_from_aliases(
                 aliases=aliases,
                 transport=transport,
                 initial_delay_seconds=_PERSISTENT_MARKET_WARMUP_SECONDS,
+                **source_runtime,
             )
         )
     sources.append(

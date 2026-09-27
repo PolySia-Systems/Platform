@@ -71,6 +71,19 @@ class ContinuousShadowConfig:
     bankroll_version: str = "synthetic-bankroll-v0.2"
     price_drift_max_ratio: Decimal | None = None
     negative_cache_ttl_seconds: int = 21_600
+    poll_interval_seconds: int = 60
+    maximum_pages_per_wallet: int = 40
+    source_page_size: int = 500
+    source_max_pages: int = 20
+    source_max_requests: int = 20
+    source_timeout_seconds: int = 30
+    maximum_selection_age_hours: int = 36
+    period_duration_seconds: int = 14_400
+    period_max_events: int = 10_000
+    period_max_storage_bytes: int = 1_073_741_824
+    code_sha: str | None = None
+    runtime_version: str = "continuous-shadow-runtime-v1"
+    wallet_count: int | None = None
 
     def __post_init__(self) -> None:
         decimal_values = (
@@ -108,6 +121,59 @@ class ContinuousShadowConfig:
             raise ValueError("price_drift_max_ratio must be None or within [0, 1]")
         if not 60 <= self.negative_cache_ttl_seconds <= 86_400:
             raise ValueError("negative_cache_ttl_seconds must be within [60, 86400]")
+        integer_fields = (
+            self.poll_interval_seconds, self.maximum_pages_per_wallet,
+            self.source_page_size, self.source_max_pages, self.source_max_requests,
+            self.source_timeout_seconds, self.maximum_selection_age_hours,
+            self.period_duration_seconds, self.period_max_events,
+            self.period_max_storage_bytes,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_fields):
+            raise ValueError("continuous Shadow runtime limits must be integers")
+        if self.wallet_count is not None and (
+            isinstance(self.wallet_count, bool) or not isinstance(self.wallet_count, int)
+        ):
+            raise ValueError("wallet_count must be an integer")
+        if not 30 <= self.poll_interval_seconds <= 3_600:
+            raise ValueError("poll_interval_seconds must be within [30, 3600]")
+        if not 1 <= self.maximum_pages_per_wallet <= 100:
+            raise ValueError("maximum_pages_per_wallet must be within [1, 100]")
+        if not 1 <= self.source_page_size <= 500:
+            raise ValueError("source_page_size must be within [1, 500]")
+        if not 1 <= self.source_max_pages <= self.source_max_requests <= 100:
+            raise ValueError("source page/request budgets are invalid")
+        if not 1 <= self.source_timeout_seconds <= 60:
+            raise ValueError("source_timeout_seconds must be within [1, 60]")
+        if not 1 <= self.maximum_selection_age_hours <= 168:
+            raise ValueError("maximum_selection_age_hours must be within [1, 168]")
+        legacy = self.runtime_version == "continuous-shadow-runtime-legacy-v0"
+        if legacy:
+            if (
+                self.period_duration_seconds != 0
+                or self.period_max_events != 0
+                or self.period_max_storage_bytes != 0
+            ):
+                raise ValueError("legacy Shadow runtime cannot acquire new period limits")
+        else:
+            if not 3_600 <= self.period_duration_seconds <= 86_400:
+                raise ValueError("period_duration_seconds must be within [3600, 86400]")
+            if not 1 <= self.period_max_events <= 100_000:
+                raise ValueError("period_max_events must be within [1, 100000]")
+            if not 10_000_000 <= self.period_max_storage_bytes <= 10_737_418_240:
+                raise ValueError(
+                    "period_max_storage_bytes must be within [10000000, 10737418240]"
+                )
+        if self.code_sha is not None and (
+            len(self.code_sha) != 40
+            or any(char not in "0123456789abcdef" for char in self.code_sha)
+        ):
+            raise ValueError("code_sha must be a lowercase 40-character Git SHA")
+        if self.runtime_version not in {
+            "continuous-shadow-runtime-v1", "continuous-shadow-runtime-legacy-v0"
+        }:
+            raise ValueError("continuous Shadow runtime version is unsupported")
+        if self.wallet_count is not None and not 1 <= self.wallet_count <= 3:
+            raise ValueError("wallet_count exceeds the validated bound of three")
         for value in (self.policy_version, self.cost_model_version, self.bankroll_version):
             if not value.strip():
                 raise ValueError("continuous Shadow versions must not be empty")
@@ -115,6 +181,7 @@ class ContinuousShadowConfig:
     def to_dict(self) -> dict[str, object]:
         return {
             "bankroll_version": self.bankroll_version,
+            "code_sha": self.code_sha,
             "cost_model_version": self.cost_model_version,
             "follower_bankroll": format(self.follower_bankroll, "f"),
             "follower_maximum_exposure": format(
@@ -132,6 +199,18 @@ class ContinuousShadowConfig:
             "maximum_forward_delay_ms": self.maximum_forward_delay_ms,
             "maximum_quote_age_ms": self.maximum_quote_age_ms,
             "negative_cache_ttl_seconds": self.negative_cache_ttl_seconds,
+            "poll_interval_seconds": self.poll_interval_seconds,
+            "maximum_pages_per_wallet": self.maximum_pages_per_wallet,
+            "source_page_size": self.source_page_size,
+            "source_max_pages": self.source_max_pages,
+            "source_max_requests": self.source_max_requests,
+            "source_timeout_seconds": self.source_timeout_seconds,
+            "maximum_selection_age_hours": self.maximum_selection_age_hours,
+            "period_duration_seconds": self.period_duration_seconds,
+            "period_max_events": self.period_max_events,
+            "period_max_storage_bytes": self.period_max_storage_bytes,
+            "runtime_version": self.runtime_version,
+            "wallet_count": self.wallet_count,
             "overlap_seconds": self.overlap_seconds,
             "policy_version": self.policy_version,
             "price_drift_max_ratio": (
