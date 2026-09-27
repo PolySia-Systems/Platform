@@ -249,6 +249,12 @@ checked against the running image identity before activation. Wallet counts
 one and two are software supported; measured operational capacity remains
 unverified. Historical period configuration is read as legacy and cannot be
 silently changed by the new worker.
+When `wallet_count` is set, Stage 4B selects that many distinct, highest-ranked
+`SHADOW_ALPHA` members from one coherent Stage 3 snapshot. Insufficient Alpha
+membership fails admission. The derived selection identity and digest freeze
+the selected subset while retaining the upstream run, snapshot, and ranking
+provenance; the separate Stress follower may have no selected member. Omitting
+`wallet_count` preserves the historical full Stage 3 cohort behavior.
 
 Schema v8 stores one digested causal opportunity per admitted event, including
 Shadow-rejected and UNKNOWN evaluations. The opportunity is committed before

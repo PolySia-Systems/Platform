@@ -8,6 +8,7 @@ from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineBusyError,
     CandidatePipelineLeaseLostError,
 )
+from polysia.application.ports.continuous_shadow import ContinuousSelectionUnavailableError
 
 FAILURE_CATEGORY_SOURCE_UNAVAILABLE = "source_unavailable"
 FAILURE_CATEGORY_MARKET_READ_FAILED = "market_read_failed"
@@ -127,6 +128,10 @@ def classify_continuous_shadow_failure(
                 FAILURE_CATEGORY_SQLITE_BUSY, safe_stage
             )
     for item in _walk_exceptions(error):
+        if isinstance(item, ContinuousSelectionUnavailableError):
+            return ClassifiedContinuousShadowFailure(
+                FAILURE_CATEGORY_SOURCE_UNAVAILABLE, safe_stage
+            )
         if isinstance(item, (CandidatePipelineBusyError, CandidatePipelineLeaseLostError)):
             return ClassifiedContinuousShadowFailure(
                 FAILURE_CATEGORY_LEASE_FAILED, safe_stage

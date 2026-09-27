@@ -21,6 +21,7 @@ from polysia.application.ports.continuous_shadow import (
     ContinuousPollCompletion,
     ContinuousPollOutcome,
     ContinuousPositionMark,
+    ContinuousSelectionSnapshot,
     ContinuousSelectionUnavailableError,
     ContinuousShadowExperiment,
     ContinuousShadowStorePort,
@@ -206,14 +207,7 @@ class ContinuousShadowService:
 
     def start(self, source_id: str) -> ContinuousShadowExperiment:
         self._initialize_store()
-        selection = self._candidate_port.current_snapshot(source_id)
-        if (
-            self._config.wallet_count is not None
-            and len(selection.candidates) != self._config.wallet_count
-        ):
-            raise ContinuousShadowError(
-                "Selected wallet count differs from the frozen runtime specification."
-            )
+        selection = self._current_selection(source_id)
         return self._store.start_experiment(
             selection=selection,
             config=self._config,
@@ -301,6 +295,40 @@ class ContinuousShadowService:
         self._store.initialize()
         self._store_initialized = True
 
+    def _current_selection(self, source_id: str) -> ContinuousSelectionSnapshot:
+        snapshot = self._candidate_port.current_snapshot(source_id)
+        count = self._config.wallet_count
+        if count is None:
+            return snapshot
+        alpha = sorted(
+            (
+                item for item in snapshot.candidates
+                if "SHADOW_ALPHA" in item.pools and item.alpha_rank is not None
+            ),
+            key=lambda item: (int(item.alpha_rank or 0), item.wallet_id),
+        )
+        selected = alpha[:count]
+        if len(selected) != count or len({item.wallet_id for item in selected}) != count:
+            raise ContinuousSelectionUnavailableError(
+                "Current Stage 3 SHADOW_ALPHA selection cannot supply the frozen wallet count."
+            )
+        if any(not item.address or item.alpha_rank is None or item.alpha_rank < 1
+               for item in selected):
+            raise ContinuousSelectionUnavailableError(
+                "Selected SHADOW_ALPHA provenance is invalid."
+            )
+        return ContinuousSelectionSnapshot.create(
+            source_id=snapshot.source_id,
+            selection_run_id=f"{snapshot.selection_run_id}:shadow-alpha-top{count}-v1",
+            source_snapshot_id=snapshot.source_snapshot_id,
+            feature_set_version=snapshot.feature_set_version,
+            policy_id=snapshot.policy_id,
+            policy_version=f"{snapshot.policy_version}+shadow-alpha-top{count}-v1",
+            ranking_version=snapshot.ranking_version,
+            published_at=snapshot.published_at,
+            candidates=tuple(selected),
+        )
+
     def _initialize_lease_port(self) -> None:
         if self._lease_port_initialized:
             return
@@ -366,7 +394,7 @@ class ContinuousShadowService:
             pending_count = self._store.pending_observation_count(experiment.experiment_id)
             if open_count == 0 and pending_count == 0:
                 try:
-                    next_selection = self._candidate_port.current_snapshot(source_id)
+                    next_selection = self._current_selection(source_id)
                 except ContinuousSelectionUnavailableError as error:
                     raise ContinuousShadowError(
                         "A fresh selected cohort is required to roll a flat period."
@@ -377,13 +405,6 @@ class ContinuousShadowService:
                 ):
                     raise ContinuousShadowError(
                         "A fresh selected cohort is required to roll a flat period."
-                    )
-                if (
-                    self._config.wallet_count is not None
-                    and len(next_selection.candidates) != self._config.wallet_count
-                ):
-                    raise ContinuousShadowError(
-                        "Next selected cohort violates the frozen wallet count."
                     )
                 self._store.transition(
                     experiment.experiment_id,
@@ -408,9 +429,11 @@ class ContinuousShadowService:
         with self._latency_span(
             "application", "candidate_lookup", parent_span_id=root_span_id
         ):
+            source_selection_available = True
             try:
-                selection = self._candidate_port.current_snapshot(source_id)
+                selection = self._current_selection(source_id)
             except ContinuousSelectionUnavailableError:
+                source_selection_available = False
                 selection = self._store.last_known_selection(experiment.experiment_id)
             current_candidates = selection.candidates
             retained = self._store.retained_candidates(experiment.experiment_id)
@@ -432,6 +455,7 @@ class ContinuousShadowService:
         window_end = self._now().replace(microsecond=0)
         selection_fresh = (
             experiment.lifecycle is ContinuousShadowLifecycle.RUNNING
+            and source_selection_available
             and selection.published_at <= window_end
             and window_end - selection.published_at <= self._maximum_selection_age
         )
