@@ -53,6 +53,23 @@ CREATE INDEX IF NOT EXISTS research_events_kind_class
 CREATE INDEX IF NOT EXISTS research_events_run_observed
     ON research_events (run_id, observed_time_utc);
 
+CREATE TABLE IF NOT EXISTS research_pending_observations (
+    run_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    first_observed_time_utc TEXT NOT NULL,
+    PRIMARY KEY (run_id, source_id, leader_alias, source_event_id)
+);
+
+CREATE TABLE IF NOT EXISTS research_source_completed_windows (
+    run_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    leader_alias TEXT NOT NULL,
+    completed_end_utc TEXT NOT NULL,
+    PRIMARY KEY (run_id, source_id, leader_alias)
+);
+
 CREATE TABLE IF NOT EXISTS research_experiments (
     run_id TEXT PRIMARY KEY,
     started_at_utc TEXT NOT NULL,

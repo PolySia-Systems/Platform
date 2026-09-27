@@ -56,6 +56,18 @@ configuration cannot silently continue an existing experiment.
 - The default one-minute poll overlaps its last watermark by 30 seconds. A missed
   interval catches up from the prior watermark; Stage 4A continues its independent
   ten-minute windowed run.
+- The wallet-filtered Data API v2 cursor walk must complete before an observed
+  trade can enter an evaluation. Per-page event identities and actual first
+  observation times are durably captured as `PENDING` before that gate; a
+  failed walk retains them without advancing the watermark or writing a fill.
+  Successful admission records its own time before market/book evaluation.
+  First observation, source execution, admission, and economic evaluation are
+  distinct UTC times. The journal retains first observation across retries.
+- A complete walk means complete *available* API pages within the bounded
+  request, page, and time budgets. It does not prove upstream publication
+  completeness. Delays beyond overlap and prolonged outages remain `UNKNOWN`
+  until separately reconciled; a quiet complete response is not an unavailable
+  response. No global-feed candidate is automatically promoted into Shadow.
 - One fenced SQLite lease prevents concurrent Stage 4B publishers. An abandoned
   poll is marked failed and prior durable state remains authoritative.
 

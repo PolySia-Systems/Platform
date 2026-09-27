@@ -53,7 +53,7 @@ from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLI
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
-CONTINUOUS_SHADOW_SCHEMA_VERSION = 6
+CONTINUOUS_SHADOW_SCHEMA_VERSION = 7
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
@@ -833,6 +833,69 @@ class ContinuousShadowRepository:
             connection.close()
         return poll_run_id
 
+    def capture_pending_observations(
+        self,
+        poll_run_id: str,
+        event_ids: tuple[str, ...],
+        *,
+        observed_at: datetime,
+    ) -> None:
+        """Durably record first sighting without granting economic admission."""
+
+        if not event_ids:
+            return
+        observed_at = _utc(observed_at)
+        if len(event_ids) > 500 or any(len(event_id) != 64 for event_id in event_ids):
+            raise ContinuousShadowStoreError("Pending observation batch is invalid.")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            poll = connection.execute(
+                "SELECT experiment_id FROM continuous_shadow_poll_runs "
+                "WHERE poll_run_id = ? AND status = 'running'",
+                (poll_run_id,),
+            ).fetchone()
+            if poll is None:
+                raise ContinuousShadowStoreError("Pending observation poll is not active.")
+            for event_id in dict.fromkeys(event_ids):
+                connection.execute(
+                    "INSERT OR IGNORE INTO continuous_shadow_pending_observations "
+                    "(experiment_id, event_id, first_observed_at, first_poll_run_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    (str(poll["experiment_id"]), event_id, _iso(observed_at), poll_run_id),
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def pending_observed_times(
+        self, experiment_id: str, event_ids: tuple[str, ...]
+    ) -> dict[str, datetime]:
+        if not event_ids:
+            return {}
+        result: dict[str, datetime] = {}
+        connection = self._connect()
+        try:
+            for start in range(0, len(event_ids), 500):
+                chunk = event_ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = connection.execute(
+                    "SELECT event_id, first_observed_at "
+                    "FROM continuous_shadow_pending_observations "
+                    f"WHERE experiment_id = ? AND event_id IN ({placeholders})",
+                    (experiment_id, *chunk),
+                ).fetchall()
+                result.update(
+                    (str(row["event_id"]), _datetime(str(row["first_observed_at"])))
+                    for row in rows
+                )
+        finally:
+            connection.close()
+        return result
+
     def complete_poll(
         self,
         poll_run_id: str,
@@ -897,10 +960,22 @@ class ContinuousShadowRepository:
                         _decimal(event.executed_size),
                         _iso(event.executed_at),
                         _iso(event.observed_at),
-                        _iso(completed_at),
+                        _iso(event.observed_at),
                         poll_run_id,
                         event.external_evidence_reference,
                         json.dumps(pools, separators=(",", ":")),
+                    ),
+                )
+                connection.execute(
+                    "UPDATE continuous_shadow_pending_observations "
+                    "SET admission_state = 'ADMITTED', admitted_poll_run_id = ?, "
+                    "admitted_at = ? WHERE experiment_id = ? AND event_id = ? "
+                    "AND admission_state = 'PENDING'",
+                    (
+                        poll_run_id,
+                        _iso(completion.admission_completed_at or completed_at),
+                        experiment.experiment_id,
+                        event.event_id,
                     ),
                 )
             for item in completion.evaluations:
@@ -2745,11 +2820,36 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     if version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
         _upsert_lifecycle_policy(connection)
         return
+    if version == 6:
+        _migrate_schema_v6_to_v7(connection)
+        return
     if version != 5:
         raise ContinuousShadowStoreError(
             "Continuous Shadow schema requires the offline split-store migration."
         )
     _migrate_schema_v5_to_v6(connection)
+    _migrate_schema_v6_to_v7(connection)
+
+
+def _migrate_schema_v6_to_v7(connection: sqlite3.Connection) -> None:
+    initialized_at = connection.execute(
+        "SELECT initialized_at FROM continuous_shadow_metadata"
+    ).fetchone()[0]
+    connection.execute(
+        "CREATE TABLE continuous_shadow_metadata_v7 ("
+        "schema_version INTEGER PRIMARY KEY CHECK(schema_version = 7), "
+        "initialized_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_metadata_v7 (schema_version, initialized_at) "
+        "VALUES (7, ?)",
+        (initialized_at,),
+    )
+    connection.execute("DROP TABLE continuous_shadow_metadata")
+    connection.execute(
+        "ALTER TABLE continuous_shadow_metadata_v7 RENAME TO continuous_shadow_metadata"
+    )
+    connection.commit()
 
 
 def _migrate_schema_v5_to_v6(connection: sqlite3.Connection) -> None:

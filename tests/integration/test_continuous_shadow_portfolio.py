@@ -11,6 +11,11 @@ from typing import Any
 
 import pytest
 
+from polysia.adapters.polymarket.copytrading_source import (
+    DATA_API_BASE_URL,
+    GAMMA_API_BASE_URL,
+    PolymarketCopyTradingSource,
+)
 from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineLeaseLostError,
 )
@@ -28,6 +33,7 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowService,
 )
 from polysia.application.services.copyability_selection import CopyabilitySelectionService
+from polysia.backtesting.shadow_historical_baseline import run_primary_comparison
 from polysia.cli_commands.wallet_intelligence import _emit_portfolio_poll
 from polysia.deployment.wallet_intelligence_backup import (
     backup_continuous_shadow_database,
@@ -85,6 +91,7 @@ class _Scenario:
     def __init__(self) -> None:
         self.events: dict[str, list[_EventSpec]] = {}
         self.fail = False
+        self.rejected_count = 0
 
 
 class _Source:
@@ -127,7 +134,7 @@ class _Source:
             next_checkpoint=None,
             raw_count=len(events),
             filtered_count=0,
-            rejected_count=0,
+            rejected_count=self.scenario.rejected_count,
             duplicate_count=0,
         )
 
@@ -323,6 +330,151 @@ def _shadow_database(source_database: Path) -> Path:
 
 
 @pytest.mark.asyncio
+async def test_actual_v2_shadow_source_captures_before_admission_and_recovers(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    _add_alpha_membership_for_first_wallet(database)
+    clock = _Clock(NOW)
+    condition = "0x" + "a" * 64
+    slug = f"btc-updown-15m-{int(NOW.timestamp())}"
+    row = {
+        "proxy_wallet": ADDRESSES[0], "side": "BUY", "token_id": "111111",
+        "condition_id": condition, "size": "5", "price": "0.45",
+        "timestamp": int((NOW + timedelta(seconds=110)).timestamp()),
+        "event_slug": slug, "outcome": "Up", "transaction_hash": "0x" + "b" * 64,
+    }
+    gamma = [{
+        "slug": slug,
+        "markets": [{
+            "conditionId": condition,
+            "clobTokenIds": '["111111", "222222"]',
+            "outcomes": '["Up", "Down"]',
+            "eventStartTime": NOW.isoformat(),
+            "endDate": (NOW + timedelta(minutes=15)).isoformat(),
+        }],
+    }]
+
+    class V2Transport:
+        fail_second_page = True
+        paths: list[str]
+
+        def __init__(self) -> None:
+            self.paths = []
+
+        async def get_json(self, base_url: str, path: str, params: Any, **_: Any) -> Any:
+            self.paths.append(path)
+            if base_url == GAMMA_API_BASE_URL:
+                return gamma
+            assert base_url == DATA_API_BASE_URL and path == "/v2/trades"
+            if params["user"] != ADDRESSES[0]:
+                return {"data": [], "pagination": {"has_more": False, "next_cursor": None}}
+            if params.get("cursor") == "next":
+                if self.fail_second_page:
+                    raise OSError("page two unavailable")
+                clock.value += timedelta(seconds=1)
+                return {"data": [row], "pagination": {"has_more": False, "next_cursor": None}}
+            return {"data": [row], "pagination": {"has_more": True, "next_cursor": "next"}}
+
+    class FixtureMarket(_MarketPort):
+        async def get_market_by_condition_id(self, market_id: str) -> MarketDetails:
+            assert market_id == condition
+            clock.value += timedelta(seconds=1)
+            return MarketDetails(
+                id="market-1", condition_id=condition, closed=False, active=True,
+                fee_schedule=MarketFeeSchedule(
+                    enabled=True, rate=Decimal("0.04"), exponent=Decimal("1"),
+                    taker_only=True,
+                ),
+                outcomes=(
+                    MarketOutcomeSummary(label="Up", token_id="111111", price=Decimal("0.5")),
+                    MarketOutcomeSummary(label="Down", token_id="222222", price=Decimal("0.5")),
+                ),
+            )
+
+        async def get_order_book(self, token_id: str) -> MarketOrderBookSnapshot:
+            return MarketOrderBookSnapshot(
+                token_id=token_id, market_id=condition, timestamp=clock.value,
+                bids=(OrderBookLevel(price=Decimal("0.4"), size=Decimal("20")),),
+                asks=(OrderBookLevel(price=Decimal("0.41"), size=Decimal("20")),),
+                minimum_order_size=Decimal("1"), tick_size=Decimal("0.01"),
+            )
+
+    transport = V2Transport()
+    shadow = _shadow_database(database)
+    repository = ContinuousShadowRepository(shadow)
+    repository.initialize()
+
+    def service() -> ContinuousShadowService:
+        return ContinuousShadowService(
+            ContinuousShadowRepository(shadow), DynamicShadowRepository(database),
+            ContinuousShadowLeaseRepository(shadow),
+            lambda leaders: PolymarketCopyTradingSource(
+                leaders, transport=transport, clock=clock
+            ),
+            FixtureMarket(clock),
+            config=ContinuousShadowConfig(maximum_quote_age_ms=60_000),
+            clock=clock,
+        )
+
+    active = service()
+    experiment = active.start("polycop")
+    clock.value = NOW + timedelta(minutes=2)
+    with pytest.raises(ContinuousShadowError, match="failed safely"):
+        await active.poll("polycop")
+    assert repository.watermark(experiment.experiment_id) is None
+    with sqlite3.connect(shadow) as connection:
+        pending = connection.execute(
+            "SELECT first_observed_at, admission_state "
+            "FROM continuous_shadow_pending_observations"
+        ).fetchone()
+        assert pending is not None and pending[1] == "PENDING"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_event_journal"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_ledger"
+        ).fetchone()[0] == 0
+
+    transport.fail_second_page = False
+    clock.value += timedelta(seconds=1)
+    recovered = await service().poll("polycop")
+    assert recovered.new_event_count == 1
+    assert "/v2/trades" in transport.paths and "/trades" not in transport.paths
+    with sqlite3.connect(shadow) as connection:
+        admitted = connection.execute(
+            "SELECT admission_state, admitted_at FROM continuous_shadow_pending_observations"
+        ).fetchone()
+        journal = connection.execute(
+            "SELECT observed_at, first_seen_at FROM continuous_shadow_event_journal"
+        ).fetchone()
+        evaluated = connection.execute(
+            "SELECT MIN(evaluated_at) FROM continuous_shadow_evaluations"
+        ).fetchone()[0]
+    assert admitted is not None and admitted[0] == "ADMITTED"
+    assert journal is not None and journal[0] == pending[0] == journal[1]
+    assert admitted[1] > pending[0]
+    assert evaluated > admitted[1]
+
+    clock.value += timedelta(seconds=1)
+    repeated = await service().poll("polycop")
+    assert repeated.new_event_count == 0
+    with sqlite3.connect(shadow) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM continuous_shadow_event_journal"
+        ).fetchone()[0] == 1
+    with sqlite3.connect(shadow) as connection:
+        connection.row_factory = sqlite3.Row
+        inventory, comparison = run_primary_comparison(
+            connection, file_digests={"continuous-shadow.sqlite3": "0" * 64}
+        )
+    assert inventory.event_count == 1
+    assert comparison.current_control.event_count == 1
+    assert comparison.parity.passed is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fail_batch", [False, True])
 async def test_batch_books_bound_requests_and_preserve_single_read_fallback(
     tmp_path: Path, fail_batch: bool,
@@ -508,7 +660,7 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
         shadow_backup.backup_path,
         working_directory=tmp_path / "restore",
     )
-    assert shadow_restored.validation.schema_version == 6
+    assert shadow_restored.validation.schema_version == 7
     assert shadow_restored.validation.experiment_count == 1
     assert shadow_restored.validation.poll_count == 3
     assert shadow_restored.validation.event_count == 2
@@ -1058,6 +1210,34 @@ async def test_failed_poll_keeps_last_known_good_portfolio_and_recovers(tmp_path
 
     scenario.fail = False
     clock.value = NOW + timedelta(minutes=4)
+    recovered = await service.poll("polycop")
+    assert recovered.new_event_count == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_source_trade_blocks_shadow_admission_and_recovers(
+    tmp_path: Path,
+) -> None:
+    database, service, clock, scenario = _started_service(tmp_path)
+    experiment = ContinuousShadowRepository(_shadow_database(database)).active_experiment(
+        "polycop"
+    )
+    assert experiment is not None
+    before = ContinuousShadowRepository(_shadow_database(database)).results(
+        experiment.experiment_id, limit=10
+    )
+    scenario.rejected_count = 1
+    clock.value = NOW + timedelta(minutes=2)
+    with pytest.raises(ContinuousShadowError) as failed:
+        await service.poll("polycop")
+    assert failed.value.error_code == "source_unavailable"
+    after = ContinuousShadowRepository(_shadow_database(database)).results(
+        experiment.experiment_id, limit=10
+    )
+    assert after["processing"]["checkpoint"] == before["processing"]["checkpoint"]
+    assert after["polls"]["succeeded"] == before["polls"]["succeeded"]
+    scenario.rejected_count = 0
+    clock.value = NOW + timedelta(minutes=3)
     recovered = await service.poll("polycop")
     assert recovered.new_event_count == 0
 

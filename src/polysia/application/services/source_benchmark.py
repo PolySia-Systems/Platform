@@ -56,6 +56,15 @@ async def run_source_benchmark(
         code_sha=code_sha,
         configuration_digest=configuration_digest,
     )
+    for source in sources:
+        set_pending_observer = getattr(source, "set_pending_observer", None)
+        if callable(set_pending_observer):
+            set_pending_observer(store.capture_pending_observations)
+        set_progress_store = getattr(source, "set_progress_store", None)
+        if callable(set_progress_store):
+            set_progress_store(
+                store.completed_source_windows, store.record_completed_source_windows
+            )
 
     async def drain(source: ResearchObservationSource) -> tuple[str, int]:
         count = 0
@@ -120,6 +129,7 @@ def summarize_benchmark(
 
     source_rows = []
     wallet_identity_sets: dict[str, set[str]] = {}
+    matched_observations: dict[str, dict[str, datetime]] = {}
     for source in sources:
         source_events = tuple(
             event
@@ -131,20 +141,32 @@ def summarize_benchmark(
             for event in source_events
             if event.event_kind is not ObservationKind.CONTROL
         )
-        wall_lags = tuple(
+        wall_lags_all = tuple(
             lag
             for event in source_events
             if event.source_time is not None
-            and event.source_time >= started
             and (lag := _wall_lag_ns(event)) is not None
         )
-        identities = {
-            _coverage_key(event)
-            for event in source_events
-            if event.event_kind is ObservationKind.WALLET_TRADE
-            and event.classification is EvidenceClassification.ACCEPTED
+        wall_lags = tuple(lag for lag in wall_lags_all if lag >= 0)
+        identity_groups: dict[str, list[CanonicalResearchEvent]] = defaultdict(list)
+        unmatchable_count = 0
+        for event in source_events:
+            if (
+                event.event_kind is ObservationKind.WALLET_TRADE
+                and event.classification is EvidenceClassification.ACCEPTED
+            ):
+                key = _coverage_key(event)
+                if key is None:
+                    unmatchable_count += 1
+                else:
+                    identity_groups[key].append(event)
+        ambiguous_keys = {
+            key for key, group in identity_groups.items() if len(group) != 1
         }
-        identities.discard("")
+        identities = set(identity_groups) - ambiguous_keys
+        matched_observations[source.candidate.candidate_id] = {
+            key: identity_groups[key][0].observed_time for key in identities
+        }
         if source.candidate.wallet_attributable:
             wallet_identity_sets[source.candidate.candidate_id] = identities
         classified = _count_classifications(source_events)
@@ -173,21 +195,22 @@ def summarize_benchmark(
                 "overload_count": classified.get(EvidenceClassification.OVERLOAD.value, 0),
                 "incomplete_count": classified.get(EvidenceClassification.INCOMPLETE.value, 0),
                 "wallet_attributed_count": attributed,
-                "receive_normalize_latency_ns": {
-                    "p50": percentile_nearest_rank(latencies, 50),
-                    "p95": percentile_nearest_rank(latencies, 95),
-                    "p99": percentile_nearest_rank(latencies, 99),
-                    "n": len(latencies),
-                },
+                "receive_normalize_latency_ns": _latency_stats(latencies),
                 "source_to_observe_wall_ns": {
-                    "p50": percentile_nearest_rank(wall_lags, 50),
-                    "p95": percentile_nearest_rank(wall_lags, 95),
-                    "p99": percentile_nearest_rank(wall_lags, 99),
-                    "n": len(wall_lags),
-                    "note": "wall_clock_not_monotonic",
+                    **_latency_stats(wall_lags),
+                    "clock_skew_count": len(wall_lags_all) - len(wall_lags),
+                    "note": "wall_clock_with_source_timestamp_precision_and_skew_limits",
                 },
                 "reconnect_count": reconnect_counts.get(source.candidate.candidate_id, 0),
                 "coverage_identity_count": len(identities),
+                "coverage_identity_scope": "relative_union_of_unambiguous_wallet_trades",
+                "unmatchable_trade_count": unmatchable_count,
+                "ambiguous_identity_count": len(ambiguous_keys),
+                "source_health": (
+                    dict(snapshot())
+                    if callable(snapshot := getattr(source, "health_snapshot", None))
+                    else None
+                ),
             }
         )
 
@@ -199,6 +222,35 @@ def summarize_benchmark(
         for candidate_id, identities in wallet_identity_sets.items()
     }
 
+    paired_differences: dict[str, dict[str, object]] = {}
+    candidate_ids = sorted(wallet_identity_sets)
+    for left_index, left in enumerate(candidate_ids):
+        for right in candidate_ids[left_index + 1 :]:
+            shared = wallet_identity_sets[left] & wallet_identity_sets[right]
+            differences = tuple(
+                int(
+                    (matched_observations[left][key] - matched_observations[right][key])
+                    .total_seconds()
+                    * 1_000_000_000
+                )
+                for key in sorted(shared)
+            )
+            paired_differences[f"{left}_minus_{right}"] = {
+                "n": len(differences),
+                "p50_ns": percentile_nearest_rank(differences, 50),
+                "p95_ns": (
+                    percentile_nearest_rank(differences, 95)
+                    if len(differences) >= 20
+                    else None
+                ),
+                "p99_ns": (
+                    percentile_nearest_rank(differences, 99)
+                    if len(differences) >= 100
+                    else None
+                ),
+                "note": "wall_clock_first_observation_difference_for_matched_trades",
+            }
+
     freshness = _market_freshness_when_wallet_arrives(events)
     drain_errors = [
         str(item) for item in drain_results if isinstance(item, BaseException)
@@ -208,6 +260,13 @@ def summarize_benchmark(
         "code_sha": code_sha,
         "configuration_digest": configuration_digest,
         "coverage_vs_union": coverage,
+        "coverage_note": "relative_source_union_not_upstream_ground_truth",
+        "trade_matching_note": (
+            "derived_from_wallet_alias_and_available_trade_fields; "
+            "no_provider_unique_id_is_assumed"
+        ),
+        "resource_use": "not_measured_by_local_benchmark",
+        "paired_first_observation_differences": paired_differences,
         "drain_errors": drain_errors,
         "ended_at": ended.isoformat(),
         "interval_reason": interval_reason,
@@ -239,6 +298,7 @@ def summarize_benchmark(
 _CANDIDATE_SOURCE_IDS = {
     "rest_activity": "polymarket:data-api:activity",
     "rest_trades": "polymarket:data-api:trades",
+    "global_trades": "polymarket:data-api:global-trades",
     "clob_market_ws": "polymarket:clob:market-stream",
 }
 
@@ -247,17 +307,24 @@ def _source_matches(source_id: str, candidate: SourceCandidate) -> bool:
     return source_id == _CANDIDATE_SOURCE_IDS.get(candidate.candidate_id, candidate.candidate_id)
 
 
-def _coverage_key(event: CanonicalResearchEvent) -> str:
-    tx_hash = event.provenance.get("has_transaction")
+def _coverage_key(event: CanonicalResearchEvent) -> str | None:
+    if event.leader_alias is None or event.provenance.get("has_transaction") is not True:
+        return None
+    trade_id = event.provenance.get("source_match_id") or event.source_event_id
+    if not isinstance(trade_id, str) or not trade_id:
+        return None
     return payload_digest(
-        {
-            "market": event.market_reference,
-            "outcome": event.outcome_reference,
-            "side": event.side,
-            "source_time": None if event.source_time is None else event.source_time.isoformat(),
-            "tx_present": tx_hash,
-        }
+        {"leader_alias": event.leader_alias, "source_match_id": trade_id}
     )
+
+
+def _latency_stats(values: tuple[int, ...]) -> dict[str, int | None]:
+    return {
+        "p50": percentile_nearest_rank(values, 50),
+        "p95": percentile_nearest_rank(values, 95) if len(values) >= 20 else None,
+        "p99": percentile_nearest_rank(values, 99) if len(values) >= 100 else None,
+        "n": len(values),
+    }
 
 
 def _count_classifications(events: tuple[CanonicalResearchEvent, ...]) -> dict[str, int]:
@@ -326,13 +393,22 @@ def _select_source(
     *,
     unavailable: tuple[SourceCandidate, ...],
 ) -> dict[str, Any]:
-    wallet_rows = [row for row in rows if row["wallet_attributable"] is True]
+    wallet_rows = [
+        row for row in rows
+        if row["wallet_attributable"] is True and row["candidate_id"] != "global_trades"
+    ]
     measured = [
         row
         for row in wallet_rows
         if row["status"] == SourceCandidateStatus.MEASURED.value
         and int(row["accepted_count"]) > 0
         and int(row["unattributable_count"]) == 0
+        and int(row["incomplete_count"]) == 0
+        and int(row["unmatchable_trade_count"]) == 0
+        and int(row["ambiguous_identity_count"]) == 0
+        and int(row["source_to_observe_wall_ns"]["clock_skew_count"]) == 0
+        and int(row["coverage_identity_count"]) > 0
+        and int(row["source_to_observe_wall_ns"]["n"]) > 0
     ]
     if not measured:
         return {
@@ -345,7 +421,7 @@ def _select_source(
         }
     # Integrity first: fewer conflicts/gaps/overloads, then coverage, then latency.
     def key(row: dict[str, Any]) -> tuple[int, int, int, int]:
-        p50 = row["receive_normalize_latency_ns"]["p50"]
+        p50 = row["source_to_observe_wall_ns"]["p50"]
         latency = 10**18 if p50 is None else int(p50)
         return (
             int(row["conflicting_count"]) + int(row["gap_count"]) + int(row["overload_count"]),
@@ -361,5 +437,7 @@ def _select_source(
         "reason": "best_public_rest_wallet_source_not_a_fast_stream",
         "unavailable_count": len(unavailable),
         "fast_wallet_stream_qualified": False,
+        "promotion_qualified": False,
+        "promotion_reason": "requires_measured_coverage_latency_and_resource_acceptance",
         "note": "lowest_latency_alone_does_not_win; official user WS remains UNAVAILABLE",
     }

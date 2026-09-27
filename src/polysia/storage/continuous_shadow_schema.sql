@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 6),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 7),
     initialized_at TEXT NOT NULL
 );
 
@@ -122,6 +122,21 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_poll_runs (
 
 CREATE INDEX IF NOT EXISTS idx_continuous_shadow_polls
     ON continuous_shadow_poll_runs(experiment_id, started_at);
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_pending_observations (
+    experiment_id TEXT NOT NULL,
+    event_id TEXT NOT NULL CHECK(length(event_id) = 64),
+    first_observed_at TEXT NOT NULL,
+    first_poll_run_id TEXT NOT NULL,
+    admission_state TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK(admission_state IN ('PENDING', 'ADMITTED')),
+    admitted_poll_run_id TEXT,
+    admitted_at TEXT,
+    PRIMARY KEY(experiment_id, event_id),
+    FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id),
+    FOREIGN KEY(first_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id),
+    FOREIGN KEY(admitted_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id)
+);
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_checkpoint (
     experiment_id TEXT PRIMARY KEY,

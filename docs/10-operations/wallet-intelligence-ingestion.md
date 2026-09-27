@@ -305,14 +305,19 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
-## Continuous Shadow Portfolio / standalone schema v6
+## Continuous Shadow Portfolio / standalone schema v7
 
 Stage 4B is additive to the immutable Stage 4A windows above. It persists a
 first-seen journal, cross-run inventory, independent Wallet portfolios, a labeled
 mixed baseline follower, independent Alpha and Stress followers, market-specific
 official fees, current valuation, change-driven marks, settlement, and Decimal
-ledger evidence. Schema v6 keeps Stage 4B as the only runtime writer of
-`continuous-shadow.sqlite3` and stores current marks on positions. Stage 4A
+ledger evidence. Schema v7 keeps Stage 4B as the only runtime writer of
+`continuous-shadow.sqlite3`, stores current marks on positions, and adds
+first-observation `PENDING` rows for incomplete v2 cursor walks. These rows
+carry no fill, fee, ledger, or watermark authority; admission occurs only after
+the available-page walk completes. A v6 file migrates additively at startup;
+take and restore-check a backup before updating because an older binary cannot
+read v7. Stage 4A
 remains in `wallet-intelligence.sqlite3`. ADR-0015 owns the lifecycle bounds.
 Its complete contract is
 `docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.

@@ -26,6 +26,13 @@ from polysia.adapters.polymarket.copytrading_source import (
     PolymarketCopyTradingSourceError,
     UrllibJsonGetTransport,
 )
+from polysia.adapters.polymarket.data_api_v2 import (
+    DATA_API_V2_ACTIVITY_PATH,
+    DATA_API_V2_TRADES_PATH,
+    IncompleteWalletWindowError,
+    data_api_v2_rows,
+    fetch_data_api_v2_window,
+)
 from polysia.adapters.polymarket.request_scheduling import TradesSourceUnavailableError
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.research_evidence import SourceCandidate
@@ -51,8 +58,6 @@ TRADES_SOURCE_ID = "polymarket:data-api:trades"
 MARKET_STREAM_SOURCE_ID = "polymarket:clob:market-stream"
 TERMINAL_SETTLEMENT_SOURCE_ID = "polymarket:gamma:terminal-settlement"
 USER_CHANNEL_SOURCE_ID = "polymarket:clob:user-stream"
-DATA_API_V2_TRADES_PATH = "/v2/trades"
-DATA_API_V2_ACTIVITY_PATH = "/v2/activity"
 
 REST_ACTIVITY_CANDIDATE = SourceCandidate(
     candidate_id="rest_activity",
@@ -68,6 +73,14 @@ REST_TRADES_CANDIDATE = SourceCandidate(
     wallet_attributable=True,
     status=SourceCandidateStatus.MEASURED,
 )
+GLOBAL_TRADES_CANDIDATE = SourceCandidate(
+    candidate_id="global_trades",
+    display_name="Bounded Data API v2 global /trades candidate",
+    kind="wallet_event",
+    wallet_attributable=True,
+    status=SourceCandidateStatus.MEASURED,
+)
+GLOBAL_TRADES_SOURCE_ID = "polymarket:data-api:global-trades"
 MARKET_STREAM_CANDIDATE = SourceCandidate(
     candidate_id="clob_market_ws",
     display_name="Official CLOB market WebSocket",
@@ -136,113 +149,12 @@ def public_wallet_alias(wallet: str) -> str:
     return f"pub-{digest}"
 
 
-def data_api_v2_rows(payload: object) -> list[dict[str, Any]]:
-    """Validate a Data API v2 envelope and adapt its rows to v1 field names.
-
-    Downstream canonicalization remains unchanged while the public read boundary
-    follows the current cursor/envelope contract.
-    """
-
-    if not isinstance(payload, Mapping):
-        raise TypeError("Data API v2 response is not an object")
-    if "data" not in payload or payload["data"] is None:
-        raise TypeError("Data API v2 feed data is missing")
-    data = payload["data"]
-    if not isinstance(data, list) or any(not isinstance(row, Mapping) for row in data):
-        raise TypeError("Data API v2 data is not a list of objects")
-    return [_canonical_data_api_v2_row(row) for row in data]
-
-
-class IncompleteWalletWindowError(ValueError):
-    """A bounded public feed walk cannot establish complete coverage."""
-
-
-async def fetch_data_api_v2_window(
-    transport: JsonGetTransport,
-    path: str,
-    params: Mapping[str, str | int | bool],
-    *,
-    purpose: LeaderReadPurpose = LeaderReadPurpose.DISCOVERY,
-    max_pages: int = 20,
-    max_requests: int = 20,
-    max_elapsed_seconds: float = 30.0,
-    monotonic: Callable[[], float] = time.monotonic,
-) -> list[dict[str, Any]]:
-    """Return a complete frozen keyset window, or no rows at all.
-
-    The feed cursor contains the seek anchor, not the filters. Keep the original
-    user/window/filter parameters identical on every page.
-    """
-
-    if path not in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
-        raise ValueError("unsupported Data API v2 feed")
-    if max_pages <= 0 or max_requests <= 0 or max_elapsed_seconds <= 0:
-        raise ValueError("Data API v2 walk budgets must be positive")
-    started = monotonic()
-    rows: list[dict[str, Any]] = []
-    seen_cursors: set[str] = set()
-    cursor: str | None = None
-    page_count = 0
-    request_count = 0
-    while True:
-        if page_count >= max_pages or request_count >= max_requests:
-            raise IncompleteWalletWindowError("page_or_request_budget_exhausted")
-        if monotonic() - started >= max_elapsed_seconds:
-            raise IncompleteWalletWindowError("time_budget_exhausted")
-        request_params = dict(params)
-        if cursor is not None:
-            request_params["cursor"] = cursor
-        request_count += 1
-        payload = await transport.get_json(DATA_API_BASE_URL, path, request_params, purpose=purpose)
-        if monotonic() - started >= max_elapsed_seconds:
-            raise IncompleteWalletWindowError("time_budget_exhausted")
-        page_rows = data_api_v2_rows(payload)
-        assert isinstance(payload, Mapping)
-        pagination = payload.get("pagination")
-        if not isinstance(pagination, Mapping):
-            raise TypeError("Data API v2 pagination is missing")
-        has_more = pagination.get("has_more")
-        next_cursor = pagination.get("next_cursor")
-        if not isinstance(has_more, bool) or not (
-            next_cursor is None or isinstance(next_cursor, str) and next_cursor
-        ):
-            raise TypeError("Data API v2 pagination is malformed")
-        if has_more != (next_cursor is not None):
-            raise TypeError("Data API v2 pagination is inconsistent")
-        page_count += 1
-        rows.extend(page_rows)
-        if next_cursor is None:
-            break
-        if next_cursor in seen_cursors:
-            raise IncompleteWalletWindowError("repeated_cursor")
-        seen_cursors.add(next_cursor)
-        cursor = next_cursor
-    return rows
-
-
 def _wallet_rows(payload: object, *, path: str) -> list[dict[str, Any]]:
-    if path.startswith("/v2/"):
+    if path in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
         return data_api_v2_rows(payload)
     if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
         raise TypeError("wallet source response is not a list of objects")
     return payload
-
-
-def _canonical_data_api_v2_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    adapted = dict(row)
-    aliases = {
-        "condition_id": "conditionId",
-        "event_slug": "eventSlug",
-        "outcome_index": "outcomeIndex",
-        "proxy_wallet": "proxyWallet",
-        "token_id": "asset",
-        "transaction_hash": "transactionHash",
-        "usdc_size": "usdcSize",
-    }
-    for current, legacy in aliases.items():
-        if current in row:
-            adapted[legacy] = row[current]
-    return adapted
 
 
 def unique_wallet_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -281,6 +193,7 @@ class DataApiWalletPollSource:
         poll_interval_seconds: float = 2.0,
         initial_delay_seconds: float = 0.0,
         page_limit: int = 50,
+        overlap_seconds: int = 30,
         clock: Clock | None = None,
         monotonic_ns: MonotonicNs | None = None,
         sleep: Sleeper = asyncio.sleep,
@@ -293,6 +206,8 @@ class DataApiWalletPollSource:
             raise ValueError("initial_delay_seconds must not be negative")
         if page_limit <= 0 or page_limit > 1000:
             raise ValueError("page_limit must be within [1, 1000]")
+        if not 0 <= overlap_seconds <= 300:
+            raise ValueError("overlap_seconds must be within [0, 300]")
         self.candidate = candidate
         self._path = path
         self._source_id = source_id
@@ -301,6 +216,7 @@ class DataApiWalletPollSource:
         self._poll_interval_seconds = poll_interval_seconds
         self._initial_delay_seconds = initial_delay_seconds
         self._page_limit = page_limit
+        self._overlap_seconds = overlap_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic_ns = monotonic_ns or _perf_ns
         self._sleep = sleep
@@ -317,6 +233,42 @@ class DataApiWalletPollSource:
         self._completed_ends: dict[str, datetime] = {}
         self._last_complete_row_count: int | None = None
         self._last_eligible_event_count: int | None = None
+        self._first_seen: dict[tuple[str, str, str], tuple[datetime, int]] = {}
+        self._pending_observer: (
+            Callable[
+                [str, str, str, tuple[str, ...], datetime], Mapping[str, datetime]
+            ]
+            | None
+        ) = None
+        self._completed_window_loader: (
+            Callable[[str, str], Mapping[str, datetime]] | None
+        ) = None
+        self._completed_window_recorder: (
+            Callable[[str, str, Mapping[str, datetime]], None] | None
+        ) = None
+        self._collection_start: datetime | None = None
+        self._active_run_id: str | None = None
+
+    def set_pending_observer(
+        self,
+        observer: Callable[
+            [str, str, str, tuple[str, ...], datetime], Mapping[str, datetime]
+        ],
+    ) -> None:
+        self._pending_observer = observer
+
+    def set_progress_store(
+        self,
+        loader: Callable[[str, str], Mapping[str, datetime]],
+        recorder: Callable[[str, str, Mapping[str, datetime]], None],
+    ) -> None:
+        self._completed_window_loader = loader
+        self._completed_window_recorder = recorder
+
+    def set_collection_start(self, started_at: datetime) -> None:
+        if started_at.tzinfo is None or started_at.utcoffset() != timedelta(0):
+            raise ValueError("collection start must be UTC")
+        self._collection_start = started_at
 
     async def run(
         self,
@@ -324,14 +276,24 @@ class DataApiWalletPollSource:
         run_id: str,
         deadline: datetime,
     ) -> AsyncIterator[CanonicalResearchEvent]:
-        collection_started = self._clock()
+        collection_started = self._collection_start or self._clock()
+        hard_deadline = time.monotonic() + max(
+            0.0, (deadline - self._clock()).total_seconds()
+        )
+        if self._active_run_id != run_id:
+            self._active_run_id = run_id
+            self._completed_ends = (
+                {}
+                if self._completed_window_loader is None
+                else dict(self._completed_window_loader(run_id, self._source_id))
+            )
         if self._initial_delay_seconds:
             remaining = (deadline - self._clock()).total_seconds()
             if remaining <= 0:
                 return
             await self._sleep(min(self._initial_delay_seconds, remaining))
         backoff = 1.0
-        while self._clock() < deadline:
+        while self._clock() < deadline and time.monotonic() < hard_deadline:
             window_end = self._clock()
             receive_ns = self._monotonic_ns()
             purpose = (
@@ -344,14 +306,37 @@ class DataApiWalletPollSource:
                 for alias, wallet in self._aliases.items():
                     previous_end = self._completed_ends.get(alias)
                     window_start = (
-                        previous_end - timedelta(seconds=1)
+                        previous_end - timedelta(seconds=self._overlap_seconds)
                         if previous_end is not None
                         else collection_started - timedelta(minutes=30)
                     )
+                    if window_start > window_end:
+                        raise ValueError("clock_before_completed_boundary")
                     params = self._params(wallet, start=window_start, end=window_end)
                     if self._path.startswith("/v2/"):
+                        def capture_page(
+                            page_rows: list[dict[str, Any]],
+                            *,
+                            page_alias: str = alias,
+                            page_wallet: str = wallet,
+                        ) -> None:
+                            if self._clock() >= deadline:
+                                raise IncompleteWalletWindowError("time_budget_exhausted")
+                            self._capture_first_seen(
+                                page_rows, alias=page_alias, wallet=page_wallet, run_id=run_id
+                            )
+
+                        remaining = (deadline - self._clock()).total_seconds()
+                        if remaining <= 0:
+                            raise IncompleteWalletWindowError("time_budget_exhausted")
                         rows = await fetch_data_api_v2_window(
-                            self._transport, self._path, params, purpose=purpose
+                            self._transport,
+                            self._path,
+                            params,
+                            purpose=purpose,
+                            max_elapsed_seconds=min(30.0, remaining),
+                            deadline_monotonic=hard_deadline,
+                            on_page=capture_page,
                         )
                     else:
                         payload = await self._transport.get_json(
@@ -376,13 +361,15 @@ class DataApiWalletPollSource:
                 self._availability = "unavailable"
                 self._last_request_outcome = (
                     "incomplete_window"
-                    if isinstance(error, (IncompleteWalletWindowError, TypeError))
+                    if isinstance(error, (ValueError, TypeError))
                     else "transient_error"
                 )
                 self._last_failure_at = observed
                 self._failure_class = failure_class
                 self._retry_at = retry_at
                 self._recovery_required = True
+                if observed >= deadline:
+                    return
                 yield _error_event(
                     source_id=self._source_id,
                     run_id=run_id,
@@ -401,6 +388,8 @@ class DataApiWalletPollSource:
                 backoff = min(backoff * 2, 30.0)
                 continue
 
+            if self._clock() >= deadline:
+                return
             observed = self._clock()
             normalize_ns = self._monotonic_ns()
             normalized: list[CanonicalResearchEvent] = []
@@ -411,26 +400,35 @@ class DataApiWalletPollSource:
                     if source_time is not None and source_time < collection_started:
                         self._bootstrap_rows_skipped += 1
                         continue
-                    normalized.append(
-                        _normalize_wallet_row(
-                            row,
-                            source_id=self._source_id,
-                            alias=alias,
-                            expected_wallet=wallet,
-                            run_id=run_id,
-                            observed_time=observed,
-                            receive_ns=receive_ns,
-                            normalize_ns=normalize_ns,
-                        )
+                    event = _normalize_wallet_row(
+                        row,
+                        source_id=self._source_id,
+                        alias=alias,
+                        expected_wallet=wallet,
+                        run_id=run_id,
+                        observed_time=observed,
+                        receive_ns=receive_ns,
+                        normalize_ns=normalize_ns,
                     )
+                    if event.source_event_id is not None:
+                        first = self._first_seen.get((run_id, alias, event.source_event_id))
+                        if first is not None:
+                            event = replace(
+                                event,
+                                observed_time=first[0],
+                                receive_monotonic_ns=first[1],
+                            )
+                    normalized.append(event)
             normalized.sort(key=lambda event: event.source_time or datetime.min.replace(tzinfo=UTC))
             seen_events: set[str] = set()
             for event in normalized:
                 if event.evidence_id not in seen_events:
                     seen_events.add(event.evidence_id)
                     yield event
-            for alias, _, _ in batch:
-                self._completed_ends[alias] = window_end
+            completed_ends = {alias: window_end for alias, _, _ in batch}
+            if self._completed_window_recorder is not None:
+                self._completed_window_recorder(run_id, self._source_id, completed_ends)
+            self._completed_ends.update(completed_ends)
             recovered = purpose is LeaderReadPurpose.RECOVERY
             if recovered:
                 self._recovery_count += 1
@@ -460,9 +458,12 @@ class DataApiWalletPollSource:
             backoff = 1.0
 
     def health_snapshot(self) -> Mapping[str, object]:
+        telemetry = getattr(self._transport, "request_telemetry", None)
         return {
             "availability": self._availability,
             "last_request_outcome": self._last_request_outcome,
+            "coverage_scope": "complete_available_v2_pages_not_upstream_completeness",
+            "overlap_seconds": self._overlap_seconds,
             "last_successful_request_at": _optional_time(self._last_successful_request_at),
             "last_successful_event_at": _optional_time(self._last_successful_event_at),
             "last_failure_at": _optional_time(self._last_failure_at),
@@ -472,7 +473,49 @@ class DataApiWalletPollSource:
             "bootstrap_rows_skipped": self._bootstrap_rows_skipped,
             "last_complete_row_count": self._last_complete_row_count,
             "last_eligible_event_count": self._last_eligible_event_count,
+            "request_telemetry": telemetry() if callable(telemetry) else None,
         }
+
+    def _capture_first_seen(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        alias: str,
+        wallet: str,
+        run_id: str,
+    ) -> None:
+        observed = self._clock()
+        received = self._monotonic_ns()
+        event_ids: list[str] = []
+        for row in rows:
+            event = _normalize_wallet_row(
+                row,
+                source_id=self._source_id,
+                alias=alias,
+                expected_wallet=wallet,
+                run_id=run_id,
+                observed_time=observed,
+                receive_ns=received,
+                normalize_ns=received,
+            )
+            if not event.decision_ready():
+                raise ValueError("malformed_attributed_trade_row")
+            if event.source_event_id is not None:
+                event_ids.append(event.source_event_id)
+        first_observed = (
+            {}
+            if self._pending_observer is None
+            else self._pending_observer(
+                run_id, self._source_id, alias, tuple(event_ids), observed
+            )
+        )
+        for event_id in event_ids:
+            if self._pending_observer is not None and event_id not in first_observed:
+                raise ValueError("pending observation was not durably captured")
+            self._first_seen.setdefault(
+                (run_id, alias, event_id),
+                (first_observed.get(event_id, observed), received),
+            )
 
     def _params(
         self,
@@ -497,6 +540,172 @@ class DataApiWalletPollSource:
         else:
             params["taker_only" if is_v2 else "takerOnly"] = False
         return params
+
+
+class DataApiGlobalTradePollSource(DataApiWalletPollSource):
+    """Bounded comparison candidate; the global endpoint ignores time filters."""
+
+    def __init__(
+        self,
+        *,
+        aliases: Mapping[str, str],
+        transport: JsonGetTransport | None = None,
+        poll_interval_seconds: float = 10.0,
+        clock: Clock | None = None,
+        monotonic_ns: MonotonicNs | None = None,
+        sleep: Sleeper = asyncio.sleep,
+    ) -> None:
+        super().__init__(
+            GLOBAL_TRADES_CANDIDATE,
+            path=DATA_API_V2_TRADES_PATH,
+            source_id=GLOBAL_TRADES_SOURCE_ID,
+            aliases=aliases,
+            transport=transport,
+            poll_interval_seconds=poll_interval_seconds,
+            page_limit=500,
+            clock=clock,
+            monotonic_ns=monotonic_ns,
+            sleep=sleep,
+        )
+
+    async def run(
+        self, *, run_id: str, deadline: datetime
+    ) -> AsyncIterator[CanonicalResearchEvent]:
+        collection_started = self._collection_start or self._clock()
+        hard_deadline = time.monotonic() + max(
+            0.0, (deadline - self._clock()).total_seconds()
+        )
+        wallets = {wallet.casefold(): alias for alias, wallet in self._aliases.items()}
+        while self._clock() < deadline and time.monotonic() < hard_deadline:
+            window_end = self._clock()
+            receive_ns = self._monotonic_ns()
+
+            def capture_page(
+                rows: list[dict[str, Any]], *, page_end: datetime = window_end
+            ) -> None:
+                if self._clock() >= deadline:
+                    raise IncompleteWalletWindowError("time_budget_exhausted")
+                for wallet, alias in wallets.items():
+                    attributed = [
+                        row for row in rows
+                        if str(row.get("proxyWallet", "")).casefold() == wallet
+                        and (
+                            source_time := _optional_timestamp(row.get("timestamp"))
+                        ) is not None
+                        and collection_started <= source_time <= page_end
+                    ]
+                    self._capture_first_seen(
+                        attributed,
+                        alias=alias,
+                        wallet=self._aliases[alias],
+                        run_id=run_id,
+                    )
+
+            try:
+                remaining = (deadline - self._clock()).total_seconds()
+                rows = await fetch_data_api_v2_window(
+                    self._transport,
+                    DATA_API_V2_TRADES_PATH,
+                    {"limit": 500, "taker_only": False},
+                    max_pages=4,
+                    max_requests=4,
+                    max_elapsed_seconds=min(10.0, remaining),
+                    deadline_monotonic=hard_deadline,
+                    on_page=capture_page,
+                )
+            except (
+                PolymarketCopyTradingSourceError,
+                TradesSourceUnavailableError,
+                HTTPError,
+                URLError,
+                OSError,
+                TimeoutError,
+                ValueError,
+                TypeError,
+            ) as error:
+                observed = self._clock()
+                self._availability = "unavailable"
+                self._last_request_outcome = "incomplete_global_snapshot"
+                self._last_failure_at = observed
+                self._failure_class = type(error).__name__
+                if observed >= deadline:
+                    return
+                yield _error_event(
+                    source_id=self._source_id,
+                    run_id=run_id,
+                    observed_time=observed,
+                    receive_ns=receive_ns,
+                    normalize_ns=self._monotonic_ns(),
+                    reason="incomplete_global_snapshot",
+                    failure_class=self._failure_class,
+                    retry_at=observed + timedelta(seconds=self._poll_interval_seconds),
+                    request_purpose=LeaderReadPurpose.DISCOVERY,
+                )
+            else:
+                if self._clock() >= deadline:
+                    return
+                normalized: list[CanonicalResearchEvent] = []
+                normalize_ns = self._monotonic_ns()
+                for row in rows:
+                    wallet = str(row.get("proxyWallet", "")).casefold()
+                    alias = wallets.get(wallet)
+                    source_time = _optional_timestamp(row.get("timestamp"))
+                    if (
+                        alias is None
+                        or source_time is None
+                        or not collection_started <= source_time <= window_end
+                    ):
+                        continue
+                    event = _normalize_wallet_row(
+                        row,
+                        source_id=self._source_id,
+                        alias=alias,
+                        expected_wallet=self._aliases[alias],
+                        run_id=run_id,
+                        observed_time=self._clock(),
+                        receive_ns=receive_ns,
+                        normalize_ns=normalize_ns,
+                    )
+                    if event.source_event_id is not None:
+                        first = self._first_seen.get((run_id, alias, event.source_event_id))
+                        if first is not None:
+                            event = replace(
+                                event, observed_time=first[0],
+                                receive_monotonic_ns=first[1],
+                            )
+                    normalized.append(event)
+                emitted: set[str] = set()
+                for event in sorted(
+                    normalized,
+                    key=lambda item: (item.source_time or collection_started, item.evidence_id),
+                ):
+                    if event.evidence_id not in emitted:
+                        emitted.add(event.evidence_id)
+                        yield event
+                self._availability = "available"
+                self._last_successful_request_at = self._clock()
+                self._last_request_outcome = (
+                    "success_events" if emitted
+                    else "success_empty" if not rows
+                    else "success_filtered"
+                )
+                self._last_complete_row_count = len(rows)
+                self._last_eligible_event_count = len(emitted)
+                if emitted:
+                    self._last_successful_event_at = self._clock()
+            remaining = (deadline - self._clock()).total_seconds()
+            if remaining <= 0:
+                return
+            await self._sleep(min(self._poll_interval_seconds, remaining))
+
+    def health_snapshot(self) -> Mapping[str, object]:
+        return {
+            **super().health_snapshot(),
+            "coverage_scope": "bounded_global_snapshot_not_interval_coverage",
+            "global_client_time_filter": True,
+            "global_taker_only": False,
+            "max_pages": 4,
+        }
 
 
 class OfficialMarketStreamSource:
@@ -1512,6 +1721,10 @@ def _normalize_wallet_row(
         "endpoint": source_id,
         "gamma_verified": False,
         "has_transaction": tx_hash is not None,
+        "source_match_id": stable_evidence_id(
+            source_id="polymarket_public_trade_match",
+            identity_fields={key: value for key, value in identity.items() if key != "trade_id"},
+        ),
     }
     return CanonicalResearchEvent(
         evidence_id=stable_evidence_id(
@@ -1710,6 +1923,4 @@ def _optional_timestamp(value: Any) -> datetime | None:
 
 
 def _perf_ns() -> int:
-    import time
-
     return time.perf_counter_ns()
