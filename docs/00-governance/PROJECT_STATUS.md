@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-07 |
+| Review date | 2026-09-27 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.7` |
@@ -62,7 +62,8 @@ CURRENT capabilities:
   on its own store. It is not the TARGET OMS, allocator, or execution router.
 - Research Replay can reconstruct the frozen local historical backup and compare
   Current Control with Target Exposure v1 without Live, Risk, or Execution
-  authority. The Helsinki host that produced that backup is retired. See
+  authority. That backup remains historical evidence; the separately
+  authorized 2026-09-27 Helsinki `DATA_ONLY` run has its own dated record. See
   [Target Exposure Replay](../03-requirements/shadow-target-exposure-replay.md).
 - [ADR-0018](../04-architecture/adrs/ADR-0018-developer-context-packets.md),
   [ADR-0019](../04-architecture/adrs/ADR-0019-research-run-contracts.md), and
@@ -80,8 +81,11 @@ CURRENT capabilities:
   deterministic command. It links each eligible Wallet observation to causal
   side-aware depth and verified fee evidence, then reports cost-aware Current
   Control versus Target Exposure results. Historical evidence without this
-  bridge remains `INSUFFICIENT_DATA`; a new bounded DATA_ONLY canary and
-  experiment are operational work, not proof of Live readiness.
+  bridge remains `INSUFFICIENT_DATA`. A bounded 2026-09-27 `DATA_ONLY` Canary
+  was technically valid but short of its activity and execution-evidence
+  thresholds; the separately authorized four-hour run is exploratory, not
+  proof of Live readiness. See the
+  [dated acceptance evidence](../18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md).
 - Combined backups validate staged snapshots before publishing and rotating a
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
@@ -95,24 +99,27 @@ FUTURE unless an approved document proves otherwise.
 
 ## Current focus and blockers
 
-The first persistent prospective-collector observation proved service and WAL
-durability but also exposed required Wallet-source recovery and evidence-
-retention gaps. The durable correction is implemented in current code. A fresh
-bounded experiment requires a separately authorized runtime query. This
-document does not record a replacement host. Earlier dated deployment, restart,
-backup, restore, storage, and replay evidence remains in
-[Prospective Source Benchmark v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
-
-**Next task:** do not deploy to Helsinki or query it. The host is retired. No
-current research or Live runtime is authorized by this document. Operational
-SHA, health, and restart counts are available only through a separately
-authorized runtime query in the
-[server deployment runbook](../10-operations/server-deployment.md#current-operational-truth).
-Do not access Nuremberg without separate authorization.
+The 2026-09-27 owner authorization reactivated Helsinki for a bounded
+`DATA_ONLY` source benchmark, Canary, Continuous Shadow worker, and four-hour
+exploratory Research run. The [dated acceptance
+record](../18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md) owns
+their evidence and explicit unmet gates. This Markdown is not live host state
+or authorization for another run. Query SHA, health, restarts, and final
+experiment state through the [server deployment
+runbook](../10-operations/server-deployment.md#current-operational-truth)
+only within an authorized task. Nuremberg remains outside this scope.
 
 Blockers and limitations:
 
-- Encrypted off-host backups and external alert delivery are unfinished.
+- The Canary, four-hour Main failure archive, and two three-store bundles
+  were encrypted off-host and recovery-checked on 2026-09-27. Recurring
+  transfer and external alert delivery are unfinished; DPAPI recovery depends
+  on the same Windows user profile.
+- The 20-minute Canary did not meet the activity or executable-evidence gates.
+  The owner-directed four-hour run closed with 24 valid but empty windows and
+  a `FAILURE_ARCHIVED` unverified bundle. Its technical gate is `FAIL` and
+  economics is `INSUFFICIENT_DATA`; it cannot retroactively make that Canary
+  `PASS`. The dated acceptance record has the exact evidence.
 - Branch-protection policy remains governance debt.
 - Risk/Execution and Stage 4B accounting hardening are merged in Git. That is
   a repository fact, not a claim about a live host.
@@ -120,13 +127,16 @@ Blockers and limitations:
 - Modeled Stage 4B P&L remains negative on Current Control and is not a
   promotion decision. Target Exposure v1 is a PARTIAL research Replay with
   UNKNOWN marks, not Alpha and not Live readiness.
-- No production Live host is currently authorized. Helsinki is retired and is
-  not a research runtime.
+- No production Live host or real order is authorized. Helsinki's dated
+  `DATA_ONLY` acceptance is not Live readiness.
 
-Next milestones: keep the immutable local backup as historical evidence;
-repository research contracts remain CURRENT in Git; any fresh collection
-requires a separately authorized runtime. Handle branch protection through a
-separate governance task. Do not access Nuremberg.
+Next milestones: investigate the selected-wallet activity and market evidence
+needed for a fresh standard Canary, continue explicit Shadow health checks,
+and address recurring backup/alert delivery and branch protection separately.
+The four-hour failure archive and deterministic empty-sample analyses are
+preserved off-host. The Stage 1–3 daily timer was re-enabled after Main closed;
+Stage 4B continued through its first period rollover. Any new experiment
+requires its own authorized scope; do not access Nuremberg.
 
 ## Audited runtime snapshot
 
@@ -171,4 +181,4 @@ Do not duplicate these records here.
 | Python 3.14 / SDK upgrade | [UPGRADE-006](../18-ai-handoffs/polysia-upgrade-006-handoff.md) |
 | Architecture visual baseline | [architecture refresh](../18-ai-handoffs/architecture-truth-refresh-2026-08-18.md) |
 | Roadmap | [roadmap](../22-roadmap/roadmap.md) |
-| Recovery limitation (no off-host backup) | [server deployment](../10-operations/server-deployment.md) |
+| 2026-09-27 one-off off-host recovery and remaining automation gap | [dated acceptance evidence](../18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md) |

@@ -74,7 +74,10 @@ excluded from Git. On Linux, the application applies mode `0700` to owned
 directories and `0600` to files.
 
 This is access-control and disclosure protection, not encrypted storage.
-Encrypted off-host backup remains separate unfinished operational work.
+A one-off encrypted off-host three-store bundle and isolated restore test were
+recorded on 2026-09-27 in the
+[dated acceptance evidence](../18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md).
+Recurring encrypted transfer is not configured.
 
 ## Data lifecycle
 
@@ -515,9 +518,9 @@ startup, not SQLite lock.
 `portfolio-results.operator_summary` remains the detailed snapshot operator
 view. `follower_portfolios` separates MIXED_BASELINE, SHADOW_ALPHA, and
 SHADOW_STRESS. `policy_experiments` are walk-forward fill filters on recorded
-evidence, not a profitability claim. Encrypted off-host backup is not
-configured; local backup and disposable restore remain the current recovery
-path.
+evidence, not a profitability claim. The dated one-off encrypted off-host
+bundle complements local backup and disposable restore; automatic off-host
+backup is not configured.
 
 Install the persistent worker and disable the previous one-minute oneshot timer:
 
@@ -541,7 +544,9 @@ analytics still use a verified snapshot, not the live SQLite file.
 The worker stays fenced locally by `continuous-shadow-portfolio-pipeline` and
 sleeps between polls. It reads one coherent Stage 3 snapshot from the intelligence
 database, then atomically stores its provenance and digest locally. The separate
-ten-minute Stage 4A job remains enabled and cannot contend with Stage 4B's file.
+ten-minute Stage 4A job remains storage-independent when installed and cannot
+contend with Stage 4B's file. The 2026-09-27 Helsinki acceptance did not enable
+its timer.
 If selection input exceeds 36 hours, health reports `STALE`, new exposure stops,
 and exits, marks, and settlement continue.
 

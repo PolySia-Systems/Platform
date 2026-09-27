@@ -11,9 +11,13 @@ because that exact path is an immutable compliance artifact.
 
 ## Current operational evidence
 
+- [`shared-data-shadow-acceptance-2026-09-27.md`](shared-data-shadow-acceptance-2026-09-27.md)
+  records the newly authorized Helsinki `DATA_ONLY` source benchmark,
+  Canary, Continuous Shadow restart, recovery checks, and bounded Research
+  experiment. It is dated evidence, not a live health dashboard.
 - [`stage4b-data-lifecycle-v1.md`](stage4b-data-lifecycle-v1.md)
-  is the current Stage 4B storage-lifecycle evidence: schema v6, compact
-  cutover, T0, and 24-hour storage acceptance.
+  records the earlier schema-v6 compact cutover, T0, and 24-hour storage
+  acceptance. The current Stage 4B schema is v8.
 - [`shadow-target-exposure-v1-baseline.md`](shadow-target-exposure-v1-baseline.md)
   is the frozen immutable-backup inventory, data-sufficiency matrix, Current
   Control parity, and Target Exposure v1 primary comparison. It is not a
@@ -24,7 +28,7 @@ because that exact path is an immutable compliance artifact.
   Git. It is not a profitability or Live-readiness claim.
 - [`polysia-finland-wallet-intelligence-deployment.md`](polysia-finland-wallet-intelligence-deployment.md)
   records the Helsinki DATA_ONLY Stages 1–4 deployment, backup/restore,
-  rollback, and `3x-ui` preservation evidence. The host itself is retired.
+  rollback, and `3x-ui` preservation evidence from that earlier deployment.
 
 These files do not authorize Live trading or another external mutation.
 
