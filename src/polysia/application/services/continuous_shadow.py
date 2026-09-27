@@ -372,6 +372,13 @@ class ContinuousShadowService:
             source = self._source_factory(
                 {candidate.wallet_id: candidate.address for candidate in candidates}
             )
+            pending_observer = getattr(source, "set_pending_observer", None)
+            if callable(pending_observer):
+                pending_observer(
+                    lambda event_ids, observed_at: self._store.capture_pending_observations(
+                        poll_run_id, event_ids, observed_at=observed_at
+                    )
+                )
             with self._latency_span(
                 "source",
                 "source_fetch",
@@ -379,12 +386,29 @@ class ContinuousShadowService:
                 endpoint_id="polymarket:data-api",
                 venue_id="polymarket",
             ):
-                raw_events, source_duplicates = await self._collect_events(
-                    source,
-                    candidates,
-                    window_start=window_start,
-                    window_end=window_end,
+                raw_events, source_duplicates = await asyncio.wait_for(
+                    self._collect_events(
+                        source,
+                        candidates,
+                        window_start=window_start,
+                        window_end=window_end,
+                    ),
+                    timeout=60.0,
                 )
+            if callable(pending_observer):
+                first_observed = self._store.pending_observed_times(
+                    experiment.experiment_id,
+                    tuple(event.event_id for event in raw_events),
+                )
+                if len(first_observed) != len(raw_events):
+                    raise ContinuousShadowError(
+                        "Leader page capture is incomplete; economic admission is blocked."
+                    )
+                raw_events = tuple(
+                    replace(event, observed_at=first_observed[event.event_id])
+                    for event in raw_events
+                )
+            admission_completed_at = self._now()
             eligible = tuple(
                 event for event in raw_events if event.executed_at >= experiment.started_at
             )
@@ -517,6 +541,7 @@ class ContinuousShadowService:
                 settlement_count=settlement_count,
                 settlement_backlog_count=settlement_backlog_count,
                 request_telemetry=_safe_mapping(source, "request_telemetry"),
+                admission_completed_at=admission_completed_at,
             )
             stage = FAILURE_STAGE_PERSIST
             with self._latency_span("application", "persistence", parent_span_id=root_span_id):
@@ -673,6 +698,13 @@ class ContinuousShadowService:
                     ):
                         raise ContinuousShadowError(
                             "Leader source returned evidence outside its requested scope."
+                        )
+                    if page.rejected_count:
+                        raise ContinuousShadowError(
+                            "Leader source returned unverifiable trade evidence; "
+                            "coverage admission was blocked.",
+                            error_code=FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
+                            processing_stage=FAILURE_STAGE_COLLECT_EVENTS,
                         )
                     events.extend(page.events)
                     duplicate_count += page.duplicate_count

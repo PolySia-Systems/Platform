@@ -28,6 +28,7 @@ from polysia.adapters.polymarket.research_sources import (
     REST_TRADES_CANDIDATE,
     TRADES_SOURCE_ID,
     USER_CHANNEL_CANDIDATE,
+    DataApiGlobalTradePollSource,
     DataApiWalletPollSource,
     OfficialMarketStreamSource,
     TerminalMarketSnapshot,
@@ -86,6 +87,9 @@ async def build_public_benchmark(
                 aliases=aliases,
                 transport=transport,
             )
+        )
+        sources.append(
+            DataApiGlobalTradePollSource(aliases=aliases, transport=transport)
         )
     fee_schedules = await discover_market_fee_schedules(token_ids)
     sources.append(

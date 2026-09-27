@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -11,6 +12,7 @@ from urllib.error import HTTPError
 
 import pytest
 
+import polysia.adapters.polymarket.copytrading_source as copytrading_source_module
 from polysia.adapters.polymarket.copytrading_source import (
     DATA_API_BASE_URL,
     GAMMA_API_BASE_URL,
@@ -82,6 +84,32 @@ class FakeTransport:
             return deepcopy(self.event)
         if base_url != DATA_API_BASE_URL:
             raise AssertionError("unexpected base URL")
+        if path == "/v2/trades":
+            source_rows = self.trades[:2] if params.get("taker_only") is True else self.trades
+            limit = int(params.get("limit", len(self.trades)))
+            offset = int(str(params.get("cursor", "0")))
+            page = source_rows[offset : offset + limit]
+            next_offset = offset + len(page)
+            return {
+                "data": deepcopy(page),
+                "pagination": {
+                    "has_more": next_offset < len(source_rows),
+                    "next_cursor": str(next_offset) if next_offset < len(source_rows) else None,
+                },
+            }
+        if path == "/v2/activity":
+            limit = int(params.get("limit", len(self.trades)))
+            offset = int(str(params.get("cursor", "0")))
+            source_rows = self.trades[:4]
+            page = source_rows[offset : offset + limit]
+            next_offset = offset + len(page)
+            return {
+                "data": deepcopy(page),
+                "pagination": {
+                    "has_more": next_offset < len(source_rows),
+                    "next_cursor": str(next_offset) if next_offset < len(source_rows) else None,
+                },
+            }
         if path == "/trades":
             if params.get("takerOnly") is True:
                 return deepcopy(self.trades[:2])
@@ -169,10 +197,10 @@ async def test_subsecond_window_filters_boundary_without_losing_pagination(
         end_at=boundary + timedelta(seconds=30), page_size=1,
     )
     assert page.events == ()
-    assert page.filtered_count == 1
+    assert page.filtered_count == 2
     assert page.rejected_count == 0
-    assert page.next_checkpoint is not None
-    assert len(transport.calls) == 1  # No Gamma lookup for out-of-window evidence.
+    assert page.next_checkpoint is None
+    assert len(transport.calls) == 2  # No Gamma lookup for out-of-window evidence.
 
 
 @pytest.fixture
@@ -222,12 +250,51 @@ async def test_normalizes_realistic_response_with_stable_identity_and_no_wallet_
     serialized = repr(first.events)
     assert WALLET not in serialized
     assert trades[0]["transactionHash"] not in serialized
-    trade_calls = [call for call in transport.calls if call[1] == "/trades"]
-    assert all(call[2]["takerOnly"] is False for call in trade_calls)
+    trade_calls = [call for call in transport.calls if call[1] == "/v2/trades"]
+    assert all(call[2]["taker_only"] is False for call in trade_calls)
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_freezes_window_and_advances_bounded_offset(
+async def test_official_v2_fields_preserve_legacy_fixture_trade_semantics(
+    trades: list[dict[str, Any]], event: list[dict[str, Any]],
+) -> None:
+    aliases = {
+        "proxyWallet": "proxy_wallet", "conditionId": "condition_id",
+        "eventSlug": "event_slug", "outcomeIndex": "outcome_index",
+        "transactionHash": "transaction_hash", "asset": "token_id",
+    }
+    snake_rows = [
+        {aliases.get(key, key): value for key, value in row.items()}
+        for row in trades
+    ]
+    legacy_shaped = PolymarketCopyTradingSource(
+        {"leader-001": WALLET}, transport=FakeTransport(trades, event),
+        clock=lambda: OBSERVED_AT,
+    )
+    official_shaped = PolymarketCopyTradingSource(
+        {"leader-001": WALLET}, transport=FakeTransport(snake_rows, event),
+        clock=lambda: OBSERVED_AT,
+    )
+    expected = await legacy_shaped.read_page(
+        "leader-001", start_at=START_AT, end_at=END_AT, page_size=2,
+    )
+    actual = await official_shaped.read_page(
+        "leader-001", start_at=START_AT, end_at=END_AT, page_size=2,
+    )
+    assert actual.events == expected.events
+    assert actual.raw_count == expected.raw_count
+    assert actual.duplicate_count == expected.duplicate_count
+    assert [
+        (item.trade_action, item.executed_price, item.executed_size)
+        for item in actual.events
+    ] == [
+        (item.trade_action, item.executed_price, item.executed_size)
+        for item in expected.events
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cursor_freezes_window_and_returns_only_complete_walk(
     trades: list[dict[str, Any]],
     event: list[dict[str, Any]],
 ) -> None:
@@ -243,23 +310,13 @@ async def test_checkpoint_freezes_window_and_advances_bounded_offset(
         end_at=END_AT,
         page_size=2,
     )
-    assert first.next_checkpoint is not None
-
-    second = await source.read_page(
-        "leader-001",
-        start_at=START_AT,
-        end_at=END_AT,
-        page_size=2,
-        checkpoint=first.next_checkpoint,
-    )
-
-    trade_calls = [call for call in transport.calls if call[1] == "/trades"]
-    assert trade_calls[-1][2]["offset"] == 2
-    assert trade_calls[-1][2]["start"] == int(START_AT.timestamp())
-    assert trade_calls[-1][2]["end"] == int(END_AT.timestamp())
-    assert {item.event_id for item in first.events}.isdisjoint(
-        item.event_id for item in second.events
-    )
+    assert first.next_checkpoint is None
+    assert first.raw_count == len(trades)
+    trade_calls = [call for call in transport.calls if call[1] == "/v2/trades"]
+    assert len(trade_calls) == 3
+    assert [call[2].get("cursor") for call in trade_calls] == [None, "2", "4"]
+    assert all(call[2]["start"] == int(START_AT.timestamp()) for call in trade_calls)
+    assert all(call[2]["end"] == int(END_AT.timestamp()) for call in trade_calls)
 
 
 @pytest.mark.asyncio
@@ -277,14 +334,23 @@ async def test_invalid_or_ambiguous_rows_fail_closed(
     )
 
     page = await source.read_page(
-        "leader-001",
-        start_at=START_AT,
-        end_at=END_AT,
-        page_size=10,
+        "leader-001", start_at=START_AT, end_at=END_AT, page_size=10,
     )
-
     assert page.events == ()
     assert page.filtered_count == 1
+    assert page.rejected_count == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_gamma_evidence_blocks_complete_wallet_window(
+    trades: list[dict[str, Any]],
+) -> None:
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET}, transport=FakeTransport(trades[:1], []),
+        clock=lambda: OBSERVED_AT,
+    )
+    page = await source.read_page("leader-001", start_at=START_AT, end_at=END_AT)
+    assert page.events == ()
     assert page.rejected_count == 1
 
 
@@ -669,6 +735,43 @@ async def test_failed_http_recovery_probe_can_retry_and_recover(
     )
     assert result == {"status": "recovered"}
     assert scheduler.circuit_snapshot()["open"] is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_public_read_keeps_blocking_io_capacity_reserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(
+        copytrading_source_module, "_PUBLIC_READ_SLOTS", threading.BoundedSemaphore(1)
+    )
+    transport = UrllibJsonGetTransport(max_attempts=1)
+
+    def blocked_read(_url: str) -> object:
+        started.set()
+        release.wait(2)
+        return {"data": [], "pagination": {"has_more": False, "next_cursor": None}}
+
+    monkeypatch.setattr(transport, "_read_json", blocked_read)
+    first = asyncio.create_task(
+        transport.get_json(DATA_API_BASE_URL, "/v2/trades", {"user": WALLET})
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    with pytest.raises(PolymarketCopyTradingSourceError, match="capacity exhausted"):
+        await transport.get_json(DATA_API_BASE_URL, "/v2/trades", {"user": WALLET})
+    first.cancel()
+    await asyncio.gather(first, return_exceptions=True)
+    with pytest.raises(PolymarketCopyTradingSourceError, match="capacity exhausted"):
+        await transport.get_json(DATA_API_BASE_URL, "/v2/trades", {"user": WALLET})
+    release.set()
+    for _ in range(100):
+        if copytrading_source_module._PUBLIC_READ_SLOTS.acquire(blocking=False):
+            copytrading_source_module._PUBLIC_READ_SLOTS.release()
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("blocking read capacity was not released")
 
 
 def test_source_module_contains_only_get_transport_and_no_mutation_methods() -> None:

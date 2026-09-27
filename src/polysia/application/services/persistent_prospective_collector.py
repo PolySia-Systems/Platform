@@ -90,6 +90,15 @@ class PersistentProspectiveCollector:
     ) -> None:
         self._store = store
         self._sources = sources
+        for source in sources:
+            set_pending_observer = getattr(source, "set_pending_observer", None)
+            if callable(set_pending_observer):
+                set_pending_observer(store.capture_pending_observations)
+            set_progress_store = getattr(source, "set_progress_store", None)
+            if callable(set_progress_store):
+                set_progress_store(
+                    store.completed_source_windows, store.record_completed_source_windows
+                )
         self._config = config or PersistentCollectorConfig()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep
@@ -193,6 +202,10 @@ class PersistentProspectiveCollector:
             configuration_digest=self._configuration_digest,
         )
         self._experiment = experiment
+        for source in self._sources:
+            set_collection_start = getattr(source, "set_collection_start", None)
+            if callable(set_collection_start):
+                set_collection_start(experiment.started_at)
         collector = ProspectiveCollector(
             self._store,
             policy=self._policy,
@@ -465,6 +478,13 @@ class PersistentProspectiveCollector:
         except asyncio.CancelledError:
             self._source_status[candidate_id] = "stopped"
             raise
+        except ResearchExperimentBudgetError as error:
+            if error.limit == "duration":
+                return
+            self._source_status[candidate_id] = "failed"
+            if required:
+                self._active().mark_drain_failed(f"required_source_failed:{candidate_id}")
+            return
         except Exception:
             self._source_status[candidate_id] = "failed"
             if required:

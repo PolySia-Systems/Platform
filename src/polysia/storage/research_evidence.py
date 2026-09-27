@@ -205,6 +205,120 @@ class ResearchEvidenceStore:
     def release_writer(self) -> None:
         self._writer_lock.release()
 
+    def capture_pending_observations(
+        self,
+        run_id: str,
+        source_id: str,
+        leader_alias: str,
+        source_event_ids: tuple[str, ...],
+        observed_at: datetime,
+    ) -> dict[str, datetime]:
+        """Retain first observation before coverage permits economic admission."""
+
+        self._require_writable()
+        if not all((run_id, source_id, leader_alias)) or any(
+            not item for item in source_event_ids
+        ):
+            raise ResearchEvidenceStoreError("pending observation identity is incomplete")
+        if len(source_event_ids) > 500:
+            raise ResearchEvidenceStoreError("pending observation page exceeds size cap")
+        if not source_event_ids:
+            return {}
+        unique_ids = tuple(dict.fromkeys(source_event_ids))
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_experiment_capacity_unlocked(
+                connection, run_id, will_insert=False
+            )
+            experiment = connection.execute(
+                "SELECT max_events FROM research_experiments "
+                "WHERE run_id = ? AND status = 'ACTIVE'",
+                (run_id,),
+            ).fetchone()
+            pending_limit = 100_000 if experiment is None else int(experiment[0])
+            placeholders = ",".join("?" for _ in unique_ids)
+            existing = connection.execute(
+                "SELECT source_event_id FROM research_pending_observations "
+                "WHERE run_id = ? AND source_id = ? AND leader_alias = ? "
+                f"AND source_event_id IN ({placeholders})",
+                (run_id, source_id, leader_alias, *unique_ids),
+            ).fetchall()
+            count = connection.execute(
+                "SELECT COUNT(*) FROM research_pending_observations WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            if int(count) + len(unique_ids) - len(existing) > pending_limit:
+                raise ResearchExperimentBudgetError("pending_observations")
+            connection.executemany(
+                "INSERT OR IGNORE INTO research_pending_observations "
+                "(run_id, source_id, leader_alias, source_event_id, first_observed_time_utc) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    (run_id, source_id, leader_alias, source_event_id, _utc_text(observed_at))
+                    for source_event_id in unique_ids
+                ),
+            )
+            rows = connection.execute(
+                "SELECT source_event_id, first_observed_time_utc "
+                "FROM research_pending_observations "
+                "WHERE run_id = ? AND source_id = ? AND leader_alias = ? "
+                f"AND source_event_id IN ({placeholders})",
+                (run_id, source_id, leader_alias, *unique_ids),
+            ).fetchall()
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return {
+            str(row[0]): datetime.fromisoformat(str(row[1]).replace("Z", "+00:00"))
+            for row in rows
+        }
+
+    def completed_source_windows(
+        self, run_id: str, source_id: str
+    ) -> dict[str, datetime]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT leader_alias, completed_end_utc "
+                "FROM research_source_completed_windows "
+                "WHERE run_id = ? AND source_id = ?",
+                (run_id, source_id),
+            ).fetchall()
+        finally:
+            connection.close()
+        return {str(row[0]): _parse_utc(str(row[1])) for row in rows}
+
+    def record_completed_source_windows(
+        self, run_id: str, source_id: str, completed_ends: Mapping[str, datetime]
+    ) -> None:
+        """Advance all aliases only after their bounded walks were consumed."""
+
+        self._require_writable()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.executemany(
+                "INSERT INTO research_source_completed_windows "
+                "(run_id, source_id, leader_alias, completed_end_utc) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(run_id, source_id, leader_alias) "
+                "DO UPDATE SET completed_end_utc = excluded.completed_end_utc "
+                "WHERE completed_end_utc < excluded.completed_end_utc",
+                (
+                    (run_id, source_id, alias, _utc_text(end))
+                    for alias, end in completed_ends.items()
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def persist_interval(self, interval: ResearchInterval) -> None:
         self._require_writable()
         connection = self._connect()

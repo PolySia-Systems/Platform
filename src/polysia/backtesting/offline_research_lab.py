@@ -119,6 +119,11 @@ class ScriptedJsonTransport:
         index = min(self.calls - 1, len(self.rows_by_call) - 1)
         rows = list(self.rows_by_call[index])
         if self.v2_pages and path == "/v2/trades":
+            requested_wallet = str(params.get("user", "")).casefold()
+            rows = [
+                row for row in rows
+                if str(row.get("proxyWallet", "")).casefold() == requested_wallet
+            ]
             midpoint = len(rows) // 2
             cursor = params.get("cursor")
             page = rows[midpoint:] if cursor == "lab-page-2" else rows[:midpoint]

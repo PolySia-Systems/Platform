@@ -220,6 +220,7 @@ class ContinuousPollCompletion:
     settlement_count: int
     settlement_backlog_count: int
     request_telemetry: dict[str, object]
+    admission_completed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,6 +445,18 @@ class ContinuousShadowStorePort(Protocol):
         window_end: datetime,
         started_at: datetime,
     ) -> str: ...
+
+    def capture_pending_observations(
+        self,
+        poll_run_id: str,
+        event_ids: tuple[str, ...],
+        *,
+        observed_at: datetime,
+    ) -> None: ...
+
+    def pending_observed_times(
+        self, experiment_id: str, event_ids: tuple[str, ...]
+    ) -> dict[str, datetime]: ...
 
     def complete_poll(
         self,

@@ -4,7 +4,10 @@ import asyncio
 import hashlib
 import json
 import re
+import threading
+import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -14,6 +17,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from polysia.adapters.polymarket.data_api_v2 import (
+    DATA_API_V2_ACTIVITY_PATH,
+    DATA_API_V2_TRADES_PATH,
+    IncompleteWalletWindowError,
+    fetch_data_api_v2_window,
+)
 from polysia.adapters.polymarket.request_scheduling import (
     EndpointRequestScheduler,
 )
@@ -45,6 +54,8 @@ POSITION_MAX_OFFSET = 10_000
 SOURCE_ID = "polymarket:data-api"
 
 Clock = Callable[[], datetime]
+_PUBLIC_READ_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="polysia-public-read")
+_PUBLIC_READ_SLOTS = threading.BoundedSemaphore(8)
 
 
 class PolymarketCopyTradingSourceError(RuntimeError):
@@ -146,7 +157,17 @@ class UrllibJsonGetTransport:
                     purpose=purpose,
                     retry=attempt > 1,
                 ):
-                    payload = await asyncio.to_thread(self._read_json, url)
+                    if not _PUBLIC_READ_SLOTS.acquire(blocking=False):
+                        raise PolymarketCopyTradingSourceError(
+                            "Public API blocking-read capacity exhausted."
+                        )
+                    try:
+                        future = _PUBLIC_READ_POOL.submit(self._read_json, url)
+                    except Exception:
+                        _PUBLIC_READ_SLOTS.release()
+                        raise
+                    future.add_done_callback(lambda _: _PUBLIC_READ_SLOTS.release())
+                    payload = await asyncio.wrap_future(future)
                 await self._scheduler.record_success(route, purpose=purpose)
                 return payload
             except HTTPError as error:
@@ -240,6 +261,14 @@ class PolymarketCopyTradingSource:
         self._market_scope = market_scope
         self._market_cache: dict[str, dict[str, _VerifiedMarket]] = {}
         self._market_by_condition: dict[str, _VerifiedMarket] = {}
+        self._pending_observer: Callable[[tuple[str, ...], datetime], None] | None = None
+
+    def set_pending_observer(
+        self, observer: Callable[[tuple[str, ...], datetime], None]
+    ) -> None:
+        """Capture page identities before a complete walk permits admission."""
+
+        self._pending_observer = observer
 
     async def read_page(
         self,
@@ -256,29 +285,30 @@ class PolymarketCopyTradingSource:
         if not 1 <= page_size <= 500:
             raise ValueError("page_size must be within [1, 500]")
 
-        offset = 0
         frozen_start = int(start_at.timestamp())
         frozen_end = int(end_at.timestamp())
         if checkpoint is not None:
-            frozen_start, frozen_end, offset = _decode_checkpoint(
-                checkpoint,
-                leader_id=leader_id,
+            raise PolymarketCopyTradingSourceError(
+                "Legacy offset checkpoint cannot resume a v2 cursor window."
             )
 
-        payload = await self._transport.get_json(
-            DATA_API_BASE_URL,
-            "/trades",
+        deadline_monotonic = time.monotonic() + 30.0
+        rows = await fetch_data_api_v2_window(
+            self._transport,
+            DATA_API_V2_TRADES_PATH,
             {
                 "user": wallet,
-                "takerOnly": False,
+                "taker_only": False,
                 "start": frozen_start,
                 "end": frozen_end,
                 "limit": page_size,
-                "offset": offset,
             },
             purpose=purpose,
+            deadline_monotonic=deadline_monotonic,
+            on_page=lambda page_rows: self._capture_pending_page(
+                page_rows, expected_wallet=wallet
+            ),
         )
-        rows = _require_object_list(payload, source="/trades")
         observed_at = self._utc_now()
         normalized: list[LeaderTradeEvent] = []
         filtered_count = 0
@@ -310,10 +340,19 @@ class PolymarketCopyTradingSource:
             except (TypeError, ValueError):
                 rejected_count += 1
 
-        verified_markets = await self._verified_markets(
-            {(slug, condition_id) for _, slug, condition_id in target_rows},
-            purpose=purpose,
-        )
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise IncompleteWalletWindowError("time_budget_exhausted")
+        try:
+            verified_markets = await asyncio.wait_for(
+                self._verified_markets(
+                    {(slug, condition_id) for _, slug, condition_id in target_rows},
+                    purpose=purpose,
+                ),
+                timeout=remaining,
+            )
+        except TimeoutError as error:
+            raise IncompleteWalletWindowError("time_budget_exhausted") from error
         for row, slug, condition_id in target_rows:
             try:
                 market = verified_markets[(slug, condition_id)]
@@ -326,27 +365,38 @@ class PolymarketCopyTradingSource:
                         market=market,
                     )
                 )
-            except (KeyError, TypeError, ValueError, PolymarketCopyTradingSourceError):
+            except (
+                KeyError, TypeError, ValueError, PolymarketCopyTradingSourceError
+            ):
                 rejected_count += 1
 
         events, duplicate_count = deduplicate_leader_trade_events(normalized)
-        next_checkpoint = None
-        if len(rows) == page_size:
-            next_checkpoint = _encode_checkpoint(
-                leader_id=leader_id,
-                start_epoch=frozen_start,
-                end_epoch=frozen_end,
-                offset=offset + page_size,
-            )
-
+        if time.monotonic() >= deadline_monotonic:
+            raise IncompleteWalletWindowError("time_budget_exhausted")
         return LeaderTradeReadPage(
             events=events,
-            next_checkpoint=next_checkpoint,
+            next_checkpoint=None,
             raw_count=len(rows),
             filtered_count=filtered_count,
             rejected_count=rejected_count,
             duplicate_count=duplicate_count,
         )
+
+    def _capture_pending_page(
+        self, rows: list[dict[str, Any]], *, expected_wallet: str
+    ) -> None:
+        if self._pending_observer is None:
+            return
+        identities: list[str] = []
+        for row in rows:
+            try:
+                if _required_string(row, "proxyWallet").casefold() != expected_wallet.casefold():
+                    continue
+                identities.append(_trade_event_id(row))
+            except (TypeError, ValueError):
+                continue
+        if identities:
+            self._pending_observer(tuple(identities), self._utc_now())
 
     async def probe_source_coverage(
         self,
@@ -367,29 +417,28 @@ class PolymarketCopyTradingSource:
             "start": int(start_at.timestamp()),
             "end": int(end_at.timestamp()),
             "limit": page_limit,
-            "offset": 0,
         }
         all_trades, taker_trades, activity, positions, closed = await asyncio.gather(
-            self._transport.get_json(
-                DATA_API_BASE_URL,
-                "/trades",
-                {**common, "takerOnly": False},
+            fetch_data_api_v2_window(
+                self._transport,
+                DATA_API_V2_TRADES_PATH,
+                {**common, "taker_only": False},
                 purpose=LeaderReadPurpose.BASELINE,
             ),
-            self._transport.get_json(
-                DATA_API_BASE_URL,
-                "/trades",
-                {**common, "takerOnly": True},
+            fetch_data_api_v2_window(
+                self._transport,
+                DATA_API_V2_TRADES_PATH,
+                {**common, "taker_only": True},
                 purpose=LeaderReadPurpose.BASELINE,
             ),
-            self._transport.get_json(
-                DATA_API_BASE_URL,
-                "/activity",
+            fetch_data_api_v2_window(
+                self._transport,
+                DATA_API_V2_ACTIVITY_PATH,
                 {
                     **common,
                     "type": "TRADE",
-                    "sortBy": "TIMESTAMP",
-                    "sortDirection": "ASC",
+                    "sort_by": "TIMESTAMP",
+                    "sort_direction": "ASC",
                 },
                 purpose=LeaderReadPurpose.BASELINE,
             ),
@@ -417,9 +466,9 @@ class PolymarketCopyTradingSource:
                 purpose=LeaderReadPurpose.BASELINE,
             ),
         )
-        all_rows = _require_object_list(all_trades, source="/trades")
-        taker_rows = _require_object_list(taker_trades, source="/trades")
-        activity_rows = _require_object_list(activity, source="/activity")
+        all_rows = all_trades
+        taker_rows = taker_trades
+        activity_rows = activity
         position_rows = _require_object_list(positions, source="/positions")
         closed_rows = _require_object_list(closed, source="/closed-positions")
         visible_sizes = [
@@ -666,19 +715,7 @@ def _normalize_trade(
         raise ValueError("timestamp must be epoch seconds")
     executed_at = datetime.fromtimestamp(timestamp, tz=UTC)
 
-    event_components = {
-        "asset": token_id,
-        "condition_id": condition_id.casefold(),
-        "price": str(price),
-        "side": action.value,
-        "size": str(size),
-        "timestamp": timestamp,
-        "transaction_hash": transaction_hash.casefold(),
-        "wallet": wallet.casefold(),
-    }
-    event_id = hashlib.sha256(
-        json.dumps(event_components, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    event_id = _trade_event_id(row)
     evidence_reference = (
         "sha256:" + hashlib.sha256(transaction_hash.casefold().encode()).hexdigest()
     )
@@ -697,6 +734,34 @@ def _normalize_trade(
         observed_at=observed_at,
         external_evidence_reference=evidence_reference,
     )
+
+
+def _trade_event_id(row: Mapping[str, Any]) -> str:
+    wallet = _required_string(row, "proxyWallet")
+    condition_id = _required_string(row, "conditionId")
+    token_id = _required_string(row, "asset")
+    transaction_hash = _required_string(row, "transactionHash")
+    if _TRANSACTION_PATTERN.fullmatch(transaction_hash) is None:
+        raise ValueError("invalid transaction hash")
+    action = LeaderTradeAction(_required_string(row, "side"))
+    price = _positive_decimal(row.get("price"), name="price")
+    size = _positive_decimal(row.get("size"), name="size")
+    timestamp = row.get("timestamp")
+    if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+        raise ValueError("timestamp must be epoch seconds")
+    event_components = {
+        "asset": token_id,
+        "condition_id": condition_id.casefold(),
+        "price": str(price),
+        "side": action.value,
+        "size": str(size),
+        "timestamp": timestamp,
+        "transaction_hash": transaction_hash.casefold(),
+        "wallet": wallet.casefold(),
+    }
+    return hashlib.sha256(
+        json.dumps(event_components, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _validated_leaders(leaders: Mapping[str, str]) -> dict[str, str]:
@@ -778,35 +843,6 @@ def _require_utc_window(start_at: datetime, end_at: datetime) -> None:
             raise ValueError(f"{name} must be timezone-aware UTC")
     if start_at >= end_at:
         raise ValueError("start_at must precede end_at")
-
-
-def _encode_checkpoint(
-    *,
-    leader_id: str,
-    start_epoch: int,
-    end_epoch: int,
-    offset: int,
-) -> LeaderTradeCheckpoint:
-    alias_digest = hashlib.sha256(leader_id.encode()).hexdigest()[:16]
-    return LeaderTradeCheckpoint(value=f"v1:{alias_digest}:{start_epoch}:{end_epoch}:{offset}")
-
-
-def _decode_checkpoint(
-    checkpoint: LeaderTradeCheckpoint,
-    *,
-    leader_id: str,
-) -> tuple[int, int, int]:
-    parts = checkpoint.value.split(":")
-    expected_alias_digest = hashlib.sha256(leader_id.encode()).hexdigest()[:16]
-    if len(parts) != 5 or parts[0] != "v1" or parts[1] != expected_alias_digest:
-        raise ValueError("checkpoint does not match the leader alias")
-    try:
-        start_epoch, end_epoch, offset = (int(value) for value in parts[2:])
-    except ValueError as error:
-        raise ValueError("checkpoint contains invalid numeric fields") from error
-    if start_epoch < 0 or end_epoch <= start_epoch or not 0 <= offset <= 10_000:
-        raise ValueError("checkpoint is outside supported bounds")
-    return start_epoch, end_epoch, offset
 
 
 def _stringify_params(

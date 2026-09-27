@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -7,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from polysia.application.ports.research_evidence import SourceCandidate
-from polysia.application.services.source_benchmark import run_source_benchmark
+from polysia.application.services.source_benchmark import (
+    run_source_benchmark,
+    summarize_benchmark,
+)
 from polysia.domain.research_evidence.models import (
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
@@ -149,3 +153,65 @@ async def test_benchmark_separates_market_and_wallet_and_replays(tmp_path: Path)
     assert payload["market_freshness_when_wallet_event_ns"]["note"] == (
         "market_ws_does_not_supply_wallet_identity"
     )
+
+
+def test_benchmark_matches_trade_identity_and_ranks_observation_delay() -> None:
+    activity_candidate = SourceCandidate(
+        candidate_id="rest_activity", display_name="activity", kind="wallet_event",
+        wallet_attributable=True, status=SourceCandidateStatus.MEASURED,
+    )
+    trades_candidate = SourceCandidate(
+        candidate_id="rest_trades", display_name="trades", kind="wallet_event",
+        wallet_attributable=True, status=SourceCandidateStatus.MEASURED,
+    )
+    activity = replace(
+        _wallet_event("activity", "polymarket:data-api:activity"),
+        source_time=OBSERVED,
+        observed_time=OBSERVED + timedelta(seconds=2),
+        source_event_id="activity-specific-id",
+        provenance={"has_transaction": True, "source_match_id": "same-confirmed-trade"},
+        normalize_monotonic_ns=11,
+    )
+    trades = replace(
+        _wallet_event("trades", "polymarket:data-api:trades"),
+        source_time=OBSERVED,
+        observed_time=OBSERVED + timedelta(seconds=1),
+        source_event_id="trades-specific-id",
+        provenance={"has_transaction": True, "source_match_id": "same-confirmed-trade"},
+        normalize_monotonic_ns=100,
+    )
+    report = summarize_benchmark(
+        (activity, trades),
+        sources=(FakeSource(activity_candidate, ()), FakeSource(trades_candidate, ())),
+        unavailable=(), started=OBSERVED, ended=OBSERVED + timedelta(seconds=3),
+        run_id="test", interval_validity="VALID", interval_reason="complete",
+        drain_results=(), replay_control_digest="control", replay_target_digest="target",
+        replay_unknown_count=0, code_sha=None, configuration_digest="config",
+        reconnect_counts={},
+    )
+    assert report["coverage_vs_union"] == {"rest_activity": "1", "rest_trades": "1"}
+    assert report["paired_first_observation_differences"][
+        "rest_activity_minus_rest_trades"
+    ]["p50_ns"] == 1_000_000_000
+    assert report["selection"]["selected_candidate_id"] == "rest_trades"
+
+    ambiguous = summarize_benchmark(
+        (
+            activity,
+            replace(
+                activity, evidence_id="other", observed_time=OBSERVED + timedelta(seconds=3)
+            ),
+            trades,
+        ),
+        sources=(FakeSource(activity_candidate, ()), FakeSource(trades_candidate, ())),
+        unavailable=(), started=OBSERVED, ended=OBSERVED + timedelta(seconds=4),
+        run_id="test", interval_validity="VALID", interval_reason="complete",
+        drain_results=(), replay_control_digest="control", replay_target_digest="target",
+        replay_unknown_count=0, code_sha=None, configuration_digest="config",
+        reconnect_counts={},
+    )
+    activity_row = next(
+        row for row in ambiguous["sources"] if row["candidate_id"] == "rest_activity"
+    )
+    assert activity_row["ambiguous_identity_count"] == 1
+    assert ambiguous["coverage_vs_union"]["rest_activity"] == "0"

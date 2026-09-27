@@ -22,11 +22,16 @@ market WebSocket is never treated as a wallet identity source.
 |---|---|---|---|
 | `rest_activity` | wallet event | yes | current REST v2 `/activity` poll baseline |
 | `rest_trades` | wallet event | yes | second official REST v2 `/trades` poll |
+| `global_trades` | wallet event | yes | bounded benchmark candidate; global API ignores user-style time bounds |
 | `clob_market_ws` | market state | yes | official CLOB market WebSocket |
 | `clob_user_ws` | wallet event | no | UNAVAILABLE; authenticated credentials are required and are not searched |
 
-No more than two wallet-attributable candidates are compared. Lowest
-normalize latency alone does not win. Attribution, recovery, and integrity
+The persistent default uses the two per-wallet sources. The explicit source
+benchmark may compare one bounded global-feed candidate alongside them. Its
+global cursor walk uses `taker_only=false`, filters selected wallets and time
+client-side, and makes no interval-completeness claim. It cannot be promoted
+automatically. Lowest normalize latency alone does not win. Attribution,
+recovery, and integrity
 are mandatory. Insufficient samples stay `INSUFFICIENT`. Credential-gated
 sources stay `UNAVAILABLE`.
 
@@ -335,6 +340,17 @@ prior completion boundary for recovery, including timestamp ties. The pre-T0
 activity policy counts deduplicated events across the same complete bounded
 walk and rejects admission with insufficient coverage if any candidate walk
 cannot finish. Existing frozen selections and bundles are not rewritten.
+Per-page first-observation identities are stored as pending evidence before
+admission. The completed end of each wallet/source walk is persisted per run;
+restart reloads that end and the experiment T0, then rereads with the declared
+overlap. Pending rows cannot enter economic replay before a complete walk.
+Successful available-page traversal does not establish upstream freshness or
+prove that no delayed trade will appear later. The benchmark pairs only
+unambiguous wallet aliases and source-independent trade identities; its
+coverage is relative to the observed source union, not ground truth. Wall
+clock source-to-observation delay and paired differences remain subject to
+source timestamp precision and clock skew. The receive-to-normalize metric is
+diagnostic and cannot by itself rank execution opportunities.
 
 It validates storage, replays both policies over identical evidence, and emits
 deterministic decision/economic digests, evidence links, configuration and

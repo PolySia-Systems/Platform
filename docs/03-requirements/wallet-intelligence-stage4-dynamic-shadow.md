@@ -22,7 +22,7 @@ to the reviewed BTC 15-minute scope. Only Stage 4 explicitly requests
 Stage 3 current Alpha + Stress memberships
   -> canonical wallet_id union (overlap removed)
   -> protected address lookup inside SQLite
-  -> official Polymarket /trades GET
+  -> official Polymarket Data API v2 /trades GET
   -> Gamma event/condition/outcome verification
   -> HISTORICAL cost model or FORWARD current order book
   -> immutable per-event and per-wallet evidence
@@ -40,11 +40,13 @@ wallet-mutation port. The Compose service forces `TRADING_MODE=DATA_ONLY` and
 - Resolve addresses only inside the protected repository and pass them to the
   official data adapter in memory. Stage 4 tables, views, CLI, health, and logs
   contain no address.
-- Fetch `/trades` with `takerOnly=false`, bounded pages, concurrency, response
-  size, retry, timeout, and the existing shared rate scheduler/circuit breaker.
-- If one trade window reaches the official offset budget, split that UTC window
-  recursively, deduplicate boundary events, and enforce a bounded total-page
-  budget instead of publishing a truncated wallet history.
+- Fetch wallet-filtered v2 `/trades` with `taker_only=false`, frozen UTC bounds,
+  an opaque cursor, bounded pages/requests/time, concurrency, response size,
+  retry, and the shared rate scheduler/circuit breaker. A later-page failure,
+  malformed envelope, repeated cursor, or exhausted budget blocks publication.
+- A successful walk covers only pages made available by the API at that read;
+  delayed upstream publication requires overlap and remains an explicit
+  coverage limitation.
 - Accept a trade only when Gamma returns one exact event slug and matching
   condition, token, outcome, and valid UTC market interval. Malformed or
   ambiguous evidence fails closed.
@@ -54,11 +56,13 @@ This covers verified event markets; it does not claim every market is liquid or
 copyable. Liquidity is evaluated separately for each simulated event.
 
 The external contract was checked against the official Polymarket
-[`/trades`](https://docs.polymarket.com/api-reference/core/get-trades-for-a-user-or-markets),
+[Data API v2 contract](https://docs.polymarket.com/api-reference/data-api/overview)
+and its linked OpenAPI schema for `/v2/trades`,
 [rate-limit](https://docs.polymarket.com/api-reference/rate-limits), and
 [order-book](https://docs.polymarket.com/api-reference/market-data/get-order-book)
-documentation on 2026-08-24. PolySia's 80 `/trades` requests per ten seconds is
-stricter than the documented external limit.
+documentation on 2026-09-27. The documented `/v2/trades` limit is 300
+requests per ten seconds; PolySia's local scheduler and per-window budgets
+remain additional limits.
 
 ## Evaluation modes
 
