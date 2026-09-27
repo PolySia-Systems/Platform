@@ -2245,12 +2245,21 @@ class ContinuousShadowRepository:
         connection = self._connect(read_only=True)
         try:
             experiment = connection.execute(
-                "SELECT lifecycle, policy_version, cost_model_version, config_json "
+                "SELECT lifecycle, selection_run_id, policy_version, cost_model_version, "
+                "config_json "
                 "FROM continuous_shadow_experiments WHERE experiment_id = ?",
                 (experiment_id,),
             ).fetchone()
             if experiment is None:
                 raise ContinuousShadowStoreError("Continuous Shadow experiment is unavailable.")
+            selection = connection.execute(
+                "SELECT policy_id, policy_version, ranking_version, source_snapshot_id, "
+                "candidate_count, digest FROM continuous_shadow_selection_snapshots "
+                "WHERE selection_run_id = ?",
+                (str(experiment["selection_run_id"]),),
+            ).fetchone()
+            if selection is None:
+                raise ContinuousShadowStoreError("Frozen copyability selection is unavailable.")
             rows = connection.execute(
                 "SELECT o.event_id, o.poll_run_id, o.evidence_json, o.evidence_digest, "
                 "p.selection_snapshot_digest, p.completed_at "
@@ -2429,6 +2438,17 @@ class ContinuousShadowRepository:
                 "scope": "bounded_available_v2_pages_not_upstream_ground_truth",
                 "polls": {str(row["status"]): int(row["count"]) for row in poll_coverage},
                 "pending_first_observations": pending_count,
+            },
+            "copyability": {
+                "status": "SELECTED_BY_RECORDED_POLICY",
+                "policy_id": str(selection["policy_id"]),
+                "policy_version": str(selection["policy_version"]),
+                "ranking_version": str(selection["ranking_version"]),
+                "selection_run_id": str(experiment["selection_run_id"]),
+                "source_snapshot_id": str(selection["source_snapshot_id"]),
+                "selection_digest": str(selection["digest"]),
+                "selected_wallet_count": int(selection["candidate_count"]),
+                "score_scope": "selection_provenance_only; scores_not_in_shadow_store",
             },
             "next_actions": next_actions,
             "wallets": {

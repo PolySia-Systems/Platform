@@ -266,6 +266,8 @@ contains the matching settlement ledger entry. They value prospective open
 inventory once; the prospective policies do not claim Shadow ledger settlement
 parity. Changing a selected wallet's pool assignment also drains the frozen
 period before a new assignment can take effect.
+The report includes the frozen Polycop selection policy and digest as
+copyability provenance; scores are not duplicated in the Shadow store.
 
 Period duration causes DRAINING. A flat period with no unadmitted observations
 can finalize and roll to a fresh selected cohort; prior evidence remains in
