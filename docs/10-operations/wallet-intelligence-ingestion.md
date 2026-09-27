@@ -419,6 +419,8 @@ as `--runtime-spec`; a missing file prevents activation. The daily candidate
 pipeline and persistent worker systemd units require
 `/etc/polysia/image.env` containing only
 `POLYSIA_IMAGE_TAG=<exact approved image SHA>` (root-owned, mode `0600`).
+The systemd precheck tests Spec readability as UID `polysia`, matching the
+container owner of the private `0700` directory.
 For manual `docker compose run` commands, export that same tag in the operator
 shell. Do not put credentials in either runtime file.
 Pass the JSON path as `--runtime-spec <reviewed-file>` to manual start and sync.

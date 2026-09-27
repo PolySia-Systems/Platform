@@ -41,7 +41,7 @@ def test_continuous_shadow_service_is_data_only_and_has_no_execution_command() -
     assert "Type=simple" in service
     assert "EnvironmentFile=/etc/polysia/image.env" in service
     assert (
-        "ExecStartPre=/usr/bin/test -r "
+        "ExecStartPre=/usr/sbin/runuser -u polysia -- /usr/bin/test -r "
         "/var/lib/polysia/wallet-intelligence/config/continuous-shadow-runtime.json"
     ) in service
     assert "Restart=on-failure" in service
