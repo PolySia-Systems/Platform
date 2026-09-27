@@ -24,6 +24,7 @@ from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineBusyError,
     CandidatePipelineLeaseLostError,
 )
+from polysia.application.ports.continuous_shadow import ContinuousSelectionUnavailableError
 from polysia.application.services.candidate_intelligence import (
     CandidateIntelligenceError,
     WalletIntelligencePipelineService,
@@ -736,6 +737,7 @@ def portfolio_start(
     except (
         ContinuousShadowError,
         ContinuousShadowStoreError,
+        ContinuousSelectionUnavailableError,
         CandidateStoreError,
         ValueError,
         OSError,
@@ -924,6 +926,7 @@ def portfolio_sync(
     except (
         ContinuousShadowError,
         ContinuousShadowStoreError,
+        ContinuousSelectionUnavailableError,
         CandidatePipelineBusyError,
         CandidatePipelineLeaseLostError,
         CandidateStoreError,

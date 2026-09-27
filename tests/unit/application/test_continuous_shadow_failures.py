@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from polysia.application.ports.candidate_intelligence import CandidatePipelineBusyError
+from polysia.application.ports.continuous_shadow import ContinuousSelectionUnavailableError
 from polysia.application.services.continuous_shadow import ContinuousShadowError
 from polysia.application.services.continuous_shadow_failures import (
     FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
@@ -42,6 +43,10 @@ def test_classify_distinguishes_sanitized_failure_categories() -> None:
 
     assert classify_continuous_shadow_failure(
         source, stage=FAILURE_STAGE_COLLECT_EVENTS
+    ).category == FAILURE_CATEGORY_SOURCE_UNAVAILABLE
+    assert classify_continuous_shadow_failure(
+        ContinuousSelectionUnavailableError("Stage 3 Alpha membership is insufficient"),
+        stage=FAILURE_STAGE_INITIALIZE,
     ).category == FAILURE_CATEGORY_SOURCE_UNAVAILABLE
     assert classify_continuous_shadow_failure(
         market, stage=FAILURE_STAGE_MARKET_READ

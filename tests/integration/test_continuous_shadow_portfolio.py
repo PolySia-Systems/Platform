@@ -24,6 +24,7 @@ from polysia.application.ports.continuous_shadow import (
     ContinuousSelectionUnavailableError,
 )
 from polysia.application.ports.copytrading import LeaderTradeReadPage
+from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.application.services.candidate_intelligence import (
     PIPELINE_LEASE_RESOURCE,
     CandidateIntelligenceService,
@@ -327,6 +328,74 @@ def _service(
 
 def _shadow_database(source_database: Path) -> Path:
     return source_database.with_name(f"{source_database.stem}-continuous-shadow.sqlite3")
+
+
+@pytest.mark.asyncio
+async def test_bounded_shadow_freezes_top_alpha_from_larger_stage3_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    clock = _Clock(NOW)
+    service = _service(
+        database, _Scenario(), _MarketPort(clock), clock,
+        config=ContinuousShadowConfig(wallet_count=3, maximum_quote_age_ms=60_000),
+    )
+    original = service._candidate_port.current_snapshot("polycop")
+    candidates = (
+        ProtectedShadowCandidate("stress", "0x" + "4" * 40, ("SHADOW_STRESS",),
+                                 stress_rank=1),
+        ProtectedShadowCandidate("alpha-3", "0x" + "3" * 40, ("SHADOW_ALPHA",),
+                                 alpha_rank=3),
+        ProtectedShadowCandidate("alpha-1", "0x" + "1" * 40, ("SHADOW_ALPHA",),
+                                 alpha_rank=1),
+        ProtectedShadowCandidate("alpha-4", "0x" + "5" * 40, ("SHADOW_ALPHA",),
+                                 alpha_rank=4),
+        ProtectedShadowCandidate("alpha-2", "0x" + "2" * 40, ("SHADOW_ALPHA",),
+                                 alpha_rank=2),
+    )
+    snapshot = ContinuousSelectionSnapshot.create(
+        source_id=original.source_id,
+        selection_run_id=original.selection_run_id,
+        source_snapshot_id=original.source_snapshot_id,
+        feature_set_version=original.feature_set_version,
+        policy_id=original.policy_id,
+        policy_version=original.policy_version,
+        ranking_version=original.ranking_version,
+        published_at=original.published_at,
+        candidates=candidates,
+    )
+    monkeypatch.setattr(service._candidate_port, "current_snapshot", lambda _: snapshot)
+    experiment = service.start("polycop")
+    frozen = ContinuousShadowRepository(_shadow_database(database)).selection_snapshot(
+        experiment.selection_run_id
+    )
+    assert {item.wallet_id for item in frozen.candidates} == {
+        "alpha-1", "alpha-2", "alpha-3"
+    }
+    assert frozen.policy_version.endswith("+shadow-alpha-top3-v1")
+    assert experiment.selection_run_id.startswith(original.selection_run_id + ":")
+    assert service.start("polycop").experiment_id == experiment.experiment_id
+    clock.value = NOW + timedelta(minutes=2)
+    outcome = await service.poll("polycop")
+    assert outcome.experiment.experiment_id == experiment.experiment_id
+    assert outcome.experiment.lifecycle.value == "RUNNING"
+
+
+def test_bounded_shadow_rejects_insufficient_alpha_without_starting(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    service = _service(
+        database, _Scenario(), _MarketPort(_Clock(NOW)), _Clock(NOW),
+        config=ContinuousShadowConfig(wallet_count=3),
+    )
+    with pytest.raises(ContinuousSelectionUnavailableError, match="cannot supply"):
+        service.start("polycop")
+    assert ContinuousShadowRepository(_shadow_database(database)).active_experiment(
+        "polycop"
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -1722,6 +1791,12 @@ async def test_source_read_failure_reuses_local_last_known_good_selection(
         raise ContinuousSelectionUnavailableError("selection source unavailable")
 
     monkeypatch.setattr(service._candidate_port, "current_snapshot", unavailable)
+    scenario.events[current.candidates[0].wallet_id] = [
+        _EventSpec(
+            "unavailable-selection-buy", LeaderTradeAction.BUY,
+            NOW + timedelta(minutes=1, seconds=30), Decimal("0.40"),
+        )
+    ]
     clock.value = NOW + timedelta(minutes=2)
     outcome = await service.poll("polycop")
     health = ContinuousShadowRepository(_shadow_database(database)).health(
@@ -1730,9 +1805,10 @@ async def test_source_read_failure_reuses_local_last_known_good_selection(
         poll_interval_seconds=60,
     )
 
-    assert outcome.new_event_count == 0
+    assert outcome.new_event_count == 1
+    assert outcome.simulated_count == 0
     assert health.selection_run_id == replacement.selection_run_id
-    assert health.selection_fresh is True
+    assert health.selection_fresh is False
 
 
 @pytest.mark.asyncio

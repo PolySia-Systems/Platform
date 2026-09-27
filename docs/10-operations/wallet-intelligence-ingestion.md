@@ -387,6 +387,11 @@ For a new v8 period, provide the same reviewed runtime Spec to
 `portfolio-start` and `portfolio-sync`. This is an example shape, not a
 measured production configuration; replace the SHA with the exact running
 image commit after approval. `source_mode` is `per-wallet-v2` only.
+When `wallet_count` is 1–3, the worker freezes the highest-ranked distinct
+`SHADOW_ALPHA` members of the current Stage 3 snapshot under a derived
+selection identity. It fails closed if that Alpha count is unavailable. The
+Stress follower can therefore have zero selected wallets; use an omitted count
+only when the full Stage 3 cohort is intentionally capacity-reviewed.
 
 ```json
 {

@@ -34,6 +34,16 @@ If the source selection cannot be read, Stage 4B may use its last-known-good
 local snapshot. Once that snapshot exceeds the versioned freshness policy,
 new exposure is rejected while exits, marks, and settlement continue.
 
+## Bounded selection addendum (2026-09-27)
+
+A runtime Spec with `wallet_count` 1–3 projects the coherent Stage 3 snapshot
+onto the highest-ranked distinct `SHADOW_ALPHA` members before Stage 4B
+persists its immutable selection. The derived selection ID retains the upstream
+run ID and names the projection policy; its digest covers the selected members.
+Missing Alpha members fail admission. A Spec without `wallet_count` keeps the
+earlier full-cohort behavior. This preserves the separate financial writer and
+does not alter Stage 3 publication or older Shadow periods.
+
 ## Migration and rollback
 
 Cutover is an offline Stage 4B maintenance operation: stop the worker, create
