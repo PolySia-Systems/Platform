@@ -1,0 +1,80 @@
+[
+  {
+    "version": "shadow-capabilities-v1",
+    "software_wallet_limit": 40,
+    "operational_status": "requires_matching_measured_evidence",
+    "policies": ["shadow-alpha-ranked-v2", "shadow-alpha-active-v2"],
+    "trading_mode": "DATA_ONLY"
+  },
+  {
+    "version": "shadow-preflight-v1",
+    "status": "PENDING_CAPACITY",
+    "requested_count": 5,
+    "selected_count": 5,
+    "capacity": {"operational_status": "unverified", "validated_count": null},
+    "activity_and_market_evidence": {"candidate_count": 12, "evaluable_rate_estimate": {"status": "UNAVAILABLE"}},
+    "proposed_runtime_spec": {"runtime_version": "continuous-shadow-runtime-v2", "wallet_count": 5}
+  },
+  {
+    "version": "shadow-config-preview-v1",
+    "status": "PENDING_DRAIN",
+    "requested": {"runtime_version": "continuous-shadow-runtime-v2", "wallet_count": 10},
+    "actual": {"runtime_version": "continuous-shadow-runtime-v2", "wallet_count": 5},
+    "expected_latest_experiment_id": "prior-period",
+    "requested_wallet_count": 10,
+    "effective_wallet_count": 5
+  },
+  {
+    "version": "shadow-config-command-v1",
+    "command_id": "set-ten",
+    "source_id": "polycop",
+    "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_latest_experiment_id": "prior-period",
+    "disposition": "PENDING_DRAIN",
+    "experiment_id": null,
+    "created_at": "2026-09-28T00:00:00+00:00",
+    "updated_at": "2026-09-28T00:00:00+00:00"
+  },
+  {
+    "version": "research-sample-readiness-v1",
+    "status": "INSUFFICIENT_DATA",
+    "eligible_observations": 12,
+    "missing_eligible_observations": 8,
+    "mapping_ratio": "0.916",
+    "execution_evidence_ratio": "0.750",
+    "valid_windows": 2,
+    "invalid_windows": 0,
+    "economic_status": "NOT_FINALIZED"
+  },
+  {
+    "contract_version": "shadow-health-v1",
+    "level": "warning",
+    "reasons": ["continuous_shadow_fee_provenance_unknown"],
+    "experiment": {"experiment_id": "period-1", "lifecycle": "RUNNING"},
+    "last_poll_status": "succeeded",
+    "open_position_count": 1
+  },
+  {
+    "contract_version": "shadow-economics-v1",
+    "evidence_reference": {"experiment_id": "period-1", "selection_run_id": "selection-1"},
+    "experiment": {"experiment_id": "period-1", "lifecycle": "RUNNING"},
+    "accounting": {"identity_status": "VERIFIED", "ledger_balanced": true},
+    "follower": {"realized_pnl": "0", "unrealized_pnl": "0", "fees": "0", "total_pnl": "0"},
+    "wallets": [{"wallet_id": "selected-zero-event", "realized_pnl": "0"}],
+    "status": "succeeded"
+  },
+  {
+    "contract_version": "research-run-status-v1",
+    "phase": "COLLECTING",
+    "run_id": "run-1",
+    "revision": 1,
+    "trading_mode": "DATA_ONLY",
+    "readiness": {"version": "research-sample-readiness-v1", "status": "NOT_STARTED"}
+  },
+  {
+    "contract_version": "research-run-result-v1",
+    "bundle_verified": false,
+    "outcome": {"technical": "FAIL", "economic": "INSUFFICIENT_DATA"},
+    "run_id": "run-1"
+  }
+]

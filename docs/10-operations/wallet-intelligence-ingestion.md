@@ -317,20 +317,22 @@ Stop it without affecting the daily source pipeline:
 sudo systemctl disable --now polysia-wallet-intelligence-shadow.timer
 ```
 
-## Continuous Shadow Portfolio / standalone schema v8
+## Continuous Shadow Portfolio / standalone schema v9
 
 Stage 4B is additive to the immutable Stage 4A windows above. It persists a
 first-seen journal, cross-run inventory, independent Wallet portfolios, a labeled
 mixed baseline follower, independent Alpha and Stress followers, market-specific
 official fees, current valuation, change-driven marks, settlement, and Decimal
-ledger evidence. Schema v8 keeps Stage 4B as the only runtime writer of
+ledger evidence. Schema v9 keeps Stage 4B as the only runtime writer of
 `continuous-shadow.sqlite3`, stores current marks on positions, and adds
 first-observation `PENDING` rows for incomplete v2 cursor walks and immutable
 digested opportunities before dependent financial rows. Pending rows
 carry no fill, fee, ledger, or watermark authority; admission occurs only after
-the available-page walk completes. A v5–v7 file migrates additively at startup;
+the available-page walk completes. Filtered pending rows remain auditable
+without blocking a flat period, and configuration receipts are durable. A
+v5–v8 file migrates additively at startup;
 take and restore-check a backup before updating because an older binary cannot
-read v8. Stage 4A
+read v9. Stage 4A
 remains in `wallet-intelligence.sqlite3`. ADR-0015 owns the lifecycle bounds.
 Its complete contract is
 `docs/03-requirements/wallet-intelligence-stage4b-continuous-shadow.md`.
@@ -386,7 +388,18 @@ docker compose --profile wallet-intelligence run --rm \
   --runtime-spec /var/lib/polysia/config/continuous-shadow-runtime.json
 ```
 
-For a new v8 period, provide the same reviewed runtime Spec to
+For new variable-count periods, use `continuous-shadow-runtime-v2`. The
+software envelope is 1–40 wallets, but each new period requires a matching
+operator-reviewed `wallet-capacity-v1` record for the running image, source
+budgets, cadence, selection policy, and financial/period workload. A request
+above validated capacity is rejected. An unkeyed record digest detects
+accidental changes; it is not host attestation. Capacity remains unverified
+until aggregate host load, shared-IP traffic, endpoint budgets and recovery
+headroom, backlog, decision latency, CPU, memory, SQLite and log growth, and
+outstanding exits/settlement have been reviewed. The candidate-only Research
+capacity probe does not itself produce a passing record.
+
+For a new v9 period, provide the same reviewed runtime Spec to
 `portfolio-start` and `portfolio-sync`. This is an example shape, not a
 measured production configuration; replace the SHA with the exact running
 image commit after approval. `source_mode` is `per-wallet-v2` only.
@@ -414,6 +427,59 @@ only when the full Stage 3 cohort is intentionally capacity-reviewed.
 }
 ```
 
+For an approved five-wallet active period, first run
+`wallet-intelligence portfolio-capabilities`, then
+`wallet-intelligence portfolio-preflight --wallet-count 5 --code-sha
+"$POLYSIA_IMAGE_TAG" --source-database
+/var/lib/polysia/data/wallet-intelligence.sqlite3 --capacity-evidence-file
+<reviewed-capacity.json>` in the DATA_ONLY image. Preflight performs bounded
+complete activity reads and checks the latest observed market/token's book
+and fee evidence. A confirmed empty read is inactivity; incomplete coverage,
+missing book/fee, and too few eligible candidates are distinct failures.
+Its reported rate is a rough historical activity estimate, not a forecast or
+profitability score. Freeze the `proposed_runtime_spec` from that response
+before T0, after reviewing its financial defaults. For example, the operator
+may save this v2 form with the full `selection_activity_counts` and
+`capacity_evidence` objects returned by preflight:
+
+```json
+{
+  "runtime_version": "continuous-shadow-runtime-v2",
+  "source_mode": "per-wallet-v2",
+  "code_sha": "<exact approved image commit>",
+  "wallet_count": 5,
+  "selection_policy": "shadow-alpha-active-v2",
+  "selection_activity_counts": {"<wallet-id>": 3},
+  "selection_observed_at": "<preflight UTC timestamp>",
+  "selection_preflight_digest": "<preflight evidence SHA-256>",
+  "capacity_evidence": {"<complete reviewed wallet-capacity-v1 record>": "..."}
+}
+```
+
+To request 5→10 without code or CI, repeat preflight with `--wallet-count
+10` under the same matching capacity record, save the new v2 Spec, and run
+`wallet-intelligence portfolio-preview --runtime-spec <new-spec.json>
+--source-database <source-db> --database <shadow-db>`. Use its
+`expected_latest_experiment_id` with
+`wallet-intelligence portfolio-apply --runtime-spec <new-spec.json>
+--command-id <stable-unique-id> --expected-latest-experiment-id <id>
+--source-database <source-db> --database <shadow-db>`. Retry with the same
+command ID and request to read the durable receipt. A changed request or stale
+revision returns conflict. An active differing period returns `PENDING_DRAIN`;
+continue its exits and settlement, then drain and finalize only when flat and
+no relevant pending observations remain. Retry the same command to apply the
+new period. Keep the worker's mounted `--runtime-spec` aligned with the actual
+period; an active mismatch fails closed. A failed command and unresolved open
+inventory never reset capital, P&L, or positions. Read the receipt with
+`portfolio-command-receipt --command-id <id> --database <shadow-db>`.
+
+`portfolio-preview` and `portfolio-apply` are application-backed CLI contracts,
+not web authorization. A future HTTP adapter must authenticate the operator,
+authorize each change, protect the command ID/revision and private evidence,
+and enforce DATA_ONLY before invoking these methods. Versioned schema and
+examples are in `research-shadow-ui-contracts.schema.json` and
+`research-shadow-ui-contracts.examples.json` in this runbook directory.
+
 Store the reviewed JSON at
 `/var/lib/polysia/wallet-intelligence/config/continuous-shadow-runtime.json`
 with directory mode `0700`, file mode `0600`, and UID/GID `10001`.
@@ -428,7 +494,7 @@ For manual `docker compose run` commands, export that same tag in the operator
 shell. Do not put credentials in either runtime file.
 Pass the JSON path as `--runtime-spec <reviewed-file>` to manual start and sync.
 The effective configuration is stored in the experiment. A changed Spec is
-rejected while its period is active. The v8 worker rejects an active legacy
+rejected while its period is active. The v9 worker rejects an active legacy
 period until a controlled drain/finalize decision is made; the older cutover
 statement above does not authorize discarding its inventory. A flat period
 with no pending observations can roll to a fresh cohort. Open positions keep
@@ -679,7 +745,7 @@ validation failures have separate sanitized codes. Do not reduce the floor to
 force a backup through: provision space or perform approved legacy cleanup.
 
 Integrity, foreign keys, schema and accounting validation run on the completed
-snapshots, not the live writer. Schema-v8 Shadow validation uses the canonical
+snapshots, not the live writer. Schema-v9 Shadow validation uses the canonical
 Decimal invariant evaluator without constructing a full historical report.
 The stores are sequential consistent snapshots, not a cross-database transaction.
 

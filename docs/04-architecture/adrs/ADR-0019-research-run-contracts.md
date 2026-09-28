@@ -59,3 +59,20 @@ software supported, not measured operational capacity. Reporting remains
 on demand; v2 records `retention_days=30` but adds no automatic deletion.
 The v2 contract rejects unsupported changes to those fields. Version 1 Plans
 and closed bundles retain their original payloads and digests.
+
+## Additive capacity and provisional-readiness contract (2026-09-28)
+
+CURRENT: `research-run-spec-v3` resolves to a separately versioned v3 Plan
+for 1–40 requested wallets. The immutable Plan records an explicit ranked or
+active policy, the frozen runtime/workload digest, and a capacity disposition.
+Start and resume reject unverified or mismatched operational capacity before
+the source factory is called. A repeated run id cannot change the frozen
+selection count or source budgets. Older Plans retain their semantic digests.
+
+CURRENT: v3 status has an opt-in read-only readiness replay of closed valid
+windows. It reports sample rate, exact denominator and evidence ratios,
+remaining observations, minimum observation time, and hard profile limit.
+The state is provisional even when thresholds are met. The normal healthcheck
+does not invoke this potentially expensive replay. Operator stop remains an
+idempotent, revision-checked command; neither provisional readiness nor
+`CLOSED` alone implies economic acceptance.

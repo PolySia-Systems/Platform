@@ -414,3 +414,35 @@ Neither is implemented as an Alpha contest here.
 
 Sanitized measurement evidence:
 [prospective-source-benchmark-v1](../18-ai-handoffs/prospective-source-benchmark-v1.md).
+
+## Additive configurable Research admission (2026-09-28)
+
+CURRENT: `research-run-spec-v3` and `research-run-plan-v3` permit an explicit
+ranked or recent-active `SHADOW_ALPHA` count from 1 through 40. The software
+envelope is distinct from operational admission. A new v3 run requires a
+matching operator-reviewed capacity record for its exact code SHA, profile,
+source cadence, cursor/retry budgets, and shared-IP workload before any
+sources open. An absent or mismatched record fails before T0; no count is
+silently clamped. Version 1 and 2 Specs/Plans retain their earlier limits,
+policy names, digests, and bundle meanings.
+
+The v2 active policy measures a complete four-hour bounded Data API v2 cursor
+walk for up to 50 ranked Alpha candidates before T0. It rejects incomplete
+coverage and fewer than the requested active, market/token-bound candidates
+with current book depth and fee metadata. The frozen evidence reports raw
+activity, selection reasons, and rough latest-token observable rates for
+5/10/20/40 alternatives from the same preflight. These rates are not forecasts
+or profitability scores. A preflight pass cannot guarantee future market
+books, fees, or trades.
+
+CURRENT: `prospective-run status --readiness` runs an opt-in, read-only replay
+of closed valid windows. Its v3 `PROVISIONALLY_SUFFICIENT` state requires the
+unchanged 20 eligible / 0.95 mapping / 0.90 executable-evidence thresholds,
+complete required-source coverage, no invalid window, and a frozen minimum
+observation period: 20 minutes for Canary or 30 minutes for Main. The frozen
+profile duration remains the hard limit. A provisional status does not stop
+collection automatically, establish economics, or bypass final window closure,
+durable finalization, replay verification, and operational gates. The normal
+30-second Compose healthcheck omits this optional replay to avoid repeated
+heavy reads of the active evidence database. Version 1 and 2 status behavior
+is unchanged.

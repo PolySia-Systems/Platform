@@ -66,3 +66,36 @@ envelope while retaining stable internal source ids. Rollback is revert of this
 ADR, the optional Spec selection policy, the Spec `wallet_count` field, and the
 reanalysis command. Operational validation of counts other than three remains
 outstanding.
+
+## Additive decision: measured capacity and pre-T0 choice (2026-09-28)
+
+CURRENT: `research-run-spec-v3` and the separate
+`continuous-shadow-runtime-v2` select 1–40 wallets in software. They use
+one `wallet-capacity-v1` admission contract, with legacy three-wallet
+behavior preserved under prior policy/version names. Operational permission
+depends on a reviewed measurement record bound to code SHA and a digest of
+profile, cadence, page/request/time budgets, source mode, selection policy,
+and Shadow financial/period workload. The record is
+operator supplied: its digest catches accidental changes but is not
+authentication or independent proof of server capacity. The bounded probe
+returns `CANDIDATE_ONLY`; it cannot mint a PASS record. Host-wide request
+load, queue/recovery headroom, books/fees, CPU/memory, and storage must be
+reviewed with actual Helsinki evidence before relying on a count above the
+previous operational baseline. No official fixed wallet ceiling or invented
+Data API numeric quota is assumed; the [current official v2 contract](https://data-api.polymarket.com/v2/docs) uses
+`429`/Retry-After for client/serving pressure and `503`/Retry-After for
+timeouts.
+
+CURRENT: the new active policy shares deterministic selection logic between
+Research and Shadow. It freezes complete four-hour preflight activity and
+current market evidence before T0. Ranked and active are explicit policy
+choices. Alternative 5/10/20/40 cohort rates compare observed data
+availability only; selecting a cohort for formal evaluation starts a new
+identified period. Neither candidate activity nor a short positive P&L is a
+profitability score.
+
+CURRENT: v3 Research status can opt into a read-only provisional sample
+replay. It does not modify the 20/0.95/0.90 acceptance thresholds, shorten
+frozen evaluation horizons automatically, or change old Bundles. Durable
+finalization and replay remain required. A future adaptive-stop design would
+need its own frozen statistical and valuation contract.

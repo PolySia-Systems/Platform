@@ -25,6 +25,7 @@ from polysia.application.services.persistent_prospective_collector import (
     PersistentCollectorConfig,
     PersistentProspectiveCollector,
 )
+from polysia.application.services.research_readiness import research_readiness
 from polysia.backtesting.prospective_analysis import open_recorded_experiment_store
 from polysia.backtesting.replay_report import (
     COMPACT_STDOUT_LIMIT,
@@ -42,6 +43,7 @@ from polysia.deployment.research_run_commands import (
     ResearchRunCommandError,
 )
 from polysia.deployment.research_run_contract import (
+    CAPACITY_PLAN_VERSION,
     ResearchRunContractError,
     ResearchRunPlan,
     ResearchRunSpec,
@@ -58,6 +60,10 @@ from polysia.deployment.research_run_profiles import (
     resolve_profile,
 )
 from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
+from polysia.domain.copytrading.wallet_capacity import (
+    WalletCapacityError,
+    require_operational_capacity,
+)
 from polysia.domain.research_evidence.collector import COLLECTOR_POLICY_VERSION
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.domain.research_evidence.models import RESEARCH_EVIDENCE_SCHEMA_VERSION
@@ -66,6 +72,7 @@ from polysia.storage.immutable_sqlite import sha256_file
 from polysia.storage.research_evidence import (
     ExclusiveWriterLock,
     ResearchEvidenceStore,
+    ResearchEvidenceStoreError,
     ResearchWriterLockError,
 )
 
@@ -219,12 +226,46 @@ class ResearchExperimentRunner:
         self._settings_factory = settings_factory or AppSettings
         self._admission_lock_path = admission_lock_path
 
-    def status(self, state_root: Path) -> dict[str, object]:
+    def status(
+        self, state_root: Path, *, include_readiness: bool = False
+    ) -> dict[str, object]:
         workspace = ResearchRunWorkspace(state_root)
         manifest = _read_manifest(workspace.manifest_path)
         health = _read_json(workspace.health_path)
         stale = _health_is_stale(workspace.health_path, health, self._clock())
-        return _compact_status(manifest, health=health, stale_health=stale)
+        readiness: dict[str, object] | None = None
+        plan_payload = _read_json(workspace.plan_path) if include_readiness else None
+        if plan_payload is not None and plan_payload.get("plan_version") == CAPACITY_PLAN_VERSION:
+            plan = load_run_plan(plan_payload)
+            bounds = _mapping(plan.selection.get("readiness_policy"))
+            t0 = _mapping(manifest.get("clocks")).get("t0")
+            if isinstance(t0, str) and health is not None and workspace.database_path.is_file():
+                try:
+                    readiness = research_readiness(
+                        workspace.database_path,
+                        run_id=str(manifest["run_id"]),
+                        t0=datetime.fromisoformat(t0.replace("Z", "+00:00")),
+                        observed_at=self._clock(),
+                        minimum_observation_seconds=int(
+                            str(bounds["minimum_observation_seconds"])
+                        ),
+                        hard_limit_seconds=int(str(bounds["hard_limit_seconds"])),
+                        source_health=health,
+                    )
+                except (ValueError, KeyError, ResearchEvidenceStoreError, sqlite3.Error) as error:
+                    readiness = {
+                        "version": "research-sample-readiness-v1",
+                        "status": "UNAVAILABLE",
+                        "reason": type(error).__name__,
+                    }
+            else:
+                readiness = {
+                    "version": "research-sample-readiness-v1",
+                    "status": "NOT_STARTED",
+                }
+        return _compact_status(
+            manifest, health=health, stale_health=stale, readiness=readiness,
+        )
 
     def result(self, state_root: Path) -> dict[str, object]:
         workspace = ResearchRunWorkspace(state_root)
@@ -459,6 +500,11 @@ class ResearchExperimentRunner:
             raise ResearchRunnerError("research-run Plan cannot enable Live")
         if plan.safety.get("overridable") is not False:
             raise ResearchRunnerError("research-run Plan cannot make safety overridable")
+        if plan.plan_version == CAPACITY_PLAN_VERSION:
+            try:
+                require_operational_capacity(_mapping(plan.selection.get("capacity")))
+            except WalletCapacityError as error:
+                raise ResearchRunnerError(str(error)) from error
         workspace.root.mkdir(parents=True, exist_ok=True)
         for path in (
             workspace.window_report_dir,
@@ -931,6 +977,7 @@ class ResearchExperimentRunner:
             selection_policy=parsed.selection_policy,
             spec_version=parsed.spec_version,
             runtime=parsed.runtime,
+            capacity_evidence=parsed.capacity_evidence,
         )
         return resolve_run_plan(
             parsed,
@@ -1254,6 +1301,7 @@ def _compact_status(
     stale_health: bool = False,
     stop_requested: bool = False,
     command: Mapping[str, object] | None = None,
+    readiness: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     clocks = _mapping(manifest.get("clocks"))
     artifacts = _mapping(manifest.get("artifacts"))
@@ -1265,6 +1313,7 @@ def _compact_status(
         }
     payload = {
         "actionable_failure": _actionable_failure(manifest, stale_health=stale_health),
+        "contract_version": "research-run-status-v1",
         "bundle": artifacts.get("bundle"),
         "code_sha": manifest.get("code_sha"),
         "collection_deadline": clocks.get("collection_deadline"),
@@ -1274,6 +1323,7 @@ def _compact_status(
         "phase": manifest.get("phase"),
         "profile": manifest.get("profile"),
         "progress": _mapping(health).get("windows_closed") if health is not None else None,
+        **({"readiness": dict(readiness)} if readiness is not None else {}),
         "revision": manifest.get("revision"),
         "run_id": manifest.get("run_id"),
         "stale_health": stale_health,
@@ -1292,6 +1342,7 @@ def _compact_result(
 ) -> dict[str, object]:
     compact = result.get("compact")
     payload = {
+        "contract_version": "research-run-result-v1",
         "bundle": _mapping(manifest.get("artifacts")).get("bundle"),
         "bundle_outcome": result.get("bundle_outcome"),
         "bundle_sha256": _mapping(manifest.get("artifacts")).get("bundle_sha256"),

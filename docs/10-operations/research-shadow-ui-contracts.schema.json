@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polysia.example/contracts/research-shadow-ui-v1",
+  "title": "PolySia Research and Shadow read model contracts",
+  "oneOf": [
+    {"$ref": "#/$defs/capabilities"},
+    {"$ref": "#/$defs/preflight"},
+    {"$ref": "#/$defs/preflightFailure"},
+    {"$ref": "#/$defs/preview"},
+    {"$ref": "#/$defs/receipt"},
+    {"$ref": "#/$defs/readiness"},
+    {"$ref": "#/$defs/readinessAvailability"},
+    {"$ref": "#/$defs/health"},
+    {"$ref": "#/$defs/economics"},
+    {"$ref": "#/$defs/researchStatus"},
+    {"$ref": "#/$defs/researchResult"}
+  ],
+  "$defs": {
+    "capabilities": {
+      "type": "object",
+      "required": ["version", "software_wallet_limit", "operational_status", "policies", "trading_mode"],
+      "properties": {
+        "version": {"const": "shadow-capabilities-v1"},
+        "software_wallet_limit": {"const": 40},
+        "operational_status": {"const": "requires_matching_measured_evidence"},
+        "policies": {"type": "array", "items": {"type": "string"}},
+        "trading_mode": {"const": "DATA_ONLY"}
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "required": ["version", "status", "requested_count", "selected_count", "capacity", "activity_and_market_evidence", "proposed_runtime_spec"],
+      "properties": {
+        "version": {"const": "shadow-preflight-v1"},
+        "status": {"enum": ["READY_FOR_PERIOD", "PENDING_CAPACITY"]},
+        "requested_count": {"type": "integer", "minimum": 1, "maximum": 40},
+        "selected_count": {"type": "integer", "minimum": 1, "maximum": 40},
+        "capacity": {"type": "object"},
+        "activity_and_market_evidence": {"type": "object"},
+        "proposed_runtime_spec": {"type": "object"}
+      }
+    },
+    "preflightFailure": {
+      "type": "object",
+      "required": ["version", "status", "reason"],
+      "properties": {
+        "version": {"const": "shadow-preflight-v1"},
+        "status": {"const": "FAILED"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "preview": {
+      "type": "object",
+      "required": ["version", "status", "requested", "actual", "expected_latest_experiment_id", "requested_wallet_count", "effective_wallet_count"],
+      "properties": {
+        "version": {"const": "shadow-config-preview-v1"},
+        "status": {"enum": ["READY_TO_APPLY", "ALREADY_APPLIED", "PENDING_DRAIN", "BLOCKED_CAPACITY", "BLOCKED_SELECTION", "UNSUPPORTED_RUNTIME"]},
+        "requested": {"type": "object"},
+        "actual": {"type": ["object", "null"]},
+        "expected_latest_experiment_id": {"type": "string"},
+        "requested_wallet_count": {"type": "integer", "minimum": 1, "maximum": 40},
+        "effective_wallet_count": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "required": ["version", "command_id", "request_digest", "disposition", "experiment_id", "expected_latest_experiment_id", "created_at", "updated_at"],
+      "properties": {
+        "version": {"const": "shadow-config-command-v1"},
+        "command_id": {"type": "string", "minLength": 1},
+        "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "disposition": {"enum": ["PENDING_DRAIN", "PENDING_APPLY", "APPLIED", "FAILED", "CONFLICT"]},
+        "experiment_id": {"type": ["string", "null"]},
+        "expected_latest_experiment_id": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "required": ["version", "status", "eligible_observations", "missing_eligible_observations", "mapping_ratio", "execution_evidence_ratio", "valid_windows", "invalid_windows", "economic_status"],
+      "properties": {
+        "version": {"const": "research-sample-readiness-v1"},
+        "status": {"enum": ["PROVISIONALLY_SUFFICIENT", "WAITING_MINIMUM_PERIOD", "WAITING_FOR_CLOSED_WINDOW", "INSUFFICIENT_DATA", "BLOCKED_COVERAGE"]},
+        "eligible_observations": {"type": "integer", "minimum": 0},
+        "missing_eligible_observations": {"type": "integer", "minimum": 0},
+        "mapping_ratio": {"type": "string"},
+        "execution_evidence_ratio": {"type": "string"},
+        "valid_windows": {"type": "integer", "minimum": 0},
+        "invalid_windows": {"type": "integer", "minimum": 0},
+        "economic_status": {"const": "NOT_FINALIZED"}
+      }
+    },
+    "readinessAvailability": {
+      "type": "object",
+      "required": ["version", "status"],
+      "properties": {
+        "version": {"const": "research-sample-readiness-v1"},
+        "status": {"enum": ["UNAVAILABLE", "NOT_STARTED"]},
+        "reason": {"type": "string"}
+      }
+    },
+    "health": {
+      "type": "object",
+      "required": ["contract_version", "level", "reasons", "experiment", "last_poll_status", "open_position_count"],
+      "properties": {
+        "contract_version": {"const": "shadow-health-v1"},
+        "level": {"type": "string"},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "experiment": {"type": ["object", "null"]},
+        "last_poll_status": {"type": ["string", "null"]},
+        "open_position_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "economics": {
+      "type": "object",
+      "required": ["contract_version", "evidence_reference", "experiment", "accounting", "follower", "wallets", "status"],
+      "properties": {
+        "contract_version": {"const": "shadow-economics-v1"},
+        "evidence_reference": {
+          "type": "object",
+          "required": ["experiment_id", "selection_run_id"],
+          "properties": {
+            "experiment_id": {"type": "string"},
+            "selection_run_id": {"type": "string"}
+          }
+        },
+        "experiment": {"type": "object"},
+        "accounting": {"type": "object"},
+        "follower": {"type": "object"},
+        "wallets": {"type": "array", "items": {"type": "object"}},
+        "status": {"const": "succeeded"}
+      }
+    },
+    "researchStatus": {
+      "type": "object",
+      "required": ["contract_version", "phase", "run_id", "revision", "trading_mode"],
+      "properties": {
+        "contract_version": {"const": "research-run-status-v1"},
+        "phase": {"type": "string"},
+        "run_id": {"type": "string"},
+        "revision": {"type": "integer", "minimum": 0},
+        "trading_mode": {"const": "DATA_ONLY"},
+        "readiness": {"anyOf": [
+          {"$ref": "#/$defs/readiness"},
+          {"$ref": "#/$defs/readinessAvailability"}
+        ]}
+      }
+    },
+    "researchResult": {
+      "type": "object",
+      "required": ["contract_version", "bundle_verified", "outcome", "run_id"],
+      "properties": {
+        "contract_version": {"const": "research-run-result-v1"},
+        "bundle_verified": {"type": "boolean"},
+        "outcome": {"type": "object"},
+        "run_id": {"type": "string"}
+      }
+    }
+  }
+}

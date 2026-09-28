@@ -23,6 +23,12 @@ from polysia.deployment.research_run_profiles import (
     RunnerProfile,
     resolve_profile,
 )
+from polysia.domain.copytrading.wallet_capacity import (
+    LEGACY_OPERATIONAL_WALLET_LIMIT,
+    capacity_status,
+    require_software_count,
+    workload_digest,
+)
 from polysia.domain.research_evidence.collector import COLLECTOR_POLICY_VERSION
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.domain.research_evidence.models import RESEARCH_EVIDENCE_SCHEMA_VERSION
@@ -32,11 +38,15 @@ SPEC_VERSION = "research-run-spec-v1"
 PLAN_VERSION = "research-run-plan-v1"
 RUNTIME_SPEC_VERSION = "research-run-spec-v2"
 RUNTIME_PLAN_VERSION = "research-run-plan-v2"
+CAPACITY_SPEC_VERSION = "research-run-spec-v3"
+CAPACITY_PLAN_VERSION = "research-run-plan-v3"
 DEFAULT_SELECTION_POLICY = "polycop-shadow-alpha-top3-v1"
 CONFIGURED_SELECTION_POLICY = "polycop-shadow-alpha-configured-v1"
 ACTIVE_SELECTION_POLICY = "polycop-shadow-alpha-active-top3-v1"
+RANKED_SELECTION_POLICY_V2 = "polycop-shadow-alpha-ranked-v2"
+ACTIVE_SELECTION_POLICY_V2 = "polycop-shadow-alpha-active-v2"
 DEFAULT_WALLET_COUNT = 3
-OPERATIONAL_WALLET_COUNT_BOUND = 3
+OPERATIONAL_WALLET_COUNT_BOUND = LEGACY_OPERATIONAL_WALLET_LIMIT
 LEGACY_SELECTION_POLICY = "legacy-cli-sources"
 EXECUTABLE_EXPRESSION_RE = re.compile(
     r"(?is)(__import__|\beval\s*\(|\bexec\s*\(|\$\{|\{\{)"
@@ -54,6 +64,7 @@ SPEC_FIELDS = frozenset(
     }
 )
 RUNTIME_SPEC_FIELDS = SPEC_FIELDS | {"runtime"}
+CAPACITY_SPEC_FIELDS = RUNTIME_SPEC_FIELDS | {"capacity_evidence"}
 RUNTIME_FIELDS = frozenset({
     "source_mode", "poll_interval_seconds", "page_limit", "max_pages",
     "max_requests", "request_timeout_seconds", "overlap_seconds",
@@ -91,6 +102,7 @@ class ResearchRunSpec:
     selection_policy: str | None = None
     spec_version: str = SPEC_VERSION
     runtime: dict[str, object] | None = None
+    capacity_evidence: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +139,7 @@ class ResearchRunPlan:
             "selection": dict(self.selection),
             "service_policy_version": self.versions["service_policy_version"],
         }
-        if self.plan_version == RUNTIME_PLAN_VERSION:
+        if self.plan_version in {RUNTIME_PLAN_VERSION, CAPACITY_PLAN_VERSION}:
             payload["runtime"] = dict(self.runtime or {})
         return payload
 
@@ -144,13 +156,16 @@ class ResearchRunPlan:
 
 def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
     version = _require_text(payload.get("spec_version"), "spec_version")
-    allowed = RUNTIME_SPEC_FIELDS if version == RUNTIME_SPEC_VERSION else SPEC_FIELDS
+    allowed = (
+        CAPACITY_SPEC_FIELDS if version == CAPACITY_SPEC_VERSION else
+        RUNTIME_SPEC_FIELDS if version == RUNTIME_SPEC_VERSION else SPEC_FIELDS
+    )
     unknown = sorted(set(payload) - allowed)
     if unknown:
         raise ResearchRunContractError(
             "unsupported research-run Spec field: " + ", ".join(unknown)
         )
-    if version not in {SPEC_VERSION, RUNTIME_SPEC_VERSION}:
+    if version not in {SPEC_VERSION, RUNTIME_SPEC_VERSION, CAPACITY_SPEC_VERSION}:
         raise ResearchRunContractError("research-run Spec version is not supported")
     _reject_executable(payload)
     profile = _require_text(payload.get("profile"), "profile")
@@ -164,12 +179,19 @@ def parse_research_run_spec(payload: Mapping[str, object]) -> ResearchRunSpec:
         code_sha=code_sha,
         image_sha=None if image_sha is None else _require_sha(image_sha, "image_sha"),
         run_id=None if run_id is None else _require_text(run_id, "run_id"),
-        wallet_count=_optional_wallet_count(payload.get("wallet_count")),
-        selection_policy=_optional_selection_policy(payload.get("selection_policy")),
+        wallet_count=_optional_wallet_count(payload.get("wallet_count"), version=version),
+        selection_policy=_optional_selection_policy(
+            payload.get("selection_policy"), version=version
+        ),
         spec_version=version,
         runtime=(
             _runtime_config(payload.get("runtime"))
-            if version == RUNTIME_SPEC_VERSION else None
+            if version in {RUNTIME_SPEC_VERSION, CAPACITY_SPEC_VERSION} else None
+        ),
+        capacity_evidence=(
+            _object_map(payload["capacity_evidence"], "capacity_evidence")
+            if version == CAPACITY_SPEC_VERSION and payload.get("capacity_evidence") is not None
+            else None
         ),
     )
 
@@ -220,12 +242,18 @@ def resolve_run_plan(
         resolved = profile
     generated = (observed or datetime.now(UTC)).astimezone(UTC)
     official = resolved.name in {PROFILE_CANARY, PROFILE_MAIN}
-    selection = _selection_contract(spec, official=official)
-    if spec.spec_version not in {SPEC_VERSION, RUNTIME_SPEC_VERSION}:
+    if spec.spec_version not in {SPEC_VERSION, RUNTIME_SPEC_VERSION, CAPACITY_SPEC_VERSION}:
         raise ResearchRunContractError("research-run Spec version is not supported")
     if spec.spec_version == SPEC_VERSION and spec.runtime is not None:
         raise ResearchRunContractError("research-run v1 cannot carry runtime overrides")
-    runtime = _runtime_config(spec.runtime) if spec.spec_version == RUNTIME_SPEC_VERSION else None
+    runtime = (
+        _runtime_config(spec.runtime)
+        if spec.spec_version in {RUNTIME_SPEC_VERSION, CAPACITY_SPEC_VERSION} else None
+    )
+    selection = _selection_contract(
+        spec, official=official, runtime=runtime,
+        hard_limit_seconds=int(resolved.duration.total_seconds()),
+    )
     return ResearchRunPlan(
         profile=resolved.name,
         profile_version=resolved.version,
@@ -262,6 +290,7 @@ def resolve_run_plan(
         run_id=spec.run_id,
         generated_at=_utc_text(generated),
         plan_version=(
+            CAPACITY_PLAN_VERSION if spec.spec_version == CAPACITY_SPEC_VERSION else
             RUNTIME_PLAN_VERSION if spec.spec_version == RUNTIME_SPEC_VERSION else PLAN_VERSION
         ),
         runtime=runtime,
@@ -271,14 +300,16 @@ def resolve_run_plan(
 def load_run_plan(payload: Mapping[str, object]) -> ResearchRunPlan:
     extra = {"generated_at", "run_id", "semantic_digest"}
     version = str(payload.get("plan_version"))
-    allowed = set(PLAN_SEMANTIC_KEYS) | ({"runtime"} if version == RUNTIME_PLAN_VERSION else set())
+    allowed = set(PLAN_SEMANTIC_KEYS) | (
+        {"runtime"} if version in {RUNTIME_PLAN_VERSION, CAPACITY_PLAN_VERSION} else set()
+    )
     unknown = sorted(set(payload) - allowed - extra)
     if unknown:
         raise ResearchRunContractError(
             "unsupported research-run Plan field: " + ", ".join(unknown)
         )
     _reject_executable(payload)
-    if version not in {PLAN_VERSION, RUNTIME_PLAN_VERSION}:
+    if version not in {PLAN_VERSION, RUNTIME_PLAN_VERSION, CAPACITY_PLAN_VERSION}:
         raise ResearchRunContractError("research-run Plan version is not supported")
     versions = {
         "collector_policy_version": _require_text(
@@ -315,7 +346,7 @@ def load_run_plan(payload: Mapping[str, object]) -> ResearchRunPlan:
         plan_version=version,
         runtime=(
             _runtime_config(payload.get("runtime"))
-            if version == RUNTIME_PLAN_VERSION else None
+            if version in {RUNTIME_PLAN_VERSION, CAPACITY_PLAN_VERSION} else None
         ),
     )
     declared = payload.get("semantic_digest")
@@ -341,7 +372,10 @@ def canonical_digest(payload: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical_dumps(payload).encode("utf-8")).hexdigest()
 
 
-def _selection_contract(spec: ResearchRunSpec, *, official: bool) -> dict[str, object]:
+def _selection_contract(
+    spec: ResearchRunSpec, *, official: bool, runtime: Mapping[str, object] | None,
+    hard_limit_seconds: int,
+) -> dict[str, object]:
     if not official:
         if spec.wallet_count is not None or spec.selection_policy is not None:
             raise ResearchRunContractError(
@@ -360,6 +394,46 @@ def _selection_contract(spec: ResearchRunSpec, *, official: bool) -> dict[str, o
         }
     count = DEFAULT_WALLET_COUNT if spec.wallet_count is None else spec.wallet_count
     requested_policy = spec.selection_policy
+    if spec.spec_version == CAPACITY_SPEC_VERSION:
+        if requested_policy not in {None, RANKED_SELECTION_POLICY_V2, ACTIVE_SELECTION_POLICY_V2}:
+            raise ResearchRunContractError("v3 requires a v2 selection policy")
+        policy = requested_policy or RANKED_SELECTION_POLICY_V2
+        assert runtime is not None
+        fingerprint = workload_digest(
+            spec.profile, {**runtime, "selection_policy": policy}
+        )
+        try:
+            capacity = capacity_status(
+                count, code_sha=spec.code_sha, workload_digest=fingerprint,
+                evidence=spec.capacity_evidence,
+            )
+        except ValueError as error:
+            raise ResearchRunContractError(str(error)) from error
+        return {
+            "capacity": capacity,
+            "policy": policy,
+            "readiness_policy": {
+                "version": "research-sample-readiness-v1",
+                "minimum_observation_seconds": (
+                    1_200 if spec.profile == PROFILE_CANARY else 1_800
+                ),
+                "hard_limit_seconds": hard_limit_seconds,
+                "finalization_required": True,
+            },
+            "reasons_policy": (
+                "highest-recent-activity-within-shadow-alpha"
+                if policy == ACTIVE_SELECTION_POLICY_V2 else
+                "highest-ranked-distinct-shadow-alpha"
+            ),
+            "reconstruction_required": True,
+            "wallet_count": count,
+            "workload_digest": fingerprint,
+            **({"activity_preflight": {
+                "candidate_limit": 50, "lookback_seconds": 14_400,
+                "minimum_event_count": 1,
+                "source": "polymarket:data-api-v2:trades",
+            }} if policy == ACTIVE_SELECTION_POLICY_V2 else {}),
+        }
     if requested_policy == ACTIVE_SELECTION_POLICY and count != DEFAULT_WALLET_COUNT:
         raise ResearchRunContractError(
             "activity-aware selection currently requires exactly three wallets"
@@ -398,12 +472,17 @@ def _selection_contract(spec: ResearchRunSpec, *, official: bool) -> dict[str, o
     }
 
 
-def _optional_wallet_count(value: object) -> int | None:
+def _optional_wallet_count(value: object, *, version: str) -> int | None:
     if value is None:
         return None
     count = _require_int(value, "wallet_count")
     if count < 1:
         raise ResearchRunContractError("wallet_count must be a positive integer")
+    if version == CAPACITY_SPEC_VERSION:
+        try:
+            return require_software_count(count)
+        except ValueError as error:
+            raise ResearchRunContractError(str(error)) from error
     if count > OPERATIONAL_WALLET_COUNT_BOUND:
         raise ResearchRunContractError(
             "wallet_count is not an operationally supported capacity; "
@@ -412,15 +491,17 @@ def _optional_wallet_count(value: object) -> int | None:
     return count
 
 
-def _optional_selection_policy(value: object) -> str | None:
+def _optional_selection_policy(value: object, *, version: str) -> str | None:
     if value is None:
         return None
     policy = _require_text(value, "selection_policy")
-    allowed = {
+    allowed = (
+        {RANKED_SELECTION_POLICY_V2, ACTIVE_SELECTION_POLICY_V2}
+        if version == CAPACITY_SPEC_VERSION else {
         ACTIVE_SELECTION_POLICY,
         CONFIGURED_SELECTION_POLICY,
         DEFAULT_SELECTION_POLICY,
-    }
+    })
     if policy not in allowed:
         raise ResearchRunContractError("research-run selection_policy is not supported")
     return policy

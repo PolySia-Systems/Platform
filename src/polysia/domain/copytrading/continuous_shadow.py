@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
 from polysia.domain.copytrading.models import LeaderTradeAction
+from polysia.domain.copytrading.wallet_capacity import require_software_count
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.domain.market.settlement import verified_settlement_prices
 
@@ -84,6 +85,11 @@ class ContinuousShadowConfig:
     code_sha: str | None = None
     runtime_version: str = "continuous-shadow-runtime-v1"
     wallet_count: int | None = None
+    selection_policy: str = "shadow-alpha-ranked-v1"
+    selection_activity_counts: dict[str, int] | None = None
+    selection_observed_at: datetime | None = None
+    selection_preflight_digest: str | None = None
+    capacity_evidence: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         decimal_values = (
@@ -169,17 +175,51 @@ class ContinuousShadowConfig:
         ):
             raise ValueError("code_sha must be a lowercase 40-character Git SHA")
         if self.runtime_version not in {
-            "continuous-shadow-runtime-v1", "continuous-shadow-runtime-legacy-v0"
+            "continuous-shadow-runtime-v1", "continuous-shadow-runtime-v2",
+            "continuous-shadow-runtime-legacy-v0",
         }:
             raise ValueError("continuous Shadow runtime version is unsupported")
-        if self.wallet_count is not None and not 1 <= self.wallet_count <= 3:
+        if self.runtime_version == "continuous-shadow-runtime-v2":
+            if self.wallet_count is None:
+                raise ValueError("v2 Shadow runtime requires wallet_count")
+            require_software_count(self.wallet_count)
+            if self.code_sha is None:
+                raise ValueError("v2 Shadow runtime requires code_sha")
+            if self.selection_policy not in {
+                "shadow-alpha-ranked-v2", "shadow-alpha-active-v2",
+            }:
+                raise ValueError("v2 Shadow selection policy is unsupported")
+            if self.selection_policy == "shadow-alpha-active-v2":
+                if self.selection_observed_at is None or self.selection_activity_counts is None:
+                    raise ValueError("active Shadow selection requires frozen preflight evidence")
+                if (
+                    self.selection_preflight_digest is None
+                    or len(self.selection_preflight_digest) != 64
+                    or any(
+                        char not in "0123456789abcdef"
+                        for char in self.selection_preflight_digest
+                    )
+                ):
+                    raise ValueError("active Shadow selection requires a preflight digest")
+                if (
+                    self.selection_observed_at.tzinfo is None
+                    or self.selection_observed_at.utcoffset() != timedelta(0)
+                ):
+                    raise ValueError("active Shadow preflight time must be UTC")
+                if any(
+                    not isinstance(key, str) or not key
+                    or isinstance(value, bool) or not isinstance(value, int) or value < 0
+                    for key, value in self.selection_activity_counts.items()
+                ):
+                    raise ValueError("active Shadow activity counts are invalid")
+        elif self.wallet_count is not None and not 1 <= self.wallet_count <= 3:
             raise ValueError("wallet_count exceeds the validated bound of three")
         for value in (self.policy_version, self.cost_model_version, self.bankroll_version):
             if not value.strip():
                 raise ValueError("continuous Shadow versions must not be empty")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "bankroll_version": self.bankroll_version,
             "code_sha": self.code_sha,
             "cost_model_version": self.cost_model_version,
@@ -220,6 +260,49 @@ class ContinuousShadowConfig:
             ),
             "wallet_bankroll": format(self.wallet_bankroll, "f"),
             "wallet_maximum_exposure": format(self.wallet_maximum_exposure, "f"),
+        }
+        if self.runtime_version == "continuous-shadow-runtime-v2":
+            payload.update({
+                "selection_policy": self.selection_policy,
+                "selection_activity_counts": self.selection_activity_counts,
+                "selection_observed_at": (
+                    None if self.selection_observed_at is None
+                    else self.selection_observed_at.isoformat()
+                ),
+                "selection_preflight_digest": self.selection_preflight_digest,
+                "capacity_evidence": self.capacity_evidence,
+            })
+        return payload
+
+    def capacity_workload(self) -> dict[str, object]:
+        return {
+            "source_mode": "per-wallet-v2",
+            "selection_policy": self.selection_policy,
+            "poll_interval_seconds": self.poll_interval_seconds,
+            "maximum_pages_per_wallet": self.maximum_pages_per_wallet,
+            "source_page_size": self.source_page_size,
+            "source_max_pages": self.source_max_pages,
+            "source_max_requests": self.source_max_requests,
+            "source_timeout_seconds": self.source_timeout_seconds,
+            "maximum_quote_age_ms": self.maximum_quote_age_ms,
+            "initial_lookback_minutes": self.initial_lookback_minutes,
+            "overlap_seconds": self.overlap_seconds,
+            "negative_cache_ttl_seconds": self.negative_cache_ttl_seconds,
+            "period_duration_seconds": self.period_duration_seconds,
+            "period_max_events": self.period_max_events,
+            "period_max_storage_bytes": self.period_max_storage_bytes,
+            "wallet_bankroll": format(self.wallet_bankroll, "f"),
+            "follower_bankroll": format(self.follower_bankroll, "f"),
+            "maximum_event_notional": format(self.maximum_event_notional, "f"),
+            "wallet_maximum_exposure": format(self.wallet_maximum_exposure, "f"),
+            "follower_maximum_exposure": format(self.follower_maximum_exposure, "f"),
+            "follower_maximum_wallet_exposure": format(
+                self.follower_maximum_wallet_exposure, "f"
+            ),
+            "follower_maximum_market_exposure": format(
+                self.follower_maximum_market_exposure, "f"
+            ),
+            "follower_maximum_positions": self.follower_maximum_positions,
         }
 
 

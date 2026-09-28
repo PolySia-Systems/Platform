@@ -76,6 +76,11 @@ EXPECTED_COMMANDS = {
         "portfolio-prune-history",
         "portfolio-results",
         "portfolio-start",
+        "portfolio-capabilities",
+        "portfolio-preview",
+        "portfolio-apply",
+        "portfolio-command-receipt",
+        "portfolio-preflight",
         "portfolio-sync",
         "restore-check",
         "runtime-bank",
@@ -151,6 +156,7 @@ def test_cli_exposes_capability_namespaces() -> None:
     for namespace, expected in EXPECTED_COMMANDS.items():
         assert set(command.commands[namespace].commands) == expected
     assert set(command.commands["research"].commands["prospective-run"].commands) == {
+        "capacity-probe",
         "result",
         "resume",
         "start",

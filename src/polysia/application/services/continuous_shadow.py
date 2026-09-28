@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -38,6 +40,7 @@ from polysia.application.ports.dynamic_shadow import (
     ProtectedShadowCandidate,
 )
 from polysia.application.ports.latency_telemetry import LatencyRecorderPort
+from polysia.application.services.active_wallet_selection import select_active_shadow_alpha
 from polysia.application.services.continuous_shadow_failures import (
     FAILURE_CATEGORY_MARKET_READ_FAILED,
     FAILURE_CATEGORY_SOURCE_UNAVAILABLE,
@@ -75,6 +78,12 @@ from polysia.domain.copytrading.continuous_shadow import (
     quote_is_fresh,
     verified_settlement_prices,
     walk_order_book,
+)
+from polysia.domain.copytrading.wallet_capacity import (
+    WalletCapacityError,
+    capacity_status,
+    require_operational_capacity,
+    workload_digest,
 )
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
@@ -207,12 +216,125 @@ class ContinuousShadowService:
 
     def start(self, source_id: str) -> ContinuousShadowExperiment:
         self._initialize_store()
+        if self._store.active_experiment(source_id) is None:
+            self._require_new_period_capacity()
         selection = self._current_selection(source_id)
         return self._store.start_experiment(
             selection=selection,
             config=self._config,
             started_at=self._now(),
         )
+
+    def apply_configuration(
+        self,
+        source_id: str,
+        *,
+        command_id: str,
+        expected_latest_experiment_id: str,
+    ) -> dict[str, object]:
+        """Record one frozen request and apply only at a safe period boundary."""
+
+        self._initialize_store()
+        content = {
+            "source_id": source_id,
+            "expected_latest_experiment_id": expected_latest_experiment_id,
+            "config": self._config.to_dict(),
+        }
+        request_digest = hashlib.sha256(json.dumps(
+            content, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        prior = self._store.config_receipt(command_id)
+        if prior is not None and prior["disposition"] in {"APPLIED", "FAILED", "CONFLICT"}:
+            if prior["source_id"] != source_id or prior["request_digest"] != request_digest:
+                raise ContinuousShadowError("Shadow command id has different request content")
+            return prior
+        recovered = self._store.recover_config_command(
+            command_id, source_id=source_id, request_digest=request_digest,
+            config=self._config, observed_at=self._now(),
+        )
+        if recovered is not None:
+            return recovered
+        self._require_new_period_capacity()
+        selection = self._current_selection(source_id)
+        receipt = self._store.claim_config_command(
+            command_id=command_id,
+            source_id=source_id,
+            request_digest=request_digest,
+            expected_latest_experiment_id=expected_latest_experiment_id,
+            selection_digest=selection.digest,
+            config=self._config,
+            observed_at=self._now(),
+        )
+        if receipt["disposition"] != "PENDING_APPLY":
+            return receipt
+        try:
+            experiment = self._store.start_experiment(
+                selection=selection, config=self._config, started_at=self._now(),
+            )
+        except Exception as error:
+            self._store.finish_config_command(
+                command_id, experiment_id=None,
+                reason=type(error).__name__, observed_at=self._now(),
+            )
+            raise ContinuousShadowError("Shadow configuration application failed") from error
+        return self._store.finish_config_command(
+            command_id, experiment_id=experiment.experiment_id,
+            reason=None, observed_at=self._now(),
+        )
+
+    def preview_configuration(self, source_id: str) -> dict[str, object]:
+        """Validate a proposed period without changing the current experiment."""
+
+        self._initialize_store()
+        latest = self._store.latest_experiment(source_id)
+        active = self._store.active_experiment(source_id)
+        reason: str | None = None
+        capacity: dict[str, object] | None = None
+        if self._config.runtime_version != "continuous-shadow-runtime-v2":
+            status = "UNSUPPORTED_RUNTIME"
+            reason = "configuration preview requires v2 Shadow runtime"
+        else:
+            assert self._config.wallet_count is not None
+            assert self._config.code_sha is not None
+            try:
+                capacity = capacity_status(
+                    self._config.wallet_count, code_sha=self._config.code_sha,
+                    workload_digest=workload_digest(
+                        "continuous-shadow", self._config.capacity_workload()
+                    ),
+                    evidence=self._config.capacity_evidence,
+                )
+                require_operational_capacity(capacity)
+            except WalletCapacityError as error:
+                status, reason = "BLOCKED_CAPACITY", str(error)
+            else:
+                try:
+                    self._require_new_period_capacity()
+                    self._current_selection(source_id)
+                except (ContinuousShadowError, ContinuousSelectionUnavailableError) as error:
+                    status, reason = "BLOCKED_SELECTION", str(error)
+                else:
+                    if active is None:
+                        status = "READY_TO_APPLY"
+                    elif active.config.to_dict() == self._config.to_dict():
+                        status = "ALREADY_APPLIED"
+                    else:
+                        status, reason = "PENDING_DRAIN", "active_period_requires_drain"
+        return {
+            "version": "shadow-config-preview-v1",
+            "status": status,
+            "reason": reason,
+            "requested": self._config.to_dict(),
+            "actual": None if active is None else active.config.to_dict(),
+            "effective_wallet_count": None if active is None else active.config.wallet_count,
+            "requested_wallet_count": self._config.wallet_count,
+            "active_experiment_id": None if active is None else active.experiment_id,
+            "active_lifecycle": None if active is None else active.lifecycle.value,
+            "expected_latest_experiment_id": (
+                "none" if latest is None else latest.experiment_id
+            ),
+            "capacity": capacity,
+        }
 
     def drain(self, source_id: str) -> ContinuousShadowExperiment:
         self._initialize_store()
@@ -300,14 +422,24 @@ class ContinuousShadowService:
         count = self._config.wallet_count
         if count is None:
             return snapshot
-        alpha = sorted(
-            (
-                item for item in snapshot.candidates
-                if "SHADOW_ALPHA" in item.pools and item.alpha_rank is not None
-            ),
-            key=lambda item: (int(item.alpha_rank or 0), item.wallet_id),
-        )
-        selected = alpha[:count]
+        active_policy = self._config.selection_policy == "shadow-alpha-active-v2"
+        activity = self._config.selection_activity_counts or {}
+        if active_policy:
+            try:
+                selected = select_active_shadow_alpha(
+                    snapshot.candidates, activity, count=count
+                )
+            except ValueError as error:
+                raise ContinuousSelectionUnavailableError(str(error)) from error
+        else:
+            alpha = sorted(
+                (
+                    item for item in snapshot.candidates
+                    if "SHADOW_ALPHA" in item.pools and item.alpha_rank is not None
+                ),
+                key=lambda item: (int(item.alpha_rank or 0), item.wallet_id),
+            )
+            selected = tuple(alpha[:count])
         if len(selected) != count or len({item.wallet_id for item in selected}) != count:
             raise ContinuousSelectionUnavailableError(
                 "Current Stage 3 SHADOW_ALPHA selection cannot supply the frozen wallet count."
@@ -317,17 +449,45 @@ class ContinuousShadowService:
             raise ContinuousSelectionUnavailableError(
                 "Selected SHADOW_ALPHA provenance is invalid."
             )
+        suffix = (
+            f"shadow-alpha-active{count}-v2" if active_policy else
+            f"shadow-alpha-ranked{count}-v2"
+            if self._config.runtime_version == "continuous-shadow-runtime-v2" else
+            f"shadow-alpha-top{count}-v1"
+        )
         return ContinuousSelectionSnapshot.create(
             source_id=snapshot.source_id,
-            selection_run_id=f"{snapshot.selection_run_id}:shadow-alpha-top{count}-v1",
+            selection_run_id=f"{snapshot.selection_run_id}:{suffix}",
             source_snapshot_id=snapshot.source_snapshot_id,
             feature_set_version=snapshot.feature_set_version,
             policy_id=snapshot.policy_id,
-            policy_version=f"{snapshot.policy_version}+shadow-alpha-top{count}-v1",
+            policy_version=f"{snapshot.policy_version}+{suffix}",
             ranking_version=snapshot.ranking_version,
             published_at=snapshot.published_at,
             candidates=tuple(selected),
         )
+
+    def _require_new_period_capacity(self) -> None:
+        if self._config.runtime_version != "continuous-shadow-runtime-v2":
+            return
+        assert self._config.wallet_count is not None
+        assert self._config.code_sha is not None
+        fingerprint = workload_digest("continuous-shadow", self._config.capacity_workload())
+        try:
+            status = capacity_status(
+                self._config.wallet_count, code_sha=self._config.code_sha,
+                workload_digest=fingerprint, evidence=self._config.capacity_evidence,
+            )
+            require_operational_capacity(status)
+        except WalletCapacityError as error:
+            raise ContinuousShadowError(str(error)) from error
+        if self._config.selection_policy == "shadow-alpha-active-v2":
+            observed = self._config.selection_observed_at
+            if (
+                observed is None or observed > self._now()
+                or self._now() - observed > timedelta(hours=4)
+            ):
+                raise ContinuousShadowError("active Shadow preflight evidence is stale")
 
     def _initialize_lease_port(self) -> None:
         if self._lease_port_initialized:
@@ -393,6 +553,7 @@ class ContinuousShadowService:
             open_count = self._store.open_position_count(experiment.experiment_id)
             pending_count = self._store.pending_observation_count(experiment.experiment_id)
             if open_count == 0 and pending_count == 0:
+                self._require_new_period_capacity()
                 try:
                     next_selection = self._current_selection(source_id)
                 except ContinuousSelectionUnavailableError as error:

@@ -155,7 +155,7 @@ Transient source-unavailable and market-read failures use the same bounded
 persistent-loop retry behavior. Persistence, lease-integrity, and unexpected
 failures remain fail-closed and may terminate the worker for systemd recovery.
 
-Schema v8 remains standalone in `continuous-shadow.sqlite3`. Current valuation
+Schema v9 remains standalone in `continuous-shadow.sqlite3`. Current valuation
 is mutable position state (`observed_at`, `source_at`, `state_changed_at`,
 price, mark status, freshness, source age, last observed poll). Mark history is
 appended only for a canonical Decimal price, mark status, relevant quantity, or
@@ -256,7 +256,7 @@ the selected subset while retaining the upstream run, snapshot, and ranking
 provenance; the separate Stress follower may have no selected member. Omitting
 `wallet_count` preserves the historical full Stage 3 cohort behavior.
 
-Schema v8 stores one digested causal opportunity per admitted event, including
+Schema v9 retains one digested causal opportunity per admitted event, including
 Shadow-rejected and UNKNOWN evaluations. The opportunity is committed before
 dependent financial rows in the same poll transaction. A failed poll leaves
 no new financial effect; pending first observations remain nonfinancial.
@@ -289,3 +289,38 @@ separate 30-day policy; opportunity and ledger evidence are not auto-pruned.
 This supports causal prospective comparison only. Market-only and Placebo
 controls remain unsupported, and no short period establishes profitability
 or authorizes Live operation.
+
+## Additive configurable periods and command receipts (2026-09-28)
+
+CURRENT: `continuous-shadow-runtime-v2` explicitly freezes a count of 1–40
+and either ranked or recent-active `SHADOW_ALPHA` selection. The same
+software envelope and operator-reviewed workload capacity contract used by
+Research applies before starting or rolling a new period. A request above
+measured capacity fails with its requested and validated counts. The v1
+runtime and older frozen cohorts retain their historical interpretation.
+Recent-active v2 selection uses bounded, complete pre-T0 counts plus
+market/token, latest book-depth, and fee preflight. It never changes the
+membership of a running period. The v2 Spec stores the preflight evidence
+digest with frozen counts and time so a period can be traced to its reviewed
+pre-T0 response. Source incompleteness is not zero activity.
+
+Schema v9 records successfully filtered pending first sightings separately
+from still-unadmitted observations. A failed poll leaves the pending record;
+a later complete poll that sees and filters it marks it filtered without
+inventing financial activity. Filtered rows remain auditable but cannot block
+flat period finalization forever. Open positions and genuinely unadmitted
+observations still block it. Existing period P&L and ledger evidence remain
+attached to their original period; a new period is a separate synthetic
+capital experiment and reports must never sum independent bankrolls as one
+continuous profit stream.
+
+`portfolio-preview` reports requested versus active configuration and the
+latest experiment revision. `portfolio-apply` records a durable command id,
+request digest, selection digest, expected latest period id, and an
+`APPLIED`, `PENDING_DRAIN`, `FAILED`, or `CONFLICT` disposition.
+The same command may be retried after a safe drain/finalization boundary.
+If a process stops after period commit but before receipt completion, retry
+recovers the matching period and marks the original receipt applied.
+The active worker must be restarted with the same reviewed Spec before
+polling the new period; a mismatched config fails rather than resetting
+inventory. No command grants Live or order authority.

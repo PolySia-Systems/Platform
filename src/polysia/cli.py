@@ -76,6 +76,7 @@ research_run_app = typer.Typer(
 )
 research_app.add_typer(research_run_app, name="prospective-run")
 research_run_app.command("start")(research.prospective_run_start)
+research_run_app.command("capacity-probe")(research.prospective_capacity_probe)
 research_run_app.command("status")(research.prospective_run_status)
 research_run_app.command("resume")(research.prospective_run_resume)
 research_run_app.command("stop")(research.prospective_run_stop)
@@ -90,6 +91,21 @@ wallet_intelligence_app.command("selection")(wallet_intelligence.selection)
 wallet_intelligence_app.command("shadow-sync")(wallet_intelligence.shadow_sync)
 wallet_intelligence_app.command("shadow-results")(wallet_intelligence.shadow_results)
 wallet_intelligence_app.command("portfolio-start")(wallet_intelligence.portfolio_start)
+wallet_intelligence_app.command("portfolio-preflight")(
+    wallet_intelligence.portfolio_preflight
+)
+wallet_intelligence_app.command("portfolio-capabilities")(
+    wallet_intelligence.portfolio_capabilities
+)
+wallet_intelligence_app.command("portfolio-preview")(
+    wallet_intelligence.portfolio_preview
+)
+wallet_intelligence_app.command("portfolio-apply")(
+    wallet_intelligence.portfolio_apply
+)
+wallet_intelligence_app.command("portfolio-command-receipt")(
+    wallet_intelligence.portfolio_command_receipt
+)
 wallet_intelligence_app.command("portfolio-sync")(wallet_intelligence.portfolio_sync)
 wallet_intelligence_app.command("portfolio-health")(wallet_intelligence.portfolio_health)
 wallet_intelligence_app.command("portfolio-results")(wallet_intelligence.portfolio_results)

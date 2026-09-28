@@ -96,6 +96,15 @@ Schema v5–v7 files migrate additively; older binaries cannot read v8, so
 rollback after migration requires the verified pre-upgrade backup and an
 explicit decision about post-upgrade evidence.
 
+## Additive period and command recovery (2026-09-28)
+
+CURRENT: schema v9 preserves the v8 opportunity transaction and adds a
+nonfinancial filtered marker to pending observations plus durable versioned
+configuration-command receipts. It migrates v5–v8 files at initialization.
+Only the Stage 4B writer owns the financial store; read-only status and
+prospective replay remain separate. Rollback to a pre-v9 binary requires a
+verified pre-upgrade backup and explicit treatment of any newer evidence.
+
 ## Matched policy verification (2026-09-28)
 
 CURRENT opportunity payload v2 adds the frozen lifecycle, exposure permission,

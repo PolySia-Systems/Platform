@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import threading
 import time
 from datetime import UTC, datetime
@@ -23,9 +25,13 @@ from polysia.deployment.research_experiment_runner import (
 from polysia.deployment.research_run_commands import DISPOSITION_ACCEPTED
 from polysia.deployment.research_run_contract import (
     ACTIVE_SELECTION_POLICY,
+    ACTIVE_SELECTION_POLICY_V2,
+    CAPACITY_PLAN_VERSION,
+    CAPACITY_SPEC_VERSION,
     CONFIGURED_SELECTION_POLICY,
     DEFAULT_SELECTION_POLICY,
     DEFAULT_WALLET_COUNT,
+    RANKED_SELECTION_POLICY_V2,
     ResearchRunContractError,
     ResearchRunPlan,
     ResearchRunSpec,
@@ -34,10 +40,85 @@ from polysia.deployment.research_run_contract import (
     plans_semantically_equal,
     resolve_run_plan,
 )
+from polysia.deployment.research_run_profiles import CANARY_PROFILE
 from polysia.deployment.research_scratch import operation_scratch, planned_scratch_bytes
+from polysia.domain.copytrading.wallet_capacity import workload_digest
 
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 CODE_SHA = "a" * 40
+
+
+@pytest.mark.parametrize("wallet_count", [5, 10, 20, 40])
+def test_v3_plan_distinguishes_software_from_operational_capacity(wallet_count: int) -> None:
+    spec = parse_research_run_spec({
+        "spec_version": CAPACITY_SPEC_VERSION,
+        "profile": "canary", "code_sha": CODE_SHA,
+        "wallet_count": wallet_count,
+        "selection_policy": ACTIVE_SELECTION_POLICY_V2,
+        "runtime": {},
+    })
+    plan = resolve_run_plan(spec, observed=NOW)
+    assert plan.plan_version == CAPACITY_PLAN_VERSION
+    assert plan.selection["wallet_count"] == wallet_count
+    assert plan.selection["capacity"]["software_limit"] == 40
+    assert plan.selection["capacity"]["operational_status"] == "unverified"
+    assert load_run_plan(plan.to_dict()).semantic_digest() == plan.semantic_digest()
+    assert plan.selection["workload_digest"] == workload_digest(
+        "canary", {**(plan.runtime or {}), "selection_policy": ACTIVE_SELECTION_POLICY_V2}
+    )
+
+
+def test_v3_rejects_count_outside_software_envelope() -> None:
+    with pytest.raises(ResearchRunContractError, match="software envelope"):
+        parse_research_run_spec({
+            "spec_version": CAPACITY_SPEC_VERSION,
+            "profile": "canary", "code_sha": CODE_SHA,
+            "wallet_count": 41, "runtime": {},
+        })
+
+
+def test_runner_preserves_measured_capacity_spec_before_source_admission() -> None:
+    from polysia.domain.copytrading.wallet_capacity import CAPACITY_CONTRACT_VERSION
+
+    runtime = resolve_run_plan(ResearchRunSpec(
+        profile="canary", code_sha=CODE_SHA,
+        spec_version=CAPACITY_SPEC_VERSION, runtime={}, wallet_count=10,
+    ), observed=NOW).runtime
+    assert runtime is not None
+    evidence: dict[str, object] = {
+        "version": CAPACITY_CONTRACT_VERSION,
+        "code_sha": CODE_SHA,
+        "workload_digest": workload_digest(
+            "canary", {**runtime, "selection_policy": RANKED_SELECTION_POLICY_V2}
+        ),
+        "validated_count": 10,
+        "result": "PASS",
+        "polls_observed": 3,
+        "max_queue_delay_ms": 1,
+        "p95_decision_latency_ms": 1,
+        "peak_memory_bytes": 1024,
+        "storage_growth_bytes": 1024,
+        "other_consumer_requests": 1,
+        "data_requests": 40,
+        "clob_requests": 2,
+        "gamma_requests": 2,
+        "rate_limited_requests": 0,
+    }
+    evidence["digest"] = hashlib.sha256(json.dumps(
+        evidence, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    runner = ResearchExperimentRunner(source_factory=lambda: None)  # type: ignore[arg-type]
+    plan = runner._resolve_plan(
+        profile="canary", resolved_profile=CANARY_PROFILE,
+        code_sha=CODE_SHA, run_id=None, image_sha=None,
+        spec={
+            "spec_version": CAPACITY_SPEC_VERSION, "profile": "canary",
+            "code_sha": CODE_SHA, "wallet_count": 10, "runtime": {},
+            "capacity_evidence": evidence,
+        },
+    )
+    assert plan.selection["capacity"]["operational_status"] == "measured"
+    assert plan.selection["capacity"]["validated_count"] == 10
 
 
 def test_spec_rejects_unknown_fields_and_executable_expressions() -> None:
