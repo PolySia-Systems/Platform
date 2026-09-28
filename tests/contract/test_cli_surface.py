@@ -81,6 +81,8 @@ EXPECTED_COMMANDS = {
         "portfolio-apply",
         "portfolio-command-receipt",
         "portfolio-preflight",
+        "portfolio-prepare",
+        "portfolio-capacity-probe",
         "portfolio-sync",
         "restore-check",
         "runtime-bank",
