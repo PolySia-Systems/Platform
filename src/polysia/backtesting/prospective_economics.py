@@ -234,7 +234,7 @@ def evaluate_prospective_economics(
         limitations=(
             "Wallet observations and market states are dependent, not independent samples.",
             "The bounded experiment does not establish persistent profitability or Live readiness.",
-            "Market-only and placebo controls are unavailable in the current research evidence contract.",
+            "Market-only and placebo controls are unavailable in this evidence contract.",
             "Maximum drawdown uses the existing cost-basis book NAV, not intraperiod marks.",
         ),
     )
