@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-27 |
+| Review date | 2026-09-28 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.7` |
@@ -89,6 +89,11 @@ CURRENT capabilities:
 - Combined backups validate staged snapshots before publishing and rotating a
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
+- Versioned Research and Shadow configuration now supports a software envelope
+  of 1–40 wallets with explicit operational capacity admission, shared active
+  selection, readiness diagnostics, and JSON contracts for a future UI. The
+  envelope is not a measured Helsinki capacity. Existing frozen v1/v2 Research
+  and v1 Shadow periods retain their original semantics.
 
 ## What is not yet implemented
 
@@ -108,6 +113,11 @@ or authorization for another run. Query SHA, health, restarts, and final
 experiment state through the [server deployment
 runbook](../10-operations/server-deployment.md#current-operational-truth)
 only within an authorized task. Nuremberg remains outside this scope.
+The [2026-09-28 dated release and readiness
+record](../18-ai-handoffs/research-shadow-readiness-2026-09-28.md) documents
+the subsequently approved code SHA, Shadow v1 three-wallet cutover, backup
+and restore checks, and a five-wallet preflight failure. It is not live host
+truth or approval for a new experiment.
 
 Blockers and limitations:
 
@@ -120,6 +130,11 @@ Blockers and limitations:
   a `FAILURE_ARCHIVED` unverified bundle. Its technical gate is `FAIL` and
   economics is `INSUFFICIENT_DATA`; it cannot retroactively make that Canary
   `PASS`. The dated acceptance record has the exact evidence.
+- The 2026-09-28 five-wallet candidate-only probe had complete available-page
+  empty Wallet reads and no market token subscription. The active preflight
+  still lacked five eligible candidates. No v2 host capacity was certified,
+  and no new Canary or four-hour evaluation began. See the dated record for
+  bounded scope and limitations.
 - Branch-protection policy remains governance debt.
 - Risk/Execution and Stage 4B accounting hardening are merged in Git. That is
   a repository fact, not a claim about a live host.

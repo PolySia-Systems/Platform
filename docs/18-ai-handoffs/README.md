@@ -11,6 +11,10 @@ because that exact path is an immutable compliance artifact.
 
 ## Current operational evidence
 
+- [`research-shadow-readiness-2026-09-28.md`](research-shadow-readiness-2026-09-28.md)
+  records the approved Helsinki release, bounded five-wallet data/capacity
+  check, three-wallet Shadow cutover, and pre/post migration recovery evidence.
+  It documents why no new Canary or economic run was started.
 - [`shared-data-shadow-acceptance-2026-09-27.md`](shared-data-shadow-acceptance-2026-09-27.md)
   records the newly authorized Helsinki `DATA_ONLY` source benchmark,
   Canary, Continuous Shadow restart, recovery checks, and bounded Research
