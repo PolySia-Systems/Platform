@@ -603,7 +603,8 @@ class ContinuousShadowService:
                         ) or follower_accepts_pool(portfolio.kind, pool_class):
                             targets.append(portfolio)
                     for portfolio in targets:
-                        evaluation, entry = self._apply_event(
+                        evaluation, entry = apply_shadow_event(
+                            self._config,
                             portfolio,
                             event,
                             pool_class=pool_class,
@@ -673,6 +674,9 @@ class ContinuousShadowService:
                         config=self._config.to_dict(),
                         market=markets.get(event.market_reference),
                         book=books.get(event.outcome_reference),
+                        pool_class=_pool_class(all_by_wallet[event.leader_id].pools),
+                        lifecycle=experiment.lifecycle,
+                        exposure_increase_allowed=selection_fresh,
                     )
                     for event in new_events
                 ),
@@ -989,334 +993,12 @@ class ContinuousShadowService:
         consumed_by_scope: dict[tuple[str, str], dict[Decimal, Decimal]],
         evaluated_at: datetime,
     ) -> tuple[ContinuousEvaluationRecord, ContinuousLedgerRecord | None]:
-        api_lag = _milliseconds(event.observed_at - event.executed_at)
-        signal_delay = _milliseconds(evaluated_at - event.observed_at)
-        total_delay = _milliseconds(evaluated_at - event.executed_at)
-
-        def evidence(
-            status: ContinuousEvaluationStatus,
-            reason: str,
-            *,
-            requested_size: Decimal = ZERO,
-            fee_status: str = "NOT_EVALUATED",
-            fee_source: str = "not_evaluated",
-        ) -> tuple[ContinuousEvaluationRecord, None]:
-            return (
-                ContinuousEvaluationRecord(
-                    event_id=event.event_id,
-                    portfolio_id=portfolio.portfolio_id,
-                    wallet_id=event.leader_id,
-                    pool_class=pool_class,
-                    status=status,
-                    reason=reason,
-                    requested_size=requested_size,
-                    filled_size=ZERO,
-                    follower_price=None,
-                    gross_notional=None,
-                    fee=None,
-                    fee_status=fee_status,
-                    fee_source=fee_source,
-                    fee_rate=None,
-                    fee_exponent=None,
-                    realized_pnl=None,
-                    source_api_lag_ms=api_lag,
-                    signal_delay_ms=signal_delay,
-                    price_movement=None,
-                    spread_cost=None,
-                    depth_impact=None,
-                    liquidity_loss=None,
-                    available_liquidity=None,
-                    quote_timestamp=None,
-                    evaluated_at=evaluated_at,
-                ),
-                None,
-            )
-
-        if total_delay > self._config.maximum_forward_delay_ms:
-            return evidence(ContinuousEvaluationStatus.UNKNOWN, "source_and_signal_delay_exceeded")
-        if event.trade_action is LeaderTradeAction.BUY and not exposure_increase_allowed:
-            return evidence(
-                ContinuousEvaluationStatus.REJECTED,
-                "stale_selection_blocks_new_exposure",
-            )
-        if book is None:
-            return evidence(ContinuousEvaluationStatus.UNKNOWN, "current_order_book_unavailable")
-        if not quote_is_fresh(
-            book,
-            evaluated_at=evaluated_at,
-            maximum_age_ms=self._config.maximum_quote_age_ms,
-        ):
-            return evidence(ContinuousEvaluationStatus.UNKNOWN, "current_order_book_stale")
-        levels = book.asks if event.trade_action is LeaderTradeAction.BUY else book.bids
-        if not levels:
-            return evidence(ContinuousEvaluationStatus.UNKNOWN, "executable_book_side_empty")
-        if (
-            event.trade_action is LeaderTradeAction.BUY
-            and lifecycle is ContinuousShadowLifecycle.DRAINING
-        ):
-            return evidence(
-                ContinuousEvaluationStatus.REJECTED,
-                "draining_blocks_new_exposure",
-            )
-        key = (event.market_reference, event.outcome_reference)
-        position = portfolio.positions.get(key)
-        attribution_key = (
-            portfolio.portfolio_id,
-            event.leader_id,
-            event.market_reference,
-            event.outcome_reference,
+        return apply_shadow_event(
+            self._config, portfolio, event, pool_class=pool_class,
+            lifecycle=lifecycle, exposure_increase_allowed=exposure_increase_allowed,
+            market=market, book=book, attributions=attributions,
+            consumed_by_scope=consumed_by_scope, evaluated_at=evaluated_at,
         )
-        attribution = attributions.get(attribution_key)
-        if event.trade_action is LeaderTradeAction.SELL:
-            available_position = ZERO if position is None else position.quantity
-            if portfolio.kind in FOLLOWER_KINDS:
-                available_position = min(
-                    available_position,
-                    ZERO if attribution is None else attribution.quantity,
-                )
-            requested_size = min(event.executed_size, available_position)
-            if requested_size <= ZERO:
-                return evidence(
-                    ContinuousEvaluationStatus.UNKNOWN,
-                    "persistent_portfolio_has_no_copyable_position",
-                )
-        else:
-            opposing = any(
-                item.market_reference == event.market_reference
-                and item.outcome_reference != event.outcome_reference
-                and item.quantity > ZERO
-                for item in portfolio.positions.values()
-            )
-            if opposing:
-                return evidence(
-                    ContinuousEvaluationStatus.REJECTED,
-                    "conflicting_market_outcome_exposure",
-                )
-            maximum_notional = min(
-                self._config.maximum_event_notional,
-                event.executed_price * event.executed_size,
-            )
-            exposure_room = (
-                self._config.wallet_maximum_exposure - portfolio.exposure
-                if portfolio.kind is ContinuousPortfolioKind.WALLET
-                else self._config.follower_maximum_exposure - portfolio.exposure
-            )
-            if portfolio.kind in FOLLOWER_KINDS:
-                wallet_exposure = sum(
-                    value.cost_basis
-                    for attr_key, value in attributions.items()
-                    if attr_key[0] == portfolio.portfolio_id
-                    and attr_key[1] == event.leader_id
-                )
-                market_exposure = sum(
-                    item.cost_basis
-                    for item in portfolio.positions.values()
-                    if item.market_reference == event.market_reference
-                )
-                exposure_room = min(
-                    exposure_room,
-                    self._config.follower_maximum_wallet_exposure - wallet_exposure,
-                    self._config.follower_maximum_market_exposure - market_exposure,
-                )
-                if (
-                    position is None
-                    and len(portfolio.positions)
-                    >= self._config.follower_maximum_positions
-                ):
-                    return evidence(
-                        ContinuousEvaluationStatus.REJECTED,
-                        "follower_position_limit_reached",
-                    )
-            maximum_notional = min(maximum_notional, exposure_room, portfolio.cash)
-            top = min(level.price for level in book.asks)
-            if maximum_notional <= ZERO or top <= ZERO:
-                return evidence(
-                    ContinuousEvaluationStatus.REJECTED,
-                    "synthetic_capital_limit_reached",
-                )
-            requested_size = min(event.executed_size, maximum_notional / top)
-        scope = (portfolio.portfolio_id, event.outcome_reference)
-        consumed = consumed_by_scope.setdefault(scope, {})
-        walk = walk_order_book(
-            book,
-            action=event.trade_action,
-            requested_size=requested_size,
-            already_consumed=consumed,
-        )
-        if walk.filled_size <= ZERO or walk.follower_price is None:
-            return evidence(
-                ContinuousEvaluationStatus.UNKNOWN,
-                "shared_liquidity_unavailable",
-                requested_size=requested_size,
-            )
-        if walk.filled_size < book.minimum_order_size:
-            return evidence(
-                ContinuousEvaluationStatus.REJECTED,
-                "fill_below_market_minimum_order_size",
-                requested_size=requested_size,
-            )
-        fee = calculate_verified_taker_fee(
-            market,
-            price=walk.follower_price,
-            size=walk.filled_size,
-        )
-        if fee.amount is None:
-            evaluation, _ = evidence(
-                ContinuousEvaluationStatus.UNKNOWN,
-                "market_specific_fee_provenance_unknown",
-                requested_size=requested_size,
-                fee_status=fee.status,
-                fee_source=fee.source,
-            )
-            return (
-                replace(
-                    evaluation,
-                    available_liquidity=walk.available_liquidity,
-                    quote_timestamp=book.timestamp,
-                ),
-                None,
-            )
-        movement = (
-            (walk.follower_price - event.executed_price) * walk.filled_size
-            if event.trade_action is LeaderTradeAction.BUY
-            else (event.executed_price - walk.follower_price) * walk.filled_size
-        )
-        if adverse_price_drift_exceeded(
-            action=event.trade_action,
-            price_movement=movement,
-            gross_notional=walk.gross_notional,
-            maximum_ratio=self._config.price_drift_max_ratio,
-        ):
-            return evidence(
-                ContinuousEvaluationStatus.REJECTED,
-                "price_drift_exceeded",
-                requested_size=requested_size,
-                fee_status=fee.status,
-                fee_source=fee.source,
-            )
-        total_buy_cost = walk.gross_notional + fee.amount
-        if event.trade_action is LeaderTradeAction.BUY and total_buy_cost > portfolio.cash:
-            return evidence(
-                ContinuousEvaluationStatus.REJECTED,
-                "synthetic_cash_limit_reached_after_verified_fee",
-                requested_size=requested_size,
-                fee_status=fee.status,
-                fee_source=fee.source,
-            )
-        for price, size in walk.consumed:
-            consumed[price] = consumed.get(price, ZERO) + size
-        realized: Decimal | None = None
-        entry_type: str
-        quantity_delta: Decimal
-        cash_delta: Decimal
-        cost_delta: Decimal
-        if event.trade_action is LeaderTradeAction.BUY:
-            entry_type = "OPEN" if position is None else "INCREASE"
-            portfolio.cash -= total_buy_cost
-            portfolio.fees += fee.amount
-            if position is None:
-                position = _MutablePosition(
-                    market_reference=event.market_reference,
-                    outcome_reference=event.outcome_reference,
-                    quantity=ZERO,
-                    cost_basis=ZERO,
-                    entry_fees=ZERO,
-                    mark_price=None,
-                    marked_at=None,
-                )
-                portfolio.positions[key] = position
-            position.quantity += walk.filled_size
-            position.cost_basis += walk.gross_notional
-            position.entry_fees += fee.amount
-            quantity_delta = walk.filled_size
-            cash_delta = -total_buy_cost
-            cost_delta = walk.gross_notional
-            if portfolio.kind in FOLLOWER_KINDS:
-                if attribution is None:
-                    attribution = _MutableAttribution(ZERO, ZERO, pool_class, event.event_id)
-                    attributions[attribution_key] = attribution
-                attribution.quantity += walk.filled_size
-                attribution.cost_basis += walk.gross_notional
-                attribution.pool_class = pool_class
-                attribution.last_event_id = event.event_id
-        else:
-            assert position is not None
-            entry_type = "CLOSE" if walk.filled_size == position.quantity else "REDUCE"
-            ratio = walk.filled_size / position.quantity
-            allocated_cost = position.cost_basis * ratio
-            allocated_entry_fees = position.entry_fees * ratio
-            realized = walk.gross_notional - allocated_cost
-            cash_delta = walk.gross_notional - fee.amount
-            portfolio.cash += cash_delta
-            portfolio.realized_pnl += realized
-            portfolio.fees += fee.amount
-            position.quantity -= walk.filled_size
-            position.cost_basis -= allocated_cost
-            position.entry_fees -= allocated_entry_fees
-            quantity_delta = -walk.filled_size
-            cost_delta = -allocated_cost
-            if position.quantity <= ZERO:
-                del portfolio.positions[key]
-            if portfolio.kind in FOLLOWER_KINDS:
-                assert attribution is not None
-                attr_ratio = walk.filled_size / attribution.quantity
-                attribution.quantity -= walk.filled_size
-                attribution.cost_basis -= attribution.cost_basis * attr_ratio
-                attribution.last_event_id = event.event_id
-                if attribution.quantity <= ZERO:
-                    del attributions[attribution_key]
-        evaluation = ContinuousEvaluationRecord(
-            event_id=event.event_id,
-            portfolio_id=portfolio.portfolio_id,
-            wallet_id=event.leader_id,
-            pool_class=pool_class,
-            status=ContinuousEvaluationStatus.SIMULATED,
-            reason=(
-                "partial_fill_after_shared_liquidity"
-                if walk.filled_size < requested_size
-                else "verified_forward_fill"
-            ),
-            requested_size=requested_size,
-            filled_size=walk.filled_size,
-            follower_price=walk.follower_price,
-            gross_notional=walk.gross_notional,
-            fee=fee.amount,
-            fee_status=fee.status,
-            fee_source=fee.source,
-            fee_rate=fee.rate,
-            fee_exponent=fee.exponent,
-            realized_pnl=realized,
-            source_api_lag_ms=api_lag,
-            signal_delay_ms=signal_delay,
-            price_movement=movement,
-            spread_cost=walk.spread_cost,
-            depth_impact=walk.depth_impact,
-            liquidity_loss=(requested_size - walk.filled_size) * event.executed_price,
-            available_liquidity=walk.available_liquidity,
-            quote_timestamp=book.timestamp,
-            evaluated_at=evaluated_at,
-            consumed=walk.consumed,
-        )
-        ledger = ContinuousLedgerRecord(
-            entry_id=uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"polysia:continuous-shadow:{event.event_id}:{portfolio.portfolio_id}",
-            ).hex,
-            portfolio_id=portfolio.portfolio_id,
-            event_id=event.event_id,
-            entry_type=entry_type,
-            market_reference=event.market_reference,
-            outcome_reference=event.outcome_reference,
-            quantity_delta=quantity_delta,
-            cash_delta=cash_delta,
-            cost_basis_delta=cost_delta,
-            realized_pnl_delta=realized or ZERO,
-            fee_delta=fee.amount,
-            created_at=evaluated_at,
-            wallet_id=event.leader_id,
-            pool_class=pool_class,
-        )
-        return evaluation, ledger
 
     def _required_experiment(self, source_id: str) -> ContinuousShadowExperiment:
         experiment = self._store.active_experiment(source_id)
@@ -1329,6 +1011,352 @@ class ContinuousShadowService:
         if value.tzinfo is None or value.utcoffset() != timedelta(0):
             raise ValueError("clock must return timezone-aware UTC")
         return value
+
+
+
+def apply_shadow_event(
+    config: ContinuousShadowConfig,
+    portfolio: _MutablePortfolio,
+    event: LeaderTradeEvent,
+    *,
+    pool_class: str,
+    lifecycle: ContinuousShadowLifecycle,
+    exposure_increase_allowed: bool,
+    market: MarketDetails | None,
+    book: MarketOrderBookSnapshot | None,
+    attributions: dict[tuple[str, str, str, str], _MutableAttribution],
+    consumed_by_scope: dict[tuple[str, str], dict[Decimal, Decimal]],
+    evaluated_at: datetime,
+) -> tuple[ContinuousEvaluationRecord, ContinuousLedgerRecord | None]:
+    """Apply the production Shadow financial policy to one recorded opportunity."""
+    api_lag = _milliseconds(event.observed_at - event.executed_at)
+    signal_delay = _milliseconds(evaluated_at - event.observed_at)
+    total_delay = _milliseconds(evaluated_at - event.executed_at)
+
+    def evidence(
+        status: ContinuousEvaluationStatus,
+        reason: str,
+        *,
+        requested_size: Decimal = ZERO,
+        fee_status: str = "NOT_EVALUATED",
+        fee_source: str = "not_evaluated",
+    ) -> tuple[ContinuousEvaluationRecord, None]:
+        return (
+            ContinuousEvaluationRecord(
+                event_id=event.event_id,
+                portfolio_id=portfolio.portfolio_id,
+                wallet_id=event.leader_id,
+                pool_class=pool_class,
+                status=status,
+                reason=reason,
+                requested_size=requested_size,
+                filled_size=ZERO,
+                follower_price=None,
+                gross_notional=None,
+                fee=None,
+                fee_status=fee_status,
+                fee_source=fee_source,
+                fee_rate=None,
+                fee_exponent=None,
+                realized_pnl=None,
+                source_api_lag_ms=api_lag,
+                signal_delay_ms=signal_delay,
+                price_movement=None,
+                spread_cost=None,
+                depth_impact=None,
+                liquidity_loss=None,
+                available_liquidity=None,
+                quote_timestamp=None,
+                evaluated_at=evaluated_at,
+            ),
+            None,
+        )
+
+    if total_delay > config.maximum_forward_delay_ms:
+        return evidence(ContinuousEvaluationStatus.UNKNOWN, "source_and_signal_delay_exceeded")
+    if event.trade_action is LeaderTradeAction.BUY and not exposure_increase_allowed:
+        return evidence(
+            ContinuousEvaluationStatus.REJECTED,
+            "stale_selection_blocks_new_exposure",
+        )
+    if book is None:
+        return evidence(ContinuousEvaluationStatus.UNKNOWN, "current_order_book_unavailable")
+    if not quote_is_fresh(
+        book,
+        evaluated_at=evaluated_at,
+        maximum_age_ms=config.maximum_quote_age_ms,
+    ):
+        return evidence(ContinuousEvaluationStatus.UNKNOWN, "current_order_book_stale")
+    levels = book.asks if event.trade_action is LeaderTradeAction.BUY else book.bids
+    if not levels:
+        return evidence(ContinuousEvaluationStatus.UNKNOWN, "executable_book_side_empty")
+    if (
+        event.trade_action is LeaderTradeAction.BUY
+        and lifecycle is ContinuousShadowLifecycle.DRAINING
+    ):
+        return evidence(
+            ContinuousEvaluationStatus.REJECTED,
+            "draining_blocks_new_exposure",
+        )
+    key = (event.market_reference, event.outcome_reference)
+    position = portfolio.positions.get(key)
+    attribution_key = (
+        portfolio.portfolio_id,
+        event.leader_id,
+        event.market_reference,
+        event.outcome_reference,
+    )
+    attribution = attributions.get(attribution_key)
+    if event.trade_action is LeaderTradeAction.SELL:
+        available_position = ZERO if position is None else position.quantity
+        if portfolio.kind in FOLLOWER_KINDS:
+            available_position = min(
+                available_position,
+                ZERO if attribution is None else attribution.quantity,
+            )
+        requested_size = min(event.executed_size, available_position)
+        if requested_size <= ZERO:
+            return evidence(
+                ContinuousEvaluationStatus.UNKNOWN,
+                "persistent_portfolio_has_no_copyable_position",
+            )
+    else:
+        opposing = any(
+            item.market_reference == event.market_reference
+            and item.outcome_reference != event.outcome_reference
+            and item.quantity > ZERO
+            for item in portfolio.positions.values()
+        )
+        if opposing:
+            return evidence(
+                ContinuousEvaluationStatus.REJECTED,
+                "conflicting_market_outcome_exposure",
+            )
+        maximum_notional = min(
+            config.maximum_event_notional,
+            event.executed_price * event.executed_size,
+        )
+        exposure_room = (
+            config.wallet_maximum_exposure - portfolio.exposure
+            if portfolio.kind is ContinuousPortfolioKind.WALLET
+            else config.follower_maximum_exposure - portfolio.exposure
+        )
+        if portfolio.kind in FOLLOWER_KINDS:
+            wallet_exposure = sum(
+                value.cost_basis
+                for attr_key, value in attributions.items()
+                if attr_key[0] == portfolio.portfolio_id
+                and attr_key[1] == event.leader_id
+            )
+            market_exposure = sum(
+                item.cost_basis
+                for item in portfolio.positions.values()
+                if item.market_reference == event.market_reference
+            )
+            exposure_room = min(
+                exposure_room,
+                config.follower_maximum_wallet_exposure - wallet_exposure,
+                config.follower_maximum_market_exposure - market_exposure,
+            )
+            if (
+                position is None
+                and len(portfolio.positions)
+                >= config.follower_maximum_positions
+            ):
+                return evidence(
+                    ContinuousEvaluationStatus.REJECTED,
+                    "follower_position_limit_reached",
+                )
+        maximum_notional = min(maximum_notional, exposure_room, portfolio.cash)
+        top = min(level.price for level in book.asks)
+        if maximum_notional <= ZERO or top <= ZERO:
+            return evidence(
+                ContinuousEvaluationStatus.REJECTED,
+                "synthetic_capital_limit_reached",
+            )
+        requested_size = min(event.executed_size, maximum_notional / top)
+    scope = (portfolio.portfolio_id, event.outcome_reference)
+    consumed = consumed_by_scope.setdefault(scope, {})
+    walk = walk_order_book(
+        book,
+        action=event.trade_action,
+        requested_size=requested_size,
+        already_consumed=consumed,
+    )
+    if walk.filled_size <= ZERO or walk.follower_price is None:
+        return evidence(
+            ContinuousEvaluationStatus.UNKNOWN,
+            "shared_liquidity_unavailable",
+            requested_size=requested_size,
+        )
+    if walk.filled_size < book.minimum_order_size:
+        return evidence(
+            ContinuousEvaluationStatus.REJECTED,
+            "fill_below_market_minimum_order_size",
+            requested_size=requested_size,
+        )
+    fee = calculate_verified_taker_fee(
+        market,
+        price=walk.follower_price,
+        size=walk.filled_size,
+    )
+    if fee.amount is None:
+        evaluation, _ = evidence(
+            ContinuousEvaluationStatus.UNKNOWN,
+            "market_specific_fee_provenance_unknown",
+            requested_size=requested_size,
+            fee_status=fee.status,
+            fee_source=fee.source,
+        )
+        return (
+            replace(
+                evaluation,
+                available_liquidity=walk.available_liquidity,
+                quote_timestamp=book.timestamp,
+            ),
+            None,
+        )
+    movement = (
+        (walk.follower_price - event.executed_price) * walk.filled_size
+        if event.trade_action is LeaderTradeAction.BUY
+        else (event.executed_price - walk.follower_price) * walk.filled_size
+    )
+    if adverse_price_drift_exceeded(
+        action=event.trade_action,
+        price_movement=movement,
+        gross_notional=walk.gross_notional,
+        maximum_ratio=config.price_drift_max_ratio,
+    ):
+        return evidence(
+            ContinuousEvaluationStatus.REJECTED,
+            "price_drift_exceeded",
+            requested_size=requested_size,
+            fee_status=fee.status,
+            fee_source=fee.source,
+        )
+    total_buy_cost = walk.gross_notional + fee.amount
+    if event.trade_action is LeaderTradeAction.BUY and total_buy_cost > portfolio.cash:
+        return evidence(
+            ContinuousEvaluationStatus.REJECTED,
+            "synthetic_cash_limit_reached_after_verified_fee",
+            requested_size=requested_size,
+            fee_status=fee.status,
+            fee_source=fee.source,
+        )
+    for price, size in walk.consumed:
+        consumed[price] = consumed.get(price, ZERO) + size
+    realized: Decimal | None = None
+    entry_type: str
+    quantity_delta: Decimal
+    cash_delta: Decimal
+    cost_delta: Decimal
+    if event.trade_action is LeaderTradeAction.BUY:
+        entry_type = "OPEN" if position is None else "INCREASE"
+        portfolio.cash -= total_buy_cost
+        portfolio.fees += fee.amount
+        if position is None:
+            position = _MutablePosition(
+                market_reference=event.market_reference,
+                outcome_reference=event.outcome_reference,
+                quantity=ZERO,
+                cost_basis=ZERO,
+                entry_fees=ZERO,
+                mark_price=None,
+                marked_at=None,
+            )
+            portfolio.positions[key] = position
+        position.quantity += walk.filled_size
+        position.cost_basis += walk.gross_notional
+        position.entry_fees += fee.amount
+        quantity_delta = walk.filled_size
+        cash_delta = -total_buy_cost
+        cost_delta = walk.gross_notional
+        if portfolio.kind in FOLLOWER_KINDS:
+            if attribution is None:
+                attribution = _MutableAttribution(ZERO, ZERO, pool_class, event.event_id)
+                attributions[attribution_key] = attribution
+            attribution.quantity += walk.filled_size
+            attribution.cost_basis += walk.gross_notional
+            attribution.pool_class = pool_class
+            attribution.last_event_id = event.event_id
+    else:
+        assert position is not None
+        entry_type = "CLOSE" if walk.filled_size == position.quantity else "REDUCE"
+        ratio = walk.filled_size / position.quantity
+        allocated_cost = position.cost_basis * ratio
+        allocated_entry_fees = position.entry_fees * ratio
+        realized = walk.gross_notional - allocated_cost
+        cash_delta = walk.gross_notional - fee.amount
+        portfolio.cash += cash_delta
+        portfolio.realized_pnl += realized
+        portfolio.fees += fee.amount
+        position.quantity -= walk.filled_size
+        position.cost_basis -= allocated_cost
+        position.entry_fees -= allocated_entry_fees
+        quantity_delta = -walk.filled_size
+        cost_delta = -allocated_cost
+        if position.quantity <= ZERO:
+            del portfolio.positions[key]
+        if portfolio.kind in FOLLOWER_KINDS:
+            assert attribution is not None
+            attr_ratio = walk.filled_size / attribution.quantity
+            attribution.quantity -= walk.filled_size
+            attribution.cost_basis -= attribution.cost_basis * attr_ratio
+            attribution.last_event_id = event.event_id
+            if attribution.quantity <= ZERO:
+                del attributions[attribution_key]
+    evaluation = ContinuousEvaluationRecord(
+        event_id=event.event_id,
+        portfolio_id=portfolio.portfolio_id,
+        wallet_id=event.leader_id,
+        pool_class=pool_class,
+        status=ContinuousEvaluationStatus.SIMULATED,
+        reason=(
+            "partial_fill_after_shared_liquidity"
+            if walk.filled_size < requested_size
+            else "verified_forward_fill"
+        ),
+        requested_size=requested_size,
+        filled_size=walk.filled_size,
+        follower_price=walk.follower_price,
+        gross_notional=walk.gross_notional,
+        fee=fee.amount,
+        fee_status=fee.status,
+        fee_source=fee.source,
+        fee_rate=fee.rate,
+        fee_exponent=fee.exponent,
+        realized_pnl=realized,
+        source_api_lag_ms=api_lag,
+        signal_delay_ms=signal_delay,
+        price_movement=movement,
+        spread_cost=walk.spread_cost,
+        depth_impact=walk.depth_impact,
+        liquidity_loss=(requested_size - walk.filled_size) * event.executed_price,
+        available_liquidity=walk.available_liquidity,
+        quote_timestamp=book.timestamp,
+        evaluated_at=evaluated_at,
+        consumed=walk.consumed,
+    )
+    ledger = ContinuousLedgerRecord(
+        entry_id=uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"polysia:continuous-shadow:{event.event_id}:{portfolio.portfolio_id}",
+        ).hex,
+        portfolio_id=portfolio.portfolio_id,
+        event_id=event.event_id,
+        entry_type=entry_type,
+        market_reference=event.market_reference,
+        outcome_reference=event.outcome_reference,
+        quantity_delta=quantity_delta,
+        cash_delta=cash_delta,
+        cost_basis_delta=cost_delta,
+        realized_pnl_delta=realized or ZERO,
+        fee_delta=fee.amount,
+        created_at=evaluated_at,
+        wallet_id=event.leader_id,
+        pool_class=pool_class,
+    )
+    return evaluation, ledger
 
 
 def _mutable_portfolios(

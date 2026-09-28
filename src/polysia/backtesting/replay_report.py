@@ -10,9 +10,94 @@ from typing import Any
 from polysia.backtesting.prospective_replay import RecordedExperimentReplay
 from polysia.domain.research_evidence.economic_contract import CONTRACT_V1
 from polysia.domain.research_evidence.replay import REPLAY_ENGINE_VERSION
-from polysia.storage.research_evidence import ResearchExperiment
+from polysia.storage.research_evidence import ResearchEvidenceStore, ResearchExperiment
 
 COMPACT_STDOUT_LIMIT = 5120
+
+
+def wallet_evidence_diagnostics(
+    store: ResearchEvidenceStore,
+    *,
+    run_id: str,
+    selected_aliases: tuple[str, ...],
+    replay: RecordedExperimentReplay,
+    source_health: Mapping[str, object],
+) -> dict[str, object]:
+    """Join process scope, durable identity and economics without hiding zero wallets."""
+
+    durable = store.wallet_evidence_diagnostics(run_id, selected_aliases)
+    economics = {item.leader_alias: item.economics for item in replay.wallet_economics}
+    wallets: dict[str, object] = {}
+    for alias in selected_aliases:
+        source_stages: dict[str, object] = {}
+        for source_id, raw in source_health.items():
+            if not isinstance(raw, Mapping):
+                continue
+            per_wallet = raw.get("wallet_diagnostics")
+            if isinstance(per_wallet, Mapping) and isinstance(per_wallet.get(alias), Mapping):
+                source_stages[source_id] = dict(per_wallet[alias])
+        stored = durable[alias]
+        economic = economics.get(alias)
+        unknown = {} if economic is None else dict(economic.unknown_by_cause)
+        reasons: list[str] = []
+        if not source_stages:
+            reasons.append("source_response_counts_unavailable")
+        for stages in source_stages.values():
+            if not isinstance(stages, Mapping):
+                continue
+            if int(str(stages.get("incomplete_windows", 0))):
+                reasons.append("source_window_incomplete")
+            if stages.get("last_outcome") == "success_filtered":
+                reasons.append("source_rows_filtered")
+        if int(str(stored["pending_unadmitted"])):
+            reasons.append("pending_coverage_admission")
+        if int(str(stored["durable_rejected"])):
+            reasons.append("identity_or_mapping_rejected")
+        if int(str(stored["accepted_invalid_interval"])):
+            reasons.append("accepted_evidence_excluded_invalid_interval")
+        if stored["admitted_accepted"] is None:
+            reasons.append("historical_admission_time_unavailable")
+        if int(str(stored["durable_accepted"])) == 0:
+            if (
+                stored["completed_source_boundaries"]
+                and source_stages
+                and all(
+                    isinstance(stage, Mapping)
+                    and stage.get("last_outcome") == "success_empty"
+                    for stage in source_stages.values()
+                )
+            ):
+                reasons.append("confirmed_empty_within_recorded_coverage")
+            else:
+                reasons.append("no_durable_wallet_events_cause_unknown")
+        for cause in unknown:
+            if cause in {"missing_quote", "stale_quote", "missing_depth", "insufficient_depth"}:
+                reasons.append("missing_stale_book_or_depth")
+            elif cause == "missing_fee":
+                reasons.append("missing_market_fee")
+            elif cause == "missing_market_token_mapping":
+                reasons.append("market_token_mapping_unverified")
+        wallets[alias] = {
+            "source_process_window_occurrences": source_stages,
+            "durable_unique_evidence": stored,
+            "economic": {
+                "eligible_observations": (
+                    None if economic is None else economic.eligible_observations
+                ),
+                "evaluated_observations": (
+                    None if economic is None else economic.evaluated_observations
+                ),
+                "unknown_by_cause": unknown,
+                "status": "UNAVAILABLE" if economic is None else economic.economic_classification,
+            },
+            "reasons": sorted(set(reasons)),
+        }
+    return {
+        "version": "wallet-evidence-diagnostics-v1",
+        "source_count_scope": "process_window_occurrences_not_unique_events",
+        "durable_count_scope": "unique_stored_evidence_with_recorded_run_id",
+        "wallets": wallets,
+    }
 
 
 def canonical_json(payload: Mapping[str, Any]) -> str:
@@ -85,6 +170,18 @@ def detailed_replay_payload(
             {
                 "control_decision": row.control_decision,
                 "decision_time": row.decision_time.isoformat(),
+                "first_observed_time": (
+                    None if row.first_observed_time is None
+                    else row.first_observed_time.isoformat()
+                ),
+                "admission_time": (
+                    None if row.admission_time is None
+                    else row.admission_time.isoformat()
+                ),
+                "source_time": (
+                    None if row.source_time is None
+                    else row.source_time.isoformat()
+                ),
                 "leader_alias": row.leader_alias,
                 "market_reference": row.market_reference,
                 "outcome_reference": row.outcome_reference,
@@ -110,6 +207,7 @@ def compact_replay_payload(detailed: Mapping[str, Any]) -> dict[str, Any]:
         "configuration_digest": detailed.get("configuration_digest"),
         "contract_digest": detailed.get("experiment_contract_digest"),
         "engine_version": detailed.get("engine_version"),
+        "evidence_diagnostics_sha256": detailed.get("evidence_diagnostics_sha256"),
         "evidence_lineage": lineage if isinstance(lineage, dict) else {},
         "result_hash": detailed.get("result_hash") or result_hash(detailed),
         "run_id": detailed.get("run_id"),
@@ -137,6 +235,8 @@ def result_hash(payload: Mapping[str, Any]) -> str:
         "unknown_by_cause": payload.get("unknown_by_cause") or {},
         "unknown_count": payload.get("unknown_count"),
     }
+    if "evidence_diagnostics_sha256" in payload:
+        identity["evidence_diagnostics_sha256"] = payload["evidence_diagnostics_sha256"]
     return digest_payload(identity)
 
 

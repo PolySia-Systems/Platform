@@ -30,6 +30,9 @@ from polysia.backtesting.replay_report import (
     COMPACT_STDOUT_LIMIT,
     compact_replay_payload,
     detailed_replay_payload,
+    digest_payload,
+    result_hash,
+    wallet_evidence_diagnostics,
 )
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.deployment.research_experiment_bundle import finalize_research_experiment
@@ -764,6 +767,16 @@ class ResearchExperimentRunner:
             expected_database_sha256=bundle.sha256,
         ) as replica:
             experiment = replica.load_experiment(run_id)
+            health = _read_json(workspace.health_path)
+            evidence_diagnostics = wallet_evidence_diagnostics(
+                replica,
+                run_id=run_id,
+                selected_aliases=tuple(_strings(
+                    _mapping(manifest.get("followed_wallet_selection")).get("aliases")
+                )),
+                replay=replay,
+                source_health=_mapping(_mapping(health).get("source_health")),
+            )
         if experiment is None:
             raise ResearchRunnerError("finalized experiment record is missing")
         detailed = detailed_replay_payload(
@@ -773,6 +786,9 @@ class ResearchExperimentRunner:
             source_database_sha256=bundle.sha256,
             include_decision_rows=False,
         )
+        detailed["evidence_diagnostics"] = evidence_diagnostics
+        detailed["evidence_diagnostics_sha256"] = digest_payload(evidence_diagnostics)
+        detailed["result_hash"] = result_hash(detailed)
         compact = compact_replay_payload(detailed)
         artifacts = _mapping(manifest.get("artifacts"))
         artifacts["bundle"] = str(bundle.path)
@@ -791,6 +807,8 @@ class ResearchExperimentRunner:
             "bundle_outcome": bundle.outcome,
             "bundle_verified": bundle.verified,
             "compact": compact,
+            "evidence_diagnostics": evidence_diagnostics,
+            "evidence_diagnostics_sha256": detailed["evidence_diagnostics_sha256"],
             "run_id": run_id,
         }
         _atomic_json(workspace.result_path, result)
@@ -1278,6 +1296,7 @@ def _compact_result(
         "bundle_outcome": result.get("bundle_outcome"),
         "bundle_sha256": _mapping(manifest.get("artifacts")).get("bundle_sha256"),
         "bundle_verified": result.get("bundle_verified"),
+        "evidence_diagnostics_sha256": result.get("evidence_diagnostics_sha256"),
         "command": "prospective-run",
         "finalization_code_sha": manifest.get("finalization_code_sha"),
         "live_trading_enabled": False,

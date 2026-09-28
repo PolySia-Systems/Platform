@@ -95,3 +95,16 @@ snapshot, and never replaces Shadow's ledger or historical replay contract.
 Schema v5–v7 files migrate additively; older binaries cannot read v8, so
 rollback after migration requires the verified pre-upgrade backup and an
 explicit decision about post-upgrade evidence.
+
+## Matched policy verification (2026-09-28)
+
+CURRENT opportunity payload v2 adds the frozen lifecycle, exposure permission,
+pool class, and executable book trading rules needed to reconstruct the exact
+production Shadow policy. A read-only verifier reuses the production event
+application function from zero opening capital, replays wallet and follower
+portfolios across polls, and compares evaluations, ledger deltas, fees, partial
+fills, final balances, and verified terminal settlements. A mismatch is an
+explicit report blocker. Payload v1 remains readable for separate prospective
+analysis, but lacks policy inputs for matched-ledger verification and therefore
+reports `UNKNOWN`. The Research prospective Control and Target policies remain
+distinct counterfactuals and are not relabeled as the Shadow ledger.

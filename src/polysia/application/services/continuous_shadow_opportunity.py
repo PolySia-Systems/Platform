@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 
 from polysia.domain.copytrading import LeaderTradeAction, LeaderTradeEvent
+from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 
 
@@ -19,6 +20,9 @@ def opportunity_payload(
     config: dict[str, object],
     market: MarketDetails | None,
     book: MarketOrderBookSnapshot | None,
+    pool_class: str,
+    lifecycle: ContinuousShadowLifecycle,
+    exposure_increase_allowed: bool,
 ) -> dict[str, object]:
     """Capture source, admission and decision facts before ledger publication."""
 
@@ -38,6 +42,7 @@ def opportunity_payload(
     fee = market.fee_schedule if market_bound and market is not None else None
     levels = None
     bids = None
+    asks = None
     if book is not None and market_bound:
         side = book.asks if event.trade_action is LeaderTradeAction.BUY else book.bids
         levels = [
@@ -48,9 +53,13 @@ def opportunity_payload(
             {"price": format(level.price, "f"), "size": format(level.size, "f")}
             for level in book.bids
         ]
+        asks = [
+            {"price": format(level.price, "f"), "size": format(level.size, "f")}
+            for level in book.asks
+        ]
     encoded_config = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return {
-        "version": "shadow-opportunity-v1",
+        "version": "shadow-opportunity-v2",
         "event_id": event.event_id,
         "source_id": event.source_id,
         "wallet_id": event.leader_id,
@@ -67,12 +76,20 @@ def opportunity_payload(
         "config_digest": hashlib.sha256(encoded_config.encode()).hexdigest(),
         "code_sha": config.get("code_sha"),
         "policy_version": config["policy_version"],
+        "pool_class": pool_class,
+        "lifecycle_at_decision": lifecycle.value,
+        "exposure_increase_allowed": exposure_increase_allowed,
         "cost_model_version": config["cost_model_version"],
         "maximum_quote_age_ms": config["maximum_quote_age_ms"],
         "book_at": None if book is None else book.timestamp.isoformat(),
         "book_hash": None if book is None else book.book_hash,
+        "book_minimum_order_size": (
+            None if book is None else format(book.minimum_order_size, "f")
+        ),
+        "book_tick_size": None if book is None else format(book.tick_size, "f"),
         "book_levels": levels,
         "book_bids": bids,
+        "book_asks": asks,
         "market_token_binding": "VERIFIED" if market_bound else "UNKNOWN",
         "fee_enabled": None if fee is None else fee.enabled,
         "fee_rate": None if fee is None or fee.rate is None else format(fee.rate, "f"),

@@ -180,4 +180,5 @@ def apply_classification(
         source_event_id=candidate.source_event_id,
         related_evidence_id=related,
         run_id=candidate.run_id,
+        admission_time=candidate.admission_time,
     )

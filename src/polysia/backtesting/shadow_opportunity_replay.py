@@ -47,7 +47,8 @@ def replay_shadow_opportunities(
             price=Decimal(str(row["price"])),
             size=Decimal(str(row["size"])),
             source_at=source_at,
-            observed_at=decided_at,
+            observed_at=first_at,
+            admission_at=admitted_at,
             wallet=str(row["wallet_id"]),
             related=None,
             provenance={
@@ -177,7 +178,16 @@ def replay_shadow_opportunities(
         "report": report.to_dict(),
         "opportunity_count": len(events),
         "excluded_execution_evidence": reasons,
-        "evidence_version": "shadow-opportunity-v1",
+        "evidence_version": (
+            str(rows[0].get("version", "shadow-opportunity-v1"))
+            if rows and all(
+                row.get("version", "shadow-opportunity-v1")
+                == rows[0].get("version", "shadow-opportunity-v1") for row in rows
+            ) else "mixed_or_empty"
+        ),
+        "evidence_versions": sorted({
+            str(row.get("version", "shadow-opportunity-v1")) for row in rows
+        }),
         "comparison": "separate_prospective_policies_not_shadow_ledger_parity",
     }
 
@@ -199,6 +209,7 @@ def _event(
     provenance: dict[str, object],
     source_event_id: str | None,
     experiment_id: str,
+    admission_at: datetime | None = None,
 ) -> CanonicalResearchEvent:
     return CanonicalResearchEvent(
         evidence_id=evidence_id,
@@ -213,6 +224,7 @@ def _event(
         size=size,
         source_time=source_at,
         observed_time=observed_at,
+        admission_time=admission_at,
         receive_monotonic_ns=0,
         normalize_monotonic_ns=0,
         attribution_status=(

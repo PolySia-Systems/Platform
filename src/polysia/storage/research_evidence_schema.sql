@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS research_events (
     size TEXT,
     source_time_utc TEXT,
     observed_time_utc TEXT NOT NULL,
+    admission_time_utc TEXT,
     receive_monotonic_ns INTEGER NOT NULL,
     normalize_monotonic_ns INTEGER NOT NULL,
     attribution_status TEXT NOT NULL,
