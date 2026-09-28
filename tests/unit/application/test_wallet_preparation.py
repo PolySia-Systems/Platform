@@ -126,3 +126,25 @@ def test_missing_capacity_and_incomplete_screening_do_not_claim_ready() -> None:
         assert "incomplete" in str(error)
     else:
         raise AssertionError("partial screening cannot be presented as complete")
+
+
+def test_bounded_partial_screening_reports_unread_alpha_and_next_action() -> None:
+    snapshot = _snapshot()
+    counts, evidence = _activity()
+    evidence["rows"] = list(evidence["rows"])[:3]
+    counts = {key: counts[key] for key in ("wallet-1", "wallet-2", "wallet-3")}
+    base = ContinuousShadowConfig(
+        runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+        wallet_count=5, selection_policy="shadow-alpha-ranked-v2",
+    )
+    policy = WalletPreparationConfig(
+        mode="exact", minimum_wallets=5, maximum_wallets=5,
+        candidate_scan_limit=3,
+    )
+    result = choose_prepared_cohort(
+        policy, snapshot, counts, evidence, base, observed_at=NOW,
+    )
+    assert result["status"] == "INSUFFICIENT_ACTIVE_CANDIDATES"
+    assert result["screening_complete"] is False
+    assert result["screening"]["unread_alpha_wallet_ids"] == ["wallet-4", "wallet-5"]
+    assert result["next_action"] == "increase_candidate_scan_limit_within_pool"

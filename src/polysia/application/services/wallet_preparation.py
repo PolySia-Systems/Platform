@@ -156,7 +156,9 @@ def choose_prepared_cohort(
             else "INSUFFICIENT_ACTIVE_CANDIDATES"
         )
         next_action = (
-            "retry_market_evidence" if status in {"UNAVAILABLE_FEE", "UNAVAILABLE_DEPTH"}
+            "increase_candidate_scan_limit_within_pool" if not
+            screening["screening_complete"]
+            else "retry_market_evidence" if status in {"UNAVAILABLE_FEE", "UNAVAILABLE_DEPTH"}
             else "widen_pool_or_wait_for_activity"
         )
         return {
@@ -241,6 +243,8 @@ def choose_prepared_cohort(
         "proposed_runtime_spec": {"source_mode": "per-wallet-v2", **runtime.to_dict()},
         "next_action": (
             "queue_for_safe_boundary" if status == "PREPARED"
+            else "increase_candidate_scan_limit_within_pool" if
+            status == "LOW_OBSERVABLE_RATE" and not screening["screening_complete"]
             else "widen_pool_or_review_target" if status == "LOW_OBSERVABLE_RATE"
             else "reduce_count_or_measure_expansion" if status == "BLOCKED_CAPACITY_ENVELOPE"
             else "measure_full_workload_capacity"
