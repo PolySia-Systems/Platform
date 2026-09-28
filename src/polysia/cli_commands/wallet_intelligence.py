@@ -864,6 +864,8 @@ def portfolio_prepare(
             source_adapter.source_id
         )
         observed = datetime.now(UTC)
+        if snapshot.published_at > observed:
+            raise ValueError("candidate snapshot publication time is in the future")
         if observed - snapshot.published_at > timedelta(hours=36):
             raise ValueError("candidate snapshot is stale after preparation")
         repository = ContinuousShadowRepository(database)
@@ -892,15 +894,27 @@ def portfolio_prepare(
             cached = prior_cached
             cached_at = cached.get("observed_at")
             expires_at = cached.get("expires_at")
-            if (
+            cache_identity_matches = (
                 cached.get("cache_identity") == cache_identity
                 and cached.get("status") == "PREPARED"
-                and isinstance(cached_at, str)
-                and isinstance(expires_at, str)
-                and datetime.fromisoformat(expires_at) > observed
-                and timedelta(0) <= observed - datetime.fromisoformat(cached_at)
-                <= timedelta(minutes=30)
+            )
+            cache_fresh = False
+            if cache_identity_matches and isinstance(cached_at, str) and isinstance(
+                expires_at, str
             ):
+                try:
+                    cached_observed = datetime.fromisoformat(cached_at)
+                    cached_expiry = datetime.fromisoformat(expires_at)
+                    cache_fresh = (
+                        cached_observed.utcoffset() == timedelta(0)
+                        and cached_expiry.utcoffset() == timedelta(0)
+                        and cached_expiry > observed
+                        and timedelta(0) <= observed - cached_observed
+                        <= timedelta(minutes=30)
+                    )
+                except ValueError:
+                    cache_fresh = False
+            if cache_fresh:
                 write_wallet_intelligence_health_payload(cached, output)
                 typer.echo(json.dumps(cached, sort_keys=True))
                 return

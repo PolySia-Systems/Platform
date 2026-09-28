@@ -139,10 +139,16 @@ def test_preparation_reuses_fresh_artifact_and_replaces_it_on_failure(
     second = runner.invoke(app, args)
     assert second.exit_code == 0, second.output
     assert calls == [1]
+    malformed_time = json.loads(output.read_text(encoding="utf-8"))
+    malformed_time["observed_at"] = "not-a-timestamp"
+    output.write_text(json.dumps(malformed_time), encoding="utf-8")
+    recovered_time = runner.invoke(app, args)
+    assert recovered_time.exit_code == 0, recovered_time.output
+    assert calls == [2]
     output.write_text("broken JSON", encoding="utf-8")
     recovered = runner.invoke(app, args)
     assert recovered.exit_code == 0, recovered.output
-    assert calls == [2]
+    assert calls == [3]
     fail[0] = True
     output.write_text("broken JSON", encoding="utf-8")
     blocked = runner.invoke(app, args)
@@ -164,6 +170,22 @@ def test_preparation_reuses_fresh_artifact_and_replaces_it_on_failure(
         assert json.loads(output.read_text(encoding="utf-8"))["status"] == "REQUESTED"
     finally:
         lease_store.release_lease(lease)
+    future = ContinuousSelectionSnapshot.create(
+        source_id="polycop", selection_run_id="stage3-future",
+        source_snapshot_id="source", feature_set_version="copyability-v0.1",
+        policy_id="copyability-selection", policy_version="v0.1",
+        ranking_version="ranking-v1", published_at=now + timedelta(days=1),
+        candidates=(wallet,),
+    )
+
+    class FutureCandidates(Candidates):
+        def current_snapshot(self, _source_id: str) -> ContinuousSelectionSnapshot:
+            return future
+
+    monkeypatch.setattr(wallet_intelligence, "DynamicShadowRepository", FutureCandidates)
+    future_result = runner.invoke(app, args)
+    assert future_result.exit_code == 1
+    assert "future" in json.loads(output.read_text(encoding="utf-8"))["reason"]
 
 
 @pytest.mark.parametrize("wallet_count", [1, 3])
