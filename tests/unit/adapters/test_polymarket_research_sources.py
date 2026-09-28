@@ -1512,6 +1512,77 @@ async def test_market_stream_rotates_subscription_to_current_wallet_tokens() -> 
 
 
 @pytest.mark.asyncio
+async def test_market_stream_waits_for_discovered_tokens_and_stops_when_empty() -> None:
+    clock = AdvancingClock()
+    streams: list[RecordingMarketStream] = []
+    discovered = iter(({}, {"token-1": "market-1"}, {}))
+
+    def stream_factory(
+        bus: object,
+        token_ids: tuple[str, ...],
+        stale_after: timedelta,
+    ) -> RecordingMarketStream:
+        del bus, stale_after
+        assert token_ids
+        stream = RecordingMarketStream(token_ids)
+        streams.append(stream)
+        return stream
+
+    async def discover() -> MarketDiscoverySnapshot:
+        return MarketDiscoverySnapshot(token_markets=next(discovered), fee_schedules={})
+
+    source = OfficialMarketStreamSource(
+        token_ids=(),
+        clock=clock,
+        sleep=clock.sleep,
+        market_discovery=discover,
+        discovery_interval_seconds=2,
+        market_stream_factory=stream_factory,
+    )
+
+    events = [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=6),
+        )
+    ]
+
+    assert events == []
+    assert [stream.token_ids for stream in streams] == [("token-1",)]
+    assert source.subscription_update_count == 2
+    assert source.reconnect_count == 0
+    assert source.health_snapshot()["availability"] == "not_started"
+
+
+@pytest.mark.asyncio
+async def test_market_stream_with_no_discovered_tokens_remains_unstarted() -> None:
+    clock = AdvancingClock()
+
+    async def discover() -> MarketDiscoverySnapshot:
+        return MarketDiscoverySnapshot(token_markets={}, fee_schedules={})
+
+    source = OfficialMarketStreamSource(
+        token_ids=(),
+        clock=clock,
+        sleep=clock.sleep,
+        market_discovery=discover,
+        discovery_interval_seconds=1,
+    )
+
+    assert [
+        event
+        async for event in source.run(
+            run_id="r1",
+            deadline=OBSERVED + timedelta(seconds=3),
+        )
+    ] == []
+    assert source.subscription_update_count == 0
+    assert source.reconnect_count == 0
+    assert source.health_snapshot()["availability"] == "not_started"
+
+
+@pytest.mark.asyncio
 async def test_wallet_source_uses_recovery_probe_then_resumes_discovery() -> None:
     clock = AdvancingClock()
     transport = RecoveryTransport(clock)

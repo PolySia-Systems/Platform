@@ -191,8 +191,8 @@ source budgets, cadence, and selection policy through `workload_digest`.
 capacity. Existing v1/v2 Specs retain their original three-wallet admission.
 The candidate-only `research prospective-run capacity-probe --wallet-count N
 --code-sha "$POLYSIA_IMAGE_TAG" --duration-seconds 90` is an opt-in public
-DATA_ONLY measurement; it does not produce a PASS capacity record. Review
-The probe's preflight plus collection has a hard timeout of the requested
+DATA_ONLY measurement; it does not produce a PASS capacity record. The probe's
+preflight plus collection has a hard timeout of the requested
 duration plus 180 seconds; timeout remains an incomplete candidate. Review
 aggregate shared-IP traffic, all PolySia consumers, endpoint request/retry
 volume, queue/decision delay, memory, CPU, SQLite and log growth, and remaining
@@ -200,7 +200,9 @@ exit/settlement work before recording passing capacity. Stop on throttling,
 timeouts, sustained backlog, resource pressure, or incomplete coverage. Use
 current observed endpoint limits with recovery headroom. The unkeyed evidence
 digest detects accidental edits but does not authenticate an operator or prove
-that a host measurement occurred.
+that a host measurement occurred. An empty followed-token set leaves the
+public market stream unstarted until discovery finds tokens; it is missing
+market evidence, not proof of zero market activity.
 
 ```bash
 docker compose --profile research run --no-deps research-runner \
