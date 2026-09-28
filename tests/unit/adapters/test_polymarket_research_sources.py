@@ -14,6 +14,8 @@ from polysia.adapters.polymarket.research_sources import (
     DATA_API_V2_ACTIVITY_PATH,
     DATA_API_V2_TRADES_PATH,
     REST_ACTIVITY_CANDIDATE,
+    REST_TRADES_CANDIDATE,
+    TRADES_SOURCE_ID,
     USER_CHANNEL_CANDIDATE,
     DataApiGlobalTradePollSource,
     DataApiWalletPollSource,
@@ -477,7 +479,67 @@ async def test_wallet_poll_emits_page_two_ties_once_in_timestamp_order() -> None
         OBSERVED + timedelta(seconds=1),
     ]
     assert len({event.evidence_id for event in events}) == 3
+    assert all(event.admission_time is not None for event in events)
+    assert all(event.admission_time >= event.observed_time for event in events)
     assert source.health_snapshot()["last_request_outcome"] == "success_events"
+    stages = source.health_snapshot()["wallet_diagnostics"][public_wallet_alias(WALLET)]
+    assert stages["response_pages"] == 2
+    assert stages["parsed_rows"] == 4
+    assert stages["admitted_occurrences"] == 3
+
+
+@pytest.mark.asyncio
+async def test_wallet_source_counts_malformed_trade_as_incomplete() -> None:
+    alias = public_wallet_alias(WALLET)
+    row = {**_trade("wrong"), "side": "HOLD"}
+    clock = AdvancingClock()
+    source = DataApiWalletPollSource(
+        REST_TRADES_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=TRADES_SOURCE_ID,
+        aliases={alias: WALLET},
+        transport=CursorTransport([_page([row], None)]),
+        clock=clock,
+        sleep=clock.sleep,
+        poll_interval_seconds=1,
+    )
+    events = [
+        event async for event in source.run(
+            run_id="identity-rejection", deadline=OBSERVED + timedelta(seconds=1)
+        )
+    ]
+    assert len(events) == 1
+    assert events[0].event_kind is ObservationKind.CONTROL
+    stages = source.health_snapshot()["wallet_diagnostics"][alias]
+    assert stages["parsed_rows"] == 1
+    assert stages["eligible_occurrences"] == 0
+    assert stages["incomplete_windows"] == 1
+    assert stages["admitted_occurrences"] == 0
+
+
+@pytest.mark.asyncio
+async def test_wallet_source_counts_bootstrap_filter_separately_from_empty() -> None:
+    alias = public_wallet_alias(WALLET)
+    clock = AdvancingClock()
+    source = DataApiWalletPollSource(
+        REST_TRADES_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=TRADES_SOURCE_ID,
+        aliases={alias: WALLET},
+        transport=CursorTransport([_page([_trade("old", int(OBSERVED.timestamp()) - 1)], None)]),
+        clock=clock, sleep=clock.sleep, poll_interval_seconds=1,
+    )
+    events = [
+        event async for event in source.run(
+            run_id="filtered", deadline=OBSERVED + timedelta(seconds=1)
+        )
+    ]
+    assert events == []
+    stages = source.health_snapshot()["wallet_diagnostics"][alias]
+    assert stages["parsed_rows"] == 1
+    assert stages["complete_windows"] == 1
+    assert stages["empty_windows"] == 0
+    assert stages["last_outcome"] == "success_filtered"
 
 
 @pytest.mark.asyncio
@@ -496,6 +558,12 @@ async def test_wallet_poll_later_page_failure_keeps_window_incomplete(
         sleep=clock.sleep,
         poll_interval_seconds=1,
     )
+    store = ResearchEvidenceStore(tmp_path / "evidence.sqlite3")
+    store.initialize()
+    source.set_pending_observer(store.capture_pending_observations)
+    source.set_progress_store(
+        store.completed_source_windows, store.record_completed_source_windows
+    )
     events = [
         event async for event in source.run(run_id="r1", deadline=OBSERVED + timedelta(seconds=1))
     ]
@@ -503,7 +571,42 @@ async def test_wallet_poll_later_page_failure_keeps_window_incomplete(
     assert events[0].event_kind is ObservationKind.CONTROL
     assert source.health_snapshot()["last_successful_request_at"] is None
     assert source.health_snapshot()["last_request_outcome"] == "transient_error"
-    store = ResearchEvidenceStore(tmp_path / "evidence.sqlite3")
+    stages = source.health_snapshot()["wallet_diagnostics"][public_wallet_alias(WALLET)]
+    assert stages["parsed_rows"] == 1
+    assert stages["incomplete_windows"] == 1
+    assert stages["admitted_occurrences"] == 0
+    assert store.completed_source_windows("r1", ACTIVITY_SOURCE_ID) == {}
+    with sqlite3.connect(store.path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM research_pending_observations"
+        ).fetchone() == (1,)
+
+    recovered_clock = AdvancingClock()
+    recovered_clock.now = OBSERVED + timedelta(seconds=2)
+    recovered = DataApiWalletPollSource(
+        REST_ACTIVITY_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=ACTIVITY_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=CursorTransport([_page([_trade("first")], None)]),
+        clock=recovered_clock,
+        sleep=recovered_clock.sleep,
+        poll_interval_seconds=1,
+    )
+    recovered.set_collection_start(OBSERVED)
+    recovered.set_pending_observer(store.capture_pending_observations)
+    recovered.set_progress_store(
+        store.completed_source_windows, store.record_completed_source_windows
+    )
+    admitted = [
+        event async for event in recovered.run(
+            run_id="r1", deadline=OBSERVED + timedelta(seconds=3)
+        )
+    ]
+    assert len(admitted) == 1
+    assert admitted[0].observed_time == OBSERVED
+    assert admitted[0].admission_time == OBSERVED + timedelta(seconds=2)
+
     store.persist_interval(
         ResearchInterval(
             interval_id="window-1",
@@ -518,6 +621,30 @@ async def test_wallet_poll_later_page_failure_keeps_window_incomplete(
     )
     store.persist_event(events[0], interval_id="window-1")
     assert store.watermark(ACTIVITY_SOURCE_ID)[0] is None
+
+
+@pytest.mark.asyncio
+async def test_wallet_completed_boundary_waits_for_consumed_batch(tmp_path: Path) -> None:
+    clock = AdvancingClock()
+    source = DataApiWalletPollSource(
+        REST_TRADES_CANDIDATE,
+        path=DATA_API_V2_TRADES_PATH,
+        source_id=TRADES_SOURCE_ID,
+        aliases={public_wallet_alias(WALLET): WALLET},
+        transport=CursorTransport([_page([_trade("one"), _trade("two")], None)]),
+        clock=clock, sleep=clock.sleep, poll_interval_seconds=1,
+    )
+    store = ResearchEvidenceStore(tmp_path / "evidence.sqlite3")
+    store.initialize()
+    source.set_progress_store(
+        store.completed_source_windows, store.record_completed_source_windows
+    )
+    iterator = source.run(run_id="batch", deadline=OBSERVED + timedelta(seconds=1))
+    first = await anext(iterator)
+    assert first.admission_time == OBSERVED
+    assert store.completed_source_windows("batch", TRADES_SOURCE_ID) == {}
+    await iterator.aclose()
+    assert store.completed_source_windows("batch", TRADES_SOURCE_ID) == {}
 
 
 @pytest.mark.asyncio
@@ -614,6 +741,7 @@ async def test_v2_completed_window_resumes_with_overlap_after_restart(tmp_path: 
     ]
     assert len(repeated) == 1
     assert repeated[0].observed_time == OBSERVED
+    assert repeated[0].admission_time == OBSERVED + timedelta(seconds=2)
     assert second_transport.calls[0]["start"] == int((OBSERVED - timedelta(seconds=30)).timestamp())
 
 

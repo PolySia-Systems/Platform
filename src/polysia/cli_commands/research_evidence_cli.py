@@ -43,6 +43,7 @@ from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.research_evidence import ResearchObservationSource
 from polysia.application.services.source_benchmark import SourceBenchmarkReport
 from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot
+from polysia.domain.market.settlement import verified_settlement_prices
 from polysia.storage.research_evidence import ResearchEvidenceStore
 
 _WALLET_RE = re.compile(r"0x[a-fA-F0-9]{40}")
@@ -354,15 +355,9 @@ async def build_persistent_sources_from_aliases(
         settlements: dict[str, Decimal] = {}
         for token, condition in token_markets.items():
             market = markets.get(condition)
-            if market is None:
-                continue
-            for outcome in market.outcomes:
-                if outcome.token_id == token and outcome.price in {
-                    Decimal("0"),
-                    Decimal("1"),
-                }:
-                    settlements[token] = outcome.price
-                    break
+            verified = verified_settlement_prices(market)
+            if verified is not None and token in verified:
+                settlements[token] = verified[token]
         return settlements
 
     snapshot = await discovery.refresh() if discovery is not None else None

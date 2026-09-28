@@ -31,7 +31,7 @@ from polysia.domain.research_evidence.models import (
     payload_digest,
 )
 
-REPLAY_ENGINE_VERSION = "same-observation-replay-v1"
+REPLAY_ENGINE_VERSION = "same-observation-replay-v2"
 MARKOUT_HORIZONS: tuple[timedelta, ...] = (
     timedelta(seconds=5),
     timedelta(seconds=30),
@@ -57,6 +57,7 @@ class MarkoutTimeBasis(StrEnum):
 class ProspectiveObservation:
     evidence_id: str
     observed_time: datetime
+    admission_time: datetime | None
     source_time: datetime | None
     market_reference: str
     outcome_reference: str
@@ -100,6 +101,9 @@ class ObservationEvaluation:
     unknown_reason: str | None
     control_decision: str
     target_decision: str
+    source_time: datetime | None = None
+    first_observed_time: datetime | None = None
+    admission_time: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -224,6 +228,8 @@ class _ReplaySnapshotIndex:
     ) -> tuple[ExecutionEvidence | None, str | None, bool, datetime]:
         if max_age.total_seconds() < 0 or acquisition_max_delay.total_seconds() < 0:
             raise ValueError("execution evidence time bounds must not be negative")
+        if observation.admission_time is None:
+            return None, "missing_admission_time", False, observation.observed_time
         timeline = self._executions.get(
             (observation.outcome_reference, observation.side)
         )
@@ -235,18 +241,18 @@ class _ReplaySnapshotIndex:
                 None,
                 "missing_quote" if mapped else "missing_market_token_mapping",
                 mapped,
-                observation.observed_time,
+                observation.admission_time,
             )
-        cutoff = observation.observed_time - max_age
-        future_cutoff = observation.observed_time + acquisition_max_delay
+        cutoff = observation.admission_time - max_age
+        future_cutoff = observation.admission_time + acquisition_max_delay
         markets = self._execution_markets.get(
             (observation.outcome_reference, observation.side), frozenset()
         )
         if observation.market_reference not in markets:
-            return None, "missing_market_token_mapping", False, observation.observed_time
+            return None, "missing_market_token_mapping", False, observation.admission_time
         first_failure: tuple[str, datetime] | None = None
         left = bisect_left(timeline.times, cutoff)
-        mid = bisect_right(timeline.times, observation.observed_time)
+        mid = bisect_right(timeline.times, observation.admission_time)
         future_right = bisect_right(timeline.times, future_cutoff)
         for index in range(mid - 1, left - 1, -1):
             snapshot = timeline.events[index]
@@ -285,8 +291,8 @@ class _ReplaySnapshotIndex:
             for index in range(left)
         )
         if stale:
-            return None, "stale_quote", True, observation.observed_time
-        return None, "missing_quote", True, observation.observed_time
+            return None, "stale_quote", True, observation.admission_time
+        return None, "missing_quote", True, observation.admission_time
 
 
 def _execution_from_snapshot(
@@ -295,7 +301,10 @@ def _execution_from_snapshot(
     observation: ProspectiveObservation,
     entry_budget: Decimal,
 ) -> tuple[ExecutionEvidence | None, str | None, datetime]:
-    decision_time = max(observation.observed_time, snapshot.observed_time)
+    decision_time = max(
+        observation.admission_time or observation.observed_time,
+        snapshot.observed_time,
+    )
     if snapshot.provenance.get("execution_evidence_version") == "order-book-depth-v1":
         evidence, reason = depth_execution_from_snapshot(
             snapshot,
@@ -344,6 +353,7 @@ def observation_from_event(event: CanonicalResearchEvent) -> ProspectiveObservat
     return ProspectiveObservation(
         evidence_id=event.evidence_id,
         observed_time=event.observed_time,
+        admission_time=event.admission_time,
         source_time=event.source_time,
         market_reference=event.market_reference,
         outcome_reference=event.outcome_reference,
@@ -406,11 +416,13 @@ def lookup_execution_evidence(
     observation: ProspectiveObservation,
     max_age: timedelta = EXECUTION_EVIDENCE_MAX_AGE,
 ) -> ExecutionEvidence | None:
-    """Return the latest explicit, side-aware quote known before observation."""
+    """Return the latest explicit, side-aware quote usable at admission."""
 
     if max_age.total_seconds() < 0:
         raise ValueError("execution evidence max_age must not be negative")
-    cutoff = observation.observed_time - max_age
+    if observation.admission_time is None:
+        return None
+    cutoff = observation.admission_time - max_age
     candidates: list[CanonicalResearchEvent] = []
     for snapshot in snapshots:
         fee = _nonnegative_decimal(snapshot.provenance.get("recorded_fee"))
@@ -425,7 +437,7 @@ def lookup_execution_evidence(
             and snapshot.size is not None
             and snapshot.provenance.get("execution_evidence") is True
             and fee is not None
-            and cutoff <= snapshot.observed_time <= observation.observed_time
+            and cutoff <= snapshot.observed_time <= observation.admission_time
         ):
             candidates.append(snapshot)
     if not candidates:
@@ -467,7 +479,10 @@ def replay_same_observations(
         ordered_events = tuple(
             sorted(
                 events,
-                key=lambda item: (item.observed_time, item.evidence_id),
+                key=lambda item: (
+                    item.admission_time or item.observed_time,
+                    item.evidence_id,
+                ),
             )
         )
     snapshot_index = _ReplaySnapshotIndex(tuple(snapshots))
@@ -543,6 +558,9 @@ def replay_same_observations(
                     unknown_reason=reason,
                     control_decision=control_decision.value,
                     target_decision=str(target_decision),
+                    source_time=observation.source_time,
+                    first_observed_time=observation.observed_time,
+                    admission_time=observation.admission_time,
                 )
             )
             _append_markouts(
@@ -670,6 +688,9 @@ def replay_same_observations(
                 unknown_reason=None,
                 control_decision=control_decision.value,
                 target_decision=str(target_decision),
+                source_time=observation.source_time,
+                first_observed_time=observation.observed_time,
+                admission_time=observation.admission_time,
             )
         )
 

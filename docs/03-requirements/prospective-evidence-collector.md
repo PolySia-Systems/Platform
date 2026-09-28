@@ -37,16 +37,19 @@ sources stay `UNAVAILABLE`.
 
 ## Canonical event
 
-Schema `research-evidence-v2` separates the source trade identity from each
+Schema `research-evidence-v3` separates the source trade identity from each
 wallet-attributed observation identity. Two wallets observing the same source
 trade therefore remain distinct evidence while retaining a shared
 `source_event_id`. The schema also preserves market and outcome references,
-side, price, size, source time, observed time, hashed leader alias,
+side, price, size, source time, first-observed time, coverage admission time,
+hashed leader alias,
 confirmation/reversion, classification, and sanitized provenance. UTC wall
-clocks are persisted. Durations use monotonic clocks. Existing v1 stores are
-migrated additively; no research evidence is deleted or relabeled. Legacy v1
-rows remain readable but cannot recover wallet observations that were already
-collapsed before migration, so new comparative research must use v2 capture.
+clocks are persisted. Durations use monotonic clocks. Existing v1/v2 stores are
+migrated additively for new writes; immutable old bundles remain read-only.
+Legacy rows without admission time remain readable but corrected economic
+reanalysis must mark their action time `UNKNOWN`. Missing historical admission
+time is never inferred from first observation. Legacy v1 rows also cannot
+recover wallet observations collapsed before the v2 migration.
 
 Classifications: `ACCEPTED`, `DUPLICATE`, `LATE`, `CONFLICTING`, `REVERTED`,
 `UNATTRIBUTABLE`, `INCOMPLETE`, `GAP`, `OVERLOAD`.
@@ -69,6 +72,11 @@ The collector is provider-neutral. Venue translation stays in adapters.
 - Empty windows keep an independent identity and may be `VALID` when collection
   completed with a successful, quiet required-source request
 - A quiet wallet is not a failed source
+- Per-wallet source health includes bounded response/page, parsed-row,
+  complete/empty/incomplete-window, eligible, admitted, and rejected counts.
+  Source counts describe process-window occurrences; durable counts describe
+  unique stored evidence. A later-page failure does not advance any selected
+  wallet's completed source boundary.
 - Service health, source availability, and research-data eligibility are
   independent. An unresolved required-source failure makes the affected
   window ineligible and therefore not `VALID`; evidence from healthy optional
@@ -185,12 +193,22 @@ Raw databases stay under `artifacts/` or `/var/lib/polysia/data/` and are not
 committed. The Compose `research` profile runs `research-collector`. Official
 comparison windows are 10–20 minutes. Ordinary pytest does not use the network.
 
+The Runner's saved `result.json` includes `evidence_diagnostics` for every
+frozen selected alias, including zero-event wallets. It joins source process
+counts, durable unique accepted/rejected evidence, unresolved pending
+observations, completed source boundaries, and per-wallet economic UNKNOWN
+causes. A successful empty read is scoped to its recorded bounded window;
+without that coverage, the zero-event cause remains `UNKNOWN`. The compact CLI
+result carries the diagnostics SHA-256, while the full diagnostics remain in
+the saved file.
+
 ## Replay
 
 Current Control and Target Exposure v1 consume the same accepted observations.
-Replay is chronological by observed time and keeps independent episode state
-for each Portfolio x Market x Outcome. Admission requires an explicit,
-side-aware executable quote observed no later than the wallet observation,
+Replay is chronological by coverage admission time and keeps independent episode
+state for each Portfolio x Market x Outcome. Source time, first observation,
+coverage admission, and economic decision remain distinct. Admission requires
+an explicit, side-aware executable quote observed no later than the decision,
 with available quantity and recorded fee. A leader trade price is never
 substituted for follower execution evidence. Missing attribution, books,
 prices, fees, marks, or gaps remain `UNKNOWN`.
@@ -243,7 +261,7 @@ limit. Fee schedules are cached and fetched only for newly observed tokens.
 
 Bootstrap rows whose source time predates the run are discovery context, not
 prospective copy observations, and are not emitted into the economic sample.
-When no causal quote is already available at Wallet observation time, replay may
+When no causal quote is already available at Wallet admission time, replay may
 use the first execution snapshot acquired within the frozen 30-second bound;
 the decision clock then advances to that snapshot's observed time. This is a
 measured acquisition delay, not future information. Follower markout horizons
@@ -256,7 +274,8 @@ most). When a requested book no longer exists because its market resolved
 during the experiment, the collector records the official closed-market
 settlement price instead. A settlement is accepted only when the exact token
 maps to a closed market and its authoritative outcome price is exactly zero or
-one. The capture is stored in the same immutable run before close so open
+one, and the complete market outcome set has one winning outcome. The capture
+is stored in the same immutable run before close so open
 positions can be valued causally at the frozen 30-second freshness threshold.
 Missing, capped, or failed terminal evidence remains explicit and produces
 `INSUFFICIENT_DATA`; the threshold is never relaxed.

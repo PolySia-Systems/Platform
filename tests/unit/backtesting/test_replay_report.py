@@ -1,12 +1,39 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 
+from polysia.backtesting.prospective_replay import replay_recorded_experiment
 from polysia.backtesting.replay_report import (
     compact_replay_payload,
     compare_replay_reports,
     result_hash,
+    wallet_evidence_diagnostics,
 )
+from polysia.storage.research_evidence import ResearchEvidenceStore
+
+
+def test_wallet_diagnostics_preserve_zero_wallet_and_incomplete_source(tmp_path: Path) -> None:
+    store = ResearchEvidenceStore(tmp_path / "evidence.sqlite3")
+    store.initialize()
+    store.record_completed_source_windows(
+        "run", "rest_trades", {"quiet": datetime(2026, 1, 1, tzinfo=UTC)}
+    )
+    replay = replay_recorded_experiment(store, run_id="run")
+    report = wallet_evidence_diagnostics(
+        store, run_id="run", selected_aliases=("quiet", "incomplete"),
+        replay=replay,
+        source_health={"rest_trades": {"wallet_diagnostics": {
+            "quiet": {"last_outcome": "success_empty", "incomplete_windows": 0},
+            "incomplete": {"last_outcome": "incomplete_window", "incomplete_windows": 1},
+        }}},
+    )
+    wallets = report["wallets"]
+    assert set(wallets) == {"quiet", "incomplete"}
+    assert "confirmed_empty_within_recorded_coverage" in wallets["quiet"]["reasons"]
+    assert "source_window_incomplete" in wallets["incomplete"]["reasons"]
+    assert "no_durable_wallet_events_cause_unknown" in wallets["incomplete"]["reasons"]
 
 
 def _report(

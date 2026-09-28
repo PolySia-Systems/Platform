@@ -30,6 +30,7 @@ def _wallet(
     *,
     run_id: str,
     observed: datetime,
+    admitted: datetime | None = None,
     leader_alias: str = "pub-one",
 ) -> CanonicalResearchEvent:
     return CanonicalResearchEvent(
@@ -45,6 +46,7 @@ def _wallet(
         size=Decimal("2"),
         source_time=observed,
         observed_time=observed,
+        admission_time=admitted or observed,
         receive_monotonic_ns=1,
         normalize_monotonic_ns=2,
         attribution_status=AttributionStatus.WALLET_ALIASED,
@@ -126,6 +128,37 @@ def test_iter_events_is_chunked_and_matches_load_events(
     assert EVENT_FETCH_CHUNK == 256
     with pytest.raises(ValueError, match="chunk_size"):
         tuple(store.iter_events(run_id="chunk-run", chunk_size=0))
+
+
+def test_stored_wallet_replay_order_uses_admission_time(tmp_path: Path) -> None:
+    run_id = "admission-order"
+    store = ResearchEvidenceStore(tmp_path / "research-evidence.sqlite3")
+    store.start_or_resume_experiment(
+        requested_run_id=run_id,
+        duration=timedelta(hours=1),
+        max_events=100,
+        max_bytes=10_000_000,
+        code_sha="a" * 40,
+        configuration_digest="config",
+    )
+    collector = ProspectiveCollector(store, run_id=run_id)
+    collector.ingest(_wallet(
+        "seen-first", run_id=run_id, observed=OBSERVED,
+        admitted=OBSERVED + timedelta(seconds=5),
+    ))
+    collector.ingest(_wallet(
+        "admitted-first", run_id=run_id,
+        observed=OBSERVED + timedelta(seconds=2),
+        admitted=OBSERVED + timedelta(seconds=3),
+    ))
+    collector.close_window(complete=True)
+
+    rows = tuple(store.iter_events(
+        run_id=run_id,
+        event_kind=ObservationKind.WALLET_TRADE,
+    ))
+    assert tuple(row.evidence_id for row in rows) == ("admitted-first", "seen-first")
+    assert rows[0].admission_time == OBSERVED + timedelta(seconds=3)
 
 
 def test_snapshot_iteration_does_not_load_wallet_trades(tmp_path: Path) -> None:

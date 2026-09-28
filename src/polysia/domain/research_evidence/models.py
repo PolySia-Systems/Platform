@@ -16,10 +16,15 @@ from decimal import Decimal
 from enum import StrEnum
 
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
-RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v2"
+RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v3"
+PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v2"
 LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION = "research-evidence-v1"
 SUPPORTED_RESEARCH_EVIDENCE_SCHEMA_VERSIONS = frozenset(
-    {LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION, RESEARCH_EVIDENCE_SCHEMA_VERSION}
+    {
+        LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    }
 )
 
 
@@ -127,6 +132,7 @@ class CanonicalResearchEvent:
     source_event_id: str | None = None
     related_evidence_id: str | None = None
     run_id: str = ""
+    admission_time: datetime | None = None
 
     def __post_init__(self) -> None:
         for name in ("evidence_id", "schema_version", "source_id", "payload_digest"):
@@ -135,6 +141,10 @@ class CanonicalResearchEvent:
         if self.schema_version not in SUPPORTED_RESEARCH_EVIDENCE_SCHEMA_VERSIONS:
             raise ValueError("schema_version is not a supported research-evidence version")
         _require_utc("observed_time", self.observed_time)
+        if self.admission_time is not None:
+            _require_utc("admission_time", self.admission_time)
+            if self.admission_time < self.observed_time:
+                raise ValueError("admission_time must not precede observed_time")
         if self.source_time is not None:
             _require_utc("source_time", self.source_time)
         if self.receive_monotonic_ns < 0 or self.normalize_monotonic_ns < 0:

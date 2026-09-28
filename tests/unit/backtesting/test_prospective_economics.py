@@ -57,6 +57,7 @@ def _event(
         size=Decimal(size),
         source_time=observed_at - timedelta(milliseconds=100),
         observed_time=observed_at,
+        admission_time=observed_at if wallet else None,
         receive_monotonic_ns=1,
         normalize_monotonic_ns=2,
         attribution_status=(

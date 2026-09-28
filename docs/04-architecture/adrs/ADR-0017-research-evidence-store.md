@@ -103,6 +103,21 @@ requirement that the WAL file always be zero bytes.
 This does not authorize Live trading, claim Alpha, or select a faster-than-REST
 wallet source when none qualifies.
 
+## Additive admission-time contract (2026-09-28)
+
+CURRENT schema `research-evidence-v3` adds nullable UTC `admission_time_utc`.
+The bounded page walks for every selected wallet finish before accepted
+observations are emitted. The durable completed source boundaries advance only
+after the consumer handles the full emitted batch; persistence failure leaves
+the restart boundary behind for recovery.
+First-observed time remains evidence of receipt; economic replay orders and
+selects quotes at admission time or later. The replay engine is versioned as
+`same-observation-replay-v2`. Old v1/v2 bundles remain immutable and readable;
+missing historical admission time yields `UNKNOWN` under corrected replay.
+The Runner saves per-wallet stage diagnostics separately from the immutable
+bundle, with a digest in its compact result. No research evidence moves into
+the Stage 4B financial store.
+
 ## Alternatives rejected
 
 - Write into Stage 4B financial SQLite: mixes research retention with ledger

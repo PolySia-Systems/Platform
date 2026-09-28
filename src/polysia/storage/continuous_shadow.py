@@ -2283,6 +2283,36 @@ class ContinuousShadowRepository:
                 "SELECT status, COUNT(*) AS count FROM continuous_shadow_poll_runs "
                 "WHERE experiment_id = ? GROUP BY status", (experiment_id,)
             ).fetchall()
+            matched_evaluations = tuple(dict(row) for row in connection.execute(
+                "SELECT e.* FROM continuous_shadow_evaluations e "
+                "WHERE e.experiment_id = ?",
+                (experiment_id,),
+            ))
+            matched_ledger = tuple(dict(row) for row in connection.execute(
+                "SELECT l.*, m.mark_price AS verified_mark_price "
+                "FROM continuous_shadow_ledger l "
+                "LEFT JOIN continuous_shadow_position_marks m "
+                "ON m.experiment_id = l.experiment_id AND m.poll_run_id = l.poll_run_id "
+                "AND m.portfolio_id = l.portfolio_id "
+                "AND m.market_reference = l.market_reference "
+                "AND m.outcome_reference = l.outcome_reference "
+                "AND m.mark_status = 'VERIFIED_SETTLEMENT' "
+                "WHERE l.experiment_id = ?",
+                (experiment_id,),
+            ))
+            matched_portfolios = tuple(dict(row) for row in connection.execute(
+                "SELECT * FROM continuous_shadow_portfolios "
+                "WHERE experiment_id = ?", (experiment_id,),
+            ))
+            matched_positions = tuple(dict(row) for row in connection.execute(
+                "SELECT x.* FROM continuous_shadow_positions x "
+                "WHERE x.experiment_id = ?", (experiment_id,),
+            ))
+            matched_poll_order = tuple(str(row[0]) for row in connection.execute(
+                "SELECT poll_run_id FROM continuous_shadow_poll_runs "
+                "WHERE experiment_id = ? AND status = 'succeeded' "
+                "ORDER BY started_at, poll_run_id", (experiment_id,),
+            ))
             pending_count = int(connection.execute(
                 "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
                 "WHERE experiment_id = ? AND admission_state = 'PENDING'",
@@ -2371,6 +2401,19 @@ class ContinuousShadowRepository:
         replay = replay_shadow_opportunities(
             tuple(evidence), experiment_id=experiment_id, settlements=tuple(settlements)
         )
+        from polysia.backtesting.shadow_matched_control import verify_matched_wallet_control
+
+        matched_control = verify_matched_wallet_control(
+            opportunities=tuple(evidence),
+            evaluations=matched_evaluations,
+            ledger=matched_ledger,
+            portfolios=matched_portfolios,
+            positions=matched_positions,
+            poll_order=matched_poll_order,
+            config=_config(configured),
+        )
+        if matched_control["status"] == "MISMATCH":
+            reasons.append("matched_control_ledger_mismatch")
         result = replay["report"]
         if not isinstance(result, dict):
             raise ContinuousShadowStoreError("Prospective report is malformed.")
@@ -2412,6 +2455,7 @@ class ContinuousShadowRepository:
         )
         return {
             **replay,
+            "matched_control": matched_control,
             "status": status,
             "reasons": reasons,
             "report_cutoff": max(

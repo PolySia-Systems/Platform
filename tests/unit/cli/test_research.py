@@ -488,6 +488,7 @@ def test_prospective_replay_emits_versioned_economic_evidence(tmp_path: Path) ->
         size=Decimal("10"),
         source_time=observed - timedelta(seconds=2),
         observed_time=observed,
+        admission_time=observed,
         receive_monotonic_ns=3,
         normalize_monotonic_ns=4,
         attribution_status=AttributionStatus.WALLET_ALIASED,

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from polysia.domain.copytrading.target_exposure import TargetExposureDecision
 from polysia.domain.research_evidence.models import (
+    PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
     CanonicalResearchEvent,
@@ -49,6 +50,7 @@ def _trade(
         size=Decimal("10"),
         source_time=source_time or observed,
         observed_time=observed,
+        admission_time=observed,
         receive_monotonic_ns=1,
         normalize_monotonic_ns=2,
         attribution_status=attribution,
@@ -172,6 +174,56 @@ def test_same_observations_control_accumulates_target_does_not() -> None:
     again = replay_same_observations((first, second), snapshots=(quote,))
     assert again.control_digest == replay.control_digest
     assert again.target_digest == replay.target_digest
+
+
+def test_coverage_admission_cannot_backdate_economic_decision() -> None:
+    """A page-one trade is unavailable for action until the walk completes."""
+
+    first_seen = OBSERVED + timedelta(seconds=1)
+    admitted = OBSERVED + timedelta(seconds=5)
+    trade = replace(
+        _trade("page-one", observed=first_seen),
+        admission_time=admitted,
+    )
+    quote = _quote("between-pages", observed_time=OBSERVED + timedelta(seconds=2))
+
+    replay = replay_same_observations((trade,), snapshots=(quote,))
+
+    assert replay.evaluations[0].decision_time >= admitted
+
+
+def test_legacy_trade_without_admission_remains_unknown() -> None:
+    trade = replace(
+        _trade("legacy", observed=OBSERVED),
+        schema_version=PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        admission_time=None,
+    )
+    replay = replay_same_observations(
+        (trade,), snapshots=(_quote("quote", observed_time=OBSERVED),)
+    )
+    assert replay.control_decisions == (("legacy", ControlAdmission.UNKNOWN),)
+    assert dict(replay.unknown_by_cause) == {"missing_admission_time": 1}
+
+
+def test_competing_trades_follow_admission_order_not_first_observation() -> None:
+    early_seen = replace(
+        _trade("early-seen", observed=OBSERVED + timedelta(seconds=1)),
+        admission_time=OBSERVED + timedelta(seconds=6),
+    )
+    later_seen = replace(
+        _trade("later-seen", observed=OBSERVED + timedelta(seconds=3)),
+        admission_time=OBSERVED + timedelta(seconds=4),
+    )
+    quote = _quote("quote", observed_time=OBSERVED + timedelta(seconds=2))
+
+    replay = replay_same_observations((early_seen, later_seen), snapshots=(quote,))
+
+    assert tuple(row.evidence_id for row in replay.evaluations) == (
+        "later-seen",
+        "early-seen",
+    )
+    assert replay.evaluations[0].decision_time == later_seen.admission_time
+    assert replay.evaluations[1].decision_time == early_seen.admission_time
 
 
 def test_replay_indexes_snapshot_stream_once() -> None:

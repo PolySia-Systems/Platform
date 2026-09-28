@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
+from polysia.domain.research_evidence.models import (
+    PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    AttributionStatus,
+    CanonicalResearchEvent,
+    ConfirmationStatus,
+    EvidenceClassification,
+    IntervalValidity,
+    ObservationKind,
+    ResearchInterval,
+)
+from polysia.domain.research_evidence.replay import replay_same_observations
 from polysia.storage.research_evidence import ResearchEvidenceStore, ensure_research_evidence_schema
 
 PRE_PR147_EXPERIMENTS_SQL = """
@@ -23,6 +36,61 @@ CREATE TABLE research_experiments (
     event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0)
 )
 """
+
+
+def test_v2_bundle_stays_readable_and_writable_migration_adds_nullable_admission(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v2.sqlite3"
+    store = ResearchEvidenceStore(database)
+    store.initialize()
+    observed = datetime(2026, 9, 13, tzinfo=UTC)
+    store.persist_interval(ResearchInterval(
+        interval_id="legacy-window", started_at=observed, ended_at=None,
+        validity=IntervalValidity.OPEN, reason="open", code_sha=None,
+        configuration_digest=None, policy_version="test-v1",
+    ))
+    store.persist_event(CanonicalResearchEvent(
+        evidence_id="e" * 64, schema_version=RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        source_id="legacy-trades", event_kind=ObservationKind.WALLET_TRADE,
+        classification=EvidenceClassification.ACCEPTED,
+        market_reference="market", outcome_reference="token", side="BUY",
+        price=Decimal("0.4"), size=Decimal("1"), source_time=observed,
+        observed_time=observed, receive_monotonic_ns=1, normalize_monotonic_ns=2,
+        attribution_status=AttributionStatus.WALLET_ALIASED, leader_alias="pub-legacy",
+        confirmation=ConfirmationStatus.CONFIRMED, payload_digest="f" * 64,
+        provenance={}, source_event_id="trade-1", run_id="legacy-run",
+    ), interval_id="legacy-window")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE research_evidence_metadata SET schema_version = ?",
+            (PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,),
+        )
+        connection.execute("ALTER TABLE research_events DROP COLUMN admission_time_utc")
+        connection.execute(
+            "UPDATE research_events SET schema_version = ?",
+            (PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,),
+        )
+    before_read = database.read_bytes()
+    old = ResearchEvidenceStore(database, read_only=True)
+    old.verify_integrity()
+    legacy_event = old.load_events(run_id="legacy-run")[0]
+    assert legacy_event.admission_time is None
+    assert dict(replay_same_observations((legacy_event,)).unknown_by_cause) == {
+        "missing_admission_time": 1
+    }
+    assert database.read_bytes() == before_read
+
+    store.initialize()
+    with sqlite3.connect(database) as connection:
+        version = connection.execute(
+            "SELECT schema_version FROM research_evidence_metadata WHERE singleton = 1"
+        ).fetchone()
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(research_events)")
+        }
+    assert version == (RESEARCH_EVIDENCE_SCHEMA_VERSION,)
+    assert "admission_time_utc" in columns
 
 
 def test_pre_pr147_status_constraint_migrates_and_preserves_rows(tmp_path: Path) -> None:

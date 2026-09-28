@@ -692,6 +692,8 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
     )
     assert prospective["copyability"]["selected_wallet_count"] == len(frozen.candidates)
     assert prospective["comparison_to_shadow_ledger"] == "NOT_COMPARABLE_POLICY_AND_CAPITAL"
+    assert prospective["matched_control"]["status"] == "VERIFIED"
+    assert prospective["matched_control"]["simulated"] == 8
     with sqlite3.connect(_shadow_database(database)) as connection:
         recorded = connection.execute(
             "SELECT evidence_json FROM continuous_shadow_opportunities ORDER BY event_id"
@@ -757,6 +759,17 @@ async def test_continuous_portfolio_deduplicates_persists_and_reconciles_after_r
     assert shadow_restored.validation.event_count == 2
     assert shadow_restored.validation.ledger_count == 8
     assert shadow_restored.validation.ledger_balanced is True
+    with sqlite3.connect(_shadow_database(database)) as connection:
+        connection.execute(
+            "UPDATE continuous_shadow_ledger SET fee_delta = '999' "
+            "WHERE entry_id = (SELECT entry_id FROM continuous_shadow_ledger "
+            "WHERE event_id = 'buy-1' LIMIT 1)"
+        )
+    tampered = ContinuousShadowRepository(_shadow_database(database)).opportunity_report(
+        experiment.experiment_id
+    )
+    assert tampered["matched_control"]["status"] == "MISMATCH"
+    assert "matched_control_ledger_mismatch" in tampered["reasons"]
 
 
 @pytest.mark.asyncio
@@ -1004,6 +1017,8 @@ async def test_verified_settlement_closes_cross_run_positions_and_allows_finaliz
     cutoff = datetime.fromisoformat(str(prospective["report_cutoff"]).replace("Z", "+00:00"))
     assert cutoff == clock.value
     assert prospective["report"]["control"]["valuation_status"] == "MEASURED"
+    assert prospective["matched_control"]["status"] == "VERIFIED"
+    assert prospective["matched_control"]["settlements"] == 3
     with sqlite3.connect(_shadow_database(database)) as connection:
         mark = connection.execute(
             "SELECT rowid, mark_price FROM continuous_shadow_position_marks "
@@ -1051,6 +1066,11 @@ async def test_reporting_records_partial_fill_without_reusing_follower_depth(
     assert results["follower_activity"]["partial_fill_evaluations"] == 1
     assert results["follower_activity"]["event_outcomes"]["partial"] == 1
     assert Decimal(results["follower_activity"]["filled_size"]) == Decimal("7")
+    matched = ContinuousShadowRepository(_shadow_database(database)).opportunity_report(
+        experiment.experiment_id
+    )["matched_control"]
+    assert matched["status"] == "VERIFIED"
+    assert matched["partial_fills"] > 0
 
 
 @pytest.mark.asyncio
@@ -1089,6 +1109,11 @@ async def test_follower_cash_and_exposure_limits_reject_without_partial_state(
     assert follower_reasons["synthetic_capital_limit_reached"] == 1
     assert Decimal(results["follower"]["exposure"]) <= Decimal("1")
     assert Decimal(results["follower"]["cash"]) >= 0
+    matched = ContinuousShadowRepository(_shadow_database(database)).opportunity_report(
+        experiment.experiment_id
+    )["matched_control"]
+    assert matched["status"] == "VERIFIED"
+    assert matched["rejected"] > 0
 
 
 @pytest.mark.asyncio

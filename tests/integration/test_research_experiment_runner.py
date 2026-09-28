@@ -636,6 +636,13 @@ def test_selected_wallet_v2_pages_reach_stored_evidence_and_replay(tmp_path: Pat
         work, profile=LAB_PROFILE, code_sha=CODE_SHA, run_id="selected-wallet-v2"
     ))
     assert result["phase"] == "CLOSED"
+    saved_result = json.loads(ResearchRunWorkspace(work).result_path.read_text())
+    diagnostics = saved_result["evidence_diagnostics"]
+    assert set(diagnostics["wallets"]) == set(service._selection.aliases)
+    assert all(
+        diagnostics["wallets"][alias]["durable_unique_evidence"]["admitted_accepted"] > 0
+        for alias in service._selection.aliases
+    )
     store = ResearchEvidenceStore(work / "research-evidence.sqlite3", read_only=True)
     wallet_events = [
         event for event in store.load_events(run_id="selected-wallet-v2")

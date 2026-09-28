@@ -73,10 +73,16 @@ docker compose --profile research restart research-collector
 Confirm the interrupted window is `INVALID_SHUTDOWN` (never `VALID`), the
 restarted service owns the writer lock, and accepted evidence is not duplicated.
 Then record T0 from UTC wall time and allow one complete ten-minute window.
-Verify health JSON, a Backup-API snapshot, schema `research-evidence-v2`,
+Verify health JSON, a Backup-API snapshot, schema `research-evidence-v3`,
 integrity, foreign keys, bounded WAL/logs, and zero real orders. Do not wait
 for T0+3h in the deployment task; that observation is an independent read-only
 acceptance.
+
+Inspect each selected alias in health `source_health.*.wallet_diagnostics` and
+the saved Runner `result.json` `evidence_diagnostics`. Distinguish confirmed
+empty completed windows from incomplete pages, pending admission, filtering,
+missing fee/depth, and absent durable evidence. Historical bundles lacking
+admission time remain read-only and cannot support corrected economic timing.
 
 Before treating a window as wallet-research eligible, run:
 

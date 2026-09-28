@@ -149,6 +149,20 @@ def public_wallet_alias(wallet: str) -> str:
     return f"pub-{digest}"
 
 
+def _source_wallet_eligible(event: CanonicalResearchEvent, alias: str) -> bool:
+    """Count only parseable, attributable source candidates before store policy."""
+
+    return (
+        event.leader_alias == alias
+        and event.source_time is not None
+        and event.market_reference is not None
+        and event.outcome_reference is not None
+        and event.side in {"BUY", "SELL"}
+        and event.price is not None
+        and event.size is not None
+    )
+
+
 def _wallet_rows(payload: object, *, path: str) -> list[dict[str, Any]]:
     if path in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
         return data_api_v2_rows(payload)
@@ -243,6 +257,20 @@ class DataApiWalletPollSource:
         self._completed_ends: dict[str, datetime] = {}
         self._last_complete_row_count: int | None = None
         self._last_eligible_event_count: int | None = None
+        self._wallet_diagnostics: dict[str, dict[str, int | str]] = {
+            alias: {
+                "response_pages": 0,
+                "parsed_rows": 0,
+                "complete_windows": 0,
+                "empty_windows": 0,
+                "incomplete_windows": 0,
+                "eligible_occurrences": 0,
+                "admitted_occurrences": 0,
+                "rejected_occurrences": 0,
+                "last_outcome": "not_started",
+            }
+            for alias in aliases
+        }
         self._first_seen: dict[tuple[str, str, str], tuple[datetime, int]] = {}
         self._pending_observer: (
             Callable[
@@ -332,6 +360,9 @@ class DataApiWalletPollSource:
                         ) -> None:
                             if self._clock() >= deadline:
                                 raise IncompleteWalletWindowError("time_budget_exhausted")
+                            stats = self._wallet_diagnostics[page_alias]
+                            stats["response_pages"] = int(stats["response_pages"]) + 1
+                            stats["parsed_rows"] = int(stats["parsed_rows"]) + len(page_rows)
                             self._capture_first_seen(
                                 page_rows, alias=page_alias, wallet=page_wallet, run_id=run_id
                             )
@@ -355,6 +386,9 @@ class DataApiWalletPollSource:
                             DATA_API_BASE_URL, self._path, params, purpose=purpose
                         )
                         rows = _wallet_rows(payload, path=self._path)
+                        stats = self._wallet_diagnostics[alias]
+                        stats["response_pages"] = int(stats["response_pages"]) + 1
+                        stats["parsed_rows"] = int(stats["parsed_rows"]) + len(rows)
                     batch.append((alias, wallet, rows))
             except (
                 PolymarketCopyTradingSourceError,
@@ -366,6 +400,9 @@ class DataApiWalletPollSource:
                 ValueError,
                 TypeError,
             ) as error:
+                for stats in self._wallet_diagnostics.values():
+                    stats["incomplete_windows"] = int(stats["incomplete_windows"]) + 1
+                    stats["last_outcome"] = "incomplete_window"
                 observed = self._clock()
                 failure_class, retry_at = _sanitized_source_failure(
                     error, observed_at=observed, fallback_seconds=backoff
@@ -405,6 +442,9 @@ class DataApiWalletPollSource:
             observed = self._clock()
             normalize_ns = self._monotonic_ns()
             normalized: list[CanonicalResearchEvent] = []
+            by_alias: dict[str, list[CanonicalResearchEvent]] = {
+                alias: [] for alias in self._aliases
+            }
             for alias, wallet, rows in batch:
                 rows.sort(key=_row_timestamp)
                 for row in rows:
@@ -430,17 +470,42 @@ class DataApiWalletPollSource:
                                 observed_time=first[0],
                                 receive_monotonic_ns=first[1],
                             )
+                    # The bounded walk for every selected wallet has completed.
+                    # First observation may be earlier, but action is allowed only now.
+                    event = replace(event, admission_time=observed)
                     normalized.append(event)
+                    by_alias[alias].append(event)
             normalized.sort(key=lambda event: event.source_time or datetime.min.replace(tzinfo=UTC))
             seen_events: set[str] = set()
             for event in normalized:
                 if event.evidence_id not in seen_events:
                     seen_events.add(event.evidence_id)
                     yield event
+            # A consumer must durably handle every yielded event before the
+            # source can advance its restart boundary.
             completed_ends = {alias: window_end for alias, _, _ in batch}
             if self._completed_window_recorder is not None:
                 self._completed_window_recorder(run_id, self._source_id, completed_ends)
             self._completed_ends.update(completed_ends)
+            for alias, _, rows in batch:
+                stats = self._wallet_diagnostics[alias]
+                eligible = sum(
+                    _source_wallet_eligible(event, alias)
+                    for event in by_alias[alias]
+                )
+                rejected = len(by_alias[alias]) - eligible
+                stats["complete_windows"] = int(stats["complete_windows"]) + 1
+                stats["empty_windows"] = int(stats["empty_windows"]) + (not rows)
+                stats["eligible_occurrences"] = int(stats["eligible_occurrences"]) + eligible
+                stats["admitted_occurrences"] = int(stats["admitted_occurrences"]) + len({
+                    event.evidence_id for event in by_alias[alias]
+                    if _source_wallet_eligible(event, alias)
+                })
+                stats["rejected_occurrences"] = int(stats["rejected_occurrences"]) + rejected
+                stats["last_outcome"] = (
+                    "success_empty" if not rows else
+                    "success_filtered" if eligible == 0 else "success_events"
+                )
             recovered = purpose is LeaderReadPurpose.RECOVERY
             if recovered:
                 self._recovery_count += 1
@@ -485,6 +550,10 @@ class DataApiWalletPollSource:
             "bootstrap_rows_skipped": self._bootstrap_rows_skipped,
             "last_complete_row_count": self._last_complete_row_count,
             "last_eligible_event_count": self._last_eligible_event_count,
+            "wallet_diagnostics_scope": "process_window_occurrences_not_unique_events",
+            "wallet_diagnostics": {
+                alias: dict(stats) for alias, stats in self._wallet_diagnostics.items()
+            },
             "request_telemetry": telemetry() if callable(telemetry) else None,
         }
 
@@ -1733,6 +1802,7 @@ def _normalize_wallet_row(
         "endpoint": source_id,
         "gamma_verified": False,
         "has_transaction": tx_hash is not None,
+        "poll_alias": alias,
         "source_match_id": stable_evidence_id(
             source_id="polymarket_public_trade_match",
             identity_fields={key: value for key, value in identity.items() if key != "trade_id"},

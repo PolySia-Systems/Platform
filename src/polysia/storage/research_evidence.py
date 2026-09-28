@@ -19,6 +19,7 @@ from typing import IO, cast
 from polysia.domain.research_evidence.collector import CollectorPolicy
 from polysia.domain.research_evidence.models import (
     LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     AttributionStatus,
     CanonicalResearchEvent,
@@ -292,6 +293,93 @@ class ResearchEvidenceStore:
             connection.close()
         return {str(row[0]): _parse_utc(str(row[1])) for row in rows}
 
+    def wallet_evidence_diagnostics(
+        self, run_id: str, aliases: tuple[str, ...]
+    ) -> dict[str, dict[str, object]]:
+        """Read unique durable stages and unresolved first sightings per selected alias."""
+
+        result: dict[str, dict[str, object]] = {
+            alias: {
+                "durable_wallet_events": 0,
+                "durable_accepted": 0,
+                "durable_rejected": 0,
+                "admitted_accepted": None,
+                "accepted_valid_interval": 0,
+                "accepted_invalid_interval": 0,
+                "pending_unadmitted": 0,
+                "completed_source_boundaries": {},
+            }
+            for alias in aliases
+        }
+        connection = self._connect()
+        try:
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(research_events)")
+            }
+            has_admission = "admission_time_utc" in columns
+            for stats in result.values():
+                stats["admitted_accepted"] = 0 if has_admission else None
+            admission_sql = (
+                "SUM(CASE WHEN e.classification = 'ACCEPTED' "
+                "AND e.admission_time_utc IS NOT NULL THEN 1 ELSE 0 END)"
+                if has_admission else "NULL"
+            )
+            for row in connection.execute(
+                "SELECT COALESCE(e.leader_alias, "
+                "json_extract(e.provenance_json, '$.poll_alias')), "
+                "COUNT(*), "
+                "SUM(CASE WHEN e.classification = 'ACCEPTED' THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN e.classification != 'ACCEPTED' THEN 1 ELSE 0 END), "
+                f"{admission_sql}, "
+                "SUM(CASE WHEN e.classification = 'ACCEPTED' "
+                "AND i.validity = 'VALID' THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN e.classification = 'ACCEPTED' "
+                "AND i.validity != 'VALID' THEN 1 ELSE 0 END) "
+                "FROM research_events e JOIN research_intervals i "
+                "ON i.interval_id = e.interval_id "
+                "WHERE e.run_id = ? AND e.event_kind = 'WALLET_TRADE' "
+                "GROUP BY COALESCE(e.leader_alias, "
+                "json_extract(e.provenance_json, '$.poll_alias'))",
+                (run_id,),
+            ):
+                alias = str(row[0])
+                if alias in result:
+                    stats = result[alias]
+                    stats["durable_wallet_events"] = int(row[1])
+                    stats["durable_accepted"] = int(row[2])
+                    stats["durable_rejected"] = int(row[3])
+                    stats["admitted_accepted"] = None if row[4] is None else int(row[4])
+                    stats["accepted_valid_interval"] = int(row[5])
+                    stats["accepted_invalid_interval"] = int(row[6])
+            for row in connection.execute(
+                "SELECT p.leader_alias, COUNT(*) FROM research_pending_observations p "
+                "WHERE p.run_id = ? AND NOT EXISTS ("
+                "SELECT 1 FROM research_events e WHERE e.run_id = p.run_id "
+                "AND e.source_id = p.source_id AND e.leader_alias = p.leader_alias "
+                "AND e.source_event_id = p.source_event_id "
+                "AND e.classification = 'ACCEPTED' "
+                + ("AND e.admission_time_utc IS NOT NULL " if has_admission else "")
+                + ") "
+                "GROUP BY p.leader_alias",
+                (run_id,),
+            ):
+                alias = str(row[0])
+                if alias in result:
+                    result[alias]["pending_unadmitted"] = int(row[1])
+            for row in connection.execute(
+                "SELECT leader_alias, source_id, completed_end_utc "
+                "FROM research_source_completed_windows WHERE run_id = ?",
+                (run_id,),
+            ):
+                alias = str(row[0])
+                if alias in result:
+                    boundaries = result[alias]["completed_source_boundaries"]
+                    if isinstance(boundaries, dict):
+                        boundaries[str(row[1])] = str(row[2])
+        finally:
+            connection.close()
+        return result
+
     def record_completed_source_windows(
         self, run_id: str, source_id: str, completed_ends: Mapping[str, datetime]
     ) -> None:
@@ -431,11 +519,12 @@ class ResearchEvidenceStore:
                         "INSERT INTO research_events ("
                         "evidence_id, schema_version, source_id, event_kind, classification, "
                         "market_reference, outcome_reference, side, price, size, "
-                        "source_time_utc, observed_time_utc, receive_monotonic_ns, "
+                        "source_time_utc, observed_time_utc, admission_time_utc, "
+                        "receive_monotonic_ns, "
                         "normalize_monotonic_ns, attribution_status, leader_alias, "
                         "confirmation, payload_digest, source_event_id, provenance_json, "
                         "related_evidence_id, run_id, interval_id"
-                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         _event_params(event, interval_id=interval_id),
                     )
                 except sqlite3.IntegrityError:
@@ -742,7 +831,7 @@ class ResearchEvidenceStore:
         event_kind: ObservationKind | None = None,
         chunk_size: int = EVENT_FETCH_CHUNK,
     ) -> Iterator[CanonicalResearchEvent]:
-        """Yield canonical events in observed order without materializing the full set."""
+        """Yield events in admission order without materializing the full set."""
 
         if interval_id is not None and interval_validity is not None:
             raise ValueError("interval_id and interval_validity are mutually exclusive")
@@ -750,14 +839,19 @@ class ResearchEvidenceStore:
             raise ValueError("interval_validity requires run_id")
         if chunk_size < 1:
             raise ValueError("chunk_size must be positive")
-        sql, parameters = _event_query(
-            run_id=run_id,
-            interval_id=interval_id,
-            interval_validity=interval_validity,
-            event_kind=event_kind,
-        )
         connection = self._connect()
         try:
+            has_admission = any(
+                str(row[1]) == "admission_time_utc"
+                for row in connection.execute("PRAGMA table_info(research_events)")
+            )
+            sql, parameters = _event_query(
+                run_id=run_id,
+                interval_id=interval_id,
+                interval_validity=interval_validity,
+                event_kind=event_kind,
+                has_admission=has_admission,
+            )
             cursor = connection.execute(sql, parameters)
             while True:
                 rows = _fetch_event_chunk(cursor, chunk_size)
@@ -961,7 +1055,16 @@ class ResearchEvidenceStore:
             version = connection.execute(
                 "SELECT schema_version FROM research_evidence_metadata WHERE singleton = 1"
             ).fetchone()
-            if version is None or str(version[0]) != RESEARCH_EVIDENCE_SCHEMA_VERSION:
+            allowed = (
+                {RESEARCH_EVIDENCE_SCHEMA_VERSION}
+                if not self._read_only
+                else {
+                    LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+                    PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+                    RESEARCH_EVIDENCE_SCHEMA_VERSION,
+                }
+            )
+            if version is None or str(version[0]) not in allowed:
                 raise ResearchEvidenceStoreError("research evidence schema version mismatch")
         finally:
             connection.close()
@@ -1107,6 +1210,8 @@ def ensure_research_evidence_schema(
     }
     if "source_event_id" not in columns:
         connection.execute("ALTER TABLE research_events ADD COLUMN source_event_id TEXT")
+    if "admission_time_utc" not in columns:
+        connection.execute("ALTER TABLE research_events ADD COLUMN admission_time_utc TEXT")
     interval_columns = {
         str(row[1]) for row in connection.execute("PRAGMA table_info(research_intervals)")
     }
@@ -1133,7 +1238,10 @@ def ensure_research_evidence_schema(
     row = connection.execute(
         "SELECT schema_version FROM research_evidence_metadata WHERE singleton = 1"
     ).fetchone()
-    if row is not None and str(row[0]) == LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION:
+    if row is not None and str(row[0]) in {
+        LEGACY_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+        PREVIOUS_RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    }:
         connection.execute(
             "UPDATE research_evidence_metadata SET schema_version = ? WHERE singleton = 1",
             (RESEARCH_EVIDENCE_SCHEMA_VERSION,),
@@ -1203,6 +1311,7 @@ def _event_params(event: CanonicalResearchEvent, *, interval_id: str) -> tuple[o
         None if event.size is None else format(event.size, "f"),
         None if event.source_time is None else _utc_text(event.source_time),
         _utc_text(event.observed_time),
+        None if event.admission_time is None else _utc_text(event.admission_time),
         event.receive_monotonic_ns,
         event.normalize_monotonic_ns,
         event.attribution_status.value,
@@ -1223,7 +1332,13 @@ def _event_query(
     interval_id: str | None,
     interval_validity: IntervalValidity | None,
     event_kind: ObservationKind | None = None,
+    has_admission: bool = False,
 ) -> tuple[str, tuple[object, ...]]:
+    order = (
+        "COALESCE(admission_time_utc, observed_time_utc), evidence_id"
+        if has_admission
+        else "observed_time_utc, evidence_id"
+    )
     kind_sql = ""
     kind_params: tuple[object, ...] = ()
     if event_kind is not None:
@@ -1232,7 +1347,7 @@ def _event_query(
     if interval_id is not None:
         return (
             "SELECT * FROM research_events WHERE interval_id = ?"
-            f"{kind_sql} ORDER BY observed_time_utc, evidence_id",
+            f"{kind_sql} ORDER BY {order}",
             (interval_id, *kind_params),
         )
     if interval_validity is not None:
@@ -1243,18 +1358,23 @@ def _event_query(
             "ON intervals.interval_id = events.interval_id "
             "WHERE events.run_id = ? AND intervals.validity = ?"
             f"{kind_sql} "
-            "ORDER BY events.observed_time_utc, events.evidence_id",
+            "ORDER BY " + (
+                "COALESCE(events.admission_time_utc, events.observed_time_utc), "
+                "events.evidence_id"
+                if has_admission
+                else "events.observed_time_utc, events.evidence_id"
+            ),
             (run_id, interval_validity.value, *kind_params),
         )
     if run_id is None:
         where = "" if event_kind is None else " WHERE event_kind = ?"
         return (
-            f"SELECT * FROM research_events{where} ORDER BY observed_time_utc, evidence_id",
+            f"SELECT * FROM research_events{where} ORDER BY {order}",
             kind_params,
         )
     return (
         "SELECT * FROM research_events WHERE run_id = ?"
-        f"{kind_sql} ORDER BY observed_time_utc, evidence_id",
+        f"{kind_sql} ORDER BY {order}",
         (run_id, *kind_params),
     )
 
@@ -1269,6 +1389,10 @@ def _event_from_row(row: Mapping[str, object]) -> CanonicalResearchEvent:
     price = row["price"]
     size = row["size"]
     source_time = row["source_time_utc"]
+    columns = tuple(row.keys())
+    admission_time = (
+        row["admission_time_utc"] if "admission_time_utc" in columns else None
+    )
     provenance_raw = row["provenance_json"]
     provenance = json.loads(str(provenance_raw))
     if not isinstance(provenance, dict):
@@ -1288,6 +1412,9 @@ def _event_from_row(row: Mapping[str, object]) -> CanonicalResearchEvent:
         size=None if size is None else Decimal(str(size)),
         source_time=None if source_time is None else _parse_utc(str(source_time)),
         observed_time=_parse_utc(str(row["observed_time_utc"])),
+        admission_time=None
+        if admission_time is None
+        else _parse_utc(str(admission_time)),
         receive_monotonic_ns=int(str(row["receive_monotonic_ns"])),
         normalize_monotonic_ns=int(str(row["normalize_monotonic_ns"])),
         attribution_status=AttributionStatus(str(row["attribution_status"])),
