@@ -41,6 +41,7 @@ from polysia.adapters.polymarket.research_sources import (
 )
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.research_evidence import ResearchObservationSource
+from polysia.application.services.active_wallet_selection import active_selection_options
 from polysia.application.services.source_benchmark import SourceBenchmarkReport
 from polysia.domain.market import MarketFeeSchedule, MarketOrderBookSnapshot
 from polysia.domain.market.settlement import verified_settlement_prices
@@ -142,9 +143,11 @@ async def build_persistent_runner_sources(
 ) -> tuple[tuple[ResearchObservationSource, ...], dict[str, object]]:
     from polysia.deployment.research_run_contract import (
         ACTIVE_SELECTION_POLICY,
+        ACTIVE_SELECTION_POLICY_V2,
         CONFIGURED_SELECTION_POLICY,
         DEFAULT_SELECTION_POLICY,
         DEFAULT_WALLET_COUNT,
+        RANKED_SELECTION_POLICY_V2,
     )
     from polysia.deployment.research_wallet_selection import (
         DEFAULT_SELECTION_DATABASE,
@@ -166,29 +169,39 @@ async def build_persistent_runner_sources(
     observed = now or datetime.now(UTC)
     transport = UrllibJsonGetTransport()
     activity_evidence: dict[str, object] | None = None
-    if policy == ACTIVE_SELECTION_POLICY:
+    if policy in {ACTIVE_SELECTION_POLICY, ACTIVE_SELECTION_POLICY_V2}:
         counts, activity_evidence = await _measure_recent_alpha_activity(
             snapshot.candidates,
             transport=transport,
             observed=observed,
+            candidate_limit=max(50, count),
+            minimum_candidates=count,
+            market_evidence_reader=(
+                (lambda tokens: measure_latest_market_availability(transport, tokens))
+                if policy == ACTIVE_SELECTION_POLICY_V2
+                else None
+            ),
         )
         selection = resolve_polycop_active_follow_set(
             snapshot,
             counts,
             now=observed,
             wallet_limit=count,
+            policy_version=policy,
         )
     elif policy == DEFAULT_SELECTION_POLICY:
         selection = resolve_polycop_shadow_alpha_top3(
             snapshot, now=observed, wallet_limit=count
         )
-    else:
+    elif policy in {CONFIGURED_SELECTION_POLICY, RANKED_SELECTION_POLICY_V2}:
         selection = resolve_polycop_follow_set(
             snapshot,
             now=observed,
             wallet_limit=count,
             policy_version=policy,
         )
+    else:
+        raise ValueError("research selection policy is unsupported")
     sources, discovery = await build_persistent_sources_from_aliases(
         selection.addresses_by_alias,
         transport=transport,
@@ -204,6 +217,29 @@ async def build_persistent_runner_sources(
     return sources, discovery
 
 
+async def measure_latest_market_availability(
+    transport: JsonGetTransport,
+    token_markets: Mapping[str, str],
+) -> Mapping[str, tuple[bool, bool]]:
+    """Read bounded public book depth and canonical fee metadata for preflight."""
+
+    if not token_markets:
+        return {}
+    adapter = PolymarketPublicAdapter()
+    tokens = tuple(token_markets)
+    books: dict[str, MarketOrderBookSnapshot] = {}
+    for offset in range(0, len(tokens), 50):
+        books.update(await adapter.get_order_books(tokens[offset : offset + 50]))
+    fees = await discover_clob_market_fee_schedules(transport, token_markets)
+    return {
+        token: (
+            token in books and bool(books[token].bids) and bool(books[token].asks),
+            token in fees,
+        )
+        for token in tokens
+    }
+
+
 async def _measure_recent_alpha_activity(
     candidates: tuple[object, ...],
     *,
@@ -211,6 +247,10 @@ async def _measure_recent_alpha_activity(
     observed: datetime,
     lookback: timedelta = timedelta(hours=4),
     candidate_limit: int = 50,
+    minimum_candidates: int = 3,
+    market_evidence_reader: Callable[
+        [Mapping[str, str]], Awaitable[Mapping[str, tuple[bool, bool]]]
+    ] | None = None,
 ) -> tuple[dict[str, int], dict[str, object]]:
     from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
     from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
@@ -228,26 +268,31 @@ async def _measure_recent_alpha_activity(
     ):
         candidates_by_wallet.setdefault(candidate.wallet_id, candidate)
     ranked = tuple(candidates_by_wallet.values())[:candidate_limit]
-    if len(ranked) < 3:
+    if len(ranked) < minimum_candidates:
         raise ResearchWalletSelectionError(
-            "activity preflight requires three SHADOW_ALPHA candidates"
+            "activity preflight has insufficient SHADOW_ALPHA candidates"
         )
     start = observed - lookback
 
-    async def measure(candidate: ProtectedShadowCandidate) -> tuple[str, int, str, int]:
+    semaphore = asyncio.Semaphore(5)
+
+    async def measure(
+        candidate: ProtectedShadowCandidate,
+    ) -> tuple[str, int, str, int, str | None, str | None, int]:
         try:
-            rows = await fetch_data_api_v2_window(
-                transport,
-                DATA_API_V2_TRADES_PATH,
-                {
-                    "user": candidate.address,
-                    "limit": 1000,
-                    "start": int(start.timestamp()),
-                    "end": int(observed.timestamp()),
-                    "taker_only": False,
-                },
-                purpose=LeaderReadPurpose.DISCOVERY,
-            )
+            async with semaphore:
+                rows = await fetch_data_api_v2_window(
+                    transport,
+                    DATA_API_V2_TRADES_PATH,
+                    {
+                        "user": candidate.address,
+                        "limit": 1000,
+                        "start": int(start.timestamp()),
+                        "end": int(observed.timestamp()),
+                        "taker_only": False,
+                    },
+                    purpose=LeaderReadPurpose.DISCOVERY,
+                )
         except (OSError, TimeoutError, TypeError, ValueError) as error:
             raise ResearchWalletSelectionError(
                 "recent activity has insufficient coverage"
@@ -265,26 +310,116 @@ async def _measure_recent_alpha_activity(
                 raise ResearchWalletSelectionError(
                     "recent activity has insufficient coverage"
                 )
+        unique_rows = unique_wallet_rows(rows)
+        recent = max(
+            unique_rows, key=lambda row: (int(row["timestamp"]), str(row.get("id") or "")),
+            default=None,
+        )
+        token = None if recent is None else recent.get("asset")
+        market = None if recent is None else recent.get("conditionId")
         return (
             candidate.wallet_id,
-            len(unique_wallet_rows(rows)),
+            len(unique_rows),
             public_wallet_alias(candidate.address),
             int(candidate.alpha_rank or 0),
+            str(token) if token else None,
+            str(market) if market else None,
+            sum(
+                row.get("asset") == token and row.get("conditionId") == market
+                for row in unique_rows
+            ) if token and market else 0,
         )
 
-    measured = await asyncio.gather(*(measure(candidate) for candidate in ranked))
-    counts = {wallet_id: count for wallet_id, count, _alias, _rank in measured}
-    public_rows = [
-        {"alpha_rank": rank, "event_count": count, "wallet_alias": alias}
-        for _wallet_id, count, alias, rank in measured
-    ]
+    try:
+        measured = await asyncio.wait_for(
+            asyncio.gather(*(measure(candidate) for candidate in ranked)),
+            timeout=180,
+        )
+    except TimeoutError as error:
+        raise ResearchWalletSelectionError(
+            "recent activity has insufficient coverage within the preflight time budget"
+        ) from error
+    token_markets: dict[str, str] = {}
+    for _wallet_id, _count, _alias, _rank, token, market, _same_token_count in measured:
+        if token is not None and market is not None:
+            previous = token_markets.setdefault(token, market)
+            if previous != market:
+                raise ResearchWalletSelectionError(
+                    "market evidence preflight has conflicting token identity"
+                )
+    availability: Mapping[str, tuple[bool, bool]] = {}
+    if market_evidence_reader is not None:
+        try:
+            availability = await asyncio.wait_for(
+                market_evidence_reader(token_markets), timeout=60,
+            )
+        except (OSError, TimeoutError, TypeError, ValueError) as error:
+            raise ResearchWalletSelectionError(
+                "market evidence preflight has insufficient coverage"
+            ) from error
+    counts: dict[str, int] = {}
+    latest_token_counts: dict[str, int] = {}
+    public_rows: list[dict[str, object]] = []
+    observable_event_count = 0
+    for wallet_id, count, alias, rank, token, market, same_token_count in measured:
+        book, fee = availability.get(token or "", (False, False))
+        eligible = count > 0 and (market_evidence_reader is None or book and fee)
+        counts[wallet_id] = count if eligible else 0
+        latest_token_counts[wallet_id] = (
+            same_token_count if eligible and market_evidence_reader is not None else 0
+        )
+        if eligible and market_evidence_reader is not None:
+            observable_event_count += same_token_count
+        row_payload: dict[str, object] = {
+            "alpha_rank": rank, "event_count": count, "wallet_alias": alias,
+            "market_token_bound": token is not None and market is not None,
+            "book_depth_available": book if market_evidence_reader is not None else None,
+            "fee_available": fee if market_evidence_reader is not None else None,
+            "selection_eligible": eligible,
+            "reason": (
+                "inactive" if count == 0 else
+                "recent_activity_market_unchecked" if market_evidence_reader is None else
+                "missing_market_token_mapping" if token is None or market is None else
+                "missing_book_or_depth" if market_evidence_reader is not None and not book else
+                "missing_fee" if market_evidence_reader is not None and not fee else
+                "observable_recent_activity"
+            ),
+        }
+        if market_evidence_reader is not None:
+            row_payload["latest_token_event_count"] = same_token_count
+        public_rows.append(row_payload)
     evidence = {
         "candidate_count": len(measured),
         "lookback_ends_at": observed.isoformat(),
         "lookback_seconds": int(lookback.total_seconds()),
         "rows": public_rows,
         "source": "polymarket:data-api-v2:trades",
+        "market_evidence_status": (
+            "checked_latest_observed_token" if market_evidence_reader is not None
+            else "not_checked"
+        ),
     }
+    observed_eligible = observable_event_count
+    evidence["evaluable_rate_estimate"] = (
+        {"status": "UNAVAILABLE", "reason": "insufficient_observed_eligible_activity"}
+        if observed_eligible < 5 or market_evidence_reader is None else
+        {
+            "status": "ROUGH_OBSERVABLE_ACTIVITY_RATE_NOT_FORECAST",
+            "latest_token_observable_events_per_hour": str(
+                Decimal(observed_eligible) / Decimal("4")
+            ),
+            "hours_for_20_if_rate_and_evidence_hold": str(
+                Decimal("80") / Decimal(observed_eligible)
+            ),
+            "uncertainty": "high; future wallets and markets may differ",
+        }
+    )
+    if market_evidence_reader is not None:
+        evidence["cohort_options"] = active_selection_options(
+            ranked, counts, latest_token_counts,
+            lookback_seconds=int(lookback.total_seconds()),
+            requested_count=minimum_candidates,
+        )
     evidence["digest"] = hashlib.sha256(
         json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

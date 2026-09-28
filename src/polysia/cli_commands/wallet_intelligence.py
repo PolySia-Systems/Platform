@@ -661,6 +661,194 @@ def shadow_results(
     )
 
 
+def portfolio_preflight(
+    wallet_count: Annotated[int, typer.Option("--wallet-count", min=1, max=40)],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
+    source_database: Annotated[
+        Path, typer.Option("--source-database")
+    ] = DEFAULT_DATABASE,
+    capacity_evidence_file: Annotated[
+        Path | None, typer.Option("--capacity-evidence-file")
+    ] = None,
+) -> None:
+    """Preview recent-active Shadow selection and its evidence before a period."""
+
+    from polysia.adapters.polymarket.copytrading_source import UrllibJsonGetTransport
+    from polysia.application.services.active_wallet_selection import select_active_shadow_alpha
+    from polysia.cli_commands.research_evidence_cli import (
+        _measure_recent_alpha_activity,
+        measure_latest_market_availability,
+    )
+    from polysia.deployment.research_wallet_selection import load_current_polycop_snapshot
+    from polysia.domain.copytrading.wallet_capacity import capacity_status, workload_digest
+
+    try:
+        _require_continuous_shadow_safety()
+        if load_runtime_identity(venue_id="polymarket").deploy_sha != code_sha:
+            raise ValueError("Shadow preflight code SHA does not match the running image")
+        observed = datetime.now(UTC)
+        snapshot = load_current_polycop_snapshot(source_database)
+        transport = UrllibJsonGetTransport()
+        counts, evidence = asyncio.run(_measure_recent_alpha_activity(
+            snapshot.candidates, transport=transport, observed=observed,
+            minimum_candidates=wallet_count,
+            market_evidence_reader=lambda tokens: measure_latest_market_availability(
+                transport, tokens
+            ),
+        ))
+        selected = select_active_shadow_alpha(
+            snapshot.candidates, counts, count=wallet_count
+        )
+        capacity_evidence = None
+        if capacity_evidence_file is not None:
+            loaded = json.loads(capacity_evidence_file.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("capacity evidence must be a JSON object")
+            capacity_evidence = loaded
+        config = ContinuousShadowConfig(
+            runtime_version="continuous-shadow-runtime-v2",
+            code_sha=code_sha, wallet_count=wallet_count,
+            selection_policy="shadow-alpha-active-v2",
+            selection_activity_counts=counts,
+            selection_observed_at=observed,
+            selection_preflight_digest=str(evidence["digest"]),
+            capacity_evidence=capacity_evidence,
+        )
+        capacity = capacity_status(
+            wallet_count, code_sha=code_sha,
+            workload_digest=workload_digest("continuous-shadow", config.capacity_workload()),
+            evidence=capacity_evidence,
+        )
+        typer.echo(json.dumps({
+            "version": "shadow-preflight-v1",
+            "status": "READY_FOR_PERIOD" if capacity["operational_status"] == "measured"
+            else "PENDING_CAPACITY",
+            "observed_at": observed.isoformat(),
+            "requested_count": wallet_count,
+            "selected_count": len(selected),
+            "selected_wallet_ids": [item.wallet_id for item in selected],
+            "activity_and_market_evidence": evidence,
+            "capacity": capacity,
+            "proposed_runtime_spec": {
+                "runtime_version": config.runtime_version,
+                "source_mode": "per-wallet-v2",
+                "code_sha": code_sha,
+                "wallet_count": wallet_count,
+                "selection_policy": config.selection_policy,
+                "selection_activity_counts": counts,
+                "selection_observed_at": observed.isoformat(),
+                "selection_preflight_digest": evidence["digest"],
+                "capacity_evidence": capacity_evidence,
+            },
+        }, sort_keys=True, default=str))
+    except (OSError, ValueError, RuntimeError) as error:
+        typer.echo(json.dumps({
+            "version": "shadow-preflight-v1",
+            "status": "FAILED",
+            "reason": str(error),
+        }, sort_keys=True), err=True)
+        raise typer.Exit(code=1) from error
+
+
+def portfolio_capabilities() -> None:
+    """Expose stable software support without claiming host capacity."""
+
+    from polysia.domain.copytrading.wallet_capacity import (
+        CAPACITY_CONTRACT_VERSION,
+        SOFTWARE_WALLET_LIMIT,
+    )
+
+    typer.echo(json.dumps({
+        "version": "shadow-capabilities-v1",
+        "software_wallet_limit": SOFTWARE_WALLET_LIMIT,
+        "legacy_operational_wallet_limit": 3,
+        "capacity_evidence_version": CAPACITY_CONTRACT_VERSION,
+        "policies": ["shadow-alpha-ranked-v2", "shadow-alpha-active-v2"],
+        "runtime_version": "continuous-shadow-runtime-v2",
+        "operational_status": "requires_matching_measured_evidence",
+        "trading_mode": "DATA_ONLY",
+    }, sort_keys=True))
+
+
+def portfolio_preview(
+    runtime_spec: Annotated[Path, typer.Option("--runtime-spec")],
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    source_database: Annotated[Path, typer.Option("--source-database")] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+) -> None:
+    """Preview a versioned config against actual period and candidate state."""
+
+    try:
+        _require_continuous_shadow_safety()
+        config = _load_continuous_shadow_runtime_spec(runtime_spec, ContinuousShadowConfig())
+        _verify_continuous_shadow_code(config)
+        service = _continuous_shadow_service(
+            source, source_database, database, config=config,
+            maximum_selection_age=timedelta(hours=config.maximum_selection_age_hours),
+        )
+        payload = service.preview_configuration(_source(source).source_id)
+    except (OSError, ValueError, ContinuousShadowError, CandidateStoreError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+def portfolio_apply(
+    runtime_spec: Annotated[Path, typer.Option("--runtime-spec")],
+    command_id: Annotated[str, typer.Option("--command-id")],
+    expected_latest_experiment_id: Annotated[
+        str, typer.Option("--expected-latest-experiment-id")
+    ],
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    source_database: Annotated[Path, typer.Option("--source-database")] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+) -> None:
+    """Apply a reviewed v2 config with durable idempotent receipt and conflict check."""
+
+    try:
+        _require_continuous_shadow_safety()
+        config = _load_continuous_shadow_runtime_spec(runtime_spec, ContinuousShadowConfig())
+        if config.runtime_version != "continuous-shadow-runtime-v2":
+            raise ValueError("portfolio-apply requires v2 Shadow runtime")
+        _verify_continuous_shadow_code(config)
+        service = _continuous_shadow_service(
+            source, source_database, database, config=config,
+            maximum_selection_age=timedelta(hours=config.maximum_selection_age_hours),
+        )
+        receipt = service.apply_configuration(
+            _source(source).source_id, command_id=command_id,
+            expected_latest_experiment_id=expected_latest_experiment_id,
+        )
+    except (
+        OSError, ValueError, ContinuousShadowError, ContinuousShadowStoreError,
+        CandidateStoreError,
+    ) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps(receipt, sort_keys=True))
+    if receipt["disposition"] in {"FAILED", "CONFLICT"}:
+        raise typer.Exit(code=1)
+
+
+def portfolio_command_receipt(
+    command_id: Annotated[str, typer.Option("--command-id")],
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+) -> None:
+    """Read a durable configuration receipt without touching the active worker."""
+
+    try:
+        receipt = ContinuousShadowRepository(database).config_receipt(command_id)
+        if receipt is None:
+            raise ValueError("Shadow configuration command was not found")
+    except (OSError, ValueError, ContinuousShadowStoreError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps(receipt, sort_keys=True))
+
+
 def portfolio_start(
     source: Annotated[str, typer.Option("--source")] = "polycop",
     source_database: Annotated[
@@ -1766,12 +1954,23 @@ def _load_continuous_shadow_runtime_spec(
         "source_timeout_seconds",
         "cost_model_version", "bankroll_version",
     }
+    version = payload.get("runtime_version")
+    if version == "continuous-shadow-runtime-v2":
+        allowed |= {
+            "selection_policy", "selection_activity_counts",
+            "selection_observed_at", "selection_preflight_digest", "capacity_evidence",
+            "wallet_bankroll", "follower_bankroll", "maximum_event_notional",
+            "wallet_maximum_exposure", "follower_maximum_exposure",
+            "follower_maximum_wallet_exposure", "follower_maximum_market_exposure",
+            "follower_maximum_positions", "maximum_forward_delay_ms",
+            "maximum_quote_age_ms", "initial_lookback_minutes", "overlap_seconds",
+        }
     unknown = set(payload) - allowed
     if unknown:
         raise ValueError(
             "Unsupported Continuous Shadow runtime field: " + ", ".join(sorted(unknown))
         )
-    if payload.get("runtime_version") != "continuous-shadow-runtime-v1":
+    if version not in {"continuous-shadow-runtime-v1", "continuous-shadow-runtime-v2"}:
         raise ValueError("Continuous Shadow runtime Spec version is unsupported")
     if payload.get("source_mode") != "per-wallet-v2":
         raise ValueError("Only per-wallet-v2 is an admitted Shadow source mode")
@@ -1793,6 +1992,53 @@ def _load_continuous_shadow_runtime_spec(
         ):
             raise ValueError(f"Continuous Shadow {field} must be an integer")
     options = {field: payload[field] for field in numeric if field in payload}
+    options["runtime_version"] = version
+    if version == "continuous-shadow-runtime-v2":
+        if not isinstance(payload.get("selection_policy"), str):
+            raise ValueError("v2 Shadow runtime requires selection_policy")
+        options["selection_policy"] = payload["selection_policy"]
+        counts = payload.get("selection_activity_counts")
+        if counts is not None:
+            if not isinstance(counts, dict):
+                raise ValueError("selection_activity_counts must be an object")
+            options["selection_activity_counts"] = dict(counts)
+        observed = payload.get("selection_observed_at")
+        if observed is not None:
+            if not isinstance(observed, str):
+                raise ValueError("selection_observed_at must be a UTC timestamp")
+            options["selection_observed_at"] = datetime.fromisoformat(
+                observed.replace("Z", "+00:00")
+            )
+        preflight_digest = payload.get("selection_preflight_digest")
+        if preflight_digest is not None:
+            if not isinstance(preflight_digest, str):
+                raise ValueError("selection_preflight_digest must be a SHA-256 string")
+            options["selection_preflight_digest"] = preflight_digest
+        evidence = payload.get("capacity_evidence")
+        if evidence is not None:
+            if not isinstance(evidence, dict):
+                raise ValueError("capacity_evidence must be an object")
+            options["capacity_evidence"] = dict(evidence)
+        financial = (
+            "wallet_bankroll", "follower_bankroll", "maximum_event_notional",
+            "wallet_maximum_exposure", "follower_maximum_exposure",
+            "follower_maximum_wallet_exposure", "follower_maximum_market_exposure",
+        )
+        for field in financial:
+            if field in payload:
+                if isinstance(payload[field], bool) or not isinstance(
+                    payload[field], (str, int)
+                ):
+                    raise ValueError(f"Continuous Shadow {field} must be decimal text")
+                options[field] = Decimal(str(payload[field]))
+        for field in (
+            "follower_maximum_positions", "maximum_forward_delay_ms",
+            "maximum_quote_age_ms", "initial_lookback_minutes", "overlap_seconds",
+        ):
+            if field in payload:
+                if isinstance(payload[field], bool) or not isinstance(payload[field], int):
+                    raise ValueError(f"Continuous Shadow {field} must be an integer")
+                options[field] = payload[field]
     if "code_sha" in payload:
         if not isinstance(payload["code_sha"], str):
             raise ValueError("Continuous Shadow code_sha must be a Git SHA string")

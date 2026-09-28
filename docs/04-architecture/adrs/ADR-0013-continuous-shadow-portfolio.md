@@ -77,3 +77,30 @@ backup/restore, container configuration, and restart behavior.
 Rollback follows ADR-0014 after the split-store cutover. In particular, once
 schema v5 has progressed, operators must not silently resume stale combined
 schema-v4 state. Stage 4A and Stages 1–3 continue independently.
+
+## Additive period-configuration decision (2026-09-28)
+
+CURRENT: schema v9 preserves first-observation history for successful
+pre-T0/filtered rows with a separate filtered timestamp. A failed poll never
+turns a pending row into a successful empty read; a later successful poll must
+observe it before filtering. This permits flat nonempty periods to finalize
+while genuinely unadmitted rows and open positions still block.
+
+CURRENT: v2 runtime configuration may request 1–40 software-supported
+wallets only with matching reviewed operational capacity evidence. A config
+change cannot rewrite an active period. A durable command receipt binds
+request digest, frozen selection digest, and expected latest experiment id;
+retry is idempotent, stale revisions conflict, and an active differing
+period yields `PENDING_DRAIN`. An active-selection Spec retains its preflight
+evidence digest, counts, and UTC observation time. A retry recovers an applied
+period after a crash between period commit and receipt completion. The
+existing lifecycle performs the boundary.
+Prior P&L and ledger rows remain in their original period. New synthetic
+capital is reported as a separate period, never summed across periods as
+one continuous account.
+
+The future web/API adapter may call the same application service methods,
+but must add authenticated identity, authorization, CSRF/replay protection,
+and operator audit policy before exposing state-changing endpoints. A CLI
+actor label or command id alone is not authentication. No public HTTP
+service is part of this decision.

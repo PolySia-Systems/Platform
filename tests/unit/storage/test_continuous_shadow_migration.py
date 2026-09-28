@@ -46,7 +46,7 @@ def test_stage4b_schema_is_standalone_and_idempotent(tmp_path: Path) -> None:
     with sqlite3.connect(shadow) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'dynamic_shadow_metadata'"
         ).fetchone() is None
@@ -76,7 +76,7 @@ def test_v6_pending_observation_migration_is_additive(tmp_path: Path) -> None:
     with sqlite3.connect(shadow) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
 
 
 def test_v7_opportunity_migration_is_additive_and_idempotent(tmp_path: Path) -> None:
@@ -102,7 +102,7 @@ def test_v7_opportunity_migration_is_additive_and_idempotent(tmp_path: Path) -> 
     with sqlite3.connect(shadow) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'continuous_shadow_pending_observations'"
         ).fetchone() == (1,)
@@ -156,7 +156,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
 
     result = migrate_continuous_shadow_database(legacy, destination)
 
-    assert result.schema_version == 8
+    assert result.schema_version == 9
     assert result.experiment_id == "exp-1"
     assert result.ledger_balanced is True
     assert result.table_counts["continuous_shadow_experiments"] == 1
@@ -171,7 +171,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
     with sqlite3.connect(destination) as target:
         assert target.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
         assert target.execute(
             "SELECT COUNT(*) FROM continuous_shadow_leases"
         ).fetchone()[0] == 0
@@ -189,7 +189,7 @@ def test_schema_v4_state_is_atomically_extracted_without_copying_lease(
     with sqlite3.connect(destination) as upgraded:
         assert upgraded.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
         columns = {
             row[1]
             for row in upgraded.execute("PRAGMA table_info(continuous_shadow_positions)")

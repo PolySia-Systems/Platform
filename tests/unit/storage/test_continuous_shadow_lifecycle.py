@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -27,6 +28,7 @@ from polysia.domain.copytrading.continuous_shadow import (
     ContinuousPortfolioKind,
     ContinuousPosition,
     ContinuousShadowConfig,
+    ContinuousShadowLifecycle,
 )
 from polysia.storage.continuous_shadow import (
     CONTINUOUS_SHADOW_SCHEMA_VERSION,
@@ -175,6 +177,62 @@ def _start(repository: ContinuousShadowRepository, started_at: datetime):
         started_at=started_at,
     )
     return experiment.experiment_id, selection
+
+
+def test_filtered_pending_capture_does_not_block_flat_period_after_recovery(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "continuous-shadow.sqlite3"
+    repository = ContinuousShadowRepository(database)
+    repository.initialize()
+    experiment_id, selection = _start(repository, NOW)
+    first_poll = repository.start_poll(
+        lease=_lease(database, NOW), experiment_id=experiment_id,
+        selection=selection, selection_fresh=True,
+        window_start=NOW, window_end=NOW + timedelta(minutes=1), started_at=NOW,
+    )
+    event_id = "a" * 64
+    repository.capture_pending_observations(
+        first_poll, (event_id,), observed_at=NOW
+    )
+    assert repository.pending_observation_count(experiment_id) == 1
+    repository.fail_poll(
+        first_poll, failed_at=NOW + timedelta(seconds=1), error_code="page_failure"
+    )
+    second_at = NOW + timedelta(minutes=1)
+    second_poll = repository.start_poll(
+        lease=_lease(database, second_at), experiment_id=experiment_id,
+        selection=selection, selection_fresh=True,
+        window_start=second_at, window_end=second_at + timedelta(minutes=1),
+        started_at=second_at,
+    )
+    repository.capture_pending_observations(
+        second_poll, (event_id,), observed_at=second_at
+    )
+    flat = replace(_portfolio(Decimal("0.4")), positions=())
+    repository.complete_poll(
+        second_poll, experiment=repository.active_experiment("polycop"),
+        selection=selection, completion=_completion((), flat),
+        completed_at=second_at + timedelta(seconds=1),
+    )
+    assert repository.pending_observation_count(experiment_id) == 0
+    with sqlite3.connect(database) as connection:
+        first_seen, filtered_at = connection.execute(
+            "SELECT first_observed_at, filtered_at "
+            "FROM continuous_shadow_pending_observations WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+    assert first_seen == NOW.isoformat().replace("+00:00", "Z")
+    assert filtered_at is not None
+    repository.transition(
+        experiment_id, lifecycle=ContinuousShadowLifecycle.DRAINING,
+        transitioned_at=second_at + timedelta(seconds=2),
+    )
+    finalized = repository.transition(
+        experiment_id, lifecycle=ContinuousShadowLifecycle.FINALIZED,
+        transitioned_at=second_at + timedelta(seconds=3),
+    )
+    assert finalized.lifecycle is ContinuousShadowLifecycle.FINALIZED
 
 
 def test_unchanged_observation_updates_current_state_without_history(
@@ -460,7 +518,7 @@ def test_schema_v5_to_current_is_idempotent(tmp_path: Path) -> None:
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT schema_version FROM continuous_shadow_metadata"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(continuous_shadow_positions)")

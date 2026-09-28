@@ -53,6 +53,7 @@ The earlier frozen Stage 4B backup remains documented in
 - [Verified Live state and approved orders](03-requirements/live-verified-state-and-approved-order.md)
 - [Shadow Target Exposure Replay v1](03-requirements/shadow-target-exposure-replay.md)
 - [Prospective research evidence collector](03-requirements/prospective-evidence-collector.md)
+- [Research and Shadow UI backend contracts](10-operations/research-shadow-ui-contracts.schema.json)
 - [Developer context packet](03-requirements/developer-context-packet.md)
 - [Delivery and rollback](10-operations/delivery-and-rollback.md)
 

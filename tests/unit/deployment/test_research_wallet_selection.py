@@ -11,6 +11,7 @@ from polysia.application.ports.continuous_shadow import ContinuousSelectionSnaps
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.deployment.research_wallet_selection import (
     POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1,
+    POLYCOP_SHADOW_ALPHA_ACTIVE_V2,
     POLYCOP_SHADOW_ALPHA_CONFIGURED_V1,
     POLYCOP_SHADOW_ALPHA_TOP3_V1,
     ResearchWalletSelectionError,
@@ -154,6 +155,26 @@ def test_activity_aware_selection_requires_three_active_alpha_wallets() -> None:
             {"w1": 1, "w2": 12, "w3": 0, "w4": 0},
             now=NOW,
         )
+
+
+@pytest.mark.parametrize("wallet_count", [5, 10, 20, 40])
+def test_v2_active_selection_freezes_requested_supported_count(wallet_count: int) -> None:
+    candidates = tuple(
+        _candidate(f"w{index}", f"0x{index:040x}", alpha_rank=index)
+        for index in range(1, 41)
+    )
+    snapshot = _snapshot(candidates)
+    counts = {f"w{index}": index for index in range(1, 41)}
+    selected = resolve_polycop_active_follow_set(
+        snapshot, counts, now=NOW, wallet_limit=wallet_count,
+        policy_version=POLYCOP_SHADOW_ALPHA_ACTIVE_V2,
+    )
+    assert len(selected.wallet_ids) == wallet_count
+    assert selected.wallet_ids[0] == "w40"
+    assert selected.policy_version == POLYCOP_SHADOW_ALPHA_ACTIVE_V2
+    assert len(verify_reconstruction(
+        reconstruction_payload(selected), public_selection_payload(selected)
+    )) == wallet_count
 
 
 def test_missing_snapshot_fails_closed(tmp_path: Path) -> None:
@@ -363,6 +384,57 @@ def test_activity_preflight_counts_all_pages_once_and_fails_on_incomplete() -> N
         ))
 
 
+def test_active_preflight_filters_missing_market_evidence_without_hiding_source_counts() -> None:
+    from polysia.cli_commands.research_evidence_cli import _measure_recent_alpha_activity
+
+    class Transport:
+        async def get_json(
+            self, _base_url: str, _path: str,
+            params: dict[str, str | int | bool], **_kwargs: object,
+        ) -> object:
+            address = str(params["user"])
+            index = int(address[2:], 16)
+            return {
+                "data": [{
+                    "id": f"trade-{index}", "transaction_hash": f"tx-{index}",
+                    "proxy_wallet": address, "timestamp": int(NOW.timestamp()),
+                    "token_id": f"token-{index}", "condition_id": f"market-{index}",
+                }],
+                "pagination": {"has_more": False, "next_cursor": None},
+            }
+
+    candidates = tuple(
+        _candidate(f"w{index}", f"0x{index:040x}", alpha_rank=index)
+        for index in range(1, 6)
+    )
+
+    async def availability(
+        tokens: dict[str, str],
+    ) -> dict[str, tuple[bool, bool]]:
+        assert len(tokens) == 5
+        return {
+            token: (token != "token-1", token != "token-2")
+            for token in tokens
+        }
+
+    counts, evidence = asyncio.run(_measure_recent_alpha_activity(
+        candidates, transport=Transport(), observed=NOW,
+        minimum_candidates=5, market_evidence_reader=availability,
+    ))
+    assert counts == {"w1": 0, "w2": 0, "w3": 1, "w4": 1, "w5": 1}
+    rows = evidence["rows"]
+    assert isinstance(rows, list)
+    assert [row["event_count"] for row in rows] == [1] * 5
+    assert [row["reason"] for row in rows[:2]] == [
+        "missing_book_or_depth", "missing_fee",
+    ]
+    assert evidence["evaluable_rate_estimate"]["status"] == "UNAVAILABLE"
+    options = evidence["cohort_options"]
+    assert isinstance(options, list)
+    assert options[0]["wallet_count"] == 5
+    assert options[0]["status"] == "INSUFFICIENT_ACTIVE_CANDIDATES"
+
+
 def test_public_benchmark_discovery_remains_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -433,3 +505,67 @@ def test_actual_persistent_source_composition_uses_frozen_cursor_budgets(
         assert source._max_pages == 7
         assert source._max_requests == 9
         assert source._overlap_seconds == 90
+
+
+@pytest.mark.parametrize("wallet_count", [5, 10, 20, 40])
+def test_v3_selected_wallets_reach_real_source_factory(
+    monkeypatch: pytest.MonkeyPatch, wallet_count: int,
+) -> None:
+    from polysia.cli_commands import research_evidence_cli
+    from polysia.deployment.research_run_contract import (
+        CAPACITY_SPEC_VERSION,
+        RANKED_SELECTION_POLICY_V2,
+        ResearchRunSpec,
+        resolve_run_plan,
+    )
+
+    class NoNetworkDiscovery:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def refresh(self) -> None:
+            return None
+
+    async def no_fees(_tokens: tuple[str, ...]) -> dict[str, object]:
+        return {}
+
+    snapshot = _alpha_snapshot()
+    candidates = tuple(
+        _candidate(f"wallet-{index}", f"0x{index:040x}", alpha_rank=index)
+        for index in range(1, 41)
+    )
+    monkeypatch.setattr(
+        "polysia.deployment.research_wallet_selection.load_current_polycop_snapshot",
+        lambda _database: snapshot.__class__.create(
+            source_id=snapshot.source_id,
+            selection_run_id=snapshot.selection_run_id,
+            source_snapshot_id=snapshot.source_snapshot_id,
+            feature_set_version=snapshot.feature_set_version,
+            policy_id=snapshot.policy_id,
+            policy_version=snapshot.policy_version,
+            ranking_version=snapshot.ranking_version,
+            published_at=snapshot.published_at,
+            candidates=candidates,
+        ),
+    )
+    monkeypatch.setattr(
+        "polysia.adapters.polymarket.research_sources.FollowedMarketDiscovery",
+        NoNetworkDiscovery,
+    )
+    monkeypatch.setattr(research_evidence_cli, "discover_market_fee_schedules", no_fees)
+    plan = resolve_run_plan(ResearchRunSpec(
+        profile="canary", code_sha="a" * 40, spec_version=CAPACITY_SPEC_VERSION,
+        wallet_count=wallet_count, selection_policy=RANKED_SELECTION_POLICY_V2,
+        runtime={"poll_interval_seconds": 3, "max_pages": 7, "max_requests": 9},
+    ), observed=NOW)
+    sources, discovery = asyncio.run(research_evidence_cli.build_persistent_runner_sources(
+        database=Path("unused.sqlite3"), now=NOW,
+        wallet_count=wallet_count, selection_policy=RANKED_SELECTION_POLICY_V2,
+        runtime=plan.runtime,
+    ))
+    assert len(sources) == 3
+    assert discovery["wallet_count"] == wallet_count
+    assert len(discovery["aliases"]) == wallet_count
+    for source in sources[:2]:
+        assert len(source._aliases) == wallet_count
+        assert source._max_pages == 7

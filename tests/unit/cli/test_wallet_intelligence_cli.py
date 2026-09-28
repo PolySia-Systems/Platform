@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.application.services.continuous_shadow import ContinuousShadowError
 from polysia.application.services.continuous_shadow_failures import (
     FAILURE_CATEGORY_ACCOUNTING_BLOCKED,
@@ -81,6 +83,143 @@ def test_shadow_runtime_spec_requires_code_identity(tmp_path: Path) -> None:
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="requires the running code SHA"):
         _load_continuous_shadow_runtime_spec(path, ContinuousShadowConfig())
+
+
+@pytest.mark.parametrize("wallet_count", [5, 10, 20, 40])
+def test_v2_shadow_runtime_loader_accepts_supported_count(
+    tmp_path: Path, wallet_count: int,
+) -> None:
+    path = tmp_path / "runtime.json"
+    path.write_text(json.dumps({
+        "runtime_version": "continuous-shadow-runtime-v2",
+        "source_mode": "per-wallet-v2",
+        "code_sha": "a" * 40,
+        "wallet_count": wallet_count,
+        "selection_policy": "shadow-alpha-ranked-v2",
+        "follower_bankroll": "800",
+        "maximum_event_notional": "4",
+    }), encoding="utf-8")
+    config = _load_continuous_shadow_runtime_spec(path, ContinuousShadowConfig())
+    assert config.wallet_count == wallet_count
+    assert config.runtime_version == "continuous-shadow-runtime-v2"
+    assert str(config.follower_bankroll) == "800"
+    assert str(config.maximum_event_notional) == "4"
+
+
+def test_shadow_config_cli_preview_apply_and_receipt_wiring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.cli_commands import wallet_intelligence
+
+    path = tmp_path / "runtime.json"
+    path.write_text(json.dumps({
+        "runtime_version": "continuous-shadow-runtime-v2",
+        "source_mode": "per-wallet-v2",
+        "code_sha": "a" * 40, "wallet_count": 5,
+        "selection_policy": "shadow-alpha-ranked-v2",
+    }), encoding="utf-8")
+    captured: list[tuple[str, str]] = []
+
+    class FakeService:
+        def preview_configuration(self, source_id: str) -> dict[str, object]:
+            captured.append(("preview", source_id))
+            return {"version": "shadow-config-preview-v1", "status": "BLOCKED_CAPACITY"}
+
+        def apply_configuration(
+            self, source_id: str, *, command_id: str,
+            expected_latest_experiment_id: str,
+        ) -> dict[str, object]:
+            captured.append((command_id, expected_latest_experiment_id))
+            return {
+                "version": "shadow-config-command-v1", "disposition": "PENDING_DRAIN",
+                "source_id": source_id,
+            }
+
+    monkeypatch.setattr(wallet_intelligence, "_require_continuous_shadow_safety", lambda: None)
+    monkeypatch.setattr(wallet_intelligence, "_verify_continuous_shadow_code", lambda _: None)
+    monkeypatch.setattr(
+        wallet_intelligence, "_continuous_shadow_service",
+        lambda *_args, **_kwargs: FakeService(),
+    )
+    preview = runner.invoke(app, [
+        "wallet-intelligence", "portfolio-preview", "--runtime-spec", str(path),
+    ])
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.stdout)["status"] == "BLOCKED_CAPACITY"
+    apply = runner.invoke(app, [
+        "wallet-intelligence", "portfolio-apply", "--runtime-spec", str(path),
+        "--command-id", "change-5", "--expected-latest-experiment-id", "old",
+    ])
+    assert apply.exit_code == 0, apply.output
+    assert json.loads(apply.stdout)["disposition"] == "PENDING_DRAIN"
+    assert captured == [("preview", "polycop"), ("change-5", "old")]
+    caps = runner.invoke(app, ["wallet-intelligence", "portfolio-capabilities"])
+    assert caps.exit_code == 0
+    assert json.loads(caps.stdout)["software_wallet_limit"] == 40
+
+
+def test_portfolio_preflight_cli_freezes_bounded_active_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.cli_commands import research_evidence_cli, wallet_intelligence
+    from polysia.deployment import research_wallet_selection
+
+    candidates = tuple(
+        ProtectedShadowCandidate(
+            f"alpha-{index}", f"0x{index:040x}", ("SHADOW_ALPHA",),
+            alpha_rank=index,
+        ) for index in range(1, 7)
+    )
+    seen: list[int] = []
+
+    async def measure(
+        _candidates: object, **kwargs: object,
+    ) -> tuple[dict[str, int], dict[str, object]]:
+        seen.append(int(kwargs["minimum_candidates"]))
+        return ({f"alpha-{index}": 7 - index for index in range(1, 7)},
+                {"candidate_count": 6, "lookback_seconds": 14_400,
+                 "digest": "b" * 64})
+
+    monkeypatch.setattr(wallet_intelligence, "_require_continuous_shadow_safety", lambda: None)
+    monkeypatch.setattr(wallet_intelligence, "load_runtime_identity",
+                        lambda **_kwargs: SimpleNamespace(deploy_sha="a" * 40))
+    monkeypatch.setattr(research_wallet_selection, "load_current_polycop_snapshot",
+                        lambda _path: SimpleNamespace(candidates=candidates))
+    monkeypatch.setattr(research_evidence_cli, "_measure_recent_alpha_activity", measure)
+    result = runner.invoke(app, [
+        "wallet-intelligence", "portfolio-preflight", "--wallet-count", "5",
+        "--code-sha", "a" * 40, "--source-database", str(tmp_path / "source.sqlite3"),
+    ])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "PENDING_CAPACITY"
+    assert payload["selected_count"] == 5
+    assert payload["proposed_runtime_spec"]["wallet_count"] == 5
+    assert payload["proposed_runtime_spec"]["selection_policy"] == "shadow-alpha-active-v2"
+    assert payload["proposed_runtime_spec"]["selection_preflight_digest"] == "b" * 64
+    assert seen == [5]
+
+
+def test_capacity_workload_changes_with_financial_or_selection_limits() -> None:
+    base = ContinuousShadowConfig(
+        runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+        wallet_count=5, selection_policy="shadow-alpha-ranked-v2",
+    )
+    assert base.capacity_workload() == replace(base, wallet_count=10).capacity_workload()
+    assert base.capacity_workload() != replace(
+        base, follower_bankroll=base.follower_bankroll * 2
+    ).capacity_workload()
+    assert base.capacity_workload() != replace(
+        base, selection_policy="shadow-alpha-active-v2",
+        selection_activity_counts={"alpha-1": 3}, selection_observed_at=datetime.now(UTC),
+        selection_preflight_digest="b" * 64,
+    ).capacity_workload()
+    with pytest.raises(ValueError, match="preflight digest"):
+        replace(
+            base, selection_policy="shadow-alpha-active-v2",
+            selection_activity_counts={"alpha-1": 3},
+            selection_observed_at=datetime.now(UTC),
+        )
 
 
 def test_capacity_counts_nested_bundles_and_legacy_files_but_not_staging(

@@ -308,6 +308,7 @@ class ContinuousShadowHealth:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "contract_version": "shadow-health-v1",
             "cumulative_evaluations": self.cumulative_evaluations,
             "cumulative_events": self.cumulative_events,
             "duplicate_count": self.duplicate_count,
@@ -388,6 +389,36 @@ class ContinuousShadowStorePort(Protocol):
     ) -> ContinuousShadowExperiment: ...
 
     def active_experiment(self, source_id: str) -> ContinuousShadowExperiment | None: ...
+
+    def latest_experiment(self, source_id: str) -> ContinuousShadowExperiment | None: ...
+
+    def config_receipt(self, command_id: str) -> dict[str, object] | None: ...
+
+    def recover_config_command(
+        self, command_id: str, *, source_id: str, request_digest: str,
+        config: ContinuousShadowConfig, observed_at: datetime,
+    ) -> dict[str, object] | None: ...
+
+    def claim_config_command(
+        self,
+        *,
+        command_id: str,
+        source_id: str,
+        request_digest: str,
+        expected_latest_experiment_id: str,
+        selection_digest: str,
+        config: ContinuousShadowConfig,
+        observed_at: datetime,
+    ) -> dict[str, object]: ...
+
+    def finish_config_command(
+        self,
+        command_id: str,
+        *,
+        experiment_id: str | None,
+        reason: str | None,
+        observed_at: datetime,
+    ) -> dict[str, object]: ...
 
     def transition(
         self,

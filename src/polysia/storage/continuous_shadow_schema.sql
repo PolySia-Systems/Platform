@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_metadata (
-    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 8),
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version = 9),
     initialized_at TEXT NOT NULL
 );
 
@@ -68,6 +68,21 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_experiments (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_shadow_one_active
     ON continuous_shadow_experiments(source_id)
     WHERE lifecycle IN ('RUNNING', 'DRAINING');
+
+CREATE TABLE IF NOT EXISTS continuous_shadow_config_receipts (
+    command_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+    expected_latest_experiment_id TEXT NOT NULL,
+    selection_digest TEXT NOT NULL CHECK(length(selection_digest) = 64),
+    disposition TEXT NOT NULL CHECK(disposition IN (
+        'PENDING_DRAIN', 'PENDING_APPLY', 'APPLIED', 'FAILED', 'CONFLICT'
+    )),
+    experiment_id TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS continuous_shadow_opportunities (
     event_id TEXT PRIMARY KEY,
@@ -142,13 +157,16 @@ CREATE TABLE IF NOT EXISTS continuous_shadow_pending_observations (
     event_id TEXT NOT NULL CHECK(length(event_id) = 64),
     first_observed_at TEXT NOT NULL,
     first_poll_run_id TEXT NOT NULL,
+    last_seen_poll_run_id TEXT,
     admission_state TEXT NOT NULL DEFAULT 'PENDING'
         CHECK(admission_state IN ('PENDING', 'ADMITTED')),
     admitted_poll_run_id TEXT,
     admitted_at TEXT,
+    filtered_at TEXT,
     PRIMARY KEY(experiment_id, event_id),
     FOREIGN KEY(experiment_id) REFERENCES continuous_shadow_experiments(experiment_id),
     FOREIGN KEY(first_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id),
+    FOREIGN KEY(last_seen_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id),
     FOREIGN KEY(admitted_poll_run_id) REFERENCES continuous_shadow_poll_runs(poll_run_id)
 );
 

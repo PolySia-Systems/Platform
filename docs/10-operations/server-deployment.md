@@ -182,6 +182,26 @@ before another multi-hour experiment.
 The bounded Runner is a separate Compose service. It does not replace
 `research-collector`. After review, start one Canary with the exact image SHA:
 
+For a new variable-count run, prepare `research-run-spec-v3` with a requested
+`wallet_count` in 1–40, an explicit `polycop-shadow-alpha-ranked-v2` or
+`polycop-shadow-alpha-active-v2` policy, and a matching operator-reviewed
+`wallet-capacity-v1` record. The record binds the image commit, profile,
+source budgets, cadence, and selection policy through `workload_digest`.
+`wallet_count` is software support only until that workload has measured host
+capacity. Existing v1/v2 Specs retain their original three-wallet admission.
+The candidate-only `research prospective-run capacity-probe --wallet-count N
+--code-sha "$POLYSIA_IMAGE_TAG" --duration-seconds 90` is an opt-in public
+DATA_ONLY measurement; it does not produce a PASS capacity record. Review
+The probe's preflight plus collection has a hard timeout of the requested
+duration plus 180 seconds; timeout remains an incomplete candidate. Review
+aggregate shared-IP traffic, all PolySia consumers, endpoint request/retry
+volume, queue/decision delay, memory, CPU, SQLite and log growth, and remaining
+exit/settlement work before recording passing capacity. Stop on throttling,
+timeouts, sustained backlog, resource pressure, or incomplete coverage. Use
+current observed endpoint limits with recovery headroom. The unkeyed evidence
+digest detects accidental edits but does not authenticate an operator or prove
+that a host measurement occurred.
+
 ```bash
 docker compose --profile research run --no-deps research-runner \
   research prospective-run start \
@@ -246,8 +266,10 @@ fail closed before T0 unless a current
 successful Polycop Stage 3 snapshot can supply the requested distinct
 `SHADOW_ALPHA` wallets. The default remains three wallets under
 `polycop-shadow-alpha-top3-v1` and the Continuous Shadow 36-hour
-freshness bound. Spec `wallet_count` 1 or 2 is unverified capacity, not an
-operational claim; counts above three fail closed. Compose mounts the host wallet-intelligence database into the
+freshness bound. Under legacy v1/v2 Specs, `wallet_count` 1 or 2 is unverified
+capacity and counts above three fail closed. A v3 Spec requires matching
+measured capacity for any requested count. Compose mounts the host
+wallet-intelligence database into the
 Runner at `/var/lib/polysia/data/wallet-intelligence.sqlite3` as read-only;
 absence of that file prevents the container from starting. The frozen
 reconstruction file
@@ -279,7 +301,19 @@ The preflight requires complete cursor coverage for every measured candidate;
 accepted. Confirmed empty reads require a complete terminal v2 page with an
 explicit empty `data` array; `success_filtered` means rows were read but none
 were eligible for the prospective interval. A budget or later-page failure
-needs a successful recovery walk before counting that window as covered.
+ needs a successful recovery walk before counting that window as covered.
+
+For v3 active selection, bounded market/book/fee preflight precedes T0 and
+the selected cohort and evidence are frozen. `research prospective-run status
+--state-root /var/lib/polysia/research-run --readiness` computes provisional
+sample progress only from closed, valid windows. It reports eligible count,
+mapping and executable coverage against the unchanged 20 / 0.95 / 0.90
+thresholds and the declared minimum observation period (Canary 20 minutes,
+Main 30 minutes). This does not finalize or automatically stop a run. An
+operator may request the existing idempotent stop after reviewing the frozen
+stopping rules; final economics still require closure, durable replay, verify,
+and the declared economic horizon. Do not treat positive P&L or provisional
+technical readiness as the economic verdict.
 
 Finalize an active experiment before deploying collector code or configuration
 that would change its recorded SHA or configuration digest.

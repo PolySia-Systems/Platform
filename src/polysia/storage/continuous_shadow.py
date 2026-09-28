@@ -55,7 +55,7 @@ from polysia.storage.lifecycle_policy import DEFAULT_STAGE4B_DATA_LIFECYCLE_POLI
 from polysia.storage.wallet_intelligence import CandidateStoreError
 
 CONTINUOUS_SHADOW_SCHEMA_PATH = Path(__file__).with_name("continuous_shadow_schema.sql")
-CONTINUOUS_SHADOW_SCHEMA_VERSION = 8
+CONTINUOUS_SHADOW_SCHEMA_VERSION = 9
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _ABANDONED_POLL_AFTER = timedelta(minutes=30)
 _ZERO = Decimal("0")
@@ -473,6 +473,201 @@ class ContinuousShadowRepository:
             connection.close()
         return None if row is None else _experiment(row)
 
+    def latest_experiment(self, source_id: str) -> ContinuousShadowExperiment | None:
+        connection = self._connect(read_only=True)
+        try:
+            row = connection.execute(
+                "SELECT * FROM continuous_shadow_experiments WHERE source_id = ? "
+                "ORDER BY started_at DESC, rowid DESC LIMIT 1", (source_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        return None if row is None else _experiment(row)
+
+    def config_receipt(self, command_id: str) -> dict[str, object] | None:
+        connection = self._connect(read_only=True)
+        try:
+            row = connection.execute(
+                "SELECT * FROM continuous_shadow_config_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        return None if row is None else _config_receipt(row)
+
+    def recover_config_command(
+        self, command_id: str, *, source_id: str, request_digest: str,
+        config: ContinuousShadowConfig, observed_at: datetime,
+    ) -> dict[str, object] | None:
+        """Complete a receipt if a process died after committing its period."""
+
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            receipt = connection.execute(
+                "SELECT * FROM continuous_shadow_config_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            if receipt is None or receipt["disposition"] != "PENDING_APPLY":
+                connection.commit()
+                return None
+            if receipt["source_id"] != source_id or receipt["request_digest"] != request_digest:
+                raise ContinuousShadowStoreError(
+                    "Shadow command id was reused with different request content."
+                )
+            latest = connection.execute(
+                "SELECT e.*, s.digest AS frozen_selection_digest "
+                "FROM continuous_shadow_experiments e JOIN "
+                "continuous_shadow_selection_snapshots s "
+                "ON s.selection_run_id = e.selection_run_id "
+                "WHERE e.source_id = ? ORDER BY e.started_at DESC, e.rowid DESC LIMIT 1",
+                (source_id,),
+            ).fetchone()
+            if (
+                latest is None
+                or latest["experiment_id"] == receipt["expected_latest_experiment_id"]
+                or latest["frozen_selection_digest"] != receipt["selection_digest"]
+                or _experiment(latest).config.to_dict() != config.to_dict()
+            ):
+                connection.commit()
+                return None
+            connection.execute(
+                "UPDATE continuous_shadow_config_receipts SET disposition = 'APPLIED', "
+                "experiment_id = ?, reason = NULL, updated_at = ? WHERE command_id = ?",
+                (latest["experiment_id"], _iso(_utc(observed_at)), command_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM continuous_shadow_config_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        assert updated is not None
+        return _config_receipt(updated)
+
+    def claim_config_command(
+        self,
+        *,
+        command_id: str,
+        source_id: str,
+        request_digest: str,
+        expected_latest_experiment_id: str,
+        selection_digest: str,
+        config: ContinuousShadowConfig,
+        observed_at: datetime,
+    ) -> dict[str, object]:
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", command_id) is None:
+            raise ContinuousShadowStoreError("Shadow command id is invalid.")
+        if re.fullmatch(r"[0-9a-f]{64}", request_digest) is None:
+            raise ContinuousShadowStoreError("Shadow command digest is invalid.")
+        observed_at = _utc(observed_at)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            prior = connection.execute(
+                "SELECT * FROM continuous_shadow_config_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            if prior is not None:
+                if (
+                    prior["source_id"] != source_id
+                    or prior["request_digest"] != request_digest
+                    or prior["expected_latest_experiment_id"] != expected_latest_experiment_id
+                    or prior["selection_digest"] != selection_digest
+                ):
+                    raise ContinuousShadowStoreError(
+                        "Shadow command id was reused with different frozen content."
+                    )
+                if prior["disposition"] in {"APPLIED", "FAILED", "CONFLICT"}:
+                    connection.commit()
+                    return _config_receipt(prior)
+            latest = connection.execute(
+                "SELECT experiment_id FROM continuous_shadow_experiments "
+                "WHERE source_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1",
+                (source_id,),
+            ).fetchone()
+            latest_id = "none" if latest is None else str(latest["experiment_id"])
+            active = connection.execute(
+                "SELECT * FROM continuous_shadow_experiments WHERE source_id = ? "
+                "AND lifecycle IN ('RUNNING', 'DRAINING')", (source_id,),
+            ).fetchone()
+            experiment_id: str | None = None
+            reason: str | None = None
+            if latest_id != expected_latest_experiment_id:
+                disposition, reason = "CONFLICT", "stale_expected_latest_experiment"
+            elif active is not None and _experiment(active).config.to_dict() == config.to_dict():
+                disposition = "APPLIED"
+                experiment_id = str(active["experiment_id"])
+            elif active is not None:
+                disposition, reason = "PENDING_DRAIN", "active_period_requires_drain"
+            else:
+                disposition = "PENDING_APPLY"
+            if prior is None:
+                connection.execute(
+                    "INSERT INTO continuous_shadow_config_receipts "
+                    "(command_id, source_id, request_digest, expected_latest_experiment_id, "
+                    "selection_digest, disposition, experiment_id, reason, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (command_id, source_id, request_digest, expected_latest_experiment_id,
+                     selection_digest, disposition, experiment_id, reason,
+                     _iso(observed_at), _iso(observed_at)),
+                )
+            else:
+                connection.execute(
+                    "UPDATE continuous_shadow_config_receipts SET disposition = ?, "
+                    "experiment_id = ?, reason = ?, updated_at = ? WHERE command_id = ?",
+                    (disposition, experiment_id, reason, _iso(observed_at), command_id),
+                )
+            row = connection.execute(
+                "SELECT * FROM continuous_shadow_config_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        assert row is not None
+        return _config_receipt(row)
+
+    def finish_config_command(
+        self,
+        command_id: str,
+        *,
+        experiment_id: str | None,
+        reason: str | None,
+        observed_at: datetime,
+    ) -> dict[str, object]:
+        disposition = "APPLIED" if experiment_id is not None else "FAILED"
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            updated = connection.execute(
+                "UPDATE continuous_shadow_config_receipts SET disposition = ?, "
+                "experiment_id = ?, reason = ?, updated_at = ? WHERE command_id = ? "
+                "AND disposition = 'PENDING_APPLY'",
+                (disposition, experiment_id, reason, _iso(_utc(observed_at)), command_id),
+            ).rowcount
+            if updated != 1:
+                raise ContinuousShadowStoreError("Shadow command is not awaiting application.")
+            row = connection.execute(
+                "SELECT * FROM continuous_shadow_config_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        assert row is not None
+        return _config_receipt(row)
+
     def transition(
         self,
         experiment_id: str,
@@ -519,7 +714,8 @@ class ContinuousShadowRepository:
                     )
                 pending_count = int(connection.execute(
                     "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
-                    "WHERE experiment_id = ? AND admission_state = 'PENDING'",
+                    "WHERE experiment_id = ? AND admission_state = 'PENDING' "
+                    "AND filtered_at IS NULL",
                     (experiment_id,),
                 ).fetchone()[0])
                 if pending_count:
@@ -884,10 +1080,15 @@ class ContinuousShadowRepository:
                 raise ContinuousShadowStoreError("Pending observation poll is not active.")
             for event_id in dict.fromkeys(event_ids):
                 connection.execute(
-                    "INSERT OR IGNORE INTO continuous_shadow_pending_observations "
-                    "(experiment_id, event_id, first_observed_at, first_poll_run_id) "
-                    "VALUES (?, ?, ?, ?)",
-                    (str(poll["experiment_id"]), event_id, _iso(observed_at), poll_run_id),
+                    "INSERT INTO continuous_shadow_pending_observations "
+                    "(experiment_id, event_id, first_observed_at, first_poll_run_id, "
+                    "last_seen_poll_run_id) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(experiment_id, event_id) DO UPDATE SET "
+                    "last_seen_poll_run_id = excluded.last_seen_poll_run_id",
+                    (
+                        str(poll["experiment_id"]), event_id, _iso(observed_at),
+                        poll_run_id, poll_run_id,
+                    ),
                 )
             connection.commit()
         except Exception:
@@ -1021,6 +1222,12 @@ class ContinuousShadowRepository:
                         event.event_id,
                     ),
                 )
+            connection.execute(
+                "UPDATE continuous_shadow_pending_observations SET filtered_at = ? "
+                "WHERE experiment_id = ? AND last_seen_poll_run_id = ? "
+                "AND admission_state = 'PENDING' AND filtered_at IS NULL",
+                (_iso(completed_at), experiment.experiment_id, poll_run_id),
+            )
             for item in completion.evaluations:
                 connection.execute(
                     "INSERT INTO continuous_shadow_evaluations "
@@ -2016,6 +2223,11 @@ class ContinuousShadowRepository:
             "stress_follower_total_pnl": _follower_total_pnl(stress_row),
         }
         return {
+            "contract_version": "shadow-economics-v1",
+            "evidence_reference": {
+                "experiment_id": experiment_id,
+                "selection_run_id": experiment.selection_run_id,
+            },
             "accounting": {
                 "identity": "NAV = initial_cash + realized_pnl + unrealized_pnl - fees",
                 "identity_delta": format(identity_delta, "f"),
@@ -2315,7 +2527,8 @@ class ContinuousShadowRepository:
             ))
             pending_count = int(connection.execute(
                 "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
-                "WHERE experiment_id = ? AND admission_state = 'PENDING'",
+                "WHERE experiment_id = ? AND admission_state = 'PENDING' "
+                "AND filtered_at IS NULL",
                 (experiment_id,),
             ).fetchone()[0])
             settlement_rows = connection.execute(
@@ -2540,7 +2753,8 @@ class ContinuousShadowRepository:
         try:
             return int(connection.execute(
                 "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
-                "WHERE experiment_id = ? AND admission_state = 'PENDING'",
+                "WHERE experiment_id = ? AND admission_state = 'PENDING' "
+                "AND filtered_at IS NULL",
                 (experiment_id,),
             ).fetchone()[0])
         finally:
@@ -3171,12 +3385,17 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     if version == CONTINUOUS_SHADOW_SCHEMA_VERSION:
         _upsert_lifecycle_policy(connection)
         return
+    if version == 8:
+        _migrate_schema_v8_to_v9(connection)
+        return
     if version == 7:
         _migrate_schema_v7_to_v8(connection)
+        _migrate_schema_v8_to_v9(connection)
         return
     if version == 6:
         _migrate_schema_v6_to_v7(connection)
         _migrate_schema_v7_to_v8(connection)
+        _migrate_schema_v8_to_v9(connection)
         return
     if version != 5:
         raise ContinuousShadowStoreError(
@@ -3185,6 +3404,47 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     _migrate_schema_v5_to_v6(connection)
     _migrate_schema_v6_to_v7(connection)
     _migrate_schema_v7_to_v8(connection)
+    _migrate_schema_v8_to_v9(connection)
+
+
+def _migrate_schema_v8_to_v9(connection: sqlite3.Connection) -> None:
+    initialized_at = connection.execute(
+        "SELECT initialized_at FROM continuous_shadow_metadata"
+    ).fetchone()[0]
+    pending_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'continuous_shadow_pending_observations'"
+    ).fetchone()
+    if pending_exists is not None:
+        columns = {
+            str(row[1]) for row in connection.execute(
+                "PRAGMA table_info(continuous_shadow_pending_observations)"
+            )
+        }
+        if "filtered_at" not in columns:
+            connection.execute(
+                "ALTER TABLE continuous_shadow_pending_observations ADD COLUMN filtered_at TEXT"
+            )
+        if "last_seen_poll_run_id" not in columns:
+            connection.execute(
+                "ALTER TABLE continuous_shadow_pending_observations "
+                "ADD COLUMN last_seen_poll_run_id TEXT"
+            )
+    connection.execute(
+        "CREATE TABLE continuous_shadow_metadata_v9 ("
+        "schema_version INTEGER PRIMARY KEY CHECK(schema_version = 9), "
+        "initialized_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO continuous_shadow_metadata_v9 (schema_version, initialized_at) "
+        "VALUES (9, ?)",
+        (initialized_at,),
+    )
+    connection.execute("DROP TABLE continuous_shadow_metadata")
+    connection.execute(
+        "ALTER TABLE continuous_shadow_metadata_v9 RENAME TO continuous_shadow_metadata"
+    )
+    connection.commit()
 
 
 def _migrate_schema_v7_to_v8(connection: sqlite3.Connection) -> None:
@@ -3673,6 +3933,22 @@ def _ledger_balanced(connection: sqlite3.Connection, experiment_id: str) -> bool
     return ledger_is_balanced(connection, experiment_id)
 
 
+def _config_receipt(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "version": "shadow-config-command-v1",
+        "command_id": str(row["command_id"]),
+        "source_id": str(row["source_id"]),
+        "request_digest": str(row["request_digest"]),
+        "expected_latest_experiment_id": str(row["expected_latest_experiment_id"]),
+        "selection_digest": str(row["selection_digest"]),
+        "disposition": str(row["disposition"]),
+        "experiment_id": None if row["experiment_id"] is None else str(row["experiment_id"]),
+        "reason": None if row["reason"] is None else str(row["reason"]),
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+    }
+
+
 def _experiment(row: sqlite3.Row) -> ContinuousShadowExperiment:
     config = _config(json.loads(str(row["config_json"])))
     return ContinuousShadowExperiment(
@@ -3747,6 +4023,26 @@ def _config(value: object) -> ContinuousShadowConfig:
                 value.get("runtime_version", "continuous-shadow-runtime-legacy-v0")
             ),
             wallet_count=None if value.get("wallet_count") is None else int(value["wallet_count"]),
+            selection_policy=str(value.get("selection_policy", "shadow-alpha-ranked-v1")),
+            selection_activity_counts=(
+                None if value.get("selection_activity_counts") is None
+                else {
+                    str(key): int(str(count))
+                    for key, count in dict(value["selection_activity_counts"]).items()
+                }
+            ),
+            selection_observed_at=(
+                None if value.get("selection_observed_at") is None
+                else _datetime(str(value["selection_observed_at"]))
+            ),
+            selection_preflight_digest=(
+                None if value.get("selection_preflight_digest") is None
+                else str(value["selection_preflight_digest"])
+            ),
+            capacity_evidence=(
+                None if value.get("capacity_evidence") is None
+                else dict(value["capacity_evidence"])
+            ),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ContinuousShadowStoreError("Continuous Shadow config is invalid.") from error

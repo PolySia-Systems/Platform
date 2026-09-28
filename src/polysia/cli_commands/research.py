@@ -838,6 +838,74 @@ def _echo_runner_payload(payload: dict[str, object]) -> None:
     typer.echo(text)
 
 
+def prospective_capacity_probe(
+    wallet_count: Annotated[int, typer.Option("--wallet-count", min=1, max=40)],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
+    duration_seconds: Annotated[
+        int, typer.Option("--duration-seconds", min=30, max=180)
+    ] = 90,
+    selection_policy: Annotated[str, typer.Option("--selection-policy")] = (
+        "polycop-shadow-alpha-ranked-v2"
+    ),
+    source_database: Annotated[
+        Path, typer.Option("--source-database")
+    ] = Path("/var/lib/polysia/data/wallet-intelligence.sqlite3"),
+) -> None:
+    """Measure a bounded public DATA_ONLY workload without approving capacity."""
+
+    from polysia.cli_commands.research_evidence_cli import build_persistent_runner_sources
+    from polysia.config.settings import TradingMode
+    from polysia.deployment.research_run_contract import (
+        CAPACITY_SPEC_VERSION,
+        parse_research_run_spec,
+        resolve_run_plan,
+    )
+    from polysia.deployment.wallet_capacity_probe import probe_wallet_workload
+    from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
+
+    try:
+        settings = AppSettings()
+        if (
+            settings.trading_mode is not TradingMode.DATA_ONLY
+            or settings.live_trading_enabled
+            or settings.polymarket_live_token_allowlist
+        ):
+            raise ValueError("capacity probe requires strict DATA_ONLY settings")
+        if load_runtime_identity(venue_id="polymarket").deploy_sha != code_sha:
+            raise ValueError("capacity probe code SHA does not match the running image")
+        spec = parse_research_run_spec({
+            "spec_version": CAPACITY_SPEC_VERSION,
+            "profile": "canary", "code_sha": code_sha,
+            "wallet_count": wallet_count, "selection_policy": selection_policy,
+            "runtime": {},
+        })
+        plan = resolve_run_plan(spec)
+
+        async def run() -> dict[str, object]:
+            async with asyncio.timeout(duration_seconds + 180):
+                sources, discovery = await build_persistent_runner_sources(
+                    database=source_database,
+                    wallet_count=wallet_count,
+                    selection_policy=selection_policy,
+                    runtime=plan.runtime,
+                )
+                return await probe_wallet_workload(
+                    sources, discovery, requested_count=wallet_count,
+                    duration_seconds=duration_seconds,
+                )
+
+        outcome = asyncio.run(run())
+        outcome.update({
+            "code_sha": code_sha,
+            "workload_digest": plan.selection["workload_digest"],
+            "profile": plan.profile,
+            "selection_policy": selection_policy,
+        })
+        typer.echo(json.dumps(outcome, sort_keys=True, default=str))
+    except (OSError, ValueError, RuntimeError) as error:
+        print_error_and_exit(error)
+
+
 def prospective_run_start(
     state_root: Annotated[
         Path,
@@ -899,13 +967,16 @@ def prospective_run_status(
         Path,
         typer.Option("--state-root"),
     ] = Path("/var/lib/polysia/research-run"),
+    readiness: Annotated[
+        bool, typer.Option("--readiness", help="Replay closed windows for sample progress.")
+    ] = False,
 ) -> None:
     """Report runner phase and health without mutating the run."""
 
     from polysia.deployment.research_experiment_runner import ResearchRunnerError
 
     try:
-        payload = _research_runner().status(state_root)
+        payload = _research_runner().status(state_root, include_readiness=readiness)
     except (OSError, ValueError, ResearchRunnerError) as error:
         print_error_and_exit(error)
     _echo_runner_payload(payload)

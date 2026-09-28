@@ -20,11 +20,13 @@ from polysia.application.ports.continuous_shadow import (
     ContinuousSelectionUnavailableError,
 )
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
+from polysia.application.services.active_wallet_selection import select_active_shadow_alpha
 from polysia.storage.dynamic_shadow import DynamicShadowRepository
 
 POLYCOP_SHADOW_ALPHA_TOP3_V1 = "polycop-shadow-alpha-top3-v1"
 POLYCOP_SHADOW_ALPHA_CONFIGURED_V1 = "polycop-shadow-alpha-configured-v1"
 POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1 = "polycop-shadow-alpha-active-top3-v1"
+POLYCOP_SHADOW_ALPHA_ACTIVE_V2 = "polycop-shadow-alpha-active-v2"
 POLYCOP_SOURCE_ID = "polycop"
 SHADOW_ALPHA_POOL = "SHADOW_ALPHA"
 DEFAULT_WALLET_LIMIT = 3
@@ -132,43 +134,30 @@ def resolve_polycop_active_follow_set(
     now: datetime | None = None,
     wallet_limit: int = DEFAULT_WALLET_LIMIT,
     maximum_age: timedelta = MAXIMUM_SELECTION_AGE,
+    policy_version: str = POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1,
 ) -> FrozenPolycopFollowSet:
     """Select recent-active SHADOW_ALPHA wallets without using economic outcomes."""
 
-    if wallet_limit != DEFAULT_WALLET_LIMIT:
+    if (
+        policy_version == POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1
+        and wallet_limit != DEFAULT_WALLET_LIMIT
+    ):
         raise ResearchWalletSelectionError(
             "activity-aware Polycop selection currently requires three wallets"
         )
+    if policy_version not in {
+        POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1, POLYCOP_SHADOW_ALPHA_ACTIVE_V2,
+    }:
+        raise ResearchWalletSelectionError("activity-aware selection policy is unsupported")
+    if wallet_limit < 1:
+        raise ResearchWalletSelectionError("wallet limit must be positive")
     _validate_snapshot(snapshot, observed=now or datetime.now(UTC), maximum_age=maximum_age)
-    eligible = [
-        candidate
-        for candidate in snapshot.candidates
-        if SHADOW_ALPHA_POOL in candidate.pools
-        and candidate.alpha_rank is not None
-        and activity_counts.get(candidate.wallet_id, 0) > 0
-    ]
-    eligible.sort(
-        key=lambda item: (
-            -activity_counts.get(item.wallet_id, 0),
-            int(item.alpha_rank or 0),
-            item.wallet_id,
+    try:
+        selected = select_active_shadow_alpha(
+            snapshot.candidates, activity_counts, count=wallet_limit
         )
-    )
-    selected: list[ProtectedShadowCandidate] = []
-    seen: set[str] = set()
-    for candidate in eligible:
-        if candidate.wallet_id in seen:
-            continue
-        if not candidate.address:
-            raise ResearchWalletSelectionError("Polycop selected wallet is missing an address")
-        seen.add(candidate.wallet_id)
-        selected.append(candidate)
-        if len(selected) == wallet_limit:
-            break
-    if len(selected) < wallet_limit:
-        raise ResearchWalletSelectionError(
-            "recent-active Polycop SHADOW_ALPHA selection is insufficient"
-        )
+    except ValueError as error:
+        raise ResearchWalletSelectionError(str(error)) from error
     reasons = tuple(
         "recent-active SHADOW_ALPHA "
         f"event_count={activity_counts[candidate.wallet_id]} "
@@ -177,8 +166,8 @@ def resolve_polycop_active_follow_set(
     )
     return _freeze_follow_set(
         snapshot,
-        selected=tuple(selected),
-        policy=POLYCOP_SHADOW_ALPHA_ACTIVE_TOP3_V1,
+        selected=selected,
+        policy=policy_version,
         reasons=reasons,
     )
 
