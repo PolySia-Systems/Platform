@@ -903,9 +903,14 @@ class OfficialMarketStreamSource:
 
         bus = InMemoryEventBus()
         subscription = bus.subscribe()
-        stream = self._new_market_stream(bus)
-        runner = asyncio.create_task(stream.run())
-        next_discovery_at = self._clock() + timedelta(seconds=self._discovery_interval_seconds)
+        runner = (
+            asyncio.create_task(self._new_market_stream(bus).run())
+            if self._token_ids
+            else None
+        )
+        next_discovery_at = self._clock() + timedelta(
+            seconds=self._discovery_interval_seconds if runner is not None else 0
+        )
         next_snapshot_at = self._clock()
         try:
             async with subscription:
@@ -913,8 +918,11 @@ class OfficialMarketStreamSource:
                     wait_timeout = min(1.0, max(0.05, (deadline - self._clock()).total_seconds()))
                     next_event = asyncio.create_task(anext(subscription))
                     sleeper = asyncio.ensure_future(self._sleep(wait_timeout))
+                    tasks = {next_event, sleeper}
+                    if runner is not None:
+                        tasks.add(runner)
                     done, pending = await asyncio.wait(
-                        {next_event, sleeper, runner},
+                        tasks,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     for task in pending:
@@ -934,17 +942,21 @@ class OfficialMarketStreamSource:
                         )
                         for item in normalized:
                             yield item
-                        if self._book_recovery_requested and self._book_recovery_due():
+                        if (
+                            runner is not None
+                            and self._token_ids
+                            and self._book_recovery_requested
+                            and self._book_recovery_due()
+                        ):
                             if not runner.done():
                                 runner.cancel()
                                 with suppress(asyncio.CancelledError):
                                     await runner
-                            stream = self._new_market_stream(bus)
-                            runner = asyncio.create_task(stream.run())
+                            runner = asyncio.create_task(self._new_market_stream(bus).run())
                             self._book_recovery_requested = False
                             self._book_recovery_not_before = self._clock() + timedelta(seconds=5)
                             self.book_recovery_count += 1
-                    if runner in done:
+                    if runner is not None and runner in done:
                         self.reconnect_count += 1
                         if runner.exception() is not None:
                             self._availability = "unavailable"
@@ -958,20 +970,26 @@ class OfficialMarketStreamSource:
                                 normalize_ns=self._monotonic_ns(),
                                 reason="stream_disconnected",
                             )
-                        stream = self._new_market_stream(bus)
-                        runner = asyncio.create_task(stream.run())
+                        runner = (
+                            asyncio.create_task(self._new_market_stream(bus).run())
+                            if self._token_ids
+                            else None
+                        )
                     if self._clock() >= next_discovery_at:
                         changed = await self._refresh_market_discovery()
                         next_discovery_at = self._clock() + timedelta(
                             seconds=self._discovery_interval_seconds
                         )
                         if changed:
-                            if not runner.done():
+                            if runner is not None and not runner.done():
                                 runner.cancel()
                                 with suppress(asyncio.CancelledError):
                                     await runner
-                            stream = self._new_market_stream(bus)
-                            runner = asyncio.create_task(stream.run())
+                            runner = (
+                                asyncio.create_task(self._new_market_stream(bus).run())
+                                if self._token_ids
+                                else None
+                            )
                             self.subscription_update_count += 1
                             # Newly discovered wallet tokens need executable evidence
                             # immediately; waiting for the periodic cadence creates a
@@ -995,7 +1013,7 @@ class OfficialMarketStreamSource:
                             seconds=self._snapshot_refresh_interval_seconds
                         )
         finally:
-            if not runner.done():
+            if runner is not None and not runner.done():
                 runner.cancel()
                 with suppress(asyncio.CancelledError):
                     await runner
@@ -1040,6 +1058,8 @@ class OfficialMarketStreamSource:
                 token for token in snapshot.token_markets if token and token not in current
             )
             self._token_ids = (*retained, *added)[:500]
+            if not self._token_ids:
+                self._availability = "not_started"
         self._token_markets = {
             token: market
             for token, market in snapshot.token_markets.items()
