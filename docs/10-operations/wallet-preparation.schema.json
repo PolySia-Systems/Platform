@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polysia.example/contracts/wallet-preparation-v1",
+  "title": "PolySia bounded DATA_ONLY wallet preparation policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "mode", "minimum_wallets", "maximum_wallets"],
+  "properties": {
+    "version": {"const": "wallet-preparation-v1"},
+    "mode": {"enum": ["exact", "adaptive"]},
+    "minimum_wallets": {"type": "integer", "minimum": 1, "maximum": 40},
+    "maximum_wallets": {"type": "integer", "minimum": 1, "maximum": 40},
+    "candidate_pool_size": {"type": "integer", "minimum": 1, "maximum": 500},
+    "candidate_scan_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "markets_per_wallet": {"type": "integer", "minimum": 1, "maximum": 20},
+    "pages_per_wallet": {"type": "integer", "minimum": 1, "maximum": 100},
+    "requests_per_wallet": {"type": "integer", "minimum": 1, "maximum": 100},
+    "total_data_requests": {"type": "integer", "minimum": 1, "maximum": 5000},
+    "total_market_tokens": {"type": "integer", "minimum": 1, "maximum": 1000},
+    "time_budget_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+    "maximum_process_rss_mb": {"type": "integer", "minimum": 64, "maximum": 768},
+    "maximum_source_storage_growth_mb": {"type": "integer", "minimum": 1, "maximum": 1024},
+    "refresh_hours": {"type": "integer", "minimum": 1, "maximum": 24},
+    "evidence_expiry_minutes": {"type": "integer", "minimum": 1, "maximum": 240},
+    "maximum_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+    "target_observable_events_per_period": {"type": "integer", "minimum": 1, "maximum": 10000}
+  }
+}

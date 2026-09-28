@@ -305,9 +305,11 @@ services:
       - --intelligence-history-days
       - "${POLYSIA_WALLET_INTELLIGENCE_HISTORY_DAYS:-365}"
       - --fresh-hours
-      - "${POLYSIA_WALLET_FRESH_HOURS:-24}"
+      - "${POLYSIA_WALLET_FRESH_HOURS:-20}"
       - --stale-hours
       - "${POLYSIA_WALLET_STALE_HOURS:-36}"
+      - --alpha-pool-size
+      - "${POLYSIA_WALLET_ALPHA_POOL_SIZE:-50}"
       - --lease-minutes
       - "${POLYSIA_WALLET_LEASE_MINUTES:-30}"
     user: "10001:10001"
@@ -336,6 +338,63 @@ services:
       options:
         max-size: 10m
         max-file: "5"
+
+  wallet-intelligence-prepare:
+    image: polysia:${POLYSIA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        POLYSIA_BUILD_COMMIT: ${POLYSIA_IMAGE_TAG:-unknown}
+    profiles:
+      - wallet-intelligence
+    environment:
+      APP_ENV: production
+      LIVE_TRADING_ENABLED: "false"
+      TRADING_MODE: DATA_ONLY
+    command:
+      - wallet-intelligence
+      - portfolio-prepare
+      - --source
+      - polycop
+      - --source-database
+      - /var/lib/polysia/data/wallet-intelligence.sqlite3
+      - --database
+      - /var/lib/polysia/data/continuous-shadow.sqlite3
+      - --preparation-spec
+      - /var/lib/polysia/config/wallet-preparation.json
+      - --backup-dir
+      - /var/lib/polysia/backups/wallet-intelligence
+      - --code-sha
+      - ${POLYSIA_IMAGE_TAG:-unknown}
+      - --output
+      - /var/lib/polysia/reports/wallet-intelligence/prepared-next-period.json
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/data
+        target: /var/lib/polysia/data
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/reports
+        target: /var/lib/polysia/reports/wallet-intelligence
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/config
+        target: /var/lib/polysia/config
+        read_only: true
+      - type: bind
+        source: ${POLYSIA_STATE_DIR:-/var/lib/polysia}/wallet-intelligence/backups
+        target: /var/lib/polysia/backups/wallet-intelligence
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 96
+    mem_limit: 768m
+    cpus: 0.75
+    restart: "no"
 
   wallet-intelligence-shadow:
     image: polysia:${POLYSIA_IMAGE_TAG:-local}
@@ -454,6 +513,8 @@ services:
       - "${POLYSIA_CONTINUOUS_SHADOW_SELECTION_MAX_AGE_HOURS:-36}"
       - --runtime-spec
       - /var/lib/polysia/config/continuous-shadow-runtime.json
+      - --preparation-file
+      - /var/lib/polysia/reports/wallet-intelligence/prepared-next-period.json
       - --loop
     user: "10001:10001"
     read_only: true

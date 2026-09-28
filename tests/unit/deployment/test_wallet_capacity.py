@@ -32,6 +32,10 @@ def _evidence(*, validated_count: int = 20) -> dict[str, object]:
         "clob_requests": 2,
         "gamma_requests": 2,
         "rate_limited_requests": 0,
+        "probe_scope": "SHADOW_FULL_PATH", "nonempty_event_count": 3,
+        "writer_poll_count": 3, "book_requests": 2, "fee_requests": 2,
+        "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+        "shared_ip_observed": True,
     }
     evidence["digest"] = hashlib.sha256(json.dumps(
         evidence, sort_keys=True, separators=(",", ":")
@@ -65,3 +69,31 @@ def test_measured_capacity_matches_code_workload_and_count() -> None:
         capacity_status(10, code_sha="a" * 40, workload_digest="b" * 64, evidence=evidence)
     with pytest.raises(WalletCapacityError, match="code SHA"):
         capacity_status(10, code_sha="b" * 40, workload_digest=fingerprint, evidence=evidence)
+    prior = {**evidence, "version": "wallet-capacity-v1"}
+    with pytest.raises(WalletCapacityError, match="version is unsupported"):
+        capacity_status(10, code_sha="a" * 40, workload_digest=fingerprint, evidence=prior)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("probe_scope", "CANDIDATE_ONLY", "full writer path"),
+        ("nonempty_event_count", 0, "nonempty full-path"),
+        ("writer_poll_count", 0, "nonempty full-path"),
+        ("shared_ip_observed", False, "nonempty full-path"),
+    ],
+)
+def test_source_only_or_empty_measurement_never_admits_capacity(
+    field: str, value: object, message: str,
+) -> None:
+    evidence = _evidence()
+    evidence[field] = value
+    evidence["digest"] = hashlib.sha256(json.dumps({
+        key: item for key, item in evidence.items() if key != "digest"
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    with pytest.raises(WalletCapacityError, match=message):
+        capacity_status(
+            5, code_sha="a" * 40,
+            workload_digest=workload_digest("canary", {"poll_interval_seconds": 3}),
+            evidence=evidence,
+        )

@@ -248,12 +248,43 @@ async def _measure_recent_alpha_activity(
     lookback: timedelta = timedelta(hours=4),
     candidate_limit: int = 50,
     minimum_candidates: int = 3,
+    market_limit_per_wallet: int = 4,
+    max_pages_per_wallet: int = 20,
+    max_requests_per_wallet: int = 20,
+    max_total_data_requests: int = 1000,
+    max_total_market_tokens: int = 500,
+    time_budget_seconds: int = 180,
     market_evidence_reader: Callable[
         [Mapping[str, str]], Awaitable[Mapping[str, tuple[bool, bool]]]
     ] | None = None,
 ) -> tuple[dict[str, int], dict[str, object]]:
     from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
     from polysia.deployment.research_wallet_selection import ResearchWalletSelectionError
+
+    if not 1 <= candidate_limit <= 500 or not 1 <= market_limit_per_wallet <= 20:
+        raise ValueError("candidate or market scan limit is outside the reviewed bound")
+    if not 1 <= max_pages_per_wallet <= max_requests_per_wallet <= 100:
+        raise ValueError("activity page/request budget is invalid")
+    if not 1 <= time_budget_seconds <= 600:
+        raise ValueError("activity time budget is invalid")
+    if not 1 <= max_total_data_requests <= 5000 or not 1 <= max_total_market_tokens <= 1000:
+        raise ValueError("aggregate activity budgets are invalid")
+
+    class BudgetedTransport:
+        def __init__(self) -> None:
+            self.used = 0
+
+        async def get_json(
+            self, base_url: str, path: str, params: Mapping[str, str | int | bool],
+            *, purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
+        ) -> Any:
+            if self.used >= max_total_data_requests:
+                raise ValueError("aggregate Data API request budget exhausted")
+            self.used += 1
+            return await transport.get_json(base_url, path, params, purpose=purpose)
+
+    budgeted_transport = BudgetedTransport()
+    preparation_started = asyncio.get_running_loop().time()
 
     candidates_by_wallet: dict[str, ProtectedShadowCandidate] = {}
     for candidate in sorted(
@@ -278,11 +309,11 @@ async def _measure_recent_alpha_activity(
 
     async def measure(
         candidate: ProtectedShadowCandidate,
-    ) -> tuple[str, int, str, int, str | None, str | None, int]:
+    ) -> tuple[str, int, str, int, tuple[tuple[str, str, int], ...]]:
         try:
             async with semaphore:
                 rows = await fetch_data_api_v2_window(
-                    transport,
+                    budgeted_transport,
                     DATA_API_V2_TRADES_PATH,
                     {
                         "user": candidate.address,
@@ -292,6 +323,9 @@ async def _measure_recent_alpha_activity(
                         "taker_only": False,
                     },
                     purpose=LeaderReadPurpose.DISCOVERY,
+                    max_pages=max_pages_per_wallet,
+                    max_requests=max_requests_per_wallet,
+                    max_elapsed_seconds=min(30, time_budget_seconds),
                 )
         except (OSError, TimeoutError, TypeError, ValueError) as error:
             raise ResearchWalletSelectionError(
@@ -311,82 +345,107 @@ async def _measure_recent_alpha_activity(
                     "recent activity has insufficient coverage"
                 )
         unique_rows = unique_wallet_rows(rows)
-        recent = max(
-            unique_rows, key=lambda row: (int(row["timestamp"]), str(row.get("id") or "")),
-            default=None,
+        recent = sorted(
+            unique_rows,
+            key=lambda row: (int(row["timestamp"]), str(row.get("id") or "")),
+            reverse=True,
         )
-        token = None if recent is None else recent.get("asset")
-        market = None if recent is None else recent.get("conditionId")
+        market_counts: dict[tuple[str, str], int] = {}
+        for row in recent:
+            token, market = row.get("asset"), row.get("conditionId")
+            if isinstance(token, str) and token and isinstance(market, str) and market:
+                key = (token, market)
+                market_counts[key] = market_counts.get(key, 0) + 1
         return (
             candidate.wallet_id,
             len(unique_rows),
             public_wallet_alias(candidate.address),
             int(candidate.alpha_rank or 0),
-            str(token) if token else None,
-            str(market) if market else None,
-            sum(
-                row.get("asset") == token and row.get("conditionId") == market
-                for row in unique_rows
-            ) if token and market else 0,
+            tuple((token, market, market_counts[(token, market)]) for token, market in
+                  tuple(market_counts)[:market_limit_per_wallet]),
         )
 
     try:
         measured = await asyncio.wait_for(
             asyncio.gather(*(measure(candidate) for candidate in ranked)),
-            timeout=180,
+            timeout=time_budget_seconds,
         )
     except TimeoutError as error:
         raise ResearchWalletSelectionError(
             "recent activity has insufficient coverage within the preflight time budget"
         ) from error
     token_markets: dict[str, str] = {}
-    for _wallet_id, _count, _alias, _rank, token, market, _same_token_count in measured:
-        if token is not None and market is not None:
+    for _wallet_id, _count, _alias, _rank, markets in measured:
+        for token, market, _same_token_count in markets:
             previous = token_markets.setdefault(token, market)
             if previous != market:
                 raise ResearchWalletSelectionError(
                     "market evidence preflight has conflicting token identity"
                 )
+    if len(token_markets) > max_total_market_tokens:
+        raise ResearchWalletSelectionError(
+            "market evidence token budget exhausted before complete screening"
+        )
     availability: Mapping[str, tuple[bool, bool]] = {}
     if market_evidence_reader is not None:
         try:
+            remaining = time_budget_seconds - (
+                asyncio.get_running_loop().time() - preparation_started
+            )
+            if remaining <= 0:
+                raise TimeoutError("activity preflight deadline exhausted")
             availability = await asyncio.wait_for(
-                market_evidence_reader(token_markets), timeout=60,
+                market_evidence_reader(token_markets), timeout=min(60, remaining),
             )
         except (OSError, TimeoutError, TypeError, ValueError) as error:
             raise ResearchWalletSelectionError(
                 "market evidence preflight has insufficient coverage"
             ) from error
+        if set(availability) != set(token_markets):
+            raise ResearchWalletSelectionError(
+                "market evidence preflight returned incomplete token coverage"
+            )
     counts: dict[str, int] = {}
-    latest_token_counts: dict[str, int] = {}
+    observable_counts: dict[str, int] = {}
     public_rows: list[dict[str, object]] = []
     observable_event_count = 0
-    for wallet_id, count, alias, rank, token, market, same_token_count in measured:
-        book, fee = availability.get(token or "", (False, False))
-        eligible = count > 0 and (market_evidence_reader is None or book and fee)
+    for wallet_id, count, alias, rank, markets in measured:
+        checked = [
+            (token, events, *availability.get(token, (False, False)))
+            for token, _market, events in markets
+        ]
+        observable = sum(events for _token, events, book, fee in checked if book and fee)
+        book = any(item[2] for item in checked)
+        fee = any(item[3] for item in checked)
+        eligible = count > 0 and (market_evidence_reader is None or observable > 0)
         counts[wallet_id] = count if eligible else 0
-        latest_token_counts[wallet_id] = (
-            same_token_count if eligible and market_evidence_reader is not None else 0
-        )
+        observable_counts[wallet_id] = observable if eligible else 0
         if eligible and market_evidence_reader is not None:
-            observable_event_count += same_token_count
+            observable_event_count += observable
         row_payload: dict[str, object] = {
             "alpha_rank": rank, "event_count": count, "wallet_alias": alias,
-            "market_token_bound": token is not None and market is not None,
+            "wallet_id": wallet_id,
+            "market_token_bound": bool(markets),
+            "market_pairs_checked": len(markets),
+            "market_pairs_available": sum(
+                1 for _token, _events, has_book, has_fee in checked if has_book and has_fee
+            ),
             "book_depth_available": book if market_evidence_reader is not None else None,
             "fee_available": fee if market_evidence_reader is not None else None,
             "selection_eligible": eligible,
             "reason": (
                 "inactive" if count == 0 else
                 "recent_activity_market_unchecked" if market_evidence_reader is None else
-                "missing_market_token_mapping" if token is None or market is None else
+                "missing_market_token_mapping" if not markets else
                 "missing_book_or_depth" if market_evidence_reader is not None and not book else
                 "missing_fee" if market_evidence_reader is not None and not fee else
+                "unobservable_market_pairs" if market_evidence_reader is not None
+                and observable == 0 else
                 "observable_recent_activity"
             ),
         }
         if market_evidence_reader is not None:
-            row_payload["latest_token_event_count"] = same_token_count
+            row_payload["observable_recent_event_count"] = observable
         public_rows.append(row_payload)
     evidence = {
         "candidate_count": len(measured),
@@ -395,7 +454,7 @@ async def _measure_recent_alpha_activity(
         "rows": public_rows,
         "source": "polymarket:data-api-v2:trades",
         "market_evidence_status": (
-            "checked_latest_observed_token" if market_evidence_reader is not None
+            "checked_bounded_recent_market_pairs" if market_evidence_reader is not None
             else "not_checked"
         ),
     }
@@ -405,18 +464,20 @@ async def _measure_recent_alpha_activity(
         if observed_eligible < 5 or market_evidence_reader is None else
         {
             "status": "ROUGH_OBSERVABLE_ACTIVITY_RATE_NOT_FORECAST",
-            "latest_token_observable_events_per_hour": str(
-                Decimal(observed_eligible) / Decimal("4")
+            "bounded_market_observable_events_per_hour": str(
+                Decimal(observed_eligible) * Decimal(3600) /
+                Decimal(int(lookback.total_seconds()))
             ),
             "hours_for_20_if_rate_and_evidence_hold": str(
-                Decimal("80") / Decimal(observed_eligible)
+                Decimal(20) * Decimal(lookback.total_seconds()) /
+                (Decimal(3600) * Decimal(observed_eligible))
             ),
             "uncertainty": "high; future wallets and markets may differ",
         }
     )
     if market_evidence_reader is not None:
         evidence["cohort_options"] = active_selection_options(
-            ranked, counts, latest_token_counts,
+            ranked, counts, observable_counts,
             lookback_seconds=int(lookback.total_seconds()),
             requested_count=minimum_candidates,
         )

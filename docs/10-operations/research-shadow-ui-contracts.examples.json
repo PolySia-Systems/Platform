@@ -16,6 +16,27 @@
     "proposed_runtime_spec": {"runtime_version": "continuous-shadow-runtime-v2", "wallet_count": 5}
   },
   {
+    "version": "wallet-preparation-v1",
+    "status": "PENDING_CAPACITY",
+    "requested_count": 5,
+    "effective_count": 4,
+    "candidate_count": 80,
+    "screened_count": 80,
+    "screening_complete": true,
+    "rate_status": "INSUFFICIENT_OBSERVED_RATE",
+    "prepared_for_experiment_id": "period-1",
+    "proposed_runtime_spec": {"runtime_version": "continuous-shadow-runtime-v2", "wallet_count": 4},
+    "next_action": "measure_full_workload_capacity"
+  },
+  {
+    "version": "shadow-capacity-probe-v1",
+    "status": "INSUFFICIENT_NONEMPTY_EVIDENCE",
+    "wallet_count": 4,
+    "polls_observed": 3,
+    "new_event_count": 0,
+    "unmeasured": ["shared_ip_other_consumers", "host_total_memory", "future_market_mix"]
+  },
+  {
     "version": "shadow-config-preview-v1",
     "status": "PENDING_DRAIN",
     "requested": {"runtime_version": "continuous-shadow-runtime-v2", "wallet_count": 10},

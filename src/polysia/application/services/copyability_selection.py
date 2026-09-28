@@ -51,6 +51,8 @@ class CopyabilitySelectionService:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._alpha_size = alpha_size
         self._stress_size = stress_size
+        if not 1 <= alpha_size <= 500 or not 1 <= stress_size <= 500:
+            raise ValueError("selection pool sizes must be within [1, 500]")
 
     def process_stage2_run(
         self,
@@ -65,7 +67,12 @@ class CopyabilitySelectionService:
             feature_set_version=FEATURE_SET_VERSION,
             policy_id=POLICY_ID,
             policy_version=POLICY_VERSION,
-            ranking_version=RANKING_VERSION,
+            ranking_version=(
+                RANKING_VERSION if (
+                    self._alpha_size == DEFAULT_ALPHA_SIZE
+                    and self._stress_size == DEFAULT_STRESS_SIZE
+                ) else f"{RANKING_VERSION}+alpha{self._alpha_size}-stress{self._stress_size}"
+            ),
         )
         existing = self._store.successful_run(key)
         if existing is not None:

@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Mapping
 
-CAPACITY_CONTRACT_VERSION = "wallet-capacity-v1"
+CAPACITY_CONTRACT_VERSION = "wallet-capacity-v2"
 SOFTWARE_WALLET_LIMIT = 40
 LEGACY_OPERATIONAL_WALLET_LIMIT = 3
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -85,6 +85,8 @@ def capacity_status(
         "polls_observed", "max_queue_delay_ms", "p95_decision_latency_ms",
         "peak_memory_bytes", "storage_growth_bytes", "other_consumer_requests",
         "data_requests", "clob_requests", "gamma_requests", "rate_limited_requests",
+        "nonempty_event_count", "writer_poll_count", "book_requests",
+        "fee_requests", "host_peak_memory_bytes",
     )
     for field in required_measures:
         value = evidence.get(field)
@@ -95,6 +97,18 @@ def capacity_status(
         or int(str(evidence["rate_limited_requests"])) > 0
     ):
         raise WalletCapacityError("capacity probe lacks repeated clean polls")
+    if evidence.get("probe_scope") not in {"SHADOW_FULL_PATH", "RESEARCH_FULL_PATH"}:
+        raise WalletCapacityError("capacity probe did not exercise a full writer path")
+    if (
+        int(str(evidence["nonempty_event_count"])) < 1
+        or int(str(evidence["writer_poll_count"])) < 2
+        or int(str(evidence["book_requests"])) < 1
+        or int(str(evidence["fee_requests"])) < 1
+        or int(str(evidence["host_peak_memory_bytes"])) < 1
+        or evidence.get("ledger_balanced") is not True
+        or evidence.get("shared_ip_observed") is not True
+    ):
+        raise WalletCapacityError("capacity probe lacks nonempty full-path host evidence")
     if evidence.get("result") != "PASS":
         raise WalletCapacityError("capacity evidence has no passing measured result")
     if count > validated:

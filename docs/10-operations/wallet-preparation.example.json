@@ -1,0 +1,20 @@
+{
+  "version": "wallet-preparation-v1",
+  "mode": "adaptive",
+  "minimum_wallets": 3,
+  "maximum_wallets": 5,
+  "candidate_pool_size": 100,
+  "candidate_scan_limit": 80,
+  "markets_per_wallet": 4,
+  "pages_per_wallet": 20,
+  "requests_per_wallet": 20,
+  "total_data_requests": 1000,
+  "total_market_tokens": 500,
+  "time_budget_seconds": 180,
+  "maximum_process_rss_mb": 768,
+  "maximum_source_storage_growth_mb": 256,
+  "refresh_hours": 20,
+  "evidence_expiry_minutes": 180,
+  "maximum_attempts": 3,
+  "target_observable_events_per_period": 20
+}

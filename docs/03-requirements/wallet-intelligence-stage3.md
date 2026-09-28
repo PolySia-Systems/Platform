@@ -148,3 +148,13 @@ Stage 2 failure. `LIVE_REVIEW_CANDIDATE` must remain empty.
 - repository quality gates pass;
 - the change is committed and opened as a draft PR;
 - deployment, timer enablement, and every trading action remain unperformed.
+
+## Additive bounded pool breadth (2026-09-28)
+
+CURRENT repository implementation: Alpha and Stress publication breadth can
+each be configured from 1 to 500 without changing selection eligibility or
+pool separation. Nondefault sizes enter the Stage 3 processing identity;
+the historical default-size identity remains unchanged. The preparation
+workflow sets Alpha breadth independently from activity scan breadth and the
+eventual Shadow wallet count. An unread or rejected candidate cannot be
+promoted to Alpha merely to fill a requested cohort.

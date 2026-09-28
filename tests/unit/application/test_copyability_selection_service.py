@@ -119,6 +119,45 @@ def test_stage3_is_idempotent_and_keeps_live_review_empty(tmp_path: Path) -> Non
     assert store.current_pool("polycop", SelectionPoolId.LIVE_REVIEW_CANDIDATE) == ()
 
 
+def test_wider_alpha_pool_has_distinct_processing_identity_and_keeps_eligibility(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    at = datetime(2026, 8, 24, tzinfo=UTC)
+    qualified = {
+        "copy_backtest_pnl": "40", "actual_pnl": "12", "markets_traded": 8,
+        "trading_days": 10, "trading_volume": "500",
+    }
+    rows = tuple(
+        (f"0x{index:040x}", index, qualified if index <= 60 else {})
+        for index in range(1, 62)
+    )
+    stage2 = _seed_stage2(database, rows, at)
+    store = CopyabilitySelectionRepository(database)
+    store.initialize()
+    intelligence = CandidateIntelligenceRepository(database)
+    lease = intelligence.acquire_lease(
+        PIPELINE_LEASE_RESOURCE, owner_id="stage3-wide",
+        acquired_at=at + timedelta(minutes=1), lease_duration=timedelta(minutes=30),
+    )
+    narrow = CopyabilitySelectionService(
+        store, clock=lambda: at + timedelta(minutes=1), alpha_size=50,
+    ).process_stage2_run("polycop", stage2, lease=lease)
+    wide = CopyabilitySelectionService(
+        store, clock=lambda: at + timedelta(minutes=2), alpha_size=60,
+    ).process_stage2_run("polycop", stage2, lease=lease)
+    assert narrow.selection.run_id != wide.selection.run_id
+    assert narrow.selection.key.ranking_version != wide.selection.key.ranking_version
+    assert wide.idempotent_replay is False
+    rejected = store.current_pool("polycop", SelectionPoolId.REJECTED)
+    assert all(item.wallet_id not in {item.wallet_id for item in rejected}
+               for item in store.current_pool("polycop", SelectionPoolId.SHADOW_ALPHA))
+    replay = CopyabilitySelectionService(
+        store, clock=lambda: at + timedelta(minutes=3), alpha_size=60,
+    ).process_stage2_run("polycop", stage2, lease=lease)
+    assert replay.idempotent_replay is True
+
+
 def test_missing_stage2_preserves_previous_pools_and_stage2(tmp_path: Path) -> None:
     database = tmp_path / "wallet-intelligence.sqlite3"
     at = datetime(2026, 8, 24, tzinfo=UTC)

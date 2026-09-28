@@ -6,6 +6,8 @@
     {"$ref": "#/$defs/capabilities"},
     {"$ref": "#/$defs/preflight"},
     {"$ref": "#/$defs/preflightFailure"},
+    {"$ref": "#/$defs/preparation"},
+    {"$ref": "#/$defs/capacityProbe"},
     {"$ref": "#/$defs/preview"},
     {"$ref": "#/$defs/receipt"},
     {"$ref": "#/$defs/readiness"},
@@ -16,6 +18,36 @@
     {"$ref": "#/$defs/researchResult"}
   ],
   "$defs": {
+    "preparation": {
+      "type": "object",
+      "required": ["version", "status"],
+      "properties": {
+        "version": {"const": "wallet-preparation-v1"},
+        "status": {"enum": ["REQUESTED", "PREPARED", "PENDING_CAPACITY", "BLOCKED_CAPACITY_ENVELOPE", "LOW_OBSERVABLE_RATE", "INSUFFICIENT_ACTIVE_CANDIDATES", "ZERO_ACTIVITY", "UNAVAILABLE_FEE", "UNAVAILABLE_DEPTH", "BLOCKED"]},
+        "requested_count": {"type": "integer", "minimum": 1, "maximum": 40},
+        "effective_count": {"type": ["integer", "null"], "minimum": 1, "maximum": 40},
+        "candidate_count": {"type": "integer", "minimum": 0},
+        "screened_count": {"type": "integer", "minimum": 0},
+        "screening_complete": {"type": "boolean"},
+        "rate_status": {"enum": ["TARGET_OBSERVED", "INSUFFICIENT_OBSERVED_RATE"]},
+        "prepared_for_experiment_id": {"type": "string"},
+        "command_id": {"type": "string"},
+        "proposed_runtime_spec": {"type": "object"},
+        "next_action": {"type": "string"}
+      }
+    },
+    "capacityProbe": {
+      "type": "object",
+      "required": ["version", "status", "wallet_count", "polls_observed", "new_event_count", "unmeasured"],
+      "properties": {
+        "version": {"const": "shadow-capacity-probe-v1"},
+        "status": {"enum": ["FAILED", "SHADOW_PATH_NONEMPTY_UNREVIEWED", "INSUFFICIENT_NONEMPTY_EVIDENCE"]},
+        "wallet_count": {"type": "integer", "minimum": 1, "maximum": 40},
+        "polls_observed": {"type": "integer", "minimum": 0},
+        "new_event_count": {"type": "integer", "minimum": 0},
+        "unmeasured": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "capabilities": {
       "type": "object",
       "required": ["version", "software_wallet_limit", "operational_status", "policies", "trading_mode"],

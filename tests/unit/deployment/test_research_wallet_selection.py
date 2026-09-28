@@ -435,6 +435,77 @@ def test_active_preflight_filters_missing_market_evidence_without_hiding_source_
     assert options[0]["status"] == "INSUFFICIENT_ACTIVE_CANDIDATES"
 
 
+def test_activity_preflight_checks_earlier_recent_market_and_bounds_aggregate_reads() -> None:
+    from polysia.cli_commands.research_evidence_cli import _measure_recent_alpha_activity
+
+    class Transport:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_json(
+            self, _base_url: str, _path: str,
+            params: dict[str, str | int | bool], **_kwargs: object,
+        ) -> object:
+            self.calls += 1
+            return {"data": [
+                {"id": "latest", "transaction_hash": "latest", "proxy_wallet": params["user"],
+                 "timestamp": int(NOW.timestamp()), "token_id": "unavailable",
+                 "condition_id": "market-latest"},
+                {"id": "earlier", "transaction_hash": "earlier", "proxy_wallet": params["user"],
+                 "timestamp": int(NOW.timestamp()) - 60, "token_id": "available",
+                 "condition_id": "market-earlier"},
+            ], "pagination": {"has_more": False, "next_cursor": None}}
+
+    transport = Transport()
+
+    async def availability(tokens: dict[str, str]) -> dict[str, tuple[bool, bool]]:
+        assert tokens == {"unavailable": "market-latest", "available": "market-earlier"}
+        return {"unavailable": (False, False), "available": (True, True)}
+
+    counts, evidence = asyncio.run(_measure_recent_alpha_activity(
+        (_candidate("one", WALLET_1, alpha_rank=1),),
+        transport=transport, observed=NOW, minimum_candidates=1,
+        market_evidence_reader=availability,
+    ))
+    assert counts == {"one": 2}
+    assert evidence["rows"][0]["market_pairs_checked"] == 2
+    assert evidence["rows"][0]["observable_recent_event_count"] == 1
+    assert evidence["rows"][0]["selection_eligible"] is True
+    assert transport.calls == 1
+    with pytest.raises(ResearchWalletSelectionError, match="insufficient coverage"):
+        asyncio.run(_measure_recent_alpha_activity(
+            (_candidate("one", WALLET_1, alpha_rank=1),
+             _candidate("two", WALLET_2, alpha_rank=2)),
+            transport=transport, observed=NOW, minimum_candidates=2,
+            max_total_data_requests=1,
+        ))
+
+
+def test_activity_preflight_rejects_incomplete_market_response() -> None:
+    from polysia.cli_commands.research_evidence_cli import _measure_recent_alpha_activity
+
+    class Transport:
+        async def get_json(
+            self, _base_url: str, _path: str,
+            params: dict[str, str | int | bool], **_kwargs: object,
+        ) -> object:
+            return {"data": [{"id": "x", "transaction_hash": "x",
+                              "proxy_wallet": params["user"],
+                              "timestamp": int(NOW.timestamp()),
+                              "token_id": "one", "condition_id": "market"}],
+                    "pagination": {"has_more": False, "next_cursor": None}}
+
+    async def missing(_tokens: dict[str, str]) -> dict[str, tuple[bool, bool]]:
+        return {}
+
+    with pytest.raises(ResearchWalletSelectionError, match="incomplete token coverage"):
+        asyncio.run(_measure_recent_alpha_activity(
+            (_candidate("one", WALLET_1, alpha_rank=1),),
+            transport=Transport(), observed=NOW, minimum_candidates=1,
+            market_evidence_reader=missing,
+        ))
+
+
 def test_public_benchmark_discovery_remains_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -64,6 +64,7 @@ class CandidateHealthReport:
     age_seconds: int | None
     warning_after_seconds: int
     critical_after_seconds: int
+    refresh_after_seconds: int
     reasons: tuple[str, ...]
     state: CandidateSourceState
 
@@ -86,6 +87,20 @@ class CandidateHealthReport:
             "last_success_at": None
             if self.state.last_success_at is None
             else self.state.last_success_at.isoformat(),
+            "source_captured_at": None
+            if self.state.source_captured_at is None
+            else self.state.source_captured_at.isoformat(),
+            "last_actual_read_at": None
+            if self.state.source_captured_at is None
+            else self.state.source_captured_at.isoformat(),
+            "source_capture_basis": "local_fetch_completed_at",
+            "upstream_data_as_of": None,
+            "next_refresh_at": None
+            if self.state.last_success_at is None
+            else (self.state.last_success_at + timedelta(
+                seconds=self.refresh_after_seconds
+            )).isoformat(),
+            "refresh_after_seconds": self.refresh_after_seconds,
             "last_warning_code": self.state.last_warning_code,
             "level": self.level.value,
             "reasons": list(self.reasons),
@@ -236,8 +251,10 @@ class CandidateWalletSyncService:
         *,
         warning_after: timedelta = timedelta(hours=36),
         critical_after: timedelta = timedelta(hours=72),
+        refresh_after: timedelta = timedelta(hours=20),
     ) -> CandidateHealthReport:
-        if warning_after <= timedelta(0) or critical_after <= warning_after:
+        if (refresh_after <= timedelta(0) or warning_after <= refresh_after
+                or critical_after <= warning_after):
             raise ValueError("health thresholds must be positive and increasing")
         self._store.initialize()
         checked_at = self._utc_now()
@@ -282,6 +299,7 @@ class CandidateWalletSyncService:
             age_seconds=age_seconds,
             warning_after_seconds=int(warning_after.total_seconds()),
             critical_after_seconds=int(critical_after.total_seconds()),
+            refresh_after_seconds=int(refresh_after.total_seconds()),
             reasons=tuple(reasons),
             state=state,
         )

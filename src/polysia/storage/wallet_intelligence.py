@@ -298,6 +298,7 @@ class WalletIntelligenceRepository:
             snapshot_id=start.snapshot_id,
             source_id=dataset.source_id,
             accepted_at=accepted_at,
+            captured_at=dataset.fetched_at,
             source_total_pages=dataset.source_total_pages,
             record_count=len(dataset.records),
             dataset_digest=dataset.dataset_digest,
@@ -387,7 +388,8 @@ class WalletIntelligenceRepository:
         connection = self._connect()
         try:
             current = connection.execute(
-                "SELECT s.snapshot_id, s.run_id, s.accepted_at, s.record_count, "
+                "SELECT s.snapshot_id, s.run_id, s.accepted_at, s.captured_at, "
+                "s.record_count, "
                 "s.source_total_pages, "
                 "r.warning_code AS current_warning_code "
                 "FROM candidate_current_snapshots c "
@@ -410,6 +412,9 @@ class WalletIntelligenceRepository:
             last_success_at=None
             if current is None
             else _parse_datetime(str(current["accepted_at"])),
+            source_captured_at=None
+            if current is None
+            else _parse_datetime(str(current["captured_at"])),
             current_record_count=None if current is None else int(current["record_count"]),
             current_page_count=None
             if current is None
@@ -429,7 +434,8 @@ class WalletIntelligenceRepository:
         try:
             row = connection.execute(
                 "SELECT r.run_id, r.snapshot_id, r.source_id, r.warning_code, "
-                "s.accepted_at, s.source_total_pages, s.record_count, s.dataset_digest "
+                "s.accepted_at, s.captured_at, s.source_total_pages, "
+                "s.record_count, s.dataset_digest "
                 "FROM candidate_source_runs r JOIN candidate_wallet_snapshots s "
                 "ON s.snapshot_id = r.snapshot_id WHERE r.run_id = ? AND r.status = 'succeeded'",
                 (run_id,),
@@ -443,6 +449,7 @@ class WalletIntelligenceRepository:
             snapshot_id=str(row["snapshot_id"]),
             source_id=str(row["source_id"]),
             accepted_at=_parse_datetime(str(row["accepted_at"])),
+            captured_at=_parse_datetime(str(row["captured_at"])),
             source_total_pages=int(row["source_total_pages"]),
             record_count=int(row["record_count"]),
             dataset_digest=str(row["dataset_digest"]),

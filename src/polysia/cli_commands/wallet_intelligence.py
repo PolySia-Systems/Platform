@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import signal
 import sqlite3
 import time
+import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -120,6 +123,25 @@ DEFAULT_CONTINUOUS_SHADOW_HEALTH = Path(
 DEFAULT_LATENCY_REPORT = Path(
     "reports/wallet-intelligence/latency-performance-intelligence.json"
 )
+
+
+def _sqlite_storage_bytes(path: Path) -> int:
+    return sum(
+        item.stat().st_size for item in (path, Path(str(path) + "-wal"))
+        if item.exists()
+    )
+
+
+def _linux_process_peak_rss_bytes() -> int | None:
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="ascii").splitlines():
+            if line.startswith("VmHWM:"):
+                parts = line.split()
+                if len(parts) == 3 and parts[2] == "kB":
+                    return int(parts[1]) * 1024
+    except OSError:
+        return None
+    return None
 _RETRYABLE_PERSISTENT_SHADOW_FAILURES = frozenset(
     {
         FAILURE_CATEGORY_MARKET_READ_FAILED,
@@ -285,8 +307,11 @@ def ensure(
     intelligence_history_days: Annotated[
         int, typer.Option("--intelligence-history-days", min=365)
     ] = 365,
-    fresh_hours: Annotated[int, typer.Option("--fresh-hours", min=1)] = 24,
+    fresh_hours: Annotated[int, typer.Option("--fresh-hours", min=1)] = 20,
     stale_hours: Annotated[int, typer.Option("--stale-hours", min=2)] = 36,
+    alpha_pool_size: Annotated[
+        int, typer.Option("--alpha-pool-size", min=1, max=500)
+    ] = 50,
     lease_minutes: Annotated[int, typer.Option("--lease-minutes", min=1, max=1440)] = 30,
 ) -> None:
     """Reuse or refresh Stage 1, then atomically publish Candidate Intelligence."""
@@ -302,6 +327,7 @@ def ensure(
         intelligence_store,
         chain="polygon",
         selection_store=selection_store,
+        alpha_size=alpha_pool_size,
     )
     try:
         outcome = asyncio.run(
@@ -340,6 +366,7 @@ def ensure(
             intelligence_store,
             warning_after=timedelta(hours=stale_hours),
             critical_after=timedelta(hours=max(72, stale_hours + 1)),
+            refresh_after=timedelta(hours=fresh_hours),
         )
         write_wallet_intelligence_health_payload(health_payload, health_report)
     except (
@@ -750,6 +777,295 @@ def portfolio_preflight(
         raise typer.Exit(code=1) from error
 
 
+def portfolio_prepare(
+    preparation_spec: Annotated[Path, typer.Option("--preparation-spec")],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    backup_dir: Annotated[Path, typer.Option("--backup-dir")] = DEFAULT_BACKUP_DIR,
+    base_runtime_spec: Annotated[
+        Path | None, typer.Option("--base-runtime-spec")
+    ] = None,
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    source_database: Annotated[Path, typer.Option("--source-database")] = DEFAULT_DATABASE,
+    database: Annotated[
+        Path, typer.Option("--database")
+    ] = DEFAULT_CONTINUOUS_SHADOW_DATABASE,
+) -> None:
+    """Refresh and screen a bounded cohort before the next DATA_ONLY period."""
+
+    from dataclasses import fields
+
+    from polysia.adapters.polymarket.copytrading_source import UrllibJsonGetTransport
+    from polysia.application.services.wallet_preparation import (
+        WalletPreparationConfig,
+        choose_prepared_cohort,
+    )
+    from polysia.cli_commands.research_evidence_cli import (
+        _measure_recent_alpha_activity,
+        measure_latest_market_availability,
+    )
+
+    attempts = 0
+    preparation_lease = None
+    preparation_lease_store = CandidateIntelligenceRepository(source_database)
+    try:
+        _require_continuous_shadow_safety()
+        if load_runtime_identity(venue_id="polymarket").deploy_sha != code_sha:
+            raise ValueError("preparation code SHA does not match the running image")
+        raw = json.loads(preparation_spec.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or set(raw) - {item.name for item in fields(
+            WalletPreparationConfig
+        )}:
+            raise ValueError("preparation Spec has unsupported fields")
+        policy = WalletPreparationConfig(**raw)
+        preparation_lease_store.initialize()
+        preparation_lease = preparation_lease_store.acquire_lease(
+            "wallet-preparation", owner_id=f"prepare-{uuid.uuid4().hex}",
+            acquired_at=datetime.now(UTC), lease_duration=timedelta(minutes=20),
+        )
+        prior_cached: dict[str, object] = {}
+        if output is not None and output.exists():
+            with suppress(WalletIntelligenceHealthReportError):
+                prior_cached = read_wallet_intelligence_health_payload(output)
+        if output is not None:
+            write_wallet_intelligence_health_payload({
+                "version": "wallet-preparation-v1", "status": "REQUESTED",
+                "requested_count": policy.maximum_wallets,
+                "next_action": "wait_for_bounded_preparation",
+            }, output)
+        source_storage_before = _sqlite_storage_bytes(source_database)
+        source_adapter = _source(source)
+        source_store = WalletIntelligenceRepository(source_database)
+        pipeline = WalletIntelligencePipelineService(
+            source_adapter, source_store,
+            CandidateIntelligenceRepository(source_database),
+            chain="polygon",
+            selection_store=CopyabilitySelectionRepository(source_database),
+            alpha_size=policy.candidate_pool_size,
+        )
+        while True:
+            attempts += 1
+            try:
+                pipeline_result = asyncio.run(pipeline.ensure(
+                    scheduled_for=datetime.now(UTC).date(),
+                    fresh_after=timedelta(hours=policy.refresh_hours),
+                ))
+                break
+            except (OSError, ValueError, RuntimeError):
+                if attempts >= policy.maximum_attempts:
+                    raise
+                time.sleep(min(2, attempts))
+        if pipeline_result.source_refreshed:
+            backup_wallet_intelligence_state(
+                source_database, backup_dir,
+                continuous_shadow_path=database, keep=3,
+            )
+        snapshot = DynamicShadowRepository(source_database).current_snapshot(
+            source_adapter.source_id
+        )
+        observed = datetime.now(UTC)
+        if observed - snapshot.published_at > timedelta(hours=36):
+            raise ValueError("candidate snapshot is stale after preparation")
+        repository = ContinuousShadowRepository(database)
+        current = (
+            repository.active_experiment(source_adapter.source_id)
+            if database.exists() else None
+        )
+        base = current.config if current is not None else ContinuousShadowConfig(
+            runtime_version="continuous-shadow-runtime-v2", code_sha=code_sha,
+            wallet_count=policy.maximum_wallets, selection_policy="shadow-alpha-ranked-v2",
+        )
+        if base_runtime_spec is not None:
+            base = _load_continuous_shadow_runtime_spec(base_runtime_spec, base)
+        base = replace(base, code_sha=code_sha)
+        latest = (
+            repository.latest_experiment(source_adapter.source_id)
+            if database.exists() else None
+        )
+        expected_latest_id = "none" if latest is None else latest.experiment_id
+        cache_identity = hashlib.sha256(json.dumps({
+            "policy": raw, "runtime": base.to_dict(),
+            "snapshot_digest": snapshot.digest,
+            "expected_latest_experiment_id": expected_latest_id,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if output is not None:
+            cached = prior_cached
+            cached_at = cached.get("observed_at")
+            expires_at = cached.get("expires_at")
+            if (
+                cached.get("cache_identity") == cache_identity
+                and cached.get("status") == "PREPARED"
+                and isinstance(cached_at, str)
+                and isinstance(expires_at, str)
+                and datetime.fromisoformat(expires_at) > observed
+                and timedelta(0) <= observed - datetime.fromisoformat(cached_at)
+                <= timedelta(minutes=30)
+            ):
+                write_wallet_intelligence_health_payload(cached, output)
+                typer.echo(json.dumps(cached, sort_keys=True))
+                return
+        transport = UrllibJsonGetTransport()
+        while True:
+            try:
+                counts, evidence = asyncio.run(_measure_recent_alpha_activity(
+                    snapshot.candidates, transport=transport, observed=observed,
+                    candidate_limit=policy.candidate_scan_limit,
+                    minimum_candidates=1,
+                    market_limit_per_wallet=policy.markets_per_wallet,
+                    max_pages_per_wallet=policy.pages_per_wallet,
+                    max_requests_per_wallet=policy.requests_per_wallet,
+                    max_total_data_requests=policy.total_data_requests,
+                    max_total_market_tokens=policy.total_market_tokens,
+                    time_budget_seconds=policy.time_budget_seconds,
+                    market_evidence_reader=lambda tokens: measure_latest_market_availability(
+                        transport, tokens
+                    ),
+                ))
+                break
+            except (OSError, ValueError, RuntimeError):
+                if attempts >= policy.maximum_attempts:
+                    raise
+                attempts += 1
+                time.sleep(min(2, attempts - 1))
+        result = choose_prepared_cohort(
+            policy, snapshot, counts, evidence, base, observed_at=observed
+        )
+        storage_growth = max(0, _sqlite_storage_bytes(source_database) - source_storage_before)
+        peak_rss = _linux_process_peak_rss_bytes()
+        if storage_growth > policy.maximum_source_storage_growth_mb * 1_048_576:
+            raise ValueError("source storage growth budget exceeded")
+        if peak_rss is None or peak_rss > policy.maximum_process_rss_mb * 1_048_576:
+            raise ValueError("preparation process RSS budget unavailable or exceeded")
+        result["source_storage_growth_bytes"] = storage_growth
+        result["process_peak_rss_bytes"] = peak_rss
+        result["cache_identity"] = cache_identity
+        result["preparation_attempts"] = attempts
+        result["snapshot_digest"] = snapshot.digest
+        result["prepared_for_experiment_id"] = expected_latest_id
+        result["expires_at"] = (
+            observed + timedelta(minutes=policy.evidence_expiry_minutes)
+        ).isoformat()
+        if result["status"] == "PREPARED":
+            frozen = {
+                "snapshot_digest": snapshot.digest,
+                "prepared_for_experiment_id": expected_latest_id,
+                "proposed_runtime_spec": result["proposed_runtime_spec"],
+            }
+            result["command_id"] = "prepare-" + hashlib.sha256(json.dumps(
+                frozen, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest()[:32]
+        result["source_last_read_at"] = pipeline_result.snapshot.captured_at.isoformat()
+        result["source_accepted_at"] = pipeline_result.snapshot.accepted_at.isoformat()
+        result["source_fetched_at"] = pipeline_result.snapshot.captured_at.isoformat()
+        result["upstream_data_as_of"] = None
+        result["next_source_refresh_at"] = (
+            pipeline_result.snapshot.accepted_at + timedelta(hours=policy.refresh_hours)
+        ).isoformat()
+        result["snapshot_age_seconds"] = max(
+            0, int((observed - snapshot.published_at).total_seconds())
+        )
+        result["progress"] = {
+            "source": "complete", "candidate_admission": "complete",
+            "activity_screening": "complete",
+            "persistence": "prepared_artifact_only",
+            "post_t0_executable_evidence": "not_started",
+        }
+        result["source_refreshed"] = pipeline_result.source_refreshed
+        result["source_snapshot_id"] = pipeline_result.snapshot.snapshot_id
+        result["source_dataset_digest"] = pipeline_result.snapshot.dataset_digest
+        if output is not None:
+            write_wallet_intelligence_health_payload(result, output)
+    except (OSError, ValueError, RuntimeError) as error:
+        blocked = {
+            "version": "wallet-preparation-v1", "status": "BLOCKED",
+            "reason": str(error), "preparation_attempts": attempts,
+            "next_action": "inspect_reason_then_retry_with_bounded_policy",
+        }
+        if output is not None and preparation_lease is not None:
+            write_wallet_intelligence_health_payload(blocked, output)
+        typer.echo(json.dumps(blocked, sort_keys=True), err=True)
+        raise typer.Exit(code=1) from error
+    finally:
+        if preparation_lease is not None:
+            preparation_lease_store.release_lease(preparation_lease)
+    typer.echo(json.dumps(result, sort_keys=True))
+
+
+def portfolio_capacity_probe(
+    preparation_file: Annotated[Path, typer.Option("--preparation-file")],
+    duration_seconds: Annotated[
+        int, typer.Option("--duration-seconds", min=30, max=180)
+    ] = 90,
+    poll_interval_seconds: Annotated[
+        int, typer.Option("--poll-interval-seconds", min=5, max=60)
+    ] = 30,
+    source: Annotated[str, typer.Option("--source")] = "polycop",
+    source_database: Annotated[Path, typer.Option("--source-database")] = DEFAULT_DATABASE,
+) -> None:
+    """Measure the real DATA_ONLY Shadow writer in a disposable store, without admission."""
+
+    from polysia.deployment.shadow_capacity_probe import (
+        CountingMarketRead,
+        probe_shadow_path,
+    )
+
+    try:
+        _require_continuous_shadow_safety()
+        prepared = read_wallet_intelligence_health_payload(preparation_file)
+        if prepared.get("status") not in {
+            "PENDING_CAPACITY", "BLOCKED_CAPACITY_ENVELOPE", "LOW_OBSERVABLE_RATE",
+            "PREPARED",
+        }:
+            raise ValueError("capacity probe requires a screened cohort proposal")
+        payload = prepared.get("proposed_runtime_spec")
+        base = ContinuousShadowConfig(
+            runtime_version="continuous-shadow-runtime-v2",
+            code_sha=load_runtime_identity(venue_id="polymarket").deploy_sha,
+            wallet_count=1, selection_policy="shadow-alpha-ranked-v2",
+        )
+        config = _parse_continuous_shadow_runtime_spec(payload, base)
+        _verify_continuous_shadow_code(config)
+        market = CountingMarketRead(PolymarketPublicAdapter())
+
+        def service_factory(path: Path) -> ContinuousShadowService:
+            return ContinuousShadowService(
+                ContinuousShadowRepository(path),
+                DynamicShadowRepository(source_database),
+                ContinuousShadowLeaseRepository(path),
+                lambda leaders: PolymarketCopyTradingSource(
+                    leaders, market_scope=PolymarketMarketScope.ALL_VERIFIED,
+                    max_pages=config.source_max_pages,
+                    max_requests=config.source_max_requests,
+                    max_elapsed_seconds=config.source_timeout_seconds,
+                ),
+                market,
+                config=config,
+                maximum_pages_per_wallet=config.maximum_pages_per_wallet,
+                maximum_selection_age=timedelta(hours=config.maximum_selection_age_hours),
+                automatic_rollover=False,
+            )
+
+        result = asyncio.run(probe_shadow_path(
+            _source(source).source_id, service_factory,
+            config=config, duration_seconds=duration_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        ))
+        result["market_reads"] = {
+            "book_requests": market.book_requests,
+            "book_tokens": market.book_tokens,
+            "market_requests": market.market_requests,
+            "fee_schedule_reads": market.fee_schedule_reads,
+        }
+        result["code_sha"] = config.code_sha
+        from polysia.domain.copytrading.wallet_capacity import workload_digest
+        result["workload_digest"] = workload_digest(
+            "continuous-shadow", config.capacity_workload()
+        )
+    except (OSError, ValueError, RuntimeError) as error:
+        _emit_continuous_shadow_failure(error)
+    typer.echo(json.dumps(result, sort_keys=True))
+
+
 def portfolio_capabilities() -> None:
     """Expose stable software support without claiming host capacity."""
 
@@ -993,6 +1309,10 @@ def portfolio_sync(
         Path | None,
         typer.Option("--runtime-spec", help="Versioned Shadow period configuration JSON."),
     ] = None,
+    preparation_file: Annotated[
+        Path | None,
+        typer.Option("--preparation-file", help="Atomic prepared next-period artifact."),
+    ] = None,
     loop: Annotated[
         bool,
         typer.Option(
@@ -1033,13 +1353,15 @@ def portfolio_sync(
         )
         source_id = _source(source).source_id
         if not loop:
-            _emit_portfolio_poll(
-                service,
-                source_id,
-                database,
-                health_report,
-                poll_interval_seconds,
-            )
+            if preparation_file is None:
+                _emit_portfolio_poll(
+                    service, source_id, database, health_report, poll_interval_seconds,
+                )
+            else:
+                _emit_coordinated_portfolio_tick(
+                    source, source_id, source_database, database, health_report,
+                    preparation_file, config,
+                )
             return
         running = True
 
@@ -1053,13 +1375,15 @@ def portfolio_sync(
             started = time.monotonic()
             wait_ns: int | None = None
             try:
-                _emit_portfolio_poll(
-                    service,
-                    source_id,
-                    database,
-                    health_report,
-                    poll_interval_seconds,
-                )
+                if preparation_file is None:
+                    _emit_portfolio_poll(
+                        service, source_id, database, health_report, poll_interval_seconds,
+                    )
+                else:
+                    _emit_coordinated_portfolio_tick(
+                        source, source_id, source_database, database, health_report,
+                        preparation_file, config,
+                    )
             except (CandidatePipelineBusyError, CandidatePipelineLeaseLostError) as error:
                 typer.echo(
                     json.dumps(
@@ -1138,6 +1462,108 @@ def portfolio_sync(
                 )
                 return
         _emit_continuous_shadow_failure(error)
+
+
+def _emit_coordinated_portfolio_tick(
+    source: str,
+    source_id: str,
+    source_database: Path,
+    database: Path,
+    health_report: Path,
+    preparation_file: Path,
+    fallback_config: ContinuousShadowConfig,
+    *,
+    clock: Callable[[], datetime] | None = None,
+) -> None:
+    from polysia.application.services.continuous_shadow_transition import (
+        ContinuousShadowTransition,
+        PreparedShadowPeriod,
+    )
+
+    store = ContinuousShadowRepository(database)
+    store.initialize()
+    active = store.active_experiment(source_id)
+    if active is not None and active.config.runtime_version == "continuous-shadow-runtime-v2":
+        try:
+            _verify_continuous_shadow_code(active.config)
+        except ValueError:
+            payload: dict[str, object] = {
+                "status": "BLOCKED_CODE_IDENTITY",
+                "experiment_id": active.experiment_id,
+                "reason": "active_period_code_sha_differs_from_running_image",
+                "next_action": "continue_on_pinned_image_or_close_at_safe_boundary",
+            }
+            health = store.health(
+                source_id, now=datetime.now(UTC),
+                poll_interval_seconds=active.config.poll_interval_seconds,
+            ).to_dict()
+            health["next_transition"] = payload
+            write_wallet_intelligence_health_payload(health, health_report)
+            typer.echo(json.dumps(payload, sort_keys=True))
+            return
+    base = fallback_config if active is None else active.config
+    plan = None
+    preparation_status = "UNAVAILABLE"
+    preparation_reason: str | None = None
+    if preparation_file.exists():
+        try:
+            prepared = read_wallet_intelligence_health_payload(preparation_file)
+            preparation_status = str(prepared.get("status", "INVALID"))
+            preparation_reason = str(prepared.get("reason")) if prepared.get("reason") else None
+            if preparation_status == "PREPARED":
+                runtime_payload = prepared.get("proposed_runtime_spec")
+                plan_config = _parse_continuous_shadow_runtime_spec(runtime_payload, base)
+                _verify_continuous_shadow_code(plan_config)
+                required = (
+                    "command_id", "prepared_for_experiment_id", "snapshot_digest",
+                    "expires_at",
+                )
+                if any(not isinstance(prepared.get(key), str) or not prepared[key]
+                       for key in required):
+                    raise ValueError("prepared period identity or expiry is missing")
+                plan = PreparedShadowPeriod(
+                    command_id=str(prepared["command_id"]),
+                    expected_latest_experiment_id=str(prepared["prepared_for_experiment_id"]),
+                    snapshot_digest=str(prepared["snapshot_digest"]),
+                    expires_at=datetime.fromisoformat(str(prepared["expires_at"])),
+                    config=plan_config,
+                )
+        except (WalletIntelligenceHealthReportError, ValueError, TypeError) as error:
+            preparation_status = "INVALID"
+            preparation_reason = str(error)
+    coordinator = ContinuousShadowTransition(
+        store, DynamicShadowRepository(source_database),
+        lambda effective: _continuous_shadow_service(
+            source, source_database, database, config=effective,
+            maximum_selection_age=timedelta(hours=effective.maximum_selection_age_hours),
+            automatic_rollover=False,
+        ),
+        **({"clock": clock} if clock is not None else {}),
+    )
+    payload = asyncio.run(coordinator.tick(source_id, plan))
+    payload["preparation_status"] = preparation_status
+    if preparation_reason is not None:
+        payload["preparation_reason"] = preparation_reason
+    observed_at = datetime.now(UTC)
+    try:
+        report = store.health(
+            source_id, now=observed_at,
+            poll_interval_seconds=base.poll_interval_seconds,
+        )
+        health_payload = report.to_dict()
+        health_payload["next_transition"] = {
+            "status": payload["status"],
+            "reason": payload.get("reason"),
+            "preparation_status": preparation_status,
+            "preparation_reason": preparation_reason,
+        }
+        write_wallet_intelligence_health_payload(health_payload, health_report)
+        payload["health"] = health_payload
+    except (sqlite3.DatabaseError, ContinuousShadowStoreError, OSError) as error:
+        payload["health_refresh"] = {
+            "status": "failed", "error_code": type(error).__name__,
+        }
+    typer.echo(json.dumps(payload, sort_keys=True))
 
 
 def _emit_portfolio_poll(
@@ -1785,6 +2211,7 @@ def _continuous_shadow_service(
     *,
     config: ContinuousShadowConfig,
     maximum_selection_age: timedelta = timedelta(hours=36),
+    automatic_rollover: bool = True,
 ) -> ContinuousShadowService:
     _source(source)
     if source_database.resolve() == database.resolve():
@@ -1813,6 +2240,7 @@ def _continuous_shadow_service(
         maximum_pages_per_wallet=config.maximum_pages_per_wallet,
         maximum_selection_age=maximum_selection_age,
         latency_recorder=recorder,
+        automatic_rollover=automatic_rollover,
     )
 
 
@@ -1943,6 +2371,12 @@ def _load_continuous_shadow_runtime_spec(
     """Apply one validated period override; the effective config is persisted at start."""
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    return _parse_continuous_shadow_runtime_spec(payload, base)
+
+
+def _parse_continuous_shadow_runtime_spec(
+    payload: object, base: ContinuousShadowConfig
+) -> ContinuousShadowConfig:
     if not isinstance(payload, dict):
         raise ValueError("Continuous Shadow runtime Spec must be a JSON object")
     allowed = {
@@ -1964,6 +2398,7 @@ def _load_continuous_shadow_runtime_spec(
             "follower_maximum_wallet_exposure", "follower_maximum_market_exposure",
             "follower_maximum_positions", "maximum_forward_delay_ms",
             "maximum_quote_age_ms", "initial_lookback_minutes", "overlap_seconds",
+            "negative_cache_ttl_seconds", "price_drift_max_ratio",
         }
     unknown = set(payload) - allowed
     if unknown:
@@ -2034,11 +2469,17 @@ def _load_continuous_shadow_runtime_spec(
         for field in (
             "follower_maximum_positions", "maximum_forward_delay_ms",
             "maximum_quote_age_ms", "initial_lookback_minutes", "overlap_seconds",
+            "negative_cache_ttl_seconds",
         ):
             if field in payload:
                 if isinstance(payload[field], bool) or not isinstance(payload[field], int):
                     raise ValueError(f"Continuous Shadow {field} must be an integer")
                 options[field] = payload[field]
+        drift = payload.get("price_drift_max_ratio")
+        if drift is not None:
+            if isinstance(drift, bool) or not isinstance(drift, (str, int)):
+                raise ValueError("price_drift_max_ratio must be decimal text")
+            options["price_drift_max_ratio"] = Decimal(str(drift))
     if "code_sha" in payload:
         if not isinstance(payload["code_sha"], str):
             raise ValueError("Continuous Shadow code_sha must be a Git SHA string")
@@ -2147,10 +2588,12 @@ def _combined_health(
     *,
     warning_after: timedelta,
     critical_after: timedelta,
+    refresh_after: timedelta = timedelta(hours=20),
 ) -> tuple[dict[str, object], int]:
     source_report = CandidateWalletSyncService(source_adapter, source_store).health(
         warning_after=warning_after,
         critical_after=critical_after,
+        refresh_after=refresh_after,
     )
     intelligence_store.initialize()
     intelligence_state = intelligence_store.state(source_adapter.source_id)
