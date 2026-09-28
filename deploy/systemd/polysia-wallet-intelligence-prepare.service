@@ -1,0 +1,15 @@
+[Unit]
+Description=Prepare the next PolySia DATA_ONLY Shadow period
+Documentation=file:/opt/polysia/docs/10-operations/wallet-intelligence-ingestion.md
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/polysia
+EnvironmentFile=/etc/polysia/image.env
+ExecStartPre=/usr/sbin/runuser -u polysia -- /usr/bin/test -r /var/lib/polysia/wallet-intelligence/config/wallet-preparation.json
+ExecStart=/usr/bin/docker compose --profile wallet-intelligence run --rm wallet-intelligence-prepare
+TimeoutStartSec=15min
+NoNewPrivileges=true

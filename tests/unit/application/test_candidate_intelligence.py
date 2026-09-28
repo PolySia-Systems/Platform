@@ -559,6 +559,35 @@ async def test_pipeline_fetches_on_first_start_then_reuses_fresh_snapshot(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_pipeline_refreshes_same_schedule_date_after_deadline_and_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    now = datetime(2026, 8, 22, tzinfo=UTC)
+    source = _PipelineSource(_dataset((("0x" + "1" * 40, 1, "90"),), fetched_at=now))
+    clock = [now]
+
+    def service() -> WalletIntelligencePipelineService:
+        return WalletIntelligencePipelineService(
+            source, WalletIntelligenceRepository(database),
+            CandidateIntelligenceRepository(database), chain="polygon",
+            clock=lambda: clock[0],
+        )
+
+    first = await service().ensure(scheduled_for=now.date())
+    clock[0] += timedelta(hours=21)
+    refreshed = await service().ensure(scheduled_for=now.date())
+    assert source.fetch_count == 2
+    assert refreshed.source_refreshed is True
+    assert refreshed.source_idempotent_replay is False
+    assert refreshed.snapshot.run_id != first.snapshot.run_id
+    assert refreshed.snapshot.dataset_digest == first.snapshot.dataset_digest
+    clock[0] += timedelta(hours=6)
+    await service().ensure(scheduled_for=clock[0].date())
+    assert source.fetch_count == 2
+
+
+@pytest.mark.asyncio
 async def test_stage1_refresh_failure_preserves_last_known_good_candidate_pool(
     tmp_path: Path,
 ) -> None:

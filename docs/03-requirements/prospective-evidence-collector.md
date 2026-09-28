@@ -435,6 +435,14 @@ activity, selection reasons, and rough latest-token observable rates for
 or profitability scores. A preflight pass cannot guarantee future market
 books, fees, or trades.
 
+The additive bounded preparation path can scan beyond 50 ranked Alpha
+candidates and more than one recent market/token pair per wallet. It reports
+screening coverage and keeps incomplete reads distinct from confirmed empty
+activity. Any new v3 run under the current code also requires the matching
+`wallet-capacity-v2` full-workload record; a source-only or empty probe is
+diagnostic and does not grant admission. Prior frozen Specs and bundles keep
+their recorded meaning.
+
 CURRENT: `prospective-run status --readiness` runs an opt-in, read-only replay
 of closed valid windows. Its v3 `PROVISIONALLY_SUFFICIENT` state requires the
 unchanged 20 eligible / 0.95 mapping / 0.90 executable-evidence thresholds,

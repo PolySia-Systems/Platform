@@ -166,7 +166,7 @@ The default Compose command is `wallet-intelligence ensure`. On the first run it
 fetches Stage 1 immediately at any time, then publishes Stage 2 and Stage 3. On
 later runs it reuses a healthy snapshot younger than 24 hours; otherwise it
 refreshes Stage 1, then replays or republishes Stage 2 and Stage 3.
-The daily timer still anchors subsequent checks at 03:15 UTC. The command exits
+The six-hour timer anchors subsequent checks at its UTC schedule. The command exits
 nonzero on a source, schema, consistency, persistence, lease, publication, or
 backup failure. Its JSON output and health file contain counts, identifiers,
 versions, freshness, and safe error codes, but no wallet addresses.
@@ -390,14 +390,17 @@ docker compose --profile wallet-intelligence run --rm \
 
 For new variable-count periods, use `continuous-shadow-runtime-v2`. The
 software envelope is 1–40 wallets, but each new period requires a matching
-operator-reviewed `wallet-capacity-v1` record for the running image, source
+operator-reviewed `wallet-capacity-v2` record for the running image, source
 budgets, cadence, selection policy, and financial/period workload. A request
 above validated capacity is rejected. An unkeyed record digest detects
 accidental changes; it is not host attestation. Capacity remains unverified
 until aggregate host load, shared-IP traffic, endpoint budgets and recovery
 headroom, backlog, decision latency, CPU, memory, SQLite and log growth, and
 outstanding exits/settlement have been reviewed. The candidate-only Research
-capacity probe does not itself produce a passing record.
+capacity probe does not itself produce a passing record. A new v2 period also
+requires repeated nonempty writer polls, book/fee reads, a balanced ledger,
+host memory and shared-IP observations. The isolated Shadow writer probe
+reports these path measurements but never self-certifies a PASS record.
 
 For a new v9 period, provide the same reviewed runtime Spec to
 `portfolio-start` and `portfolio-sync`. This is an example shape, not a
@@ -433,7 +436,7 @@ For an approved five-wallet active period, first run
 "$POLYSIA_IMAGE_TAG" --source-database
 /var/lib/polysia/data/wallet-intelligence.sqlite3 --capacity-evidence-file
 <reviewed-capacity.json>` in the DATA_ONLY image. Preflight performs bounded
-complete activity reads and checks the latest observed market/token's book
+complete activity reads and checks bounded recent market/token pairs' books
 and fee evidence. A confirmed empty read is inactivity; incomplete coverage,
 missing book/fee, and too few eligible candidates are distinct failures.
 Its reported rate is a rough historical activity estimate, not a forecast or
@@ -452,7 +455,7 @@ may save this v2 form with the full `selection_activity_counts` and
   "selection_activity_counts": {"<wallet-id>": 3},
   "selection_observed_at": "<preflight UTC timestamp>",
   "selection_preflight_digest": "<preflight evidence SHA-256>",
-  "capacity_evidence": {"<complete reviewed wallet-capacity-v1 record>": "..."}
+  "capacity_evidence": {"<complete reviewed wallet-capacity-v2 record>": "..."}
 }
 ```
 
@@ -484,7 +487,7 @@ Store the reviewed JSON at
 `/var/lib/polysia/wallet-intelligence/config/continuous-shadow-runtime.json`
 with directory mode `0700`, file mode `0600`, and UID/GID `10001`.
 The worker mounts this directory read-only and always passes the same file
-as `--runtime-spec`; a missing file prevents activation. The daily candidate
+as `--runtime-spec`; a missing file prevents activation. The six-hour candidate
 pipeline and persistent worker systemd units require
 `/etc/polysia/image.env` containing only
 `POLYSIA_IMAGE_TAG=<exact approved image SHA>` (root-owned, mode `0600`).
@@ -682,7 +685,85 @@ for authenticated read-only preflight. `--submit` remains prohibited without a
 new run-specific owner authorization, matching acknowledgement, exact green-CI
 commit, and every existing Live safety gate.
 
-## Daily automation at 03:15 UTC
+## Bounded next-period preparation and coordinated DATA_ONLY Shadow
+
+CURRENT repository workflow; enable only under the approved Helsinki run.
+Place a reviewed copy of
+[`wallet-preparation.example.json`](wallet-preparation.example.json) at
+`/var/lib/polysia/wallet-intelligence/config/wallet-preparation.json`, owned
+by UID/GID `10001`, directory mode `0700`, file mode `0600`. The example is a
+policy shape, not a capacity approval or a claim that five wallets are active.
+The machine-readable shape is
+[`wallet-preparation.schema.json`](wallet-preparation.schema.json).
+Set `mode: exact` with equal minimum/maximum for a fixed count, or explicitly
+set `mode: adaptive` to allow a smaller qualified cohort. Pool breadth,
+activity scan breadth, and selected count are independent. Increasing the
+count alone does not expand the candidate universe. Financial assumptions
+inherit the active period unless `--base-runtime-spec` supplies an explicitly
+reviewed alternative. Keep the image tag and runtime Spec at the approved
+exact code SHA.
+
+```bash
+docker compose --profile wallet-intelligence run --rm wallet-intelligence-prepare
+docker compose --profile wallet-intelligence run --rm --no-deps \
+  wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-capacity-probe \
+  --preparation-file /var/lib/polysia/reports/wallet-intelligence/prepared-next-period.json \
+  --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
+  --duration-seconds 90 --poll-interval-seconds 30
+```
+
+Preparation uses at most the configured attempts and explicit per-wallet,
+aggregate Data API, market-token, and elapsed preflight budgets. It writes an
+atomic `wallet-preparation-v1` artifact. Only `PREPARED` is applicable;
+`PENDING_CAPACITY` is a proposal for measurement, not admission. A failure
+replaces an older artifact with `BLOCKED` so the worker cannot consume it.
+Repeated fresh work is reused for at most 30 minutes and never past artifact
+expiry. Source read completion is local evidence; upstream data-as-of remains
+unknown. The market check is current observability, not a historical fill
+claim. The capacity probe uses a disposable SQLite writer and returns only
+diagnostic status. Review its nonempty source, books, fees, writer, ledger,
+host and shared-IP observations alongside the existing telemetry before
+creating a matching `wallet-capacity-v2` PASS record. Empty and source-only
+probes never certify capacity.
+
+The worker reads the prepared artifact each poll. It retains the active
+period's frozen membership and financial assumptions until duration/event
+boundary, then drains. Once flat with no unadmitted observations, it uses the
+existing expected-period revision and command receipt to finalize and start
+exactly one new period. Expired, malformed, stale-revision, or missing plans
+leave `WAITING_PREPARATION` in the health report. Open inventory keeps its
+existing exit, settlement, and hard-stop behavior; no reset is permitted.
+If an active v2 period was started by a different image SHA, the new worker
+reports `BLOCKED_CODE_IDENTITY` and does not poll it. Continue that period on
+its pinned image or close it at the safe flat boundary under the old image
+before switching the worker; do not relabel old-period polls as new code.
+Read `portfolio-health`, `portfolio-results --database <verified-snapshot> --experiment-id <id>`, and
+`portfolio-command-receipt --command-id <id>` for actual period state and
+separate opening capital, fees, and net P&L. Do not sum separate bankrolls as
+a continuous return. The older `portfolio-preflight` and manual apply commands
+remain available for reviewed maintenance, but the preparation timer and
+coordinated worker consume the normal next-period request automatically.
+
+Install the preparation unit only with the reviewed policy in place:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-prepare.service \
+  /etc/systemd/system/polysia-wallet-intelligence-prepare.service
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/polysia-wallet-intelligence-prepare.timer \
+  /etc/systemd/system/polysia-wallet-intelligence-prepare.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now polysia-wallet-intelligence-prepare.timer
+systemctl list-timers polysia-wallet-intelligence-prepare.timer
+```
+
+The preparation timer is persistent at each UTC half hour with at most two
+minutes of jitter. Observe one `PREPARED` artifact and the worker's health
+before relying on the next boundary. Stop the preparation timer during
+rollback; retain the databases, prepared artifact, and prior verified backup.
+
+## Six-hour candidate refresh with persistent missed-run recovery
 
 Install the reviewed one-shot unit and timer:
 
@@ -698,7 +779,12 @@ sudo systemctl enable --now polysia-wallet-intelligence.timer
 systemctl list-timers polysia-wallet-intelligence.timer
 ```
 
-The timer is persistent and has a bounded five-minute randomized delay. It runs
+The timer runs at 00:15, 06:15, 12:15, and 18:15 UTC, is persistent, and has a
+bounded five-minute randomized delay. With a 20-hour healthy refresh threshold,
+the next scheduled attempt begins no later than about 24 hours five minutes
+after the prior read when the host is available, below the 36-hour stale
+boundary. A real source failure remains visible in health and preserves the
+last accepted snapshot. It runs
 the Compose service once, which exits after success or failure. It does not
 create another always-running worker.
 

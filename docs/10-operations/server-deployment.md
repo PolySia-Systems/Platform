@@ -185,13 +185,16 @@ The bounded Runner is a separate Compose service. It does not replace
 For a new variable-count run, prepare `research-run-spec-v3` with a requested
 `wallet_count` in 1–40, an explicit `polycop-shadow-alpha-ranked-v2` or
 `polycop-shadow-alpha-active-v2` policy, and a matching operator-reviewed
-`wallet-capacity-v1` record. The record binds the image commit, profile,
+`wallet-capacity-v2` record. The record binds the image commit, profile,
 source budgets, cadence, and selection policy through `workload_digest`.
 `wallet_count` is software support only until that workload has measured host
 capacity. Existing v1/v2 Specs retain their original three-wallet admission.
 The candidate-only `research prospective-run capacity-probe --wallet-count N
 --code-sha "$POLYSIA_IMAGE_TAG" --duration-seconds 90` is an opt-in public
-DATA_ONLY measurement; it does not produce a PASS capacity record. The probe's
+DATA_ONLY measurement; it does not produce a PASS capacity record. The v2
+record additionally requires nonempty full-path writer, book/fee, ledger,
+host-memory and shared-IP evidence. The isolated Shadow writer probe is
+diagnostic and likewise never self-certifies PASS. The candidate probe's
 preflight plus collection has a hard timeout of the requested
 duration plus 180 seconds; timeout remains an incomplete candidate. Review
 aggregate shared-IP traffic, all PolySia consumers, endpoint request/retry

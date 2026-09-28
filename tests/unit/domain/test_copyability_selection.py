@@ -121,6 +121,34 @@ def test_missing_source_copyability_metrics_cannot_enter_alpha() -> None:
     )
 
 
+def test_alpha_breadth_above_fifty_keeps_unchanged_eligibility() -> None:
+    calculated_at = datetime(2026, 8, 24, 1, tzinfo=UTC)
+    evidence = tuple(
+        _evidence(
+            f"w-{index:03d}", rank=index,
+            metrics={
+                "copy_backtest_pnl": "80", "copy_loss_rate": "0.1",
+                "actual_pnl": "20", "markets_traded": 10,
+                "trading_days": 20, "trading_volume": "1000",
+            } if index <= 60 else {},
+        ) for index in range(1, 62)
+    )
+    _, narrow = select_copyability_pools(
+        evidence, calculated_at=calculated_at, alpha_size=50,
+    )
+    _, wide = select_copyability_pools(
+        evidence, calculated_at=calculated_at, alpha_size=60,
+    )
+    narrow_alpha = {item.wallet_id for item in narrow
+                    if item.pool_id is SelectionPoolId.SHADOW_ALPHA}
+    wide_alpha = {item.wallet_id for item in wide
+                  if item.pool_id is SelectionPoolId.SHADOW_ALPHA}
+    assert len(narrow_alpha) == 50
+    assert len(wide_alpha) == 60
+    assert narrow_alpha < wide_alpha
+    assert "w-061" not in wide_alpha
+
+
 def test_invalid_metrics_are_rejected_not_watchlisted() -> None:
     calculated_at = datetime(2026, 8, 24, 1, tzinfo=UTC)
     scores, memberships = select_copyability_pools(

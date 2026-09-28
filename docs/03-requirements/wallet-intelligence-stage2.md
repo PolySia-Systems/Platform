@@ -188,3 +188,14 @@ partial results are never current.
 - repository quality gates and a security review pass;
 - the change is committed, reviewed through PR/CI, and merged normally;
 - deployment and every trading action remain unperformed.
+
+## Additive freshness contract (2026-09-28)
+
+CURRENT repository implementation: the healthy source refresh threshold is
+20 hours, and the six-hour UTC timer has up to five minutes of jitter and
+persistent missed-run recovery. A source read after that threshold creates a
+new run even on the same UTC date. Success preserves the prior snapshot on a
+failed refresh. Health reports last accepted read, local fetch completion,
+snapshot age, next refresh deadline, and the latest failure. The source does
+not provide an independently verified upstream data-as-of timestamp; local
+fetch time must never be presented as upstream freshness proof.

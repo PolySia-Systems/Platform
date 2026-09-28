@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -33,9 +34,14 @@ from polysia.application.services.continuous_shadow import (
     ContinuousShadowError,
     ContinuousShadowService,
 )
+from polysia.application.services.continuous_shadow_transition import (
+    ContinuousShadowTransition,
+    PreparedShadowPeriod,
+)
 from polysia.application.services.copyability_selection import CopyabilitySelectionService
 from polysia.backtesting.shadow_historical_baseline import run_primary_comparison
 from polysia.cli_commands.wallet_intelligence import _emit_portfolio_poll
+from polysia.deployment.shadow_capacity_probe import probe_shadow_path
 from polysia.deployment.wallet_intelligence_backup import (
     backup_continuous_shadow_database,
     backup_wallet_intelligence_database,
@@ -426,6 +432,10 @@ def test_v2_shadow_composition_freezes_supported_count_with_synthetic_capacity(
         "clob_requests": 1,
         "gamma_requests": 1,
         "rate_limited_requests": 0,
+        "probe_scope": "SHADOW_FULL_PATH", "nonempty_event_count": 3,
+        "writer_poll_count": 3, "book_requests": 2, "fee_requests": 2,
+        "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+        "shared_ip_observed": True,
     }
     evidence["digest"] = hashlib.sha256(json.dumps(
         evidence, sort_keys=True, separators=(",", ":")
@@ -512,6 +522,10 @@ def test_v2_config_command_changes_five_to_ten_after_safe_boundary(
             "other_consumer_requests": 0, "data_requests": 20,
             "clob_requests": 1, "gamma_requests": 1,
             "rate_limited_requests": 0,
+            "probe_scope": "SHADOW_FULL_PATH", "nonempty_event_count": 3,
+            "writer_poll_count": 3, "book_requests": 2, "fee_requests": 2,
+            "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+            "shared_ip_observed": True,
         }
         evidence["digest"] = hashlib.sha256(json.dumps(
             evidence, sort_keys=True, separators=(",", ":")
@@ -1112,6 +1126,294 @@ async def test_flat_period_rollover_preserves_finalized_evidence(
             "SELECT lifecycle FROM continuous_shadow_experiments WHERE experiment_id = ?",
             (old.experiment_id,),
         ).fetchone() == ("FINALIZED",)
+
+
+@pytest.mark.asyncio
+async def test_prepared_worker_crosses_two_four_hour_boundaries_and_waits_on_failure(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    _add_alpha_membership_for_first_wallet(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+    shadow_path = _shadow_database(database)
+    store = ContinuousShadowRepository(shadow_path)
+    store.initialize()
+    candidate_port = DynamicShadowRepository(database)
+    snapshot = candidate_port.current_snapshot("polycop")
+    wallet_id = next(item.wallet_id for item in snapshot.candidates
+                     if "SHADOW_ALPHA" in item.pools)
+
+    def config(at: datetime) -> ContinuousShadowConfig:
+        base = ContinuousShadowConfig(
+            runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+            wallet_count=1, selection_policy="shadow-alpha-active-v2",
+            selection_activity_counts={wallet_id: 1}, selection_observed_at=at,
+            selection_preflight_digest="b" * 64,
+            period_duration_seconds=14_400,
+        )
+        evidence: dict[str, object] = {
+            "version": CAPACITY_CONTRACT_VERSION, "code_sha": "a" * 40,
+            "workload_digest": workload_digest("continuous-shadow", base.capacity_workload()),
+            "validated_count": 1, "result": "PASS", "polls_observed": 2,
+            "max_queue_delay_ms": 1, "p95_decision_latency_ms": 1,
+            "peak_memory_bytes": 1024, "storage_growth_bytes": 1024,
+            "other_consumer_requests": 1, "data_requests": 2,
+            "clob_requests": 1, "gamma_requests": 1, "rate_limited_requests": 0,
+            "probe_scope": "SHADOW_FULL_PATH", "nonempty_event_count": 3,
+            "writer_poll_count": 3, "book_requests": 2, "fee_requests": 2,
+            "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+            "shared_ip_observed": True,
+        }
+        evidence["digest"] = hashlib.sha256(json.dumps(
+            evidence, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        return replace(base, capacity_evidence=evidence)
+
+    def service(effective: ContinuousShadowConfig) -> ContinuousShadowService:
+        return ContinuousShadowService(
+            store, candidate_port, ContinuousShadowLeaseRepository(shadow_path),
+            lambda leaders: _Source(dict(leaders), scenario), market,
+            config=effective, clock=clock, automatic_rollover=False,
+        )
+
+    first = service(config(NOW)).start("polycop")
+    coordinator = ContinuousShadowTransition(
+        store, candidate_port, service, clock=clock,
+    )
+    assert (await coordinator.tick("polycop", None))["status"] == "POLL_COMPLETED"
+    for index in (1, 2):
+        clock.value = NOW + timedelta(hours=4 * index, minutes=index)
+        latest = store.latest_experiment("polycop")
+        assert latest is not None
+        plan = PreparedShadowPeriod(
+            command_id=f"boundary-{index}",
+            expected_latest_experiment_id=latest.experiment_id,
+            snapshot_digest=snapshot.digest,
+            expires_at=clock.value + timedelta(hours=2),
+            config=config(clock.value),
+        )
+        applied = await coordinator.tick("polycop", plan)
+        assert applied["status"] == "PERIOD_APPLIED"
+        assert applied["receipt"]["disposition"] == "APPLIED"
+        assert store.config_receipt(plan.command_id) == applied["receipt"]
+        assert store.active_experiment("polycop").experiment_id != latest.experiment_id
+        assert store.results(latest.experiment_id, limit=10)["experiment"]["experiment_id"] == (
+            latest.experiment_id
+        )
+        if index == 1:
+            with sqlite3.connect(shadow_path) as connection:
+                connection.execute(
+                    "UPDATE continuous_shadow_config_receipts SET "
+                    "disposition = 'PENDING_APPLY', experiment_id = NULL "
+                    "WHERE command_id = ?", (plan.command_id,),
+                )
+                connection.commit()
+            recovered = await coordinator.tick("polycop", plan)
+            assert recovered["status"] == "POLL_COMPLETED"
+            assert store.config_receipt(plan.command_id)["disposition"] == "APPLIED"
+    clock.value = NOW + timedelta(hours=12, minutes=3)
+    waiting = await coordinator.tick("polycop", None)
+    assert waiting["status"] == "WAITING_PREPARATION"
+    assert waiting["reason"] == "prepared_cohort_unavailable"
+    assert store.active_experiment("polycop").lifecycle.value == "DRAINING"
+    assert store.latest_experiment("polycop").experiment_id != first.experiment_id
+
+
+@pytest.mark.asyncio
+async def test_isolated_capacity_probe_counts_persisted_nonempty_shadow_path(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    _add_alpha_membership_for_first_wallet(database)
+    candidate_port = DynamicShadowRepository(database)
+    wallet_id = next(item.wallet_id for item in
+                     candidate_port.current_snapshot("polycop").candidates
+                     if "SHADOW_ALPHA" in item.pools)
+    scenario = _Scenario()
+    scenario.events[wallet_id] = [_EventSpec(
+        "probe-buy", LeaderTradeAction.BUY, NOW + timedelta(seconds=100),
+        Decimal("0.40"),
+    )]
+    clock = _Clock(NOW + timedelta(minutes=2))
+    market = _MarketPort(clock)
+    config = ContinuousShadowConfig(
+        runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+        wallet_count=1, selection_policy="shadow-alpha-ranked-v2",
+        maximum_quote_age_ms=60_000,
+    )
+
+    def factory(path: Path) -> ContinuousShadowService:
+        return ContinuousShadowService(
+            ContinuousShadowRepository(path), candidate_port,
+            ContinuousShadowLeaseRepository(path),
+            lambda leaders: _Source(dict(leaders), scenario), market,
+            config=config, clock=clock, automatic_rollover=False,
+        )
+
+    elapsed = [0.0]
+
+    async def sleep(seconds: float) -> None:
+        elapsed[0] += seconds
+
+    report = await probe_shadow_path(
+        "polycop", factory, config=config, duration_seconds=60,
+        poll_interval_seconds=30, scratch_root=tmp_path, clock=lambda: NOW,
+        monotonic=lambda: elapsed[0], sleeper=sleep,
+    )
+    assert report["polls_observed"] == 2
+    assert report["new_event_count"] == report["persisted_event_count"] == 1
+    assert report["ledger_balanced"] is True
+    assert report["status"] == "SHADOW_PATH_NONEMPTY_UNREVIEWED"
+
+
+@pytest.mark.asyncio
+async def test_prepared_five_to_ten_waits_for_exit_and_preserves_prior_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    shadow_path = tmp_path / "continuous-shadow.sqlite3"
+    store = ContinuousShadowRepository(shadow_path)
+    store.initialize()
+    snapshot = ContinuousSelectionSnapshot.create(
+        source_id="polycop", selection_run_id="stage3-ten",
+        source_snapshot_id="source-ten", feature_set_version="copyability-v0.1",
+        policy_id="copyability-selection", policy_version="v0.1",
+        ranking_version="percentile-alpha-stress-v0.1", published_at=NOW,
+        candidates=tuple(ProtectedShadowCandidate(
+            f"alpha-{index}", f"0x{index:040x}", ("SHADOW_ALPHA",),
+            alpha_rank=index,
+        ) for index in range(1, 11)),
+    )
+
+    class Candidates:
+        def current_snapshot(self, _source_id: str) -> ContinuousSelectionSnapshot:
+            return snapshot
+
+    candidates = Candidates()
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    market = _MarketPort(clock)
+
+    def config(count: int, observed: datetime) -> ContinuousShadowConfig:
+        base = ContinuousShadowConfig(
+            runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+            wallet_count=count, selection_policy="shadow-alpha-active-v2",
+            selection_activity_counts={f"alpha-{index}": 1 for index in range(1, 11)},
+            selection_observed_at=observed, selection_preflight_digest="b" * 64,
+            period_duration_seconds=14_400, maximum_quote_age_ms=60_000,
+        )
+        evidence: dict[str, object] = {
+            "version": CAPACITY_CONTRACT_VERSION, "code_sha": "a" * 40,
+            "workload_digest": workload_digest("continuous-shadow", base.capacity_workload()),
+            "validated_count": 10, "result": "PASS", "polls_observed": 3,
+            "max_queue_delay_ms": 1, "p95_decision_latency_ms": 1,
+            "peak_memory_bytes": 1024, "storage_growth_bytes": 1024,
+            "other_consumer_requests": 1, "data_requests": 20,
+            "clob_requests": 5, "gamma_requests": 5, "rate_limited_requests": 0,
+            "probe_scope": "SHADOW_FULL_PATH", "nonempty_event_count": 3,
+            "writer_poll_count": 3, "book_requests": 5, "fee_requests": 5,
+            "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+            "shared_ip_observed": True,
+        }
+        evidence["digest"] = hashlib.sha256(json.dumps(
+            evidence, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        return replace(base, capacity_evidence=evidence)
+
+    def service(effective: ContinuousShadowConfig) -> ContinuousShadowService:
+        return ContinuousShadowService(
+            store, candidates, ContinuousShadowLeaseRepository(shadow_path),
+            lambda leaders: _Source(dict(leaders), scenario), market,
+            config=effective, clock=clock, automatic_rollover=False,
+        )
+
+    first = service(config(5, NOW)).start("polycop")
+    coordinator = ContinuousShadowTransition(store, candidates, service, clock=clock)
+    scenario.events["alpha-1"] = [
+        _EventSpec("prepared-buy", LeaderTradeAction.BUY,
+                   NOW + timedelta(minutes=1), Decimal("0.40")),
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    bought = await coordinator.tick("polycop", None)
+    assert bought["status"] == "POLL_COMPLETED"
+    assert store.open_position_count(first.experiment_id) > 0
+    clock.value = NOW + timedelta(hours=4, minutes=1)
+    plan = PreparedShadowPeriod(
+        command_id="five-to-ten", expected_latest_experiment_id=first.experiment_id,
+        snapshot_digest=snapshot.digest, expires_at=clock.value + timedelta(hours=2),
+        config=config(10, clock.value),
+    )
+    pending = await coordinator.tick("polycop", plan)
+    assert pending["status"] == "PENDING_DRAIN"
+    assert store.active_experiment("polycop").experiment_id == first.experiment_id
+    scenario.events["alpha-1"].append(_EventSpec(
+        "prepared-sell", LeaderTradeAction.SELL,
+        NOW + timedelta(hours=4, minutes=1, seconds=30), Decimal("0.60"),
+    ))
+    clock.value = NOW + timedelta(hours=4, minutes=2)
+    await coordinator.tick("polycop", plan)
+    assert store.open_position_count(first.experiment_id) == 0
+    old_results = store.results(first.experiment_id, limit=10)
+    assert old_results["polls"]["new_event_count"] == 2
+    clock.value = NOW + timedelta(hours=4, minutes=3)
+    from polysia.cli_commands import wallet_intelligence as worker
+
+    prepared_file = tmp_path / "prepared-next-period.json"
+    prepared_file.write_text(json.dumps({
+        "status": "PREPARED", "command_id": plan.command_id,
+        "prepared_for_experiment_id": plan.expected_latest_experiment_id,
+        "snapshot_digest": plan.snapshot_digest,
+        "expires_at": plan.expires_at.isoformat(),
+        "proposed_runtime_spec": {
+            "source_mode": "per-wallet-v2", **plan.config.to_dict(),
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(worker, "DynamicShadowRepository", lambda _path: candidates)
+    monkeypatch.setattr(worker, "_verify_continuous_shadow_code", lambda _config: None)
+    monkeypatch.setattr(
+        worker, "_continuous_shadow_service",
+        lambda _source, _source_database, _database, **kwargs: service(kwargs["config"]),
+    )
+    await asyncio.to_thread(worker._emit_coordinated_portfolio_tick,
+        "polycop", "polycop", tmp_path / "source.sqlite3", shadow_path,
+        tmp_path / "health.json", prepared_file, config(5, NOW),
+        clock=clock,
+    )
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["status"] == "PERIOD_APPLIED"
+    assert store.active_experiment("polycop").config.wallet_count == 10
+    assert store.results(first.experiment_id, limit=10)["follower_portfolios"] == (
+        old_results["follower_portfolios"]
+    )
+    assert store.config_receipt("five-to-ten")["disposition"] == "APPLIED"
+    assert (await coordinator.tick("polycop", plan))["status"] == "POLL_COMPLETED"
+    assert store.latest_experiment("polycop").experiment_id == applied["experiment_id"]
+    prepared_file.write_text('{"status":"PREPARED"}', encoding="utf-8")
+    clock.value += timedelta(minutes=1)
+    await asyncio.to_thread(worker._emit_coordinated_portfolio_tick,
+        "polycop", "polycop", tmp_path / "source.sqlite3", shadow_path,
+        tmp_path / "health.json", prepared_file, config(5, NOW), clock=clock,
+    )
+    malformed = json.loads(capsys.readouterr().out)
+    assert malformed["status"] == "POLL_COMPLETED"
+    assert malformed["preparation_status"] == "INVALID"
+    assert store.latest_experiment("polycop").experiment_id == applied["experiment_id"]
+    def mismatch(_config: ContinuousShadowConfig) -> None:
+        raise ValueError("image changed")
+
+    monkeypatch.setattr(worker, "_verify_continuous_shadow_code", mismatch)
+    await asyncio.to_thread(worker._emit_coordinated_portfolio_tick,
+        "polycop", "polycop", tmp_path / "source.sqlite3", shadow_path,
+        tmp_path / "health.json", prepared_file, config(5, NOW), clock=clock,
+    )
+    identity_block = json.loads(capsys.readouterr().out)
+    assert identity_block["status"] == "BLOCKED_CODE_IDENTITY"
+    assert store.latest_experiment("polycop").experiment_id == applied["experiment_id"]
 
 
 @pytest.mark.asyncio

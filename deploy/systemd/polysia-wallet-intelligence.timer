@@ -1,8 +1,8 @@
 [Unit]
-Description=Run PolySia wallet-intelligence candidate pipeline daily
+Description=Run PolySia wallet-intelligence candidate pipeline every six hours
 
 [Timer]
-OnCalendar=*-*-* 03:15:00 UTC
+OnCalendar=*-*-* 00,06,12,18:15:00 UTC
 Persistent=true
 RandomizedDelaySec=5min
 Unit=polysia-wallet-intelligence.service

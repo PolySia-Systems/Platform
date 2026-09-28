@@ -100,6 +100,11 @@ class WalletIntelligencePipelineOutcome:
                 "run_id": self.snapshot.run_id,
                 "snapshot_id": self.snapshot.snapshot_id,
                 "source_id": self.snapshot.source_id,
+                "last_actual_read_at": self.snapshot.captured_at.isoformat(),
+                "source_accepted_at": self.snapshot.accepted_at.isoformat(),
+                "source_captured_at": self.snapshot.captured_at.isoformat(),
+                "source_capture_basis": "local_fetch_completed_at",
+                "upstream_data_as_of": None,
                 "source_total_pages": self.snapshot.source_total_pages,
             },
             "status": "succeeded",
@@ -221,6 +226,7 @@ class WalletIntelligencePipelineService:
         chain: str,
         clock: Clock | None = None,
         selection_store: CopyabilitySelectionStorePort | None = None,
+        alpha_size: int = 50,
     ) -> None:
         self._source = source
         self._source_store = source_store
@@ -236,14 +242,16 @@ class WalletIntelligencePipelineService:
         self._selection = (
             None
             if selection_store is None
-            else CopyabilitySelectionService(selection_store, clock=self._clock)
+            else CopyabilitySelectionService(
+                selection_store, clock=self._clock, alpha_size=alpha_size
+            )
         )
 
     async def ensure(
         self,
         *,
         scheduled_for: date,
-        fresh_after: timedelta = timedelta(hours=24),
+        fresh_after: timedelta = timedelta(hours=20),
         stale_after: timedelta = timedelta(hours=36),
         lease_duration: timedelta = timedelta(minutes=30),
         history_days: int = 365,
@@ -266,6 +274,10 @@ class WalletIntelligencePipelineService:
             if source_refreshed:
                 source_outcome = await self._source_sync.sync(
                     scheduled_for=scheduled_for,
+                    force_new=(
+                        state.current_snapshot_id is not None
+                        and state.last_success_at is not None
+                    ),
                     history_days=history_days,
                     quarantine_days=quarantine_days,
                 )

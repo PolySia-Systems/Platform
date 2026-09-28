@@ -324,3 +324,26 @@ recovers the matching period and marks the original receipt applied.
 The active worker must be restarted with the same reviewed Spec before
 polling the new period; a mismatched config fails rather than resetting
 inventory. No command grants Live or order authority.
+
+## Additive prepared next-period contract (2026-09-28)
+
+CURRENT repository implementation: `wallet-preparation-v1` accepts exact or
+explicit adaptive count bounds, separate pool and scan limits, finite Data API
+and market token budgets, a refresh threshold, preflight expiry, and a maximum
+attempt count. A complete bounded recent-activity read is required for each
+screened Alpha wallet. The preflight examines multiple recent market/token
+pairs, reports total activity and current-book/fee observability separately,
+and cannot claim historical executable observations from a current book.
+Insufficient candidates, confirmed zero activity, missing fee/depth, short
+observable rate, incomplete reads, and insufficient capacity remain distinct.
+
+The DATA_ONLY persistent worker accepts only a complete, unexpired artifact
+bound to the current Stage 3 digest, expected latest period, runtime Spec,
+and stable command ID. It polls the active frozen configuration during a
+period; at the permitted boundary it drains and applies the prepared period
+once through existing receipts. Open positions or unresolved pending
+observations retain the existing drain and hard-stop rules. A malformed or
+missing artifact causes a stable waiting state after expiry, not a new period.
+The new period has its own opening capital and P&L; prior ledger history is
+retained by period. This repository path still requires matching reviewed
+`wallet-capacity-v2` host evidence before application.

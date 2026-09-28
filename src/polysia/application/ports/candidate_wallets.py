@@ -47,6 +47,7 @@ class CandidateStoredSnapshot:
     snapshot_id: str
     source_id: str
     accepted_at: datetime
+    captured_at: datetime
     source_total_pages: int
     record_count: int
     dataset_digest: str
@@ -59,6 +60,7 @@ class CandidateSourceState:
     current_snapshot_id: str | None
     current_run_id: str | None
     last_success_at: datetime | None
+    source_captured_at: datetime | None
     current_record_count: int | None
     current_page_count: int | None
     last_run_id: str | None

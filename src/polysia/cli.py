@@ -94,6 +94,12 @@ wallet_intelligence_app.command("portfolio-start")(wallet_intelligence.portfolio
 wallet_intelligence_app.command("portfolio-preflight")(
     wallet_intelligence.portfolio_preflight
 )
+wallet_intelligence_app.command("portfolio-prepare")(
+    wallet_intelligence.portfolio_prepare
+)
+wallet_intelligence_app.command("portfolio-capacity-probe")(
+    wallet_intelligence.portfolio_capacity_probe
+)
 wallet_intelligence_app.command("portfolio-capabilities")(
     wallet_intelligence.portfolio_capabilities
 )

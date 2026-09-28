@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh prepared PolySia Shadow evidence before each boundary
+
+[Timer]
+OnCalendar=*-*-* *:00,30:00 UTC
+Persistent=true
+RandomizedDelaySec=2min
+Unit=polysia-wallet-intelligence-prepare.service
+
+[Install]
+WantedBy=timers.target

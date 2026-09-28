@@ -103,6 +103,10 @@ def test_runner_preserves_measured_capacity_spec_before_source_admission() -> No
         "clob_requests": 2,
         "gamma_requests": 2,
         "rate_limited_requests": 0,
+        "probe_scope": "RESEARCH_FULL_PATH", "nonempty_event_count": 3,
+        "writer_poll_count": 3, "book_requests": 2, "fee_requests": 2,
+        "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+        "shared_ip_observed": True,
     }
     evidence["digest"] = hashlib.sha256(json.dumps(
         evidence, sort_keys=True, separators=(",", ":")

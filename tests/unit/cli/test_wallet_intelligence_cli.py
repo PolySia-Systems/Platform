@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from polysia.application.ports.continuous_shadow import ContinuousSelectionSnapshot
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.application.services.continuous_shadow import ContinuousShadowError
 from polysia.application.services.continuous_shadow_failures import (
@@ -25,9 +26,166 @@ from polysia.cli_commands.wallet_intelligence import (
     _load_continuous_shadow_runtime_spec,
 )
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+from polysia.domain.copytrading.wallet_capacity import workload_digest
 from polysia.domain.wallet_intelligence import CandidateWalletDataset, CandidateWalletRecord
 
 runner = CliRunner()
+
+
+def test_preparation_reuses_fresh_artifact_and_replaces_it_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.cli_commands import research_evidence_cli, wallet_intelligence
+
+    now = datetime.now(UTC)
+    wallet = ProtectedShadowCandidate(
+        "wallet-1", "0x" + "1" * 40, ("SHADOW_ALPHA",), alpha_rank=1,
+    )
+    snapshot = ContinuousSelectionSnapshot.create(
+        source_id="polycop", selection_run_id="stage3", source_snapshot_id="source",
+        feature_set_version="copyability-v0.1", policy_id="copyability-selection",
+        policy_version="v0.1", ranking_version="ranking-v1", published_at=now,
+        candidates=(wallet,),
+    )
+    base = ContinuousShadowConfig(
+        runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+        wallet_count=1, selection_policy="shadow-alpha-active-v2",
+        selection_activity_counts={"wallet-1": 1}, selection_observed_at=now,
+        selection_preflight_digest="b" * 64,
+    )
+    capacity: dict[str, object] = {
+        "version": "wallet-capacity-v2", "code_sha": "a" * 40,
+        "workload_digest": workload_digest("continuous-shadow", base.capacity_workload()),
+        "validated_count": 1, "result": "PASS", "polls_observed": 3,
+        "max_queue_delay_ms": 1, "p95_decision_latency_ms": 1,
+        "peak_memory_bytes": 1024, "storage_growth_bytes": 1024,
+        "other_consumer_requests": 1, "data_requests": 3,
+        "clob_requests": 3, "gamma_requests": 3, "rate_limited_requests": 0,
+        "probe_scope": "SHADOW_FULL_PATH", "nonempty_event_count": 3,
+        "writer_poll_count": 3, "book_requests": 3, "fee_requests": 3,
+        "host_peak_memory_bytes": 2048, "ledger_balanced": True,
+        "shared_ip_observed": True,
+    }
+    capacity["digest"] = hashlib.sha256(json.dumps(
+        capacity, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    runtime = tmp_path / "runtime.json"
+    runtime.write_text(json.dumps({
+        "source_mode": "per-wallet-v2", **replace(base, capacity_evidence=capacity).to_dict(),
+    }), encoding="utf-8")
+    policy = tmp_path / "preparation.json"
+    policy.write_text(json.dumps({
+        "version": "wallet-preparation-v1", "mode": "exact",
+        "minimum_wallets": 1, "maximum_wallets": 1,
+        "candidate_pool_size": 1, "candidate_scan_limit": 1,
+        "maximum_attempts": 1, "target_observable_events_per_period": 1,
+    }), encoding="utf-8")
+    output = tmp_path / "prepared.json"
+    calls = [0]
+    fail = [False]
+
+    class Pipeline:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def ensure(self, **_kwargs: object) -> object:
+            return SimpleNamespace(
+                source_refreshed=False,
+                snapshot=SimpleNamespace(
+                    accepted_at=now, captured_at=now, snapshot_id="source",
+                    dataset_digest="c" * 64,
+                ),
+            )
+
+    class Candidates:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def current_snapshot(self, _source_id: str) -> ContinuousSelectionSnapshot:
+            return snapshot
+
+    async def measure(
+        *_args: object, **_kwargs: object
+    ) -> tuple[dict[str, int], dict[str, object]]:
+        calls[0] += 1
+        if fail[0]:
+            raise RuntimeError("activity coverage failed")
+        return {"wallet-1": 1}, {
+            "digest": "b" * 64, "lookback_seconds": 14_400,
+            "rows": [{"wallet_id": "wallet-1", "event_count": 1,
+                      "observable_recent_event_count": 1}],
+        }
+
+    monkeypatch.setattr(wallet_intelligence, "_require_continuous_shadow_safety", lambda: None)
+    monkeypatch.setattr(wallet_intelligence, "load_runtime_identity",
+                        lambda **_kwargs: SimpleNamespace(deploy_sha="a" * 40))
+    monkeypatch.setattr(wallet_intelligence, "_source",
+                        lambda _name: SimpleNamespace(source_id="polycop"))
+    monkeypatch.setattr(wallet_intelligence, "WalletIntelligencePipelineService", Pipeline)
+    monkeypatch.setattr(wallet_intelligence, "DynamicShadowRepository", Candidates)
+    monkeypatch.setattr(wallet_intelligence, "_linux_process_peak_rss_bytes",
+                        lambda: 1024 * 1024)
+    monkeypatch.setattr(research_evidence_cli, "_measure_recent_alpha_activity", measure)
+    args = [
+        "wallet-intelligence", "portfolio-prepare", "--preparation-spec", str(policy),
+        "--base-runtime-spec", str(runtime), "--code-sha", "a" * 40,
+        "--source-database", str(tmp_path / "source.sqlite3"),
+        "--database", str(tmp_path / "shadow.sqlite3"), "--output", str(output),
+    ]
+    first = runner.invoke(app, args)
+    assert first.exit_code == 0, first.output
+    assert json.loads(first.stdout)["status"] == "PREPARED"
+    assert json.loads(first.stdout)["preparation_attempts"] == 1
+    second = runner.invoke(app, args)
+    assert second.exit_code == 0, second.output
+    assert calls == [1]
+    malformed_time = json.loads(output.read_text(encoding="utf-8"))
+    malformed_time["observed_at"] = "not-a-timestamp"
+    output.write_text(json.dumps(malformed_time), encoding="utf-8")
+    recovered_time = runner.invoke(app, args)
+    assert recovered_time.exit_code == 0, recovered_time.output
+    assert calls == [2]
+    output.write_text("broken JSON", encoding="utf-8")
+    recovered = runner.invoke(app, args)
+    assert recovered.exit_code == 0, recovered.output
+    assert calls == [3]
+    fail[0] = True
+    output.write_text("broken JSON", encoding="utf-8")
+    blocked = runner.invoke(app, args)
+    assert blocked.exit_code == 1
+    assert json.loads(output.read_text(encoding="utf-8"))["status"] == "BLOCKED"
+    from datetime import timedelta
+
+    from polysia.storage.candidate_intelligence import CandidateIntelligenceRepository
+
+    lease_store = CandidateIntelligenceRepository(tmp_path / "source.sqlite3")
+    lease = lease_store.acquire_lease(
+        "wallet-preparation", owner_id="another-preparer", acquired_at=datetime.now(UTC),
+        lease_duration=timedelta(minutes=20),
+    )
+    try:
+        output.write_text('{"status":"REQUESTED"}', encoding="utf-8")
+        concurrent = runner.invoke(app, args)
+        assert concurrent.exit_code == 1
+        assert json.loads(output.read_text(encoding="utf-8"))["status"] == "REQUESTED"
+    finally:
+        lease_store.release_lease(lease)
+    future = ContinuousSelectionSnapshot.create(
+        source_id="polycop", selection_run_id="stage3-future",
+        source_snapshot_id="source", feature_set_version="copyability-v0.1",
+        policy_id="copyability-selection", policy_version="v0.1",
+        ranking_version="ranking-v1", published_at=now + timedelta(days=1),
+        candidates=(wallet,),
+    )
+
+    class FutureCandidates(Candidates):
+        def current_snapshot(self, _source_id: str) -> ContinuousSelectionSnapshot:
+            return future
+
+    monkeypatch.setattr(wallet_intelligence, "DynamicShadowRepository", FutureCandidates)
+    future_result = runner.invoke(app, args)
+    assert future_result.exit_code == 1
+    assert "future" in json.loads(output.read_text(encoding="utf-8"))["reason"]
 
 
 @pytest.mark.parametrize("wallet_count", [1, 3])

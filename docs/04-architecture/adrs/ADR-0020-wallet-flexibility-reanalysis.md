@@ -69,8 +69,8 @@ outstanding.
 
 ## Additive decision: measured capacity and pre-T0 choice (2026-09-28)
 
-CURRENT: `research-run-spec-v3` and the separate
-`continuous-shadow-runtime-v2` select 1–40 wallets in software. They use
+At this decision, `research-run-spec-v3` and the separate
+`continuous-shadow-runtime-v2` selected 1–40 wallets in software. They used
 one `wallet-capacity-v1` admission contract, with legacy three-wallet
 behavior preserved under prior policy/version names. Operational permission
 depends on a reviewed measurement record bound to code SHA and a digest of
@@ -99,3 +99,33 @@ replay. It does not modify the 20/0.95/0.90 acceptance thresholds, shorten
 frozen evaluation horizons automatically, or change old Bundles. Durable
 finalization and replay remain required. A future adaptive-stop design would
 need its own frozen statistical and valuation contract.
+
+## Additive decision: bounded preparation and coordinated rollover (2026-09-28)
+
+CURRENT repository behavior: `wallet-preparation-v1` separates the Stage 3
+Alpha pool, bounded activity scan, and selected Shadow count. Exact requests
+remain exact; an explicit adaptive minimum and maximum may choose fewer
+qualifying wallets. Nondefault Stage 3 pool sizes enter the processing key, so
+older default-size runs keep their original interpretation. Recent activity
+checks multiple bounded market/token pairs; current books and fees indicate
+present observability, not historical execution. The Data API read must be
+complete before any count can be used for admission.
+
+CURRENT repository behavior: the DATA_ONLY preparation timer writes an atomic
+next-period artifact. The persistent Shadow worker polls its frozen active
+configuration, drains at the existing boundary, and consumes a prepared
+artifact only after inventory and pending observations permit finalization.
+Existing revision and command receipts make retry recoverable. If preparation
+fails, the worker keeps the existing period and reports a waiting or blocked
+state. Each new period opens its own synthetic capital; prior period economics
+remain separate.
+
+CURRENT capacity admission uses `wallet-capacity-v2` for new v2 Research and
+Shadow periods. A candidate-only or empty probe cannot certify writer
+capacity. The isolated Shadow writer probe supplies diagnostic evidence but
+does not mint a PASS record. The operator must review matching nonempty
+host-wide evidence, including shared-IP load, books, fees, writer persistence,
+ledger balance, resource use, and headroom. Older frozen periods and v1
+capacity records remain historical evidence; v1 does not authorize a new v2
+period after this change. An unkeyed record digest detects accidental edits,
+not host attestation.

@@ -183,6 +183,7 @@ class ContinuousShadowService:
         maximum_pages_per_wallet: int = 40,
         maximum_selection_age: timedelta = timedelta(hours=36),
         latency_recorder: LatencyRecorderPort | None = None,
+        automatic_rollover: bool = True,
     ) -> None:
         if not 1 <= concurrency <= 12:
             raise ValueError("concurrency must be within [1, 12]")
@@ -203,6 +204,7 @@ class ContinuousShadowService:
         self._store_initialized = False
         self._lease_port_initialized = False
         self._latency = latency_recorder
+        self._automatic_rollover = automatic_rollover
         self._lease_owner_id = f"continuous-shadow-{uuid.uuid4().hex}"
         self._poll_in_flight = False
 
@@ -224,6 +226,11 @@ class ContinuousShadowService:
             config=self._config,
             started_at=self._now(),
         )
+
+    def selection_for_isolated_probe(self, source_id: str) -> ContinuousSelectionSnapshot:
+        """Return the real frozen selection; callers must use a disposable probe store."""
+
+        return self._current_selection(source_id)
 
     def apply_configuration(
         self,
@@ -552,7 +559,7 @@ class ContinuousShadowService:
                 )
             open_count = self._store.open_position_count(experiment.experiment_id)
             pending_count = self._store.pending_observation_count(experiment.experiment_id)
-            if open_count == 0 and pending_count == 0:
+            if open_count == 0 and pending_count == 0 and self._automatic_rollover:
                 self._require_new_period_capacity()
                 try:
                     next_selection = self._current_selection(source_id)
