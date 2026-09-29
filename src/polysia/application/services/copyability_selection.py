@@ -76,6 +76,20 @@ class CopyabilitySelectionService:
         )
         existing = self._store.successful_run(key)
         if existing is not None:
+            current = self._store.current_run(source_id)
+            if current is None or current.run_id != existing.run_id:
+                try:
+                    self._store.activate_successful_run(
+                        existing.run_id, source_id=source_id, lease=lease,
+                        activated_at=self._utc_now(),
+                    )
+                except CandidatePipelineLeaseLostError:
+                    raise
+                except Exception as error:
+                    raise CopyabilitySelectionError(
+                        "copyability_selection_failed",
+                        "Copyability selection replay could not activate its published run.",
+                    ) from error
             return CopyabilitySelectionOutcome(selection=existing, idempotent_replay=True)
         try:
             evidence = self._store.load_evidence(source_id, stage2_run_id)

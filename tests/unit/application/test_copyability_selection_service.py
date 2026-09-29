@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -156,6 +157,26 @@ def test_wider_alpha_pool_has_distinct_processing_identity_and_keeps_eligibility
         store, clock=lambda: at + timedelta(minutes=3), alpha_size=60,
     ).process_stage2_run("polycop", stage2, lease=lease)
     assert replay.idempotent_replay is True
+    narrow_replay = CopyabilitySelectionService(
+        store, clock=lambda: at + timedelta(minutes=4), alpha_size=50,
+    ).process_stage2_run("polycop", stage2, lease=lease)
+    assert narrow_replay.idempotent_replay is True
+    assert store.current_run("polycop").run_id == narrow.selection.run_id
+    wide_replay = CopyabilitySelectionService(
+        store, clock=lambda: at + timedelta(minutes=5), alpha_size=60,
+    ).process_stage2_run("polycop", stage2, lease=lease)
+    assert wide_replay.idempotent_replay is True
+    assert store.current_run("polycop").run_id == wide.selection.run_id
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM copyability_selection_runs"
+        ).fetchone()[0] == 2
+    intelligence.release_lease(lease)
+    with pytest.raises(CandidatePipelineLeaseLostError):
+        CopyabilitySelectionService(
+            store, clock=lambda: at + timedelta(minutes=6), alpha_size=50,
+        ).process_stage2_run("polycop", stage2, lease=lease)
+    assert store.current_run("polycop").run_id == wide.selection.run_id
 
 
 def test_missing_stage2_preserves_previous_pools_and_stage2(tmp_path: Path) -> None:

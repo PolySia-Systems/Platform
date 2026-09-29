@@ -30,6 +30,15 @@ class CopyabilitySelectionStorePort(Protocol):
 
     def successful_run(self, key: CopyabilityProcessingKey) -> CopyabilitySelectionRun | None: ...
 
+    def activate_successful_run(
+        self,
+        run_id: str,
+        *,
+        source_id: str,
+        lease: CandidatePipelineLease,
+        activated_at: datetime,
+    ) -> None: ...
+
     def start_run(
         self,
         key: CopyabilityProcessingKey,
