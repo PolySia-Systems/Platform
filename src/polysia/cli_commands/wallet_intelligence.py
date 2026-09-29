@@ -1008,7 +1008,7 @@ def portfolio_prepare(
 def portfolio_capacity_probe(
     preparation_file: Annotated[Path, typer.Option("--preparation-file")],
     duration_seconds: Annotated[
-        int, typer.Option("--duration-seconds", min=30, max=180)
+        int, typer.Option("--duration-seconds", min=30, max=1800)
     ] = 90,
     poll_interval_seconds: Annotated[
         int, typer.Option("--poll-interval-seconds", min=5, max=60)
@@ -1063,6 +1063,9 @@ def portfolio_capacity_probe(
             _source(source).source_id, service_factory,
             config=config, duration_seconds=duration_seconds,
             poll_interval_seconds=poll_interval_seconds,
+            market_path_observed=lambda: (
+                market.book_requests > 0 and market.fee_schedule_reads > 0
+            ),
         ))
         result["market_reads"] = {
             "book_requests": market.book_requests,

@@ -41,7 +41,7 @@ from polysia.application.services.continuous_shadow_transition import (
 from polysia.application.services.copyability_selection import CopyabilitySelectionService
 from polysia.backtesting.shadow_historical_baseline import run_primary_comparison
 from polysia.cli_commands.wallet_intelligence import _emit_portfolio_poll
-from polysia.deployment.shadow_capacity_probe import probe_shadow_path
+from polysia.deployment.shadow_capacity_probe import CountingMarketRead, probe_shadow_path
 from polysia.deployment.wallet_intelligence_backup import (
     backup_continuous_shadow_database,
     backup_wallet_intelligence_database,
@@ -1223,8 +1223,9 @@ async def test_prepared_worker_crosses_two_four_hour_boundaries_and_waits_on_fai
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("market_confirmed", [False, True])
 async def test_isolated_capacity_probe_counts_persisted_nonempty_shadow_path(
-    tmp_path: Path,
+    tmp_path: Path, market_confirmed: bool,
 ) -> None:
     database = tmp_path / "wallet-intelligence.sqlite3"
     _seed_stage3(database)
@@ -1239,7 +1240,7 @@ async def test_isolated_capacity_probe_counts_persisted_nonempty_shadow_path(
         Decimal("0.40"),
     )]
     clock = _Clock(NOW + timedelta(minutes=2))
-    market = _MarketPort(clock)
+    market = CountingMarketRead(_MarketPort(clock))
     config = ContinuousShadowConfig(
         runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
         wallet_count=1, selection_policy="shadow-alpha-ranked-v2",
@@ -1260,14 +1261,25 @@ async def test_isolated_capacity_probe_counts_persisted_nonempty_shadow_path(
         elapsed[0] += seconds
 
     report = await probe_shadow_path(
-        "polycop", factory, config=config, duration_seconds=60,
+        "polycop", factory, config=config,
+        duration_seconds=1800 if market_confirmed else 60,
         poll_interval_seconds=30, scratch_root=tmp_path, clock=lambda: NOW,
         monotonic=lambda: elapsed[0], sleeper=sleep,
+        market_path_observed=lambda: (
+            market_confirmed and market.book_requests > 0
+            and market.fee_schedule_reads > 0
+        ),
     )
     assert report["polls_observed"] == 2
     assert report["new_event_count"] == report["persisted_event_count"] == 1
     assert report["ledger_balanced"] is True
-    assert report["status"] == "SHADOW_PATH_NONEMPTY_UNREVIEWED"
+    assert report["status"] == (
+        "SHADOW_PATH_NONEMPTY_UNREVIEWED" if market_confirmed
+        else "INSUFFICIENT_NONEMPTY_EVIDENCE"
+    )
+    assert report["stopped_after_full_path"] is market_confirmed
+    assert market.book_requests > 0
+    assert market.fee_schedule_reads > 0
 
 
 @pytest.mark.asyncio

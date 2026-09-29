@@ -128,6 +128,24 @@ def test_missing_capacity_and_incomplete_screening_do_not_claim_ready() -> None:
         raise AssertionError("partial screening cannot be presented as complete")
 
 
+def test_measured_capacity_does_not_turn_rate_estimate_into_hard_gate() -> None:
+    snapshot = _snapshot()
+    counts, activity = _activity()
+    base = ContinuousShadowConfig(
+        runtime_version="continuous-shadow-runtime-v2", code_sha="a" * 40,
+        wallet_count=5, selection_policy="shadow-alpha-ranked-v2",
+    )
+    base = replace(base, capacity_evidence=_capacity(base, 4))
+    proposal = choose_prepared_cohort(
+        WalletPreparationConfig(mode="adaptive", minimum_wallets=3, maximum_wallets=5),
+        snapshot, counts, activity, base, observed_at=NOW,
+    )
+    assert proposal["status"] == "PREPARED"
+    assert proposal["rate_status"] == "INSUFFICIENT_OBSERVED_RATE"
+    assert proposal["capacity"]["operational_status"] == "measured"
+    assert proposal["next_action"] == "queue_for_safe_boundary"
+
+
 def test_bounded_partial_screening_reports_unread_alpha_and_next_action() -> None:
     snapshot = _snapshot()
     counts, evidence = _activity()

@@ -712,7 +712,7 @@ docker compose --profile wallet-intelligence run --rm --no-deps \
   wallet-intelligence-shadow-portfolio wallet-intelligence portfolio-capacity-probe \
   --preparation-file /var/lib/polysia/reports/wallet-intelligence/prepared-next-period.json \
   --source-database /var/lib/polysia/data/wallet-intelligence.sqlite3 \
-  --duration-seconds 90 --poll-interval-seconds 30
+  --duration-seconds 1800 --poll-interval-seconds 30
 ```
 
 Preparation uses at most the configured attempts and explicit per-wallet,
@@ -724,10 +724,17 @@ Repeated fresh work is reused for at most 30 minutes and never past artifact
 expiry. Source read completion is local evidence; upstream data-as-of remains
 unknown. The market check is current observability, not a historical fill
 claim. The capacity probe uses a disposable SQLite writer and returns only
-diagnostic status. Review its nonempty source, books, fees, writer, ledger,
-host and shared-IP observations alongside the existing telemetry before
-creating a matching `wallet-capacity-v2` PASS record. Empty and source-only
-probes never certify capacity.
+diagnostic status. Its bounded window is 30–1800 seconds and it stops early
+after at least two polls only when a source event, simulation, book and fee
+reads, persisted writer count, and balanced ledger are all observed. Aggregate
+Data API attempts are capped at 1,000 with a per-poll worst-case reservation;
+market and book reads share a 500-token cap. The historical rate remains
+visible as `INSUFFICIENT_OBSERVED_RATE` even if a matching measured capacity
+record permits `PREPARED`; Canary admission still
+uses its unchanged actual thresholds. Review the probe's nonempty source,
+books, fees, writer, ledger, host and shared-IP observations alongside the
+existing telemetry before creating a matching `wallet-capacity-v2` PASS record.
+Empty and source-only probes never certify capacity.
 
 The worker reads the prepared artifact each poll. It retains the active
 period's frozen membership and financial assumptions until duration/event
