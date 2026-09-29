@@ -152,6 +152,43 @@ class CopyabilitySelectionRepository:
             connection.close()
         return None if row is None else _selection_run(row)
 
+    def activate_successful_run(
+        self,
+        run_id: str,
+        *,
+        source_id: str,
+        lease: CandidatePipelineLease,
+        activated_at: datetime,
+    ) -> None:
+        """Make an existing policy result current without duplicating its evidence."""
+        _require_identifier(source_id, field_name="source_id")
+        activated_at = _utc(activated_at, field_name="activated_at")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_live_lease(connection, lease, at=activated_at)
+            run = connection.execute(
+                "SELECT 1 FROM copyability_selection_runs "
+                "WHERE run_id = ? AND source_id = ? AND status = 'succeeded'",
+                (run_id, source_id),
+            ).fetchone()
+            if run is None:
+                raise CopyabilitySelectionStoreError(
+                    "Successful copyability run is unavailable for activation."
+                )
+            connection.execute(
+                "INSERT INTO copyability_selection_current (source_id, run_id, published_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(source_id) DO UPDATE SET "
+                "run_id = excluded.run_id, published_at = excluded.published_at",
+                (source_id, run_id, _iso(activated_at)),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def start_run(
         self,
         key: CopyabilityProcessingKey,

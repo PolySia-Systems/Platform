@@ -128,7 +128,10 @@ or Stage 2.
 The processing identity includes source snapshot, feature-set version, policy
 id/version, and ranking version. A successful identity is idempotent. The full
 feature and evaluation result is validated and the current pointer is then
-published in one transaction. Failed work cannot replace the previous pool.
+published in one transaction. If a prior successful identity is replayed after
+another pool policy became current for the same Stage 2 run, the replay
+reactivates its verified result under the pipeline lease without duplicating
+scores or memberships. Failed work cannot replace the previous pool.
 
 Stage 4 consumes the deduplicated union of current `SHADOW_ALPHA` and
 `SHADOW_STRESS`; it does not read the old fixed 102-wallet file. The legacy
