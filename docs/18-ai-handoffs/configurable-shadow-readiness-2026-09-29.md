@@ -95,3 +95,111 @@ capacity measurement with an operator-reviewed matching v2 PASS record, then
 the unchanged Canary. Only after those gates may a separately authorized
 exact-SHA economic run begin. Later code SHAs require their own operational
 authorization; this record does not extend the `579f5c5…` approval.
+
+## Authorized continuation through 2026-09-29 19:52 UTC
+
+The owner separately authorized this task's exact verified release. The
+earlier 20-event preparation-rate statement above was the disposition at
+00:16 UTC; [PR #186](https://github.com/PolySia-Systems/Platform/pull/186)
+subsequently made that uncertain historical estimate advisory after a
+matching measured capacity record exists. It did not change the standard
+Canary thresholds. The PR's source commit was
+`9af25f184689a9be97727400c2b3224808826949`; its squash merge and
+verified main commit was `ecee30881ebea64a36529fd3a3bcb019178c014f`.
+The [PR CI](https://github.com/PolySia-Systems/Platform/actions/runs/36507885345)
+and [new-main CI](https://github.com/PolySia-Systems/Platform/actions/runs/36508183276)
+passed their required quality, container, and CI Gate jobs. The local full
+suite passed 1,328 tests with one skip. The project lock audit found no known
+vulnerabilities; a separate audit of the workstation's global environment
+found `cryptography 48.0.0`, which is absent from the project lock.
+
+The host policy was changed privately to adaptive 1–10, pool 100, scan 100;
+its previous version was retained under the protected config directory.
+The 1,000 Data API request, 500 market-token, 180-second preflight, and
+three-attempt limits remained. A first scan of all 100 Alpha candidates found
+three eligible wallets and 13 recent observable events. One preparation on
+the final `ecee308…` image reused the bounded source state and found three
+eligible wallets, 12 recent observable events, 95 confirmed inactive
+candidates, and two with missing fee evidence. Screening was complete, with
+zero unread Alpha candidates. The proposed protected wallet IDs, in selection
+order, were `73b413a18659947d60f4ff3ad0f0f926d6bc83f456fdb97f21af580540e25b24`,
+`91fae364d25821783d20711c9fc6a545a8af408a810978cd267f7ce02fb37a89`,
+and `65e6440dfaa0f4144b44ecd946c08f3bdbe7ad6133020660ffe2a071a3908808`.
+Its `LOW_OBSERVABLE_RATE` artifact had `INSUFFICIENT_OBSERVED_RATE` and
+unverified capacity. No cohort was admitted to a v2 period.
+
+The trusted archive of `ecee308…` matched SHA-256
+`88ee81afe1f61972d47c7be4dfba9ea17dcb51c73fce56ad890efbd81c9eb0a2`
+before and after transfer. The read-only release was staged at
+`/opt/polysia-releases/ecee30881ebea64a36529fd3a3bcb019178c014f`.
+The tagged image's `BUILD_COMMIT` matched, and its isolated default check
+returned `TRADING_MODE=DATA_ONLY` and `LIVE_TRADING_ENABLED=false`. The root
+symlink and persistent Shadow worker were not switched.
+
+One isolated, systemd-bounded full-path probe ran from 01:36:44 through
+02:06:52 UTC under `ecee308…`, with a 30-minute observation window and
+explicit 1,000 source-request and 500 market-token caps. It completed 30
+polls, 94 counted public-source attempts, two new and persisted events (at
+polls 7 and 24), two book reads, two fee-schedule reads, zero simulations,
+and six `UNKNOWN` evaluations. The writer count matched source events and the
+disposable ledger was balanced. No request budget or timeout was exhausted;
+peak probe RSS was 122,994,688 bytes, process CPU 6.142 seconds, and storage
+growth 69,632 bytes. The result was
+`INSUFFICIENT_NONEMPTY_EVIDENCE`, not capacity `PASS`. The diagnostic JSON
+does not retain per-evaluation UNKNOWN reasons after removing its isolated
+SQLite store; no cause beyond the observed evaluation stage is established.
+
+The 31 host samples over that same window showed at least 2,625 MiB available
+RAM, maximum one-minute load 0.45, 729,088 bytes host-disk growth, 2,239,158
+received and 903,036 transmitted bytes on `eth0`, and at most five
+established TCP connections. These are aggregate load observations, not
+endpoint attribution for every consumer of the shared IP. The probe JSON
+still lists `shared_ip_other_consumers` and future market mix as unmeasured.
+The retained host reports are
+`/var/lib/polysia/wallet-intelligence/reports/capacity-probe-ecee308-20260929.json`
+(SHA-256 `b0cfc94a58ca4ea22ec81dd5cb204974196b67bb5e365fe8f300e18161bd6a4b`)
+and `capacity-host-ecee308-20260929.log`
+(SHA-256 `77ad5b78335af607562991da4fbf2bcde0259104da2e018310f445aeab4de2fa`).
+The probe process exited zero; that is not an admission verdict.
+
+At 19:52 UTC the accepted v1 Shadow worker remained active with zero
+restarts. Its current, separately capitalized period
+`6ea932b8948b48018fc21cc06a169601` began at 19:28 UTC under the old
+`621b3d6…` image. Its latest poll succeeded, health was healthy, selection
+fresh, ledger balanced, with zero events, evaluations, and open positions.
+The source timer remained enabled; the v2 preparation timer was not installed.
+The earlier verified three-store backup and off-host encrypted copy remain
+the recovery evidence; this change had no persistence migration, so no
+repeat backup or restore rehearsal was performed.
+
+| Gate | Outcome | Evidence or prerequisite |
+|---|---|---|
+| Repository correction | PASS | PR #186, focused tests, local gates, PR and main CI. |
+| v2 runtime transition | NOT RUN | Probe had 0 simulations and 6 UNKNOWN evaluations; no matching reviewed capacity PASS record or safe v2 boundary application. |
+| Standard Canary | NOT RUN | v2 full-path capacity gate remains unmet; fixed 20 / 0.95 / 0.90 criteria were not tested. |
+| New four-hour economics | NOT RUN | No eligible Canary and no new economic T0; Control/Target opening capital, gross P&L, fees, net P&L, return, and relative result are UNKNOWN. |
+| Profitability | NOT ESTABLISHED | Technical health and the older empty-sample zero-net report do not show profitable economics. |
+
+No new economic period ID or T0 exists. The requested current-period
+comparison is therefore unavailable:
+
+| Measure | Control | Target |
+|---|---:|---:|
+| Opening capital | UNKNOWN | UNKNOWN |
+| Gross P&L | UNKNOWN | UNKNOWN |
+| Fees and costs | UNKNOWN | UNKNOWN |
+| Net P&L | UNKNOWN | UNKNOWN |
+| Return | UNKNOWN | UNKNOWN |
+
+Target-minus-Control net P&L is also UNKNOWN. The distinct historical
+2026-09-27 failure archive reported zero eligible observations and net P&L
+of zero for both sides, but had no event-bearing interval or verified economic
+bundle; those empty-sample figures are not a result for this task.
+
+The next bounded step requires preserved per-evaluation reason diagnostics,
+then a genuinely new observation showing a nonempty simulated writer path
+with matching code/workload, attributable shared-IP load, and a reviewed
+capacity record. Only then can a fresh complete preparation, safe v2 period,
+unchanged Canary, and conditional economic run proceed. Do not infer an
+UNKNOWN reason, loosen the Canary gates, or promote the staged image on this
+probe result alone.
