@@ -336,6 +336,10 @@ pairs, reports total activity and current-book/fee observability separately,
 and cannot claim historical executable observations from a current book.
 Insufficient candidates, confirmed zero activity, missing fee/depth, short
 observable rate, incomplete reads, and insufficient capacity remain distinct.
+The short historical observable-rate estimate is advisory for a complete
+eligible cohort with matching measured capacity; retain its insufficient-rate
+status even when that cohort becomes `PREPARED`. The standard Canary's actual
+observation and executable-evidence thresholds remain unchanged.
 
 The DATA_ONLY persistent worker accepts only a complete, unexpired artifact
 bound to the current Stage 3 digest, expected latest period, runtime Spec,

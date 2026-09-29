@@ -210,9 +210,9 @@ def choose_prepared_cohort(
     except WalletCapacityError as error:
         capacity = {"operational_status": "blocked", "reason": str(error)}
     status = (
-        "LOW_OBSERVABLE_RATE" if estimated_period_events <
+        "PREPARED" if capacity.get("operational_status") == "measured"
+        else "LOW_OBSERVABLE_RATE" if estimated_period_events <
         config.target_observable_events_per_period
-        else "PREPARED" if capacity.get("operational_status") == "measured"
         else "BLOCKED_CAPACITY_ENVELOPE" if "exceeds measured" in str(
             capacity.get("reason", "")
         ) else "PENDING_CAPACITY"
