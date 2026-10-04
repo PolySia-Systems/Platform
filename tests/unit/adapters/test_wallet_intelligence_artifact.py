@@ -173,3 +173,11 @@ def test_cross_wallet_reference_and_partial_inactivity_are_rejected(
     seal(data)
     with pytest.raises(ResearchPublicationError, match="unsupported_inactive_claim"):
         read(tmp_path, data)
+
+
+def test_foreign_run_reference_is_rejected(tmp_path, wallet_intelligence_artifact):
+    data = wallet_intelligence_artifact
+    data["source_references"][0]["run_id"] = "f" * 32
+    seal(data)
+    with pytest.raises(ResearchPublicationError, match="foreign_run_evidence"):
+        read(tmp_path, data)

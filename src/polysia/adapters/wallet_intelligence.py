@@ -89,6 +89,8 @@ def _validate_semantics(source: Publication) -> None:
         raise ResearchPublicationError("hidden_partial_coverage")
     references = {_reference_key(ref) for ref in source.source_references}
     for ref in source.source_references:
+        if ref.run_id != source.run_id:
+            raise ResearchPublicationError("foreign_run_evidence")
         if _utc(ref.fetched_at) > generated:
             raise ResearchPublicationError("reference_from_future")
     ids: list[str] = []
