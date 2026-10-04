@@ -1,0 +1,357 @@
+{
+  "schema_version": "wallet-intelligence/v1",
+  "producer_version": "0.1.0",
+  "code_revision": "dddddddddddddddddddddddddddddddddddddddd",
+  "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "profile": {
+    "id": "research-candidates",
+    "version": "1"
+  },
+  "config_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "feature_set_version": "descriptive/v1",
+  "input_manifest_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "data_cutoff": "2026-10-03T21:00:00Z",
+  "evaluation_at": "2026-10-03T21:00:00Z",
+  "generated_at": "2026-10-03T21:00:00Z",
+  "expires_at": "2026-10-04T21:00:00Z",
+  "coverage": {
+    "discovered": 4,
+    "examined": 3,
+    "unexamined": 1,
+    "active": 2,
+    "performance_supported": 2,
+    "published": 1,
+    "outcomes": {
+      "CANDIDATE": 1,
+      "WATCHLIST": 1,
+      "EXCLUDED": 1,
+      "DATA_HOLD": 0
+    },
+    "discovery_routes": [
+      {
+        "kind": "board",
+        "pages_examined": 1,
+        "exhausted": false
+      }
+    ],
+    "missing_partitions": [],
+    "scope": "bounded_discovered_population_not_all_users",
+    "limits": {
+      "deep": 2,
+      "discovery": 500,
+      "publication": 20,
+      "screening": 20
+    },
+    "discovery_mode": "automatic",
+    "discovery_at": "2026-10-03T21:00:00Z"
+  },
+  "status": "COMPLETE_FOR_SCOPE",
+  "reasons": [],
+  "records": [
+    {
+      "wallet_id": "polymarket:137:0x1111111111111111111111111111111111111111",
+      "identity": {
+        "venue": "polymarket",
+        "chain_id": 137,
+        "account_wallet": "0x1111111111111111111111111111111111111111",
+        "wallet_type": "UNKNOWN"
+      },
+      "outcome": "CANDIDATE",
+      "candidate_rank": 1,
+      "discovery": [
+        {
+          "route": "board",
+          "source_rank": 4,
+          "display_name": "Synthetic account",
+          "source_representation": "0x1111111111111111111111111111111111111111"
+        }
+      ],
+      "activity": {
+        "state": "ACTIVE",
+        "window_days": 7,
+        "window_start": "2026-09-26T21:00:00Z",
+        "window_end": "2026-10-03T21:00:00Z",
+        "last_trade_at": "2026-10-03T20:59:00Z",
+        "source_rows": 1,
+        "issues": [],
+        "acquisition": "INCOMPLETE",
+        "existence_only": true
+      },
+      "performance": {
+        "state": "POSITIVE",
+        "value": "10.25",
+        "metric": "source-reported-position-pnl-change",
+        "unit": "USDC",
+        "target_days": 7,
+        "boundary_policy": "preceding-anchor-one-day/v1",
+        "source_fidelity": "1d",
+        "freshness": "FRESH",
+        "source_observed_at": "2026-10-03T21:00:00Z",
+        "start": "2026-09-26T21:00:00Z",
+        "end": "2026-10-03T21:00:00Z",
+        "span_seconds": 604800,
+        "components": {
+          "position_pnl": {
+            "value": "10.25",
+            "unit": "USDC",
+            "basis": "same-observed-window",
+            "reason": "observed"
+          },
+          "wallet_income": {
+            "value": "0.00",
+            "unit": "USDC",
+            "basis": "same-observed-window",
+            "reason": "observed"
+          }
+        },
+        "reason": "supported_observed_boundaries"
+      },
+      "reasons": [
+        "active_supported_positive_fresh"
+      ],
+      "freshness": "FRESH",
+      "features": {},
+      "labels": [],
+      "evidence_depth": {
+        "source_rows": 1,
+        "history_complete": false
+      },
+      "quality": {
+        "descriptive": "AVAILABLE",
+        "predictive": "NOT_EVALUATED"
+      },
+      "copyability": {
+        "state": "NOT_EVALUATED",
+        "reason": "follower_benchmark_not_evaluated"
+      },
+      "rank_policy": "period-pnl-activity-identity/v1",
+      "observed_at": "2026-10-03T21:00:00Z",
+      "fetched_at": "2026-10-03T21:00:00Z",
+      "computed_at": "2026-10-03T21:00:00Z",
+      "expires_at": "2026-10-04T21:00:00Z",
+      "evidence_references": [
+        {
+          "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "query_id": "5cd1cfc2ec62d41e3d81a931bcbe1650bbad25a5ba305bb95adba05aab778a92",
+          "page": 1,
+          "fetched_at": "2026-10-03T21:00:00Z",
+          "url": "https://data-api.polymarket.com/v2/activity?user=0x1111111111111111111111111111111111111111",
+          "body_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "data_validity": "VALID"
+    },
+    {
+      "wallet_id": "polymarket:137:0x2222222222222222222222222222222222222222",
+      "identity": {
+        "venue": "polymarket",
+        "chain_id": 137,
+        "account_wallet": "0x2222222222222222222222222222222222222222",
+        "wallet_type": "UNKNOWN"
+      },
+      "outcome": "WATCHLIST",
+      "candidate_rank": null,
+      "discovery": [
+        {
+          "route": "board",
+          "source_rank": 4,
+          "display_name": "Synthetic account",
+          "source_representation": "0x2222222222222222222222222222222222222222"
+        }
+      ],
+      "activity": {
+        "state": "ACTIVE",
+        "window_days": 7,
+        "window_start": "2026-09-26T21:00:00Z",
+        "window_end": "2026-10-03T21:00:00Z",
+        "last_trade_at": "2026-10-03T20:59:00Z",
+        "source_rows": 1,
+        "issues": [],
+        "acquisition": "INCOMPLETE",
+        "existence_only": true
+      },
+      "performance": {
+        "state": "UNKNOWN",
+        "value": null,
+        "metric": "source-reported-position-pnl-change",
+        "unit": "USDC",
+        "target_days": 7,
+        "boundary_policy": "preceding-anchor-one-day/v1",
+        "source_fidelity": "1d",
+        "freshness": "UNKNOWN",
+        "source_observed_at": null,
+        "start": null,
+        "end": null,
+        "span_seconds": null,
+        "components": {},
+        "reason": "unsupported_boundaries"
+      },
+      "reasons": [
+        "unsupported_boundaries"
+      ],
+      "freshness": "UNKNOWN",
+      "features": {},
+      "labels": [],
+      "evidence_depth": {
+        "source_rows": 1,
+        "history_complete": false
+      },
+      "quality": {
+        "descriptive": "UNKNOWN",
+        "predictive": "NOT_EVALUATED"
+      },
+      "copyability": {
+        "state": "NOT_EVALUATED",
+        "reason": "follower_benchmark_not_evaluated"
+      },
+      "rank_policy": "period-pnl-activity-identity/v1",
+      "observed_at": null,
+      "fetched_at": "2026-10-03T21:00:00Z",
+      "computed_at": "2026-10-03T21:00:00Z",
+      "expires_at": "2026-10-04T21:00:00Z",
+      "evidence_references": [
+        {
+          "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "query_id": "da8746f109495621a77c163cebc25b0abb06d8a6f21d0518b87023e17a38a255",
+          "page": 1,
+          "fetched_at": "2026-10-03T21:00:00Z",
+          "url": "https://data-api.polymarket.com/v2/activity?user=0x2222222222222222222222222222222222222222",
+          "body_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "data_validity": "VALID"
+    },
+    {
+      "wallet_id": "polymarket:137:0x3333333333333333333333333333333333333333",
+      "identity": {
+        "venue": "polymarket",
+        "chain_id": 137,
+        "account_wallet": "0x3333333333333333333333333333333333333333",
+        "wallet_type": "UNKNOWN"
+      },
+      "outcome": "EXCLUDED",
+      "candidate_rank": null,
+      "discovery": [
+        {
+          "route": "board",
+          "source_rank": 4,
+          "display_name": "Synthetic account",
+          "source_representation": "0x3333333333333333333333333333333333333333"
+        }
+      ],
+      "activity": {
+        "state": "INACTIVE",
+        "window_days": 7,
+        "window_start": "2026-09-26T21:00:00Z",
+        "window_end": "2026-10-03T21:00:00Z",
+        "last_trade_at": null,
+        "source_rows": 0,
+        "issues": [],
+        "acquisition": "COMPLETE_FOR_QUERY",
+        "existence_only": true
+      },
+      "performance": {
+        "state": "NON_POSITIVE",
+        "value": "0.00",
+        "metric": "source-reported-position-pnl-change",
+        "unit": "USDC",
+        "target_days": 7,
+        "boundary_policy": "preceding-anchor-one-day/v1",
+        "source_fidelity": "1d",
+        "freshness": "FRESH",
+        "source_observed_at": "2026-10-03T21:00:00Z",
+        "start": "2026-09-26T21:00:00Z",
+        "end": "2026-10-03T21:00:00Z",
+        "span_seconds": 604800,
+        "components": {
+          "position_pnl": {
+            "value": "0.00",
+            "unit": "USDC",
+            "basis": "same-observed-window",
+            "reason": "observed"
+          },
+          "wallet_income": {
+            "value": "0.00",
+            "unit": "USDC",
+            "basis": "same-observed-window",
+            "reason": "observed"
+          }
+        },
+        "reason": "supported_observed_boundaries"
+      },
+      "reasons": [
+        "no_qualifying_activity"
+      ],
+      "freshness": "FRESH",
+      "features": {},
+      "labels": [],
+      "evidence_depth": {
+        "source_rows": 0,
+        "history_complete": false
+      },
+      "quality": {
+        "descriptive": "AVAILABLE",
+        "predictive": "NOT_EVALUATED"
+      },
+      "copyability": {
+        "state": "NOT_EVALUATED",
+        "reason": "follower_benchmark_not_evaluated"
+      },
+      "rank_policy": "period-pnl-activity-identity/v1",
+      "observed_at": "2026-10-03T21:00:00Z",
+      "fetched_at": "2026-10-03T21:00:00Z",
+      "computed_at": "2026-10-03T21:00:00Z",
+      "expires_at": "2026-10-04T21:00:00Z",
+      "evidence_references": [
+        {
+          "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "query_id": "8cdab3177b17f97f92abd2d768194ff141bce6768926a38bdd8464a2010a652c",
+          "page": 1,
+          "fetched_at": "2026-10-03T21:00:00Z",
+          "url": "https://data-api.polymarket.com/v2/activity?user=0x3333333333333333333333333333333333333333",
+          "body_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "data_validity": "VALID"
+    }
+  ],
+  "candidates": [
+    "polymarket:137:0x1111111111111111111111111111111111111111"
+  ],
+  "capabilities": {
+    "descriptive_screening": "AVAILABLE",
+    "copyability": "NOT_EVALUATED",
+    "predictive_quality": "NOT_EVALUATED",
+    "accounting_reconciliation": "NOT_EVALUATED"
+  },
+  "source_references": [
+    {
+      "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "query_id": "5cd1cfc2ec62d41e3d81a931bcbe1650bbad25a5ba305bb95adba05aab778a92",
+      "page": 1,
+      "fetched_at": "2026-10-03T21:00:00Z",
+      "url": "https://data-api.polymarket.com/v2/activity?user=0x1111111111111111111111111111111111111111",
+      "body_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "query_id": "da8746f109495621a77c163cebc25b0abb06d8a6f21d0518b87023e17a38a255",
+      "page": 1,
+      "fetched_at": "2026-10-03T21:00:00Z",
+      "url": "https://data-api.polymarket.com/v2/activity?user=0x2222222222222222222222222222222222222222",
+      "body_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "query_id": "8cdab3177b17f97f92abd2d768194ff141bce6768926a38bdd8464a2010a652c",
+      "page": 1,
+      "fetched_at": "2026-10-03T21:00:00Z",
+      "url": "https://data-api.polymarket.com/v2/activity?user=0x3333333333333333333333333333333333333333",
+      "body_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "diagnostics": {
+    "requests": 3
+  },
+  "snapshot_digest": "12715ad4b94c6c238c20d646dbf5eadcd9ce483f1058ee7da65adfe4c49d824b"
+}

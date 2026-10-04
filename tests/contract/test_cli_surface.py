@@ -63,6 +63,7 @@ EXPECTED_COMMANDS = {
     },
     "control": {"apply", "history", "plan", "status"},
     "wallet-intelligence": {
+        "intake",
         "backup",
         "capacity",
         "compact-backup",

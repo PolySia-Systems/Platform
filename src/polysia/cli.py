@@ -4,7 +4,15 @@ from collections.abc import Callable
 
 import typer
 
-from polysia.cli_commands import core, developer, live, operations, research, wallet_intelligence
+from polysia.cli_commands import (
+    core,
+    developer,
+    live,
+    operations,
+    research,
+    wallet_intelligence,
+    wallet_intelligence_research,
+)
 from polysia.control.cli import control_app
 
 app = typer.Typer(
@@ -84,6 +92,7 @@ research_run_app.command("verify")(research.prospective_run_verify)
 research_run_app.command("result")(research.prospective_run_result)
 
 wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
+wallet_intelligence_app.command("intake")(wallet_intelligence_research.intake)
 wallet_intelligence_app.command("ensure")(wallet_intelligence.ensure)
 wallet_intelligence_app.command("health")(wallet_intelligence.health)
 wallet_intelligence_app.command("pool")(wallet_intelligence.pool)
