@@ -89,7 +89,11 @@ def _validate_semantics(source: Publication) -> None:
         raise ResearchPublicationError("hidden_partial_coverage")
     references = {_reference_key(ref) for ref in source.source_references}
     for ref in source.source_references:
-        if ref.run_id != source.run_id:
+        # Registry refresh retains discovery pages with their original run/time identities.
+        if ref.run_id != source.run_id and (
+            source.coverage.discovery_mode != "retained_registry_refresh"
+            or urlsplit(ref.url).path not in {"/v2/trades", "/v2/leaderboard"}
+        ):
             raise ResearchPublicationError("foreign_run_evidence")
         if _utc(ref.fetched_at) > generated:
             raise ResearchPublicationError("reference_from_future")
@@ -107,6 +111,8 @@ def _validate_semantics(source: Publication) -> None:
         if record.fetched_at is not None and _utc(record.fetched_at) > generated:
             raise ResearchPublicationError("record_fetch_from_future")
         for ref in record.evidence_references:
+            if ref.run_id != source.run_id:
+                raise ResearchPublicationError("foreign_wallet_run_evidence")
             if _reference_key(ref) not in references:
                 raise ResearchPublicationError("unlinked_record_evidence")
             url = urlsplit(ref.url)

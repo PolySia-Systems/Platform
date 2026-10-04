@@ -181,3 +181,27 @@ def test_foreign_run_reference_is_rejected(tmp_path, wallet_intelligence_artifac
     seal(data)
     with pytest.raises(ResearchPublicationError, match="foreign_run_evidence"):
         read(tmp_path, data)
+
+
+def test_retained_discovery_provenance_keeps_original_run_and_times(
+    tmp_path, wallet_intelligence_artifact
+):
+    from copy import deepcopy
+
+    data = wallet_intelligence_artifact
+    data["coverage"]["discovery_mode"] = "retained_registry_refresh"
+    data["coverage"]["discovery_at"] = "2026-10-03T19:00:00Z"
+    ref = deepcopy(data["source_references"][0])
+    ref.update(
+        run_id="f" * 32,
+        fetched_at="2026-10-03T19:00:01Z",
+        url="https://data-api.polymarket.com/v2/leaderboard?limit=10",
+    )
+    data["source_references"].append(ref)
+    seal(data)
+    publication = read(tmp_path, data)
+    assert json.loads(publication.analytical_json)["source_references"][-1] == ref
+    data["records"][0]["evidence_references"] = [ref]
+    seal(data)
+    with pytest.raises(ResearchPublicationError, match="foreign_wallet_run_evidence"):
+        read(tmp_path, data)
