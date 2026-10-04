@@ -12,6 +12,7 @@ from polysia.cli_commands import (
     research,
     wallet_intelligence,
     wallet_intelligence_research,
+    wallet_intelligence_workflow,
 )
 from polysia.control.cli import control_app
 
@@ -93,6 +94,7 @@ research_run_app.command("result")(research.prospective_run_result)
 
 wallet_intelligence_app.command("sync")(wallet_intelligence.sync)
 wallet_intelligence_app.command("intake")(wallet_intelligence_research.intake)
+wallet_intelligence_app.command("local")(wallet_intelligence_workflow.local)
 wallet_intelligence_app.command("ensure")(wallet_intelligence.ensure)
 wallet_intelligence_app.command("health")(wallet_intelligence.health)
 wallet_intelligence_app.command("pool")(wallet_intelligence.pool)

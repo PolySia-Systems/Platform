@@ -33,6 +33,47 @@ Producer cohort rank is neither board rank nor Platform `source_score`.
 
 ## Run and inspect
 
+### Convenient finite local workflow
+
+With both normal virtual environments installed, from any clean PowerShell shell:
+
+```powershell
+& "$HOME\Documents\PolySia\.venv\Scripts\polysia.exe" wallet-intelligence local --open-view
+```
+
+The Platform operations launcher invokes `wallet-intelligence run --if-due
+--no-render` and uses the announced immutable run path, never blindly reading
+`latest`. The producer owns configuration, due status and acquisition. Its due
+decision and refresh share one writer lock. A valid not-due snapshot requires zero
+provider requests; `--force` requests one bounded immediate refresh. The launcher
+copies the exact announced publication into a unique local attempt directory,
+verifies its identity, optionally calls the standalone renderer and composes the
+existing application intake at current UTC. No producer internals or database
+are accessed by Platform. Existing standalone commands remain available below.
+
+Printed results include source status/expiry, examined/candidate/accepted counts,
+principal rejection reasons, warnings and all result paths. `--open-view` opens
+the local HTML optionally; `--no-view` skips rendering. Renderer failure leaves
+machine intake usable with an explicit warning and no old view link. Empty is
+honest, partial still requires `--allow-partial`, and stale/invalid/rejected input
+exits 2. Each attempt gets a separate directory; `current.json` records even failed
+attempts so a retained old research report cannot masquerade as a new result.
+Overlapping workflows for the same output root fail promptly under an OS lock.
+Direct producer invocations cannot switch an already selected snapshot.
+
+Defaults use Documents/PolySia-Wallet-Intelligence for the producer, its `.venv`
+CLI, `config/acceptance.toml`, and `artifacts/acceptance` data. Local workflow
+outputs are in Documents/PolySia/artifacts/wallet-intelligence-workflow. All paths
+can be supplied explicitly with `--producer-dir`, `--producer-executable`,
+`--producer-config`, `--data-root` and `--output-root`; no shell activation is needed.
+`current.json` points to the selected artifact, immutable-run Human View and
+research report. Original source timestamps and code/config/digest identities
+remain unchanged on reuse or merge. The public producer config supports positive
+activity days (30 tested), performance days 1..29, and existing hard caps; this
+command does not promise arbitrary supported historical performance windows.
+
+### Standalone intake
+
 ```powershell
 polysia wallet-intelligence intake --artifact <wallet-intelligence.json> --output <research-report.json>
 polysia wallet-intelligence intake --artifact <wallet-intelligence.json> --allow-partial
@@ -103,4 +144,10 @@ installed. Existing candidate sources and defaults continue unchanged. Roll back
 this optional command/adapter revision if needed; no database migration is required.
 Keep immutable producer artifacts with their original expiry. Producer implementation
 should be reviewed/merged before the integration that consumes its contract; both
-PRs remain drafts in this delivery. No merge, deployment or trading was performed.
+PRs record review/merge status; the owner-authorized release consolidation merges
+producer before consumer only after applicable validation. No deployment, timer
+activation or trading is part of this workflow. Inspect
+`artifacts/wallet-intelligence-workflow/release-receipt.json` for exact revisions,
+final source measurements and merge evidence; earlier execution receipts retain
+their historical identities. Stop invoking the optional local command or revert
+compatible code to disable/roll back; there is no migration or service to undo.
