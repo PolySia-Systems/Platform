@@ -1,8 +1,35 @@
 # Independent Platform execution
 
-Date: 2026-10-16. Status: IN_PROGRESS. This is the single execution record;
-the delivery PR owns ordinary resume after creation. Runtime rows below are
+Date: 2026-10-16. Status: ENGINEERING_COMPLETE; private backend commissioned;
+public access BLOCKED. PRODUCT_ACCEPTED is not claimed. This is the single
+execution record; the delivery PR owns ordinary resume. Runtime rows below are
 dated observations, not live status.
+
+## Final delivery verdicts
+
+Released [v0.2.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.2.0)
+at `e0ad838d78c42739bff9dcce64d391e99bf57ffe`, through merged
+[#190](https://github.com/PolySia-Systems/Platform/pull/190) and
+[#192](https://github.com/PolySia-Systems/Platform/pull/192).
+[Full exact-source CI 38904275992](https://github.com/PolySia-Systems/Platform/actions/runs/38904275992)
+and [retained-artifact publication 38906866667](https://github.com/PolySia-Systems/Platform/actions/runs/38906866667)
+passed. Subsequent Markdown-only receipts do not change this runtime artifact.
+
+| Criterion | Verdict | Evidence / limit |
+|---|---|---|
+| Engineering and independence | PASS | Exact selected Standards v0.5.2; full hosted matrix; standalone installed image on both hosts; no WI service dependency or Live path |
+| Reporting correctness | PASS | Nonempty deterministic Decimal/UTC fixtures, supported interval and gap tests; installed retained report and cold restore reproduce the same analytical digest |
+| Operational usefulness | OPEN | Actual retained diagnostic has zero opportunities; source freshness is insufficient under the frozen profile; no continuous admission |
+| Reliability and diagnosis | PASS within tested scope | Durable STOP/charges survive promotion and restore; bounded failure, duplicate, expiry and recovery-fence tests; installed schedules and terminal publication verified |
+| Human View | OPEN | Automated desktop/mobile/keyboard journeys pass; actual owner comprehension has no receipt |
+| Secure independent deployment and recovery | BLOCKED overall | Private backend and isolated recovery PASS; owner-only Access/Tunnel and public denial checks cannot be completed with the available API permission |
+| Clean maintainable repository | PASS | Final 729-path/266-module consumer review, documented compatibility retentions, resolved material code findings and current documentation |
+| Economic evidence | OPEN / UNKNOWN | Zero observed simulated opportunities is no measurable Control/Target result; no profitability or Live conclusion |
+
+No human action was requested to manufacture acceptance. No model polling for
+economic observation, chat automation, new notification destination or authority
+renewal is left running. The server publishes its actual stopped/insufficient
+state and continues bounded backup/recovery supervision.
 
 ## Authority and publication boundary
 
@@ -350,3 +377,185 @@ tables a readable minimum width inside named, keyboard-focusable scroll regions.
 Desktop/mobile browser tests exercise horizontal keyboard scrolling without
 weakening CSP; both passed locally. The release must include that fix and its own
 exact hosted artifact evidence. No new provider acquisition is involved.
+
+## Final immutable release and host receipts
+
+The full manual main run deliberately selects every release gate after the mobile
+fix; the redundant narrower push run was cancelled. Both Linux and Windows report
+1,422 passed and four explicit opt-in skips. Linux took 96.66 seconds; Windows
+1,096.46 seconds. The skipped cases remain optional browser/network paths in the
+ordinary matrix; the separate opt-in installed-wheel browser job passed its two
+desktop/mobile cases. No failing required check was waived.
+
+Hosted commands passed:
+
+```text
+python scripts/validate_standards.py --mode full
+python -m compileall -q src tests
+python -m ruff check .
+python -m mypy src
+python -m pytest -q
+python -m pip check
+python scripts/dependency_locks.py check
+python -m polysia.security.secret_scan
+python -m build
+python -m pip_audit --strict --vulnerability-service osv
+cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json
+```
+
+Mypy covered 266 source modules; the audit found no known vulnerabilities.
+Installed-wheel, actual age round trip, separate command identities, native
+mounts/WAL, container health and aggregate checks passed in the maintained jobs.
+Final browser cached-read p95 was 6.087 ms desktop and 6.893 ms mobile, 25 reads
+each on the declared synthetic one-observation/one-wallet dataset with zero
+provider calls. Screenshots were inspected and the mobile fragmentation finding
+was fixed before release. These are not production-load or owner-comprehension
+measurements. The unchanged full matrix was not repeated on the laptop.
+
+Publication used:
+
+```text
+gh workflow run publish-release.yml --ref main -f ci_run_id=38904275992 -f tag=v0.2.0
+```
+
+It promoted the retained tested artifacts; it did not rebuild them. Release identities:
+
+| Asset | SHA-256 / identity |
+|---|---|
+| Image archive | `77746cb4a148a9a6e3fba1348bb47ab6945bb97482a158da216b4238b1b128eb` |
+| Source-runner image configuration | `sha256:63ab3c45484172a54e42d3b8953473fc4e58bb6d98a9568f464242b9cd3e9fea` |
+| Loaded destination OCI image (both hosts) | `sha256:9ef951e8f12ba436fb5f54143a19b24dfcef399ef41296283284b7b1669bd71c` |
+| Wheel | `e6147c207eebf6fae3695c624204ab0e580f104ca6f86de7c10d7496422c6471` |
+| SBOM | `634b41e4d850bfb10bee8546aa7c4d2f2e61e971e2a303e4d4224b763acdf2d6` |
+
+The source and destination image identities are bound by the same archive; their
+different representation is verified, not silently treated as identical strings.
+The manifest binds schema 9, Python >=3.14,<3.15, DATA_ONLY/Live false, Standards
+`2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c`, OS inventory and both host scripts.
+Both servers fetched the public release directly, checked its hashes, loaded it
+and verified `/opt/polysia/BUILD_COMMIT`. No laptop-built artifact or local
+runtime/recovery file was an input; the administrative client only initiated
+the retained host operations.
+Nuremberg independently retains the image, wheel, SBOM and compatible manifests.
+
+Primary promotion used the retained bootstrap and preserved all state/configuration
+except the installed release identity. Worker/publisher were stopped during the
+change and restarted successfully. Backup/restore units now reference that exact
+retained release. The previous compatible candidate and original diagnostic roots
+remain for rollback. At 13:23:58 UTC, a direct read-only SQL/runtime query verified
+one experiment, zero opportunities, STOP true, 11 charged requests, 2,371,503 bytes
+and zero uncertain requests. All values match the pre-promotion ledger. Authority
+expired at 07:19:26 UTC; acquisition remains false and admission empty. There is no
+next acquisition/observation window scheduled.
+
+Canonical installed analytical digest, unchanged through promotion and recovery:
+`afd041eaaf58eaada4c68f6734cce0a7e56ea86a0ac4f31f34d3875ec3e7d6ee`.
+The dataset remains `retained_isolated_diagnostic_not_continuous_admission`.
+Reproduce the retained report using the installed provider-free publisher and
+its protected publication, not by restarting discovery:
+
+```text
+systemctl start polysia-platform-publisher.service
+```
+
+Read the protected `/var/lib/polysia-platform/publication/publication.json` and
+`/var/lib/polysia-platform/worker/status.json` on the primary.
+
+For the standalone report CLI, use the same image, the retained experiment ID in
+that publication and the `ops shadow-report` procedure in the operating runbook.
+Unsupported UTC boundaries remain explicit; a zero-activity report is not profit.
+
+### Final encrypted generations and cold recovery
+
+Two fresh release generations were encrypted and uploaded, then their remote
+hashes were independently checked on Nuremberg at 13:24:06 UTC. Each is
+79,983,880 bytes:
+
+| Generation | SHA-256 |
+|---|---|
+| `platform-20261016T132121Z.tar.age` | `3c2d2ba54afef65415cb3595dde6ca5f03af4042cc055c9a82db48577b3d3ddf` |
+| `platform-20261016T132139Z.tar.age` | `bc7afb4f4532d982cf8303a008fd1553d11f9c75542b03ef99d548d2d79271fb` |
+
+The latest generation passed complete isolated recovery at 13:22:46 UTC:
+authenticated decryption, bounded archive/inventory/SQLite integrity checks,
+independently trusted full release manifest, same-image startup and exact
+financial report replay. Receipt: `VERIFIED_ISOLATED_RESTORE`, network none,
+acquisition false, real orders false, runtime STOPPED. Measured RPO **56.820 seconds**
+and RTO **40.323 seconds**, within <=24h and <=60m respectively. The restored worker
+also enforces the authority-reconciliation fence; it cannot reuse a stale allowance.
+No primary failover or active/active writer was attempted.
+
+Both hosts retain exactly two complete ciphertext generations. Secondary plaintext
+drill roots were cleaned; the mounted vault has 3,751,088,128 free bytes. The key is
+root-owned mode 0600 outside the SFTP chroot, and an actual upload-identity read
+check was denied. Helsinki has only the public recipient and separate upload key.
+Primary free disk was 20,444,295,168 bytes, above its 8-GiB reserve.
+
+These installed-unit operations returned success (backup was run twice):
+
+```text
+systemctl start polysia-platform-backup.service
+systemctl start polysia-platform-restore.service
+systemctl start polysia-platform-recovery-status.service
+systemctl start polysia-platform-publisher.service
+```
+
+The restore service runs only on Nuremberg; the other three run on Helsinki.
+The hourly status projection and final publisher exposed the successful new-release
+backup/restore receipts. Protected receipt locations are
+`/var/lib/polysia-platform/publication/backup-status.json`,
+`/var/lib/polysia-platform/publication/restore-status.json` and, on Nuremberg,
+`/srv/polysia-platform-backups/status/restore-status.json`.
+
+### Durable supervision and remaining external conditions
+
+Final `is-enabled`/`is-active` checks returned enabled/active for every timer:
+
+| Host | Timer | Persistent UTC schedule |
+|---|---|---|
+| Helsinki | `polysia-platform-worker.timer` | Every minute; durable STOP/no acquisition |
+| Helsinki | `polysia-platform-publisher.timer` | Every minute; retained reports, no provider I/O |
+| Helsinki | `polysia-platform-backup.timer` | Daily 00:15 |
+| Helsinki | `polysia-platform-recovery-status.timer` | Hourly |
+| Nuremberg | `polysia-platform-restore.timer` | Daily 00:45; isolated drill only |
+
+Bounded CPU/memory, job locks, finite timeouts, log rotation, two-generation
+retention and restore cleanup remain installed. The candidate schedules also
+continued publishing while the model session was unavailable; final supervision
+uses only host paths and retained artifacts. No laptop scheduler/tunnel/key is
+required. WI and Standards reference checkouts remained clean at their starting
+identities; no WI campaign, data or unrelated service was changed.
+
+The web unit is deliberately inactive; a direct listener check found no port 8765.
+Public authentication/direct-origin acceptance cannot be claimed from a stopped
+web unit or synthetic JWT tests. The original supplied DNS record is unchanged.
+Cloudflare API Access creation returned 403. The browser tool independently requires
+action-time confirmation for an action that "Creates or materially expands
+security-sensitive access"; pre-approval does not satisfy that tool rule. The owner
+requested no questions, so that affected action remains blocked without a bypass.
+
+Remaining actions are specific external conditions, not an engineering backlog:
+
+- Cloudflare account operator: provide the scoped Access/Tunnel write capability,
+  then apply the already recorded single-owner application/role map and dedicated
+  Tunnel to loopback. Use the unused covered `console.movafegh.com` fallback if
+  retaining free TLS; the requested deeper hostname lacks current free coverage.
+  Verify unauthenticated/direct-origin denial before publishing any route. No paid
+  upgrade, guessed identity or anonymous origin is authorized.
+- Credential owner: rotate the existing shared Cloudflare credential exposed by
+  the earlier parser exception, preserving its other consumers. No secret value
+  was committed or included in these receipts. This operational security dependency
+  remains open; source secret-scan success is not credential rotation.
+- Research/source owner: operational usefulness needs materially new source
+  evidence and nonempty, fully valued frozen-policy activity plus matching resource
+  admission. Do not rerun the unchanged empty diagnostic, widen freshness merely
+  for a pass, reset counters, renew expired authority implicitly or restart WI.
+- Owner: actual comprehension remains OPEN until the protected Console can be
+  used and an actual receipt exists. Automated journeys cannot supply that verdict.
+
+Rollback selects the retained compatible release with durable STOP, preserves all
+post-cutover evidence and reconciles the newest authority before any resume.
+Schema downgrades, spent-allowance restoration and automatic failover remain
+prohibited. All independently authorized engineering, release, private supervision
+and recovery work is complete; secure public commissioning and product acceptance
+remain explicitly BLOCKED/OPEN as listed above.
