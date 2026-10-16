@@ -59,6 +59,18 @@ def checked_root(path: str, expected: str) -> Path:
 
 
 def backup(value: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return _backup_generation(value)
+    finally:
+        subprocess.run(
+            ["docker", "stop", "-t", "5", "polysia-platform-backup-stage"],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+
+
+def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
     output = checked_root(value["output"], "/var/lib/polysia-platform/backup-out")
     output.mkdir(mode=0o700, exist_ok=True)
     os.chown(output, 10101, 10102)
@@ -79,6 +91,7 @@ def backup(value: dict[str, Any]) -> dict[str, Any]:
         f"{release}:/release:ro",
         f"{output}:/out:rw",
     )
+    args += ["--name", "polysia-platform-backup-stage"]
     receipt = json.loads(
         run(
             args
@@ -132,7 +145,60 @@ def backup(value: dict[str, Any]) -> dict[str, Any]:
     return {**receipt, "status": "ENCRYPTED_UPLOADED", "filename": name}
 
 
+def decrypt_bounded(command: list[str], source: Path) -> None:
+    process = subprocess.Popen(
+        command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    try:
+        if process.stdin is None:
+            raise OSError("decryption_input_unavailable")
+        total = 0
+        with source.open("rb") as stream:
+            while chunk := stream.read(1_048_576):
+                total += len(chunk)
+                if total > MAX_GENERATION:
+                    raise ValueError("encrypted_generation_limit_exceeded")
+                process.stdin.write(chunk)
+        process.stdin.close()
+        if process.wait(timeout=120):
+            raise ValueError("authenticated_decryption_failed")
+    except BaseException:
+        process.kill()
+        process.wait()
+        subprocess.run(
+            ["docker", "stop", "-t", "5", "polysia-platform-restore-decrypt"],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        raise
+
+
 def restore(value: dict[str, Any]) -> dict[str, Any]:
+    # Drill plaintext is disposable. Only the two encrypted generations and
+    # independently retained release assets are the durable recovery source.
+    vault = checked_root(value["vault"], "/srv/polysia-platform-backups")
+    stage_root = vault / "restore"
+    try:
+        return _restore_generation(value)
+    finally:
+        subprocess.run(
+            ["docker", "stop", "-t", "5", "polysia-platform-restore-stage"],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if stage_root.exists():
+            for stage in stage_root.iterdir():
+                if re.fullmatch(r"drill-\d{8}T\d{6}Z", stage.name):
+                    if stage.is_symlink() or not stage.resolve().is_relative_to(
+                        stage_root.resolve()
+                    ):
+                        raise ValueError("restore_cleanup_path_escaped")
+                    shutil.rmtree(stage)
+
+
+def _restore_generation(value: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
     vault = checked_root(value["vault"], "/srv/polysia-platform-backups")
     incoming = vault / "incoming"
@@ -153,15 +219,14 @@ def restore(value: dict[str, Any]) -> dict[str, Any]:
     stage.mkdir(mode=0o700)
     image = value["image_id"]
     args = isolated(
-        image,
-        f"{incoming}:/incoming:ro",
-        f"{stage}:/restore:rw",
-        value["recovery_key"] + ":/run/recovery-key:ro",
-        user="0:0",
+        image, f"{stage}:/restore:rw", value["recovery_key"] + ":/run/recovery-key:ro", user="0:0"
     )
-    run(
+    decrypt_bounded(
         args
         + [
+            "--interactive",
+            "--name",
+            "polysia-platform-restore-decrypt",
             "--entrypoint",
             "age",
             image,
@@ -170,15 +235,15 @@ def restore(value: dict[str, Any]) -> dict[str, Any]:
             "/run/recovery-key",
             "--output",
             "/restore/bundle.tar",
-            "/incoming/" + source.name,
         ],
-        timeout=120,
+        source,
     )
     tar = stage / "bundle.tar"
     if tar.stat().st_size > MAX_GENERATION:
         raise ValueError("plaintext_generation_limit_exceeded")
     trusted = Path(value["release_manifest"])
     verify = isolated(image, f"{stage}:/restore:rw", f"{trusted}:/release.json:ro", user="0:0")
+    verify += ["--name", "polysia-platform-restore-stage"]
     receipt = json.loads(
         run(
             verify
@@ -196,7 +261,10 @@ def restore(value: dict[str, Any]) -> dict[str, Any]:
             timeout=300,
         )
     )
-    run(isolated(image) + [image, "system", "health"], timeout=60)
+    run(
+        isolated(image) + ["--name", "polysia-platform-restore-stage", image, "system", "health"],
+        timeout=60,
+    )
     # Restore startup stays network-isolated and uses rewritten isolated paths.
     worker = json.loads(
         run(
@@ -251,7 +319,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         value = json.loads(args.config.read_text())
-        with args.config.with_suffix(".job.lock").open("a+b") as lock:
+        with Path("/run/lock/polysia-platform-" + args.mode + ".lock").open("a+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             receipt = (backup if args.mode == "backup" else restore)(value)
         Path(value["receipt"]).write_text(json.dumps(receipt, sort_keys=True) + "\n")

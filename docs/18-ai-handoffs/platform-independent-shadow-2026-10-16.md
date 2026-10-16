@@ -282,3 +282,16 @@ are maintained in hosted CI and include finite cached-read p95 measurements on a
 specified synthetic dataset; they do not establish production or owner comprehension.
 Final exact-release gates, host scheduling/recovery and public access remain separate
 acceptance rows; no blanket ENGINEERING_COMPLETE/PRODUCT_ACCEPTED claim is made here.
+
+
+Independent secondary key-route proof passed using a primary-generated 32-byte
+nonce, real public-recipient encryption, the dedicated SFTP route and authenticated
+network-isolated decryption with the secondary's protected key. The upload identity
+could not read that key; the primary had no recovery private key. This exposed a
+cold-recovery detail: cap-dropped container root cannot open uploader-owned mode-0600
+ciphertext. The host recovery role now streams a bounded ciphertext input through
+stdin; the container retains only its read-only key mount and private restore output.
+Drill plaintext is cleaned on success/failure, fixed job locks prevent overlaps,
+and named containers are stopped on failed/timeout paths. This preserves the
+allocation for two complete encrypted generations and avoids accumulating failed
+plaintext stages. A complete financial-bundle drill still requires its own receipt.
