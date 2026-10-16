@@ -21,6 +21,7 @@ RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 FROM ${PYTHON_IMAGE} AS runtime
 
 ARG POLYSIA_BUILD_COMMIT=unknown
+ARG AGE_PACKAGE=1.2.1-1+b5
 
 ENV APP_ENV=production \
     LIVE_TRADING_ENABLED=false \
@@ -31,7 +32,10 @@ ENV APP_ENV=production \
     PYTHONUNBUFFERED=1 \
     TRADING_MODE=DATA_ONLY
 
-RUN groupadd --gid 10001 polysia \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends age=${AGE_PACKAGE} \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 polysia \
     && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin polysia
 
 WORKDIR /opt/polysia

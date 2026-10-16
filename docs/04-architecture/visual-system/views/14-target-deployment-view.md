@@ -1,12 +1,12 @@
-# Deployment Evolution View
+# Deployment Evolution and Acceptance
 
 - **Diagram ID:** PSA-ARCH-14
-- **Purpose:** Show the current conservative single-host foundation and the next justified operational improvements.
-- **Scope:** Developer workstation, CI, controlled host, runtime safety, secrets, SQLite state, monitoring, local backup, target off-host recovery and alerts, and optional later HA.
+- **Purpose:** Separate implemented process boundaries from operational acceptance.
+- **Scope:** Hosted artifacts, Helsinki, private Console and Nuremberg cold recovery.
 - **Architecture status:** MIXED
-- **Audience:** Owner, architects, operations engineers, security reviewers, and release planners.
-- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
-- **Reviewed:** 2026-09-06
+- **Audience:** Operators, developers and security reviewers.
+- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- **Reviewed:** 2026-10-16
 
 ## Mermaid diagram
 
@@ -14,98 +14,53 @@ Canonical source: [`14-target-deployment-view.mmd`](../sources/14-target-deploym
 
 ```mermaid
 flowchart LR
-  Developer["Owner Workstation\nverified source and release archive\n[CURRENT]"]:::current
-  Operator["Operator Access\ncontrolled SSH and explicit runtime state\n[CURRENT]"]:::current
-  CI["GitHub CI\nquality, security, package evidence\n[CURRENT]"]:::current
-
-  subgraph HOST["Controlled Helsinki host [CURRENT]"]
-    Runtime["PolySia modular-monolith runtime\nDATA_ONLY monitor and Shadow jobs; Live disabled"]:::current
-    SecretStore["Root-only runtime secrets boundary"]:::risk
-    Database[("Persistent SQLite state and audit")]:::current
-    Monitor["Local health, logs, reports, and timers"]:::current
-    Backup["Verified same-host backup and restore evidence"]:::current
-  end
-
-  Venue["Venue APIs\n[EXTERNAL]"]:::external
-  OffHost["Encrypted off-host backup\n[TARGET]"]:::target
-  Alerts["External alert delivery\n[TARGET]"]:::target
-  HA["High-availability / failover boundary\n[FUTURE only after measured need]"]:::future
-
-  Developer -->|versioned change| CI
-  CI -->|verified commit evidence| Developer
-  Developer -->|verified Git archive| Runtime
-  Operator -->|controlled commands and approvals| Runtime
-  SecretStore -->|runtime-only credentials| Runtime
-  Runtime ==>|events, evaluations, simulated fills, ledger, audit| Database
-  Runtime -.->|metrics and alerts| Monitor
-  Database ==>|backup| Backup
-  Backup -.->|approved encrypted copy| OffHost
-  Monitor -.->|health and failure events| Alerts
-  Runtime --> Venue
-  Runtime -.->|later replication / failover| HA
-
-  subgraph LEGEND["Legend"]
-    L1["CURRENT solid"]:::current
-    L2["TARGET dashed"]:::target
-    L3["FUTURE dotted"]:::future
-    L4["EXTERNAL"]:::external
-    L5["SECRET / SAFETY"]:::risk
-  end
-
+  Artifact["One hosted tested release\nwheel, image, SBOM, manifest [CURRENT]"]:::current
+  Install["Idempotent isolated bootstrap\nno automatic acquisition [CURRENT]"]:::current
+  Primary["Helsinki worker and publisher\nDATA_ONLY / durable STOP [CURRENT software]"]:::current
+  Recovery["Nuremberg encrypted cold recovery\nseparate key and authority reconciliation [CURRENT software]"]:::current
+  Access["Approved private Access / Tunnel\npermissions BLOCKED [TARGET commissioning]"]:::target
+  Useful["Nonempty real simulations and numerical valuation\nsource evidence insufficient [TARGET acceptance]"]:::target
+  Alerts["Verified external alert destination\nlocal Console / journal are current [TARGET]"]:::target
+  HA["Automatic high availability\nonly after measured need [FUTURE]"]:::future
+  Artifact --> Install
+  Install --> Primary
+  Artifact --> Recovery
+  Primary -->|encrypted bounded generations| Recovery
+  Primary -.-> Access
+  Primary -.-> Useful
+  Primary -.-> Alerts
+  Recovery -.->|not automatic failover| HA
   classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
   classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
-  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
   classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
-  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,stroke-dasharray:6 4,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2px,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
 ```
 
-## Legend
+## Reading and evidence
 
-CURRENT is solid, TARGET is dashed, FUTURE is dotted, EXTERNAL is gray, safety is amber, emergency/block is red, and approval/healthy is green. Arrow meanings follow [diagram conventions](../diagram-conventions.md).
+CURRENT software is verified in the package and tests; it is not a claim that
+all host services or public access are commissioned. The [dated execution record](../../../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
+owns operational receipts; a runtime query owns live state. The [runbook](../../../10-operations/independent-platform-shadow.md)
+owns release, STOP, recovery and rollback actions. Existing WI roots, credentials,
+campaigns and unrelated services are preserved. Old topology snapshots are dated
+evidence, not the authority for new activation.
 
-## Main reading path
+## Boundaries and limitations
 
-Follow a versioned change through CI and the verified archive to the controlled
-runtime, then inspect operator, secrets, state, monitoring, backup, and venue
-boundaries before the target recovery and alert extensions.
+The web process has no financial mount or Docker socket. Only the worker applies
+validated control receipts under durable authority. Report windows do not reset
+capital or force financial-session closure. Backup upload cannot decrypt. Recovery
+starts isolated and disabled; stale counters never authorize resumed acquisition.
+Access permissions, nonempty numerical usefulness and owner comprehension each
+need separate actual receipts. No profitability, Live authority, active/active
+operation or automatic failover is implied.
 
-## Current implementation mapping
+## Implementation and tests
 
-The controlled Helsinki host, immutable release transfer, DATA_ONLY Docker
-runtime, systemd timers, root-only secret file, SQLite state, local monitoring,
-and verified same-host backup/restore are CURRENT.
-
-## Target/future elements
-
-Encrypted off-host backup and external alert delivery are TARGET. A stronger
-database or high availability remains optional and must be justified by measured
-need rather than assumed now.
-
-## Related repository files
-
-`docs/00-governance/master-operating-charter.md`, `docs/22-roadmap/roadmap.md`, `.github/workflows/ci.yml`, `src/polysia/config/`, `src/polysia/monitoring/`
-
-## Related tests
-
-Current foundation evidence: deployment/readiness tests, storage tests, security/redaction tests
-
-## Related ADRs
-
-ADR-0002, ADR-0006, ADR-0007, ADR-0008, ADR-0009
-
-## Related capabilities/requirements
-
-Current CAP-004, CAP-008, CAP-011, CAP-012; Charter §§47 and 63
-
-## Assumptions
-
-A single controlled host is preferred until measured reliability or isolation needs justify more.
-
-## Known limitations
-
-No off-host backup provider, external alert provider, RTO, RPO, stronger database
-product, orchestration platform, or HA design has been approved.
-
-## Review trigger
-
-A deployment, storage, alerting, backup objective, or availability boundary changes.
+`deploy/platform_bootstrap.py`, `deploy/platform_backup.py`,
+`src/polysia/cli_commands/platform_worker.py`, `src/polysia/deployment/platform_recovery.py`,
+`src/polysia/monitoring/console.py`, `tests/unit/deployment/test_platform_bootstrap.py`,
+`tests/browser/test_console_browser.py`, `tests/integration/test_continuous_shadow_portfolio.py`.
+ADR-0021 records ownership. Review on any process, state, identity, host, release,
+network or recovery-boundary change.

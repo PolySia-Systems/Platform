@@ -5,11 +5,16 @@ from collections.abc import Callable
 import typer
 
 from polysia.cli_commands import (
+    console,
     core,
     developer,
     live,
     operations,
+    platform_discovery,
+    platform_recovery,
+    platform_worker,
     research,
+    shadow_reporting,
     wallet_intelligence,
     wallet_intelligence_research,
     wallet_intelligence_workflow,
@@ -60,6 +65,7 @@ system_app.command("status")(operations.operator_status)
 system_app.command("report")(operations.operator_report)
 system_app.command("runbook")(operations.operator_runbook)
 system_app.command("observability")(operations.observability_snapshot)
+system_app.command("console")(console.serve_console)
 
 market_app.command("discover")(core.discover_markets)
 market_app.command("stream")(core.stream_market)
@@ -73,6 +79,12 @@ research_app.command("evaluate-extended")(research.strategy_evaluation_extended)
 research_app.command("fill-audit")(research.fill_simulation_audit)
 research_app.command("shadow-replay")(research.shadow_historical_replay)
 research_app.command("source-benchmark")(research.source_benchmark)
+research_app.command("discovery-diagnostic")(platform_discovery.discovery_diagnostic)
+research_app.command("platform-tick")(platform_worker.platform_tick)
+ops_app.command("platform-stop")(platform_worker.platform_stop)
+ops_app.command("platform-publish")(platform_worker.platform_publish)
+ops_app.command("platform-backup")(platform_recovery.platform_backup)
+ops_app.command("platform-restore-verify")(platform_recovery.platform_restore_verify)
 research_app.command("prospective-replay")(research.prospective_replay)
 research_app.command("prospective-reanalyze")(research.prospective_reanalyze)
 research_app.command("prospective-collect")(research.prospective_collect)
@@ -139,6 +151,8 @@ wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
 wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)
 
 ops_app.command("deployment-readiness")(operations.deployment_readiness)
+ops_app.command("shadow-report")(shadow_reporting.shadow_report)
+ops_app.command("acquisition-policy")(platform_discovery.continue_acquisition_policy)
 ops_app.command("release-manifest")(operations.release_manifest)
 ops_app.command("deployment-automation")(operations.deployment_automation)
 ops_app.command("final-handoff")(operations.final_handoff)

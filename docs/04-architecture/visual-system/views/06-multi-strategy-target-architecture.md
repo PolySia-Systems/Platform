@@ -5,8 +5,8 @@
 - **Scope:** Current strategy plug-ins plus target registration, supervision, conflict resolution, capital allocation, OMS, routing, and feedback.
 - **Architecture status:** MIXED
 - **Audience:** Owner, architects, strategy developers, risk reviewers, and execution developers.
-- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
-- **Reviewed:** 2026-09-06
+- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- **Reviewed:** 2026-10-16
 
 ## Mermaid diagram
 

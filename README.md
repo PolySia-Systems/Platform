@@ -32,10 +32,14 @@ and conservative operating defaults.
   optimistic concurrency, idempotency, observed state, and append-only audit
   history.
 
+A bounded private [PolySia Console and independent Shadow profile](docs/10-operations/independent-platform-shadow.md) provide retained reports, native/PolyCop discovery, durable STOP and encrypted recovery tooling.
+Software implementation, secure deployment and real-observation usefulness have
+separate acceptance receipts; no continuous admission or public access is implied.
+
 These capabilities do not establish strategy profitability, generalized
 multi-strategy orchestration, production readiness, or authorization for
 broader Live use. Generalized allocation, OMS/Transaction Manager, execution
-routing, adapter registry, operator web UI, and additional venues remain
+routing, adapter registry, and additional venues remain
 TARGET or FUTURE work.
 
 ## Safety contract

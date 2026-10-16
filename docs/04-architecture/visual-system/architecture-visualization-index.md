@@ -1,8 +1,8 @@
 # Architecture Visualization Index
 
-Baseline: `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+Baseline: `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
 Original full-corpus generation baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
-Reviewed: 2026-09-06
+Reviewed: 2026-10-16
 Owner: PolySia project owner
 
 | ID | View | Status | Canonical Mermaid | Documentation | SVG |
@@ -19,7 +19,7 @@ Owner: PolySia project owner
 | PSA-ARCH-10 | Risk and Emergency Control | CURRENT | [source](sources/10-risk-and-emergency-control.mmd) | [view](views/10-risk-and-emergency-control.md) | [SVG](rendered/10-risk-and-emergency-control.svg) |
 | PSA-ARCH-11 | Reconciliation and Recovery | CURRENT | [source](sources/11-reconciliation-and-recovery.mmd) | [view](views/11-reconciliation-and-recovery.md) | [SVG](rendered/11-reconciliation-and-recovery.svg) |
 | PSA-ARCH-12 | Runtime Modes and Promotion | MIXED | [source](sources/12-runtime-modes-and-promotion.mmd) | [view](views/12-runtime-modes-and-promotion.md) | [SVG](rendered/12-runtime-modes-and-promotion.svg) |
-| PSA-ARCH-13 | Current Deployment View | CURRENT | [source](sources/13-current-deployment-view.mmd) | [view](views/13-current-deployment-view.md) | [SVG](rendered/13-current-deployment-view.svg) |
+| PSA-ARCH-13 | Current Deployment View | MIXED | [source](sources/13-current-deployment-view.mmd) | [view](views/13-current-deployment-view.md) | [SVG](rendered/13-current-deployment-view.svg) |
 | PSA-ARCH-14 | Deployment Evolution View | MIXED | [source](sources/14-target-deployment-view.mmd) | [view](views/14-target-deployment-view.md) | [SVG](rendered/14-target-deployment-view.svg) |
 | PSA-ARCH-15 | Trust Boundaries | MIXED | [source](sources/15-trust-boundaries.mmd) | [view](views/15-trust-boundaries.md) | [SVG](rendered/15-trust-boundaries.svg) |
 | PSA-ARCH-16 | Module Dependency Map | CURRENT | [source](sources/16-module-dependency-map.mmd) | [view](views/16-module-dependency-map.md) | [SVG](rendered/16-module-dependency-map.svg) |
@@ -46,3 +46,8 @@ Owners should read 01, 02, 03, 06, 10, 12, and 18. Developers should add 05,
   repository truth must not be presented as deployed runtime truth.
 - The [archived before-and-after comparison](../../99-archive/architecture-history/before-after.md) is not current
   dependency, CI, test-count, or deployment evidence.
+
+The 2026-10-16 review covers the independent Platform delta. Unchanged source
+views retain their prior semantics; generalized execution control remains TARGET.
+Bounded research Console software is CURRENT, with deployment/usefulness receipts
+kept separate in ADR-0021 and the dated execution record.

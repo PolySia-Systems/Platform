@@ -1,0 +1,12 @@
+{
+  "release_commit": "0000000000000000000000000000000000000000",
+  "manifest": "/config/manifest.json",
+  "authority": "/state/authority.sqlite3",
+  "database": "/state/financial.sqlite3",
+  "commands": "/control/commands.sqlite3",
+  "cohort": "/state/cohort.json",
+  "status": "/state/status.json",
+  "publication": "/publication/publication.json",
+  "acquisition_enabled": false,
+  "admission": {}
+}

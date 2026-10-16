@@ -29,10 +29,18 @@ flowchart TB
       Recon["Container: Reconciliation and Safety Pause\ninternal vs external"]:::risk
     end
 
+    Web["Process: Private PolySia Console\nverified identity; cached evidence; bounded commands"]:::application
+    Reports["Process: Snapshot / report publisher\nno provider reads"]:::observability
+    Commands[("Separate durable command queue")]:::storage
     Ops["Container: Monitoring, Backtesting, Deployment\nreports, replay, readiness, handoff"]:::observability
   end
 
   Actor -->|commands| CLI
+  Actor -->|verified private session| Web
+  Web ==>|request receipts only| Commands
+  Commands -->|checked STOP / drain / resume| Services
+  Storage -->|read-only snapshot| Reports
+  Reports -->|published canonical JSON| Web
   CLI --> Config
   CLI --> Ops
   CLI --> Adapter

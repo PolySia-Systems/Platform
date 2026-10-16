@@ -1,44 +1,22 @@
 flowchart LR
-  Developer["Owner Workstation\nverified source and release archive\n[CURRENT]"]:::current
-  Operator["Operator Access\ncontrolled SSH and explicit runtime state\n[CURRENT]"]:::current
-  CI["GitHub CI\nquality, security, package evidence\n[CURRENT]"]:::current
-
-  subgraph HOST["Controlled Helsinki host [CURRENT]"]
-    Runtime["PolySia modular-monolith runtime\nDATA_ONLY monitor and Shadow jobs; Live disabled"]:::current
-    SecretStore["Root-only runtime secrets boundary"]:::risk
-    Database[("Persistent SQLite state and audit")]:::current
-    Monitor["Local health, logs, reports, and timers"]:::current
-    Backup["Verified same-host backup and restore evidence"]:::current
-  end
-
-  Venue["Venue APIs\n[EXTERNAL]"]:::external
-  OffHost["Encrypted off-host backup\n[TARGET]"]:::target
-  Alerts["External alert delivery\n[TARGET]"]:::target
-  HA["High-availability / failover boundary\n[FUTURE only after measured need]"]:::future
-
-  Developer -->|versioned change| CI
-  CI -->|verified commit evidence| Developer
-  Developer -->|verified Git archive| Runtime
-  Operator -->|controlled commands and approvals| Runtime
-  SecretStore -->|runtime-only credentials| Runtime
-  Runtime ==>|events, evaluations, simulated fills, ledger, audit| Database
-  Runtime -.->|metrics and alerts| Monitor
-  Database ==>|backup| Backup
-  Backup -.->|approved encrypted copy| OffHost
-  Monitor -.->|health and failure events| Alerts
-  Runtime --> Venue
-  Runtime -.->|later replication / failover| HA
-
-  subgraph LEGEND["Legend"]
-    L1["CURRENT solid"]:::current
-    L2["TARGET dashed"]:::target
-    L3["FUTURE dotted"]:::future
-    L4["EXTERNAL"]:::external
-    L5["SECRET / SAFETY"]:::risk
-  end
-
+  Artifact["One hosted tested release\nwheel, image, SBOM, manifest [CURRENT]"]:::current
+  Install["Idempotent isolated bootstrap\nno automatic acquisition [CURRENT]"]:::current
+  Primary["Helsinki worker and publisher\nDATA_ONLY / durable STOP [CURRENT software]"]:::current
+  Recovery["Nuremberg encrypted cold recovery\nseparate key and authority reconciliation [CURRENT software]"]:::current
+  Access["Approved private Access / Tunnel\npermissions BLOCKED [TARGET commissioning]"]:::target
+  Useful["Nonempty real simulations and numerical valuation\nsource evidence insufficient [TARGET acceptance]"]:::target
+  Alerts["Verified external alert destination\nlocal Console / journal are current [TARGET]"]:::target
+  HA["Automatic high availability\nonly after measured need [FUTURE]"]:::future
+  Artifact --> Install
+  Install --> Primary
+  Artifact --> Recovery
+  Primary -->|encrypted bounded generations| Recovery
+  Primary -.-> Access
+  Primary -.-> Useful
+  Primary -.-> Alerts
+  Recovery -.->|not automatic failover| HA
   classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
   classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
-  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;
   classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
-  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,stroke-dasharray:6 4,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2px,color:#0F172A;
+  classDef future fill:#F1F5F9,stroke:#64748B,stroke-width:2px,stroke-dasharray:2 5,color:#475569;

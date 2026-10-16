@@ -23,7 +23,7 @@
 | Monitoring and reports | CURRENT | `src/polysia/monitoring/` | `tests/unit/monitoring/` | CAP-011 | ADR-0009 | Sanitized operator outputs |
 | Backtesting and replay | CURRENT | `src/polysia/backtesting/` | `tests/unit/backtesting/` | CAP-005, CAP-007 | ADR-0009 | Paper-only execution path |
 | Deployment and CI tooling | CURRENT | `src/polysia/deployment/`, `.github/workflows/ci.yml`, `Dockerfile`, `compose.yaml` | `tests/unit/deployment/`, `docs/18-ai-handoffs/polysia-controlled-server-deployment-handoff.md` | CAP-012 | ADR-0009, ADR-0010, ADR-0011 | Current CI is remotely verified; deployed runtime has a separately recorded older baseline |
-| Wallet Intelligence deployment topology | CURRENT | `deploy/systemd/`, `compose.yaml` | `docs/18-ai-handoffs/stage4b-data-lifecycle-v1.md`, `docs/18-ai-handoffs/stage4b-data-ownership-cutover.md` | CAP-004, CAP-011 | ADR-0014, ADR-0015 | Stages 1–4A are scheduled jobs; Stage 4B is a persistent worker; Intelligence, Continuous Shadow, and Telemetry use separate physical stores |
+| Historical Wallet Intelligence deployment topology | CURRENT | `deploy/systemd/`, `compose.yaml` | `docs/18-ai-handoffs/stage4b-data-lifecycle-v1.md`, `docs/18-ai-handoffs/stage4b-data-ownership-cutover.md` | CAP-004, CAP-011 | ADR-0014, ADR-0015 | Historical implementation topology only; actual activity requires dated runtime evidence; separate physical stores remain supported |
 | Strategy Registry | CURRENT | `src/polysia/domain/strategy/`, `src/polysia/storage/repositories.py`, `src/polysia/storage/schemas.sql` | `tests/unit/strategies/test_registry.py`, `tests/unit/storage/test_repositories.py` | CAP-005 | ADR-0002, ADR-0012 | Bounded identity, version, lifecycle, run evidence, and unrated performance; no orchestration |
 | SHADOW-only Control Kernel | CURRENT | `src/polysia/control/`, `src/polysia/storage/control.py`, `src/polysia/monitoring/shadow_run.py` | `tests/integration/test_shadow_control_vertical_slice.py`, `tests/unit/control/`, `tests/architecture/test_boundaries.py` | CAP-005, CAP-011 | ADR-0012 | `stale-price@0.1.0` `RUNNING`/`PAUSED` only; no PAPER, LIVE, Web, API, or AI authority |
 | Bounded Tiny Live Copy experiment | CURRENT | `src/polysia/domain/copytrading/`, `src/polysia/execution/tiny_live_copy.py`, `src/polysia/storage/copytrading.py` | `tests/integration/test_tiny_live_copy_vertical_slice.py`, `tests/unit/execution/test_tiny_live_copy_safety.py`, `docs/18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md` | CAP-005, CAP-008, CAP-009, CAP-010 | ADR-0007, ADR-0008 | Experimental owner-bounded path; run four ended `FAILED_SAFE` with zero confirmed fill, exposure, and cost |
@@ -32,6 +32,12 @@
 | Portfolio and Capital Allocator | TARGET | — | Charter §25 | — | ADR-0002 | Reserves capital before risk/execution |
 | OMS / Transaction Manager | TARGET | — | Charter §29 and §59 | — | ADR-0002 | Explicit idempotency and lifecycle boundary |
 | Adapter Registry | TARGET | — | Charter §32 | — | ADR-0004 | Capability discovery and routing |
-| Operator Console | TARGET | — | Charter §46 | — | ADR-0008 | CLI/reports are current interface |
+| Private research Console | CURRENT | `src/polysia/monitoring/console.py` | `tests/browser/test_console_browser.py`, `tests/unit/monitoring/test_console.py` | CAP-011 | ADR-0021 | Bounded retained-data UI; deployment and owner comprehension are separate receipts |
+| Generalized execution Console | TARGET | — | Charter §46 | — | ADR-0008 | No generalized control or Live authority |
 | Additional venue adapters | FUTURE | — | Charter §32, roadmap | — | ADR-0004 | No release commitment |
 | Web3 signer and protocols | FUTURE | — | Charter §48–56 | — | ADR-0007, ADR-0008 | Separate trust boundary required |
+
+Independent Platform deployment, durable authority and encrypted recovery are
+traced by `deploy/platform_bootstrap.py`, `deploy/platform_backup.py`,
+`tests/unit/storage/test_acquisition_authority.py` and the dated
+`docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md` execution record.

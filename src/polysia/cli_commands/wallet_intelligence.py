@@ -1724,19 +1724,29 @@ def portfolio_results(
         bool,
         typer.Option("--prospective", help="Replay durable opportunities on this snapshot."),
     ] = False,
+    canonical: Annotated[
+        bool, typer.Option("--canonical", help="Use the shared consistent snapshot report."),
+    ] = False,
 ) -> None:
     """Read cumulative evidence from a snapshot without initializing or writing storage."""
     try:
         repository = ContinuousShadowRepository(database)
         if experiment_id is None:
-            experiment = repository.active_experiment(_source(source).source_id)
+            source_id = (
+                "polymarket-native" if source == "polymarket-native" else _source(source).source_id
+            )
+            experiment = repository.active_experiment(source_id)
             if experiment is None:
                 raise ContinuousShadowStoreError(
                     "Continuous Shadow experiment is unavailable."
                 )
             experiment_id = experiment.experiment_id
-        payload = repository.results(experiment_id, limit=limit)
-        if prospective:
+        if canonical:
+            from polysia.application.services.shadow_reporting import ShadowReportingService
+            payload = ShadowReportingService(database).report(experiment_id, limit=limit)
+        else:
+            payload = repository.results(experiment_id, limit=limit)
+        if prospective and not canonical:
             payload["prospective"] = repository.opportunity_report(experiment_id)
     except (
         ContinuousShadowStoreError,

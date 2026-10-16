@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts.classify_ci_changes import ChangeMap, classify_event, classify_paths
 
 
@@ -86,3 +88,21 @@ def test_manual_full_and_unknown_events_fail_closed() -> None:
 
 def test_empty_pull_request_diff_fails_closed() -> None:
     assert classify_event("pull_request") == ChangeMap.full()
+
+
+@pytest.mark.parametrize("path", [
+    "docs/03-requirements/shadow-contract.json",
+    "docs/examples/acquisition.yaml",
+    "docs/migrations/upgrade.sql",
+    "docs/console/index.html",
+    "standards/adoption.toml",
+    "plans/runtime.py",
+    "prompts/runner.sh",
+])
+def test_executable_or_unclassified_document_assets_fail_closed(path: str) -> None:
+    assert classify_paths((path,)) == ChangeMap.full()
+
+
+def test_deployment_selects_behavioral_contract_checks() -> None:
+    result = classify_paths(("deploy/migrations/upgrade.sql",))
+    assert result.python and result.container

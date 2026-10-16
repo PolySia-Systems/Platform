@@ -1,5 +1,9 @@
 # Evidence Index
 
+- [`platform-independent-shadow-2026-10-16.md`](platform-independent-shadow-2026-10-16.md)
+  records the independent Platform execution, bounded authority, exact artifacts,
+  source-freshness and Access blockers, and separate commissioning/recovery acceptance.
+
 Ordinary in-progress work resumes from the GitHub Issue or PR. This directory
 holds major operational, safety, deployment, incident, and compliance
 evidence that must outlive a single PR. Chat history is not a source of

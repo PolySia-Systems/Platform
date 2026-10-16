@@ -176,9 +176,20 @@ class ContinuousShadowConfig:
             raise ValueError("code_sha must be a lowercase 40-character Git SHA")
         if self.runtime_version not in {
             "continuous-shadow-runtime-v1", "continuous-shadow-runtime-v2",
+            "continuous-shadow-native-research-v1",
             "continuous-shadow-runtime-legacy-v0",
         }:
             raise ValueError("continuous Shadow runtime version is unsupported")
+        if self.runtime_version == "continuous-shadow-native-research-v1" and (
+                    self.code_sha is None or self.wallet_count is None
+                    or not 1 <= self.wallet_count <= 10
+                    or self.selection_policy != "native-recent-activity-v1"
+                    or self.selection_observed_at is None
+                    or self.selection_observed_at.utcoffset() != timedelta(0)
+                    or self.selection_preflight_digest is None
+                    or len(self.selection_preflight_digest) != 64
+                    or any(c not in "0123456789abcdef" for c in self.selection_preflight_digest)):
+            raise ValueError("native research requires exact frozen profile and code identity")
         if self.runtime_version == "continuous-shadow-runtime-v2":
             if self.wallet_count is None:
                 raise ValueError("v2 Shadow runtime requires wallet_count")
@@ -261,7 +272,9 @@ class ContinuousShadowConfig:
             "wallet_bankroll": format(self.wallet_bankroll, "f"),
             "wallet_maximum_exposure": format(self.wallet_maximum_exposure, "f"),
         }
-        if self.runtime_version == "continuous-shadow-runtime-v2":
+        if self.runtime_version in {
+            "continuous-shadow-runtime-v2", "continuous-shadow-native-research-v1",
+        }:
             payload.update({
                 "selection_policy": self.selection_policy,
                 "selection_activity_counts": self.selection_activity_counts,

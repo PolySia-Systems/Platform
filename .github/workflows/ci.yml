@@ -137,6 +137,13 @@ jobs:
           .wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
           .wheel-smoke/bin/python -c "import polysia"
           .wheel-smoke/bin/python -m polysia.cli --help
+      - uses: actions/upload-artifact@v7
+        if: needs.changes.outputs.package == 'true'
+        with:
+          name: polysia-wheel
+          path: dist/*
+          retention-days: 30
+          if-no-files-found: error
 
   windows-compatibility:
     name: Windows Compatibility
@@ -176,8 +183,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - run: docker build --tag polysia:ci .
+      - run: docker build --build-arg POLYSIA_BUILD_COMMIT="$GITHUB_SHA" --tag polysia:ci .
       - run: docker run --rm polysia:ci system health
+      - name: Encryption runtime and round-trip smoke
+        shell: bash
+        run: |
+          docker run --rm --network none --user 0 --tmpfs /tmp:rw,noexec,nosuid,size=8m --entrypoint python polysia:ci -c '
+          import pathlib, subprocess, tempfile
+          with tempfile.TemporaryDirectory() as directory:
+              root = pathlib.Path(directory)
+              key = root / "test-identity"
+              subprocess.run(["age-keygen", "-o", str(key)], check=True, capture_output=True)
+              recipient = subprocess.check_output(["age-keygen", "-y", str(key)], text=True).strip()
+              source = root / "input"
+              source.write_bytes(b"recovery fixture")
+              subprocess.run(["age", "-r", recipient, "-o", str(root / "encrypted"), str(source)], check=True)
+              result = subprocess.check_output(["age", "-d", "-i", str(key), str(root / "encrypted")])
+              assert result == source.read_bytes()
+          print("age encryption and independent decryption passed")'
       - shell: bash
         run: |
           mkdir -p .ci-state
@@ -194,6 +217,65 @@ jobs:
             polysia:ci \
             -m polysia.deployment.sqlite_backup \
             init --database /var/lib/polysia/data/polysia.sqlite3
+      - name: Verify separate worker and web command ownership
+        shell: bash
+        run: |
+          mkdir -p .ci-state/control
+          docker run --rm --network none --user 0:0 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'import os; os.chown("/control",10101,10102); os.chmod("/control",0o2770)'
+          docker run --rm --network none --user 10101:10102 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'from pathlib import Path; from polysia.storage.console_commands import ConsoleCommandStore; ConsoleCommandStore(Path("/control/commands.sqlite3")).initialize()'
+          docker run --rm --network none --user 10102:10102 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'from pathlib import Path; from polysia.storage.console_commands import ConsoleCommandStore; s=ConsoleCommandStore(Path("/control/commands.sqlite3")); s.initialize(); assert s.submit(subject="fixture-operator",action="stop",expected_revision=0,idempotency_key="separate-identities-test")["status"]=="REQUESTED"'
+          docker run --rm --network none --user 10101:10102 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'from pathlib import Path; from polysia.storage.console_commands import ConsoleCommandStore; s=ConsoleCommandStore(Path("/control/commands.sqlite3")); s.finish(1,status="APPLIED"); assert s.pending()==[]'
+      - name: Verify read-only financial SQL with WAL bookkeeping
+        shell: bash
+        run: |
+          docker run --rm --network none --user 10101:10102 --volume "$PWD/.ci-state/control:/state" --entrypoint python polysia:ci -c 'import sqlite3; c=sqlite3.connect("/state/readonly-fixture.sqlite3"); c.execute("PRAGMA journal_mode=WAL"); c.execute("CREATE TABLE evidence(value INTEGER)"); c.execute("INSERT INTO evidence VALUES(1)"); c.commit(); c.close()'
+          docker run --rm --network none --user 10101:10102 --volume "$PWD/.ci-state/control:/state" --entrypoint python polysia:ci -c 'import sqlite3; c=sqlite3.connect("file:/state/readonly-fixture.sqlite3?mode=ro",uri=True); c.execute("PRAGMA query_only=ON"); assert c.execute("SELECT value FROM evidence").fetchall()==[(1,)]; denied=False
+          try: c.execute("INSERT INTO evidence VALUES(2)")
+          except sqlite3.OperationalError: denied=True
+          assert denied; c.close()'
+      - name: Retain exact tested image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-image
+          cp deploy/platform_bootstrap.py release-image/platform_bootstrap.py
+          cp deploy/platform_backup.py release-image/platform_backup.py
+          docker save polysia:ci | gzip > release-image/polysia-image.tar.gz
+          docker image inspect polysia:ci --format '{{.Id}}' > release-image/image-id.txt
+          docker run --rm --network none --entrypoint dpkg-query polysia:ci -W age libc6 > release-image/os-packages.txt
+          python scripts/release_manifest.py --image release-image/polysia-image.tar.gz --image-id-file release-image/image-id.txt --commit "$GITHUB_SHA" --output release-image/manifest.json --os-packages-file release-image/os-packages.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: polysia-release-image
+          path: release-image/*
+          retention-days: 30
+          if-no-files-found: error
+
+  browser-acceptance:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: python -m pip install -r locks/requirements-dev-py314.txt
+      - run: python -m build --wheel --no-isolation
+      - run: python -m pip install --no-deps dist/*.whl
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q tests/browser -o pythonpath=
+        env:
+          POLYSIA_BROWSER_TESTS: "1"
+          POLYSIA_REQUIRE_WHEEL: "1"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: console-browser-evidence
+          path: output/playwright/*
+          if-no-files-found: error
+          retention-days: 14
 
   supply-chain:
     needs: changes
@@ -243,6 +325,7 @@ jobs:
       - windows-compatibility
       - container
       - supply-chain
+      - browser-acceptance
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -250,6 +333,8 @@ jobs:
       CHANGES_RESULT: ${{ needs.changes.result }}
       QUALITY_REQUIRED: ${{ needs.changes.outputs.quality }}
       QUALITY_RESULT: ${{ needs.quality.result }}
+      BROWSER_REQUIRED: ${{ needs.changes.outputs.python }}
+      BROWSER_RESULT: ${{ needs.browser-acceptance.result }}
       WINDOWS_REQUIRED: ${{ needs.changes.outputs.windows }}
       WINDOWS_RESULT: ${{ needs.windows-compatibility.result }}
       CONTAINER_REQUIRED: ${{ needs.changes.outputs.container }}
@@ -281,6 +366,7 @@ jobs:
           }
 
           check_job quality "$QUALITY_REQUIRED" "$QUALITY_RESULT"
+          check_job browser-acceptance "$BROWSER_REQUIRED" "$BROWSER_RESULT"
           check_job windows-compatibility "$WINDOWS_REQUIRED" "$WINDOWS_RESULT"
           check_job container "$CONTAINER_REQUIRED" "$CONTAINER_RESULT"
           check_job supply-chain "$SUPPLY_CHAIN_REQUIRED" "$SUPPLY_CHAIN_RESULT"

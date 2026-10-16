@@ -5,8 +5,8 @@
 - **Scope:** Logical containers inside one deployable Python package/process; these are not independently deployed services.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, owner, maintainers, and architecture reviewers.
-- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
-- **Reviewed:** 2026-09-06
+- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- **Reviewed:** 2026-10-16
 
 ## Mermaid diagram
 
@@ -44,10 +44,18 @@ flowchart TB
       Recon["Container: Reconciliation and Safety Pause\ninternal vs external"]:::risk
     end
 
+    Web["Process: Private PolySia Console\nverified identity; cached evidence; bounded commands"]:::application
+    Reports["Process: Snapshot / report publisher\nno provider reads"]:::observability
+    Commands[("Separate durable command queue")]:::storage
     Ops["Container: Monitoring, Backtesting, Deployment\nreports, replay, readiness, handoff"]:::observability
   end
 
   Actor -->|commands| CLI
+  Actor -->|verified private session| Web
+  Web ==>|request receipts only| Commands
+  Commands -->|checked STOP / drain / resume| Services
+  Storage -->|read-only snapshot| Reports
+  Reports -->|published canonical JSON| Web
   CLI --> Config
   CLI --> Ops
   CLI --> Adapter

@@ -5,8 +5,8 @@
 - **Scope:** Target logical containers for multi-strategy, portfolio, OMS, adapter discovery, generalized state, and operator control.
 - **Architecture status:** TARGET
 - **Audience:** Owner, architects, senior developers, risk reviewers, and roadmap reviewers.
-- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
-- **Reviewed:** 2026-09-06
+- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- **Reviewed:** 2026-10-16
 
 ## Mermaid diagram
 
@@ -18,7 +18,7 @@ flowchart LR
   Venues["External Systems: Venue APIs\n[EXTERNAL]"]:::external
 
   subgraph PS["PolySia target modular monolith — logical containers, not microservices"]
-    Console["Operator Console\n[TARGET]"]:::target
+    Console["Generalized Execution Console\n[TARGET; bounded research Console exists]"]:::target
     DataPlatform["Market Data and Normalization\n[CURRENT foundation]"]:::current
     Registry["Strategy Registry Extensions and Orchestrator\n[TARGET over bounded CURRENT registry]"]:::target
     Intent["Intent Aggregator / Conflict Resolver\n[TARGET]"]:::target
@@ -82,7 +82,8 @@ orchestration or OMS components already exist.
 
 Strategy Registry extensions and orchestration, intent resolution, allocation,
 OMS/Transaction Manager, execution routing, adapter registry, generalized
-ledger, operator console, and a stronger database boundary are TARGET. The
+ledger, generalized execution console, and a stronger database boundary are TARGET.
+The bounded research Console is CURRENT software with separate deployment acceptance. The
 bounded current registry is not reclassified as TARGET by this view.
 
 ## Related repository files

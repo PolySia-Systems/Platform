@@ -22,6 +22,7 @@ from polysia.domain.research_evidence.replay import replay_same_observations
 def replay_shadow_opportunities(
     rows: tuple[dict[str, object], ...], *, experiment_id: str,
     settlements: tuple[dict[str, str], ...] = (),
+    include_financial_state: bool = False,
 ) -> dict[str, object]:
     """Keep both policies on all admitted observations, including Shadow rejects."""
 
@@ -174,7 +175,7 @@ def replay_shadow_opportunities(
         record_markouts=False,
     )
     report = evaluate_prospective_economics(replay, events=tuple((*events, *snapshots)))
-    return {
+    result: dict[str, object] = {
         "report": report.to_dict(),
         "opportunity_count": len(events),
         "excluded_execution_evidence": reasons,
@@ -190,6 +191,12 @@ def replay_shadow_opportunities(
         }),
         "comparison": "separate_prospective_policies_not_shadow_ledger_parity",
     }
+    if include_financial_state:
+        result["financial_state"] = {
+            "control": report.control.financial_state(),
+            "target": report.target.financial_state(),
+        }
+    return result
 
 
 def _event(

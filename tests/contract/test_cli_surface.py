@@ -20,6 +20,7 @@ EXPECTED_NAMESPACES = {
 EXPECTED_COMMANDS = {
     "system": {
         "configuration",
+        "console",
         "developer-context",
         "health",
         "observability",
@@ -30,6 +31,8 @@ EXPECTED_COMMANDS = {
     "market": {"discover", "stream"},
     "research": {
         "backtest",
+        "discovery-diagnostic",
+        "platform-tick",
         "evaluate",
         "evaluate-extended",
         "fill-audit",
@@ -48,6 +51,12 @@ EXPECTED_COMMANDS = {
     },
     "ops": {
         "acceptance-audit",
+        "acquisition-policy",
+        "shadow-report",
+        "platform-publish",
+        "platform-stop",
+        "platform-backup",
+        "platform-restore-verify",
         "deployment-automation",
         "deployment-readiness",
         "final-handoff",
