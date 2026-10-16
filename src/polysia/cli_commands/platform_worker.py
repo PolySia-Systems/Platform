@@ -46,6 +46,9 @@ def worker_tick(config: Path) -> dict[str, Any]:
         policy = load_policy(Path(value["manifest"]))
         authority = AcquisitionAuthority(Path(value["authority"]), policy)
         authority.initialize()
+        recovery_fenced = value.get("recovery_requires_authority_reconciliation") is True
+        if recovery_fenced:
+            authority.stop()
         commands = ConsoleCommandStore(Path(value["commands"]))
         commands.initialize()
         prior = {}
@@ -66,6 +69,9 @@ def worker_tick(config: Path) -> dict[str, Any]:
             if action == "stop":
                 authority.stop()
             elif action == "resume":
+                if recovery_fenced:
+                    commands.finish(revision, status="BLOCKED")
+                    continue
                 try:
                     authority.resume(now=datetime.now(UTC), host=socket.gethostname())
                 except AcquisitionBlockedError:
@@ -79,7 +85,11 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 continue
             commands.finish(revision, status="APPLIED")
         if authority.status()["stopped"]:
-            result["reason"] = "durable_authority_stop"
+            result["reason"] = (
+                "recovery_authority_reconciliation_required"
+                if recovery_fenced
+                else "durable_authority_stop"
+            )
         elif value.get("acquisition_enabled") is not True:
             result["reason"] = "acquisition_not_enabled"
         elif not policy.starts_at <= datetime.now(UTC) < policy.expires_at:

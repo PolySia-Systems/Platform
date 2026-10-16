@@ -239,16 +239,7 @@ def extract_and_verify_recovery(
         raise ValueError("authority or command recovery state missing")
     release = json.loads((destination / "release.json").read_text())
     trusted = json.loads(trusted_release_manifest.read_text())
-    if any(
-        release.get(key) != trusted.get(key)
-        for key in (
-            "commit",
-            "image_id",
-            "archive_sha256",
-            "financial_schema",
-            "bootstrap_sha256",
-        )
-    ):
+    if release != trusted:
         raise ValueError("backup release differs from independently retained trusted release")
     if (
         release["commit"] != metadata["release_commit"]

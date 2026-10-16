@@ -295,3 +295,11 @@ Drill plaintext is cleaned on success/failure, fixed job locks prevent overlaps,
 and named containers are stopped on failed/timeout paths. This preserves the
 allocation for two complete encrypted generations and avoids accumulating failed
 plaintext stages. A complete financial-bundle drill still requires its own receipt.
+
+
+Final recovery-boundary review also made the restored reconciliation flag an
+actual worker fence, rather than only descriptive configuration: restored ticks
+force STOP and reject even a retained pending resume while reconciliation remains
+required. A deterministic test enables the acquisition flag and supplies a stale
+resume, and verifies no provider work and a BLOCKED receipt. Recovery compares the
+entire embedded release manifest with the independently retained trusted manifest.

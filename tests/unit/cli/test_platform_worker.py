@@ -81,6 +81,22 @@ def test_stop_is_applied_even_with_missing_cohort_and_without_acquisition(
     assert authority.status()["stopped"] is True
     assert authority.status()["requests_charged"] == 0
     assert commands.status()["receipts"][0]["status"] == "APPLIED"
+    authority.resume(now=datetime.now(UTC), host=socket.gethostname())
+    commands.submit(
+        subject="owner",
+        action="resume",
+        expected_revision=2,
+        idempotency_key="resume-from-stale-restore",
+    )
+    restored = json.loads(config.read_text())
+    restored.update(recovery_requires_authority_reconciliation=True, acquisition_enabled=True)
+    config.write_text(json.dumps(restored))
+    result = worker_tick(config)
+    assert result["status"] == "STOPPED"
+    assert result["reason"] == "recovery_authority_reconciliation_required"
+    assert authority.status()["stopped"] is True
+    assert commands.status()["receipts"][0]["status"] == "BLOCKED"
+    assert authority.status()["requests_charged"] == 0
 
 
 def test_export_bounds_are_durable_and_do_not_modify_stop(tmp_path: Path) -> None:
