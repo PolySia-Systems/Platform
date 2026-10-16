@@ -48,3 +48,37 @@ def test_backup_job_isolated_mounts_and_immutable_image() -> None:
         isolated("polysia:latest")
     with pytest.raises(ValueError, match="dedicated allocation"):
         checked_root("/var/lib/../", "/srv/polysia-platform-backups")
+
+
+@pytest.mark.parametrize("case", ["traversal", "symlink", "duplicate", "oversize"])
+def test_recovery_rejects_unsafe_archive_before_extracting_outside_root(
+    tmp_path: Path, case: str
+) -> None:
+    import io
+    import tarfile
+
+    from polysia.deployment.platform_recovery import MAX_BUNDLE_BYTES, extract_and_verify_recovery
+
+    archive = tmp_path / "untrusted.tar"
+    if case == "oversize":
+        member = tarfile.TarInfo("large")
+        member.size = MAX_BUNDLE_BYTES + 1
+        archive.write_bytes(member.tobuf() + b"\0" * 1024)
+    else:
+        with tarfile.open(archive, "w") as tar:
+            member = tarfile.TarInfo("../escape" if case == "traversal" else "entry")
+            if case == "symlink":
+                member.type = tarfile.SYMTYPE
+                member.linkname = "../escape"
+            else:
+                member.size = 1
+            tar.addfile(member, io.BytesIO(b"x") if member.isfile() else None)
+            if case == "duplicate":
+                tar.addfile(member, io.BytesIO(b"x"))
+    trusted = tmp_path / "trusted.json"
+    trusted.write_text("{}")
+    with pytest.raises(ValueError, match="unsafe or duplicate|extraction limit"):
+        extract_and_verify_recovery(
+            archive, tmp_path / "isolated", trusted_release_manifest=trusted
+        )
+    assert not (tmp_path / "escape").exists()
