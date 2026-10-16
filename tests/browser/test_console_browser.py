@@ -89,6 +89,12 @@ def console_fixture(tmp_path: Path) -> Any:
                 "status": "SYNTHETIC TEST FIXTURE",
                 "published_at": now.isoformat(),
                 "next_action": "Fixture only; no acquisition",
+                "authority_window": {
+                    "expires_at": "2026-10-16T12:00:00+00:00",
+                    "maximum_requests": 40,
+                    "maximum_bytes": 33554432,
+                },
+                "authority": {"requests_charged": 11, "bytes_charged": 2371503},
                 "report": {
                     "analytical": analytical,
                     "analytical_digest": digest,
@@ -96,6 +102,9 @@ def console_fixture(tmp_path: Path) -> Any:
                 },
                 "diagnostic": {
                     "discovery": {
+                        "source_rows": 500,
+                        "unique_wallets": 1,
+                        "excluded": {"before_activity_window": 499},
                         "candidates": [
                             {
                                 "wallet_id": "fixture-wallet-123",
@@ -104,7 +113,7 @@ def console_fixture(tmp_path: Path) -> Any:
                                 "exclusions": ["book_stale"],
                                 "last_qualifying_activity": now.isoformat(),
                             }
-                        ]
+                        ],
                     }
                 },
             }
@@ -186,6 +195,8 @@ def test_console_operator_tasks_and_protected_downloads(
         page.goto(origin)
         expect(page.get_by_role("heading", name="SYNTHETIC TEST FIXTURE")).to_be_visible()
         expect(page.locator("#control")).to_have_text("-1")
+        expect(page.locator("#authority-window")).to_contain_text("11 / 40 requests")
+        expect(page.locator("#reasons")).to_contain_text("499 excluded: before activity window")
         page.get_by_label("Wallet identity hash").fill("123")
         page.get_by_role("button", name="fixture-wallet-123").click()
         expect(page.locator("#wallet-detail")).to_contain_text("book_stale")

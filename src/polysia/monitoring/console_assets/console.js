@@ -56,8 +56,12 @@ async function load() {
       const tr = document.createElement("tr"); [label,readable(state.control?.[key]),readable(state.target?.[key])].forEach(value => { const td = document.createElement("td"); td.textContent = value; tr.append(td); }); table.append(tr);
     });
     text("positions", JSON.stringify({control:state.control?.closing_positions || [],target:state.target?.closing_positions || []},null,2));
+    const source = publication.diagnostic?.discovery || {}, authority = publication.authority || {}, windowAuthority = publication.authority_window || {};
+    text("source-sample", `${source.source_rows ?? "UNKNOWN"} sampled source rows · ${source.unique_wallets ?? "UNKNOWN"} qualifying identities · cutoff ${readable(source.cutoff)} · newest source age at fetch ${readable(source.seed_newest_age_seconds)} seconds`);
+    text("authority-window", `Authority expires ${readable(windowAuthority.expires_at)} · ${authority.requests_charged ?? "UNKNOWN"} / ${windowAuthority.maximum_requests ?? "UNKNOWN"} requests · ${authority.bytes_charged ?? "UNKNOWN"} / ${windowAuthority.maximum_bytes ?? "UNKNOWN"} bytes charged. STOP does not settle financial positions.`);
+    const exclusionRows = [source.excluded || {}, analytical.excluded_execution_evidence || {}].flatMap(rows => Object.entries(rows).map(([reason,count]) => `${count} excluded: ${reason.replaceAll("_", " ")}`));
     const reasons = document.getElementById("reasons"); reasons.replaceChildren();
-    [...(analytical.reasons || []), ...(report.limitations || []), ...(publication.alerts || [])].forEach(value => { const item = document.createElement("li"); item.textContent = value; reasons.append(item); });
+    [...(analytical.reasons || []), ...exclusionRows, ...(report.limitations || []), ...(publication.alerts || [])].forEach(value => { const item = document.createElement("li"); item.textContent = value; reasons.append(item); });
     text("diagnostics", JSON.stringify({source:publication.diagnostics || {status:"UNKNOWN"},recovery:publication.backup_health || {status:"UNKNOWN"}}, null, 2));
     wallets();
   } catch (error) { const target = document.getElementById("error"); target.hidden = false; target.textContent = error.message; }

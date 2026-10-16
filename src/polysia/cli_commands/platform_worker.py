@@ -42,7 +42,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
     with workflow_lock(database.with_suffix(".worker.lock")):
         code_sha = Path("/opt/polysia/BUILD_COMMIT").read_text().strip()
         if code_sha != value["release_commit"]:
-            raise ValueError("installed_release_mismatch")
+            raise AcquisitionBlockedError("installed_release_mismatch")
         policy = load_policy(Path(value["manifest"]))
         authority = AcquisitionAuthority(Path(value["authority"]), policy)
         authority.initialize()
@@ -61,6 +61,12 @@ def worker_tick(config: Path) -> dict[str, Any]:
             "policy_digest": policy.digest,
             "last_attempt": datetime.now(UTC).isoformat(),
             "real_orders": False,
+            "authority_window": {
+                "starts_at": policy.starts_at.isoformat(),
+                "expires_at": policy.expires_at.isoformat(),
+                "maximum_requests": policy.maximum_requests,
+                "maximum_bytes": policy.maximum_bytes,
+            },
             "last_success": prior.get("last_success"),
         }
         # Consume command receipts before any acquisition. Effects are idempotent;
@@ -70,12 +76,16 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 authority.stop()
             elif action == "resume":
                 if recovery_fenced:
-                    commands.finish(revision, status="BLOCKED")
+                    commands.finish(
+                        revision,
+                        status="BLOCKED",
+                        result={"reason": "recovery_authority_reconciliation_required"},
+                    )
                     continue
                 try:
                     authority.resume(now=datetime.now(UTC), host=socket.gethostname())
-                except AcquisitionBlockedError:
-                    commands.finish(revision, status="BLOCKED")
+                except AcquisitionBlockedError as error:
+                    commands.finish(revision, status="BLOCKED", result={"reason": error.error_code})
                     continue
             elif action == "drain":
                 # Retain this receipt until the financial service is available.
@@ -90,8 +100,16 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 if recovery_fenced
                 else "durable_authority_stop"
             )
+            result["next_action"] = (
+                "Reconcile the latest authority and fence the old primary before resuming."
+                if recovery_fenced
+                else "Review evidence; resume needs valid authority and admission."
+            )
         elif value.get("acquisition_enabled") is not True:
-            result["reason"] = "acquisition_not_enabled"
+            result.update(
+                reason="acquisition_not_enabled",
+                next_action="Disabled; review policy and nonempty admission.",
+            )
         elif not policy.starts_at <= datetime.now(UTC) < policy.expires_at:
             result.update(
                 status="TERMINAL",
@@ -112,10 +130,10 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 os.getenv("TRADING_MODE", "DATA_ONLY") != "DATA_ONLY"
                 or os.getenv("LIVE_TRADING_ENABLED", "false").lower() != "false"
             ):
-                raise ValueError("research_runtime_safety_flags_invalid")
+                raise AcquisitionBlockedError("research_runtime_safety_flags_invalid")
             discovery = json.loads(Path(value["cohort"]).read_text())["discovery"]
             if value["admission"].get("mode") != "CONTINUOUS":
-                raise ValueError("continuous_admission_required")
+                raise AcquisitionBlockedError("continuous_admission_required")
             store = ContinuousShadowRepository(database)
             service = native_shadow_service(
                 database,
@@ -129,7 +147,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
             if experiment is None:
                 experiment = service.start("polymarket-native")
             if experiment.config.code_sha != code_sha:
-                raise ValueError("active_financial_session_requires_pinned_release")
+                raise AcquisitionBlockedError("active_financial_session_requires_pinned_release")
             for revision, action in commands.pending():
                 if action == "drain":
                     experiment = service.drain("polymarket-native")
@@ -226,7 +244,7 @@ def platform_tick(
     except Exception as error:
         result = {
             "status": "FAILED",
-            "reason": type(error).__name__,
+            "reason": getattr(error, "error_code", type(error).__name__),
             "last_attempt": datetime.now(UTC).isoformat(),
             "next_action": "inspect configuration or state; acquisition is blocked",
         }

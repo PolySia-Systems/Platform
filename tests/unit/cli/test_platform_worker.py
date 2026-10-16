@@ -97,6 +97,29 @@ def test_stop_is_applied_even_with_missing_cohort_and_without_acquisition(
     assert authority.status()["stopped"] is True
     assert commands.status()["receipts"][0]["status"] == "BLOCKED"
     assert authority.status()["requests_charged"] == 0
+    assert commands.status()["receipts"][0]["result"]["reason"] == (
+        "recovery_authority_reconciliation_required"
+    )
+    from polysia.cli_commands import platform_worker as worker_module
+
+    class ExpiredClock(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return now + timedelta(hours=2)
+
+    restored.update(recovery_requires_authority_reconciliation=False, acquisition_enabled=False)
+    config.write_text(json.dumps(restored))
+    commands.submit(
+        subject="owner",
+        action="resume",
+        expected_revision=3,
+        idempotency_key="resume-after-manifest-expiry",
+    )
+    monkeypatch.setattr(worker_module, "datetime", ExpiredClock)
+    result = worker_tick(config)
+    assert commands.status()["receipts"][0]["result"]["reason"] == "authority_not_current"
+    assert result["status"] == "STOPPED"
+    assert authority.status()["requests_charged"] == 0
 
 
 def test_export_bounds_are_durable_and_do_not_modify_stop(tmp_path: Path) -> None:
