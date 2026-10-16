@@ -3,3 +3,4 @@
 nav{display:flex;gap:24px;flex-wrap:wrap;padding:14px 5%;background:#fff;border-bottom:1px solid var(--line)}nav a{text-decoration:none;font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 
 .range{display:flex;flex-wrap:wrap;gap:1rem}.range label{display:flex;flex-direction:column}#receipts{overflow-wrap:anywhere}
+@media(max-width:480px){.scroll table{min-width:560px}.scroll th:first-child,.scroll td:first-child{min-width:190px}}
