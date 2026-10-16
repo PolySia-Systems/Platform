@@ -112,9 +112,12 @@ and [ADR-0021](../04-architecture/adrs/ADR-0021-independent-platform-shadow.md).
 Release v0.2.0 at `e0ad838d78c42739bff9dcce64d391e99bf57ffe` passed the full
 hosted release matrix. Dated 2026-10-16 receipts establish private Helsinki
 supervision and independent Nuremberg encrypted cold recovery of that artifact,
-with STOP and consumed authority preserved. Secure public Access/Tunnel setup
-remains BLOCKED; real observations have not established nonempty numerical
-usefulness, and owner comprehension remains OPEN. The
+with STOP and consumed authority preserved. Later same-day receipts establish
+owner-only Access/Tunnel serving at `https://console.movafegh.com`, normal TLS,
+anonymous/origin denial, actual owner login and protected frontend cold-start
+inputs. The original requested DNS record is unchanged. Real observations have
+not established nonempty numerical usefulness; owner comprehension and recorded
+credential rotation remain OPEN. The
 [dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
 tracks separate acceptance verdicts and exact artifacts. Current host state still
 requires a runtime query; this release grants no acquisition or Live authority.

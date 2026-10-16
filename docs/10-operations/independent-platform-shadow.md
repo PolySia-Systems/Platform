@@ -91,10 +91,49 @@ report and archived download checks RS256 identity. Commands validate role, orig
 CSRF, revision and idempotency; the worker/publisher applies durable receipts.
 The protected page still serves STOP when report publication is unavailable.
 
-The requested deep hostname lacks current free edge-certificate coverage. An unused
-single-level fallback may be provisioned under the execution delegation, but only
-after Access protection succeeds. An API 403 or a browser-required security approval
-blocks that action; it never authorizes an unprotected origin or a paid upgrade.
+The protected owner Console is [console.movafegh.com](https://console.movafegh.com).
+The original deeper hostname lacks current free certificate coverage; its supplied
+DNS record was preserved. The covered fallback was published after Access policy
+and origin denial verification. Do not add an anonymous route or paid upgrade when
+access fails. Login/render is verified; comprehension is a separate condition.
+
+Helsinki's enabled `polysia-platform-tunnel.service` pulls in the static
+`polysia-platform-web.service` at boot. A dedicated hostname ingress serves only
+loopback port 8765 with a terminal 404. Check both services and existing timers
+with `systemctl status`; use the dedicated unit journals for errors. The pinned
+binary is `/usr/local/libexec/polysia-platform/cloudflared-2026.10.1`; its
+[dependency decision](../05-security/console-dependencies.md) records checksum,
+notices and rollback. Automatic binary updates are disabled.
+
+The connector uses systemd LoadCredential from root-only
+`/etc/polysia-platform/tunnel-token`, passed with `--token-file`; never put its
+value in unit arguments, environment, reports or Git. The administrative API token
+is not a runtime dependency. Web configuration and CSRF files under
+`/etc/polysia-platform` are root-owned mode 0640 with web group 10102. Access
+requires the exact verified issuer/audience and sole authorized owner role map;
+no wildcard or bypass rule is permitted.
+
+To stop public serving without changing worker state:
+
+```bash
+systemctl disable --now polysia-platform-tunnel.service
+systemctl stop polysia-platform-web.service
+```
+
+Keep the owner-only Access policy in place. To restart this commissioned route,
+after checking protected configuration and the pinned binary:
+
+```bash
+systemctl enable --now polysia-platform-tunnel.service
+```
+
+Verify both services are active and only `127.0.0.1:8765` is listening.
+Missing-identity origin requests must be 403. Public anonymous JSON GETs for `/`,
+`/api/report`, `/api/health`, `/api/commands`, `/download/comparison.csv`,
+`/console.js` and `/console.css`, and an anonymous command POST, must be rejected.
+Ordinary browser navigation must reach the named Access login with normal TLS.
+The owner completes email login personally; never collect OTPs in chat. Restarting
+this route does not renew acquisition authority.
 
 If Access is unavailable, use the existing protected administrative SSH route and
 the installed immutable image, with the same worker configuration/state mounts:
@@ -142,6 +181,22 @@ and forces acquisition disabled. RPO <=24h and RTO <=60m require measured receip
 not an SFTP login. The recovery root is not an automatically promoted second writer.
 Fence the old primary and reconcile the newest authority before any real failover;
 a stale backup cannot restore spent allowance.
+
+The protected secondary directory `/etc/polysia-platform-recovery/console`
+retains web configuration, unit templates, the dedicated runtime token and
+independent CSRF. Credential files are root-only; the directory is mode 0700,
+outside the upload identity. The administrative API token is not retained there.
+Refresh these inputs through verified administrative SSH whenever primary
+equivalents change. Both hosts retain the independently hash-verified connector.
+Secondary units are templates only; the connector stays inactive.
+
+The frontend isolated startup receipt uses the same image, network none,
+128 MiB/0.25 CPU, independent CSRF and no financial-store mount. It supplements
+complete financial recovery; it does not replace replay or measured RPO/RTO.
+For manual failover, first fence the primary and reconcile newest authority with
+the existing recovery-worker fence. Adapt paths, generate independent CSRF and
+install retained dedicated templates only after these checks. Never start a
+second writer or restore spent allowance.
 
 ## Rollback and retained compatibility
 
