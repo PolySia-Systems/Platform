@@ -61,8 +61,8 @@ class AcquisitionAuthority:
         host: str,
         closure: bool = False,
     ) -> str:
-        if now.tzinfo is None or now.utcoffset() is None:
-            raise AcquisitionBlockedError("clock_not_aware")
+        if now.tzinfo is None or now.utcoffset() != timedelta(0):
+            raise AcquisitionBlockedError("clock_not_UTC")
         if host != self.policy.host or endpoint not in self.policy.endpoints:
             raise AcquisitionBlockedError("host_or_endpoint_not_authorized")
         if not self.policy.starts_at <= now < self.policy.expires_at:

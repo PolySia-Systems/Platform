@@ -206,3 +206,15 @@ def test_legacy_retained_metadata_does_not_invent_latency_or_break_reports(tmp_p
     assert endpoint["latency_sample_count"] == 0
     assert endpoint["unknown_latency_count"] == 1
     assert endpoint["known_bytes"] == 128
+
+
+def test_tampered_published_or_archived_financial_values_are_not_served(tmp_path: Path) -> None:
+    app = application(tmp_path)
+    invalid = {"analytical": {"net_result": "999"}, "analytical_digest": "a" * 64}
+    (tmp_path / "publication.json").write_text(json.dumps({"report": invalid}))
+    assert request(app, path="/api/report")[0] == "503 Service Unavailable"
+    assert request(app)[0] == "200 OK"  # Control path remains available.
+    archive = tmp_path / "reports"
+    archive.mkdir()
+    (archive / ("a" * 64 + ".json")).write_text(json.dumps(invalid))
+    assert request(app, path="/reports/" + "a" * 64 + ".json")[0] == "404 Not Found"

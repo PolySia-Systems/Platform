@@ -311,3 +311,29 @@ root-owned and not writable by the upload identity. Missing/stale/failed receipt
 remain explicit, and no health receipt can activate acquisition or reconcile
 financial authority. This avoids making reporting perform provider reads or
 letting a successful old backup imply current recovery health.
+
+
+## Actual candidate recovery receipt
+
+CI 38876139422 retained tested merge `6b4595545d042f7026f3eff2da04d1f4a19a1c63`
+(source `e62b01a`), archive `2e339d862f74c23f1473ae16c6a208af42ed3d8eee49b6626094c9dd452465d0`,
+destination image `sha256:900a005bb074d5aed7961a16982f1ecfb121755ac6b4f6c7022df38464c74d77`.
+Its installed primary worker and provider-free publisher passed with STOP and
+unchanged 11 requests / 2,371,503 bytes, zero uncertain requests and zero opportunities.
+Retained analytical digest: `afd041eaaf58eaada4c68f6734cce0a7e56ea86a0ac4f31f34d3875ec3e7d6ee`.
+
+The first complete encrypted generation was `platform-20261016T085720Z.tar.age`,
+79,983,880 bytes, SHA-256 `cf9d471284e9bc65fee7ea4ae4097863c0955bb3c67d834399117a0ddefcfcf1`.
+It was uploaded through the pinned dedicated route. At 08:59:37 UTC the independent
+Nuremberg drill decrypted, verified integrity/full trusted release, started the
+same image with no provider network and replayed that exact digest. Runtime was
+STOPPED, acquisition false and real orders false. Measured RPO 126.443 seconds;
+RTO 40.680 seconds, both within the declared objectives. Plaintext drill files were
+cleaned; source ciphertext and independently retained release assets remain.
+These are candidate recovery facts, not public-access or economic acceptance.
+
+The final read-model review also verifies the canonical analytical digest before
+serving cached or archived financial values; tampering fails closed while the
+control page remains available. Recovery tests reject traversal, symlinks,
+duplicate entries and oversized members. Provider-budget windows reject non-UTC
+clocks before reservations, preserving consistent UTC window accounting.

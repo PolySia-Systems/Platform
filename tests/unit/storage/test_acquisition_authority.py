@@ -131,3 +131,13 @@ def test_explicit_continuation_preserves_charges_stop_and_numeric_ceilings(tmp_p
     assert updated.status()["stopped"] is True
     with pytest.raises(AcquisitionBlockedError, match="mismatched"):
         authority.reserve(ENDPOINT, now=NOW, host="host")
+
+
+def test_budget_windows_reject_non_UTC_clocks_before_reservation(tmp_path: Path) -> None:
+    from datetime import timezone
+
+    authority = AcquisitionAuthority(tmp_path / "clock.sqlite3", policy())
+    authority.initialize()
+    with pytest.raises(AcquisitionBlockedError, match="clock_not_UTC"):
+        authority.reserve(ENDPOINT, now=NOW.astimezone(timezone(timedelta(hours=3))), host="host")
+    assert authority.status()["requests_charged"] == 0
