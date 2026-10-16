@@ -105,3 +105,35 @@ processed before missing cohort data or retry delay; expiry and finite transient
 retry accounting block the affected operation. Per-window limits and closure
 reserves remain inside lifetime totals. Focused authority/STOP tests: 7 passed;
 native/report integration tests: 2 passed. Full typing: 263 files passed.
+
+## First real native diagnostic
+
+Hosted Linux quality/container/supply-chain passed for source `696567e`, tested
+merge artifact `b90e9627a5942bc761e608ff81edb6ff4f7469e3` (parents baseline
+`ca9f37d` and source `696567e`). Helsinki retrieved its archive directly from GitHub;
+no laptop artifact was an input. Archive digest:
+`8fcff30417d834605db5aeeb30894587bc843d05873ecbd561ca63d0b9aea83a`.
+
+Artifact portability defect: the source Docker store addressed the image by
+config digest `0e418ac0…`, while the destination containerd store addressed the
+same archive by OCI manifest digest `1c3a08f8…`. The archive binds both identities.
+The initial load check failed before any acquisition; no allowance was consumed.
+The bootstrap now resolves only identities bound by the verified archive.
+
+Manifest `platform-native-feasibility-20261016-001` was then frozen with one wallet,
+40 requests/32 MiB total (5 requests/4 MiB reserved), 1 MiB response cap, 15-minute
+expiry, 30-second cadence, 512 MiB RAM/50% CPU and an 8 GiB free-disk floor.
+Effective policy digest:
+`351634e938968a7bdc1f25b030616bdf989ced5cc14ef0510fc9817eab28887e`.
+At 06:27:39 UTC it failed closed after 4 requests / 1,569,982 bytes, without
+publishing a cohort or starting simulations. Economics remains UNKNOWN.
+
+Root cause confirmed in the [official Data API v2 contract](https://data-api.polymarket.com/v2/docs):
+the bare trade feed ignores time bounds and covers the current/previous month.
+Only wallet-anchored trades and activity honor those bounds. The native route
+is corrected to explicitly sample one feed page for seed identities, without a
+feed completeness/watermark claim, then completely walk each selected wallet's
+activity with unchanged filters. This reduces the work rather than widening the
+diagnostic. Raw provider responses and query/trace/digest metadata are now retained
+privately before successful charge settlement. Exact cursor failure reasons are
+preserved. No unchanged diagnostic is authorized by this finding.

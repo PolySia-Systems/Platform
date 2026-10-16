@@ -19,6 +19,10 @@ class AcquisitionAuthority:
         self._path = path
         self.policy = policy
 
+    @property
+    def evidence_root(self) -> Path:
+        return self._path.parent / "evidence"
+
     def initialize(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self._path) as connection:

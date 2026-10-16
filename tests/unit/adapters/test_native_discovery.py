@@ -23,9 +23,10 @@ class Transport:
             1 if self.future else -1), "price": "0.5", "size": "2", "side": "BUY"}
         if path.endswith("activity"):
             row["type"] = "TRADE"
+        has_more = self.incomplete or path.endswith("trades")
         return {"data": [row], "pagination": {
-            "next_cursor": "opaque" if self.incomplete else None,
-            "has_more": self.incomplete,
+            "next_cursor": "opaque" if has_more else None,
+            "has_more": has_more,
         }}
 
 
@@ -38,6 +39,8 @@ async def test_complete_native_activity_is_causal_and_deterministic() -> None:
     assert first["candidates"][0]["state"] == "ACTIVITY_CONFIRMED"
     assert first["candidates"][0]["execution_eligibility"].startswith("UNKNOWN")
     assert first["profile"] == "native-recent-activity/v1"
+    assert first["seed_coverage"] == "FIRST_PAGE_SAMPLE_NOT_EXHAUSTIVE"
+    assert first["seed_has_more"] is True
 
 
 @pytest.mark.asyncio
@@ -45,8 +48,9 @@ async def test_incomplete_native_walk_cannot_publish_candidate_snapshot() -> Non
     transport = Transport(incomplete=True)
     with pytest.raises(IncompleteWalletWindowError, match="repeated_cursor"):
         await discover_native_activity(transport, cutoff=NOW, cohort_limit=1)
-    assert "cursor" not in transport.calls[0]
-    assert transport.calls[1] == {**transport.calls[0], "cursor": "opaque"}
+    assert transport.calls[0] == {"limit": 500, "taker_only": False}
+    assert "cursor" not in transport.calls[1]
+    assert transport.calls[2] == {**transport.calls[1], "cursor": "opaque"}
 
 
 @pytest.mark.asyncio

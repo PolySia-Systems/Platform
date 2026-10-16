@@ -9,9 +9,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from polysia.adapters.polymarket.data_api_v2 import (
+    DATA_API_BASE_URL,
     DATA_API_V2_ACTIVITY_PATH,
     DATA_API_V2_TRADES_PATH,
     DataApiV2Transport,
+    data_api_v2_rows,
     fetch_data_api_v2_window,
 )
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
@@ -23,19 +25,26 @@ async def discover_native_activity(
     transport: DataApiV2Transport, *, cutoff: datetime,
     cohort_limit: int, lookback: timedelta = timedelta(minutes=5), max_pages: int = 4,
 ) -> dict[str, Any]:
-    """Complete bounded query, then freeze candidates before subsequent outcomes."""
+    """Sample recent seed identities, then fully walk each wallet's activity."""
     offset = cutoff.utcoffset()
     if cutoff.tzinfo is None or offset is None or offset.total_seconds() != 0:
         raise ValueError("cutoff must be UTC")
     if not 1 <= cohort_limit <= 10 or not timedelta(0) < lookback <= timedelta(hours=1):
         raise ValueError("native diagnostic cohort or window is outside bounds")
     lower = cutoff - lookback
-    params = {"start": int(lower.timestamp()), "end": int(cutoff.timestamp()),
-              "limit": 500, "taker_only": False}
-    rows = await fetch_data_api_v2_window(
-        transport, DATA_API_V2_TRADES_PATH, params,
-        max_pages=max_pages, max_requests=max_pages, max_elapsed_seconds=60,
+    # The official bare feed ignores start/end and spans two calendar months.
+    # This is an explicitly sampled first page, never a completed feed walk or
+    # watermark. Complete-query requirements apply to wallet activity below.
+    seed = await transport.get_json(
+        DATA_API_BASE_URL, DATA_API_V2_TRADES_PATH, {"limit": 500, "taker_only": False},
     )
+    rows = data_api_v2_rows(seed)
+    pagination = seed.get("pagination")
+    cursor = pagination.get("next_cursor") if isinstance(pagination, dict) else None
+    if (not isinstance(pagination, dict) or type(pagination.get("has_more")) is not bool
+            or not (cursor is None or isinstance(cursor, str) and cursor)
+            or pagination["has_more"] != (pagination.get("next_cursor") is not None)):
+        raise ValueError("seed_pagination_invalid")
     wallets: dict[str, tuple[str, datetime]] = {}
     excluded: dict[str, int] = {}
     for row in rows:
@@ -84,7 +93,9 @@ async def discover_native_activity(
     ))
     result = {
         "profile": PROFILE_VERSION, "source": "polymarket-native",
-        "coverage": "COMPLETE_FOR_BOUNDED_QUERY", "cutoff": cutoff.isoformat(),
+        "coverage": "COMPLETE_WALLET_ACTIVITY_WITH_SAMPLED_SEEDS",
+        "seed_coverage": "FIRST_PAGE_SAMPLE_NOT_EXHAUSTIVE",
+        "seed_has_more": pagination["has_more"], "cutoff": cutoff.isoformat(),
         "window_start": lower.isoformat(), "source_rows": len(rows),
         "unique_wallets": len(wallets), "candidates": candidates,
         "excluded": excluded, "ranking": "activity_recency_then_identity_hash",

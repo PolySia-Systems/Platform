@@ -16,6 +16,7 @@ import typer
 from polysia.adapters.polycop.candidate_wallet_source import PolyCopCandidateWalletSource
 from polysia.adapters.polymarket.bounded_market import BoundedMarketAdapter
 from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
+from polysia.adapters.polymarket.data_api_v2 import IncompleteWalletWindowError
 from polysia.adapters.polymarket.native_discovery import discover_native_activity
 from polysia.application.services.shadow_reporting import ShadowReportingService
 from polysia.cli_support.native_research import native_shadow_service
@@ -146,7 +147,7 @@ def discovery_diagnostic(
         # authority for every failure; no exception is reported as insufficiency.
         result["reason"] = type(error).__name__
         result["error_code"] = (
-            str(error) if isinstance(error, AcquisitionBlockedError)
+            str(error) if isinstance(error, AcquisitionBlockedError | IncompleteWalletWindowError)
             else getattr(error, "error_code", "diagnostic_failed")
         )
         result["next_action"] = "inspect retained diagnostic; do not repeat unchanged workload"
