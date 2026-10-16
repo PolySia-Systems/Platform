@@ -98,11 +98,23 @@ CURRENT capabilities:
 ## What is not yet implemented
 
 Generalized intent aggregation, capital allocation, OMS/Transaction Manager,
-generalized ledger, execution router, adapter registry, operator web UI,
+generalized ledger, execution router, adapter registry,
 additional venues, AI/ML, and production Live automation remain TARGET or
 FUTURE unless an approved document proves otherwise.
 
-## Current focus and blockers
+## Independent Platform increment (2026-10-16)
+
+CURRENT code provides a bounded private Console, native research profile,
+Platform-owned durable acquisition authority, provider-free financial snapshot and
+supported interval reports, and encrypted isolated recovery tooling. The new
+runtime does not require a WI checkout/service. See the [operating procedure](../10-operations/independent-platform-shadow.md)
+and [ADR-0021](../04-architecture/adrs/ADR-0021-independent-platform-shadow.md).
+Implementation is not commissioning. Real observations have not established a
+nonempty numerical usefulness result; source freshness and secure Access setup
+have separate blockers. The [dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
+tracks acceptance and exact artifacts. Current host state requires a runtime query.
+
+## Historical focus and blockers (dated September evidence)
 
 The 2026-09-27 owner authorization reactivated Helsinki for a bounded
 `DATA_ONLY` source benchmark, Canary, Continuous Shadow worker, and four-hour

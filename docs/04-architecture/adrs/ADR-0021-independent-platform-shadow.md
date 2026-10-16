@@ -40,3 +40,12 @@ volume or private-repository credential may be required by the final artifact.
 Use separate schema roots for transitions; preserve originals and post-cutover
 evidence. Rollback selects the previous compatible artifact and root, with
 acquisition stopped and consumed authority reconciled before any resume.
+
+
+Implementation refinement: the publisher uses read-only SQLite connections and
+Backup API snapshots. Its private state directory permits SQLite WAL/SHM
+bookkeeping; a physically read-only mount failed the installed-artifact probe.
+The Console still has no financial mount. This keeps one financial writer and
+avoids falsely declaring an active database immutable. Waitress/PyJWT are the
+smaller cached-WSGI equivalent of the default web-stack proposal; notices,
+maintenance, test evidence and rollback are in the Console dependency decision.

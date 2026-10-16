@@ -5,8 +5,8 @@
 - **Scope:** `TradingMode` enum, replay/paper/shadow/tiny-live workflows, and the evidence-based maturity path.
 - **Architecture status:** MIXED
 - **Audience:** Owner, operators, researchers, risk reviewers, and release reviewers.
-- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
-- **Reviewed:** 2026-09-06
+- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- **Reviewed:** 2026-10-16
 
 ## Mermaid diagram
 

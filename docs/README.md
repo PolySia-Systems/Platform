@@ -16,11 +16,13 @@ Risk-approved request. Live trading stays disabled by default. No new Live
 authorization exists.
 
 **What is not implemented:** generalized OMS, capital allocation, execution
-router, adapter registry, extra venues, operator web UI, and production Live
+router, adapter registry, extra venues, and production Live
 automation.
 
-**Current focus:** continue DATA_ONLY/Shadow research from the immutable
-local historical baseline. Do not promote modeled P&L into Live authority.
+**Current focus:** the [independent Platform Shadow and Console](10-operations/independent-platform-shadow.md) retain canonical reports, bounded discovery and
+protected operations. Track separate implementation, deployment and observational
+acceptance in the [execution record](18-ai-handoffs/platform-independent-shadow-2026-10-16.md).
+Do not promote modeled P&L into Live authority.
 
 **Where to go next:** [project status](00-governance/PROJECT_STATUS.md) for
 durable state and [architecture](04-architecture/README.md) to go deeper.

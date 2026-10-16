@@ -6,9 +6,9 @@ Mermaid for canonical diagrams-as-code.
 
 ## Authority and state
 
-- Baseline Git commit: `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
+- Baseline Git commit: `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
 - Original full-corpus generation baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
-- Review date: 2026-09-06
+- Review date: 2026-10-16
 - Architecture model: modular monolith with ports and adapters
 - First venue adapter: Polymarket
 
@@ -35,3 +35,8 @@ prior semantics.
 `python scripts/check_changed_docs.py --architecture-only` checks structural
 consistency, coverage, metadata, local paths, and traceability. It does not
 replace human review of architectural meaning or rendered visual quality.
+
+The 2026-10-16 review covers the independent Platform delta. Unchanged source
+views retain their prior semantics; generalized execution control remains TARGET.
+Bounded research Console software is CURRENT, with deployment/usefulness receipts
+kept separate in ADR-0021 and the dated execution record.

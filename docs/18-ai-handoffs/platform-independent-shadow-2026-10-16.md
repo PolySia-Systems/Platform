@@ -199,3 +199,86 @@ new DNS record. Reuse the existing verified team issuer. Retain returned IDs and
 configuration privately. Rollback removes only the new record/application/tunnel
 by their recorded IDs and stops the dedicated connector; it preserves all existing
 records, Access configuration and services. Create protection before any route.
+
+
+## Backup allocation manifest
+
+Before allocation, Helsinki has 22,067,630,080 free bytes and Nuremberg
+28,702,048,256 free bytes. New Platform-only allocation on Nuremberg:
+`/var/lib/polysia-platform-backups/vault.img`, exactly 4,294,967,296 bytes,
+mounted at `/srv/polysia-platform-backups`. Neither path existed. Preserve at
+least 8 GiB on the host. Maximum ciphertext generation 512 MiB; retain two
+completed generations plus plaintext staging/restore reserve inside the new
+filesystem. Upload identity `polysia-platform-upload` has only chrooted SFTP;
+protected recovery key remains under root's separate configuration directory.
+Daily backup and isolated cold-recovery checks target RPO <=24h and RTO <=60m;
+only actual drill receipts establish those bounds. No existing WI allocation,
+backup, key or unrelated container is changed. Rollback disables the new units
+and upload identity; retain the new ciphertext, key and allocation for recovery.
+
+The scoped Access-app creation request returned HTTP 403. The existing API
+credential cannot apply the required protection. UI-based security access creation
+requires action-time confirmation under the browser tool policy; the owner asks
+for no questions. That affected action stays BLOCKED; no unprotected route is
+created. Existing hostname and DNS remain unchanged.
+
+
+## Installed-artifact findings and final review
+
+CI 38871621799 tested merge `d8448c7dd1811692446bcc90c1727191f425344d`
+(source `790c4b7`): Linux quality, container, browser, supply-chain and Windows
+compatibility passed. Its archive `23abb2d5a7ed4853fe4ba2c0b4927750603d2b33964cb76a34b502e28e9605a6`
+was retrieved directly on both servers, verified and loaded. The common destination
+image is `sha256:137822ace3ba8f0e3a9512edfc95c2e6fa15934df827a28e205086454c859694`.
+This is candidate evidence; the final main release requires its own exact checks.
+
+The primary bootstrap created dedicated identities/units with acquisition false
+and web stopped. A new runtime root retained SQLite Backup API snapshots of the
+Platform diagnostic, including one experiment, two polls and zero opportunities.
+All 11 requests / 2,371,503 bytes and durable STOP were preserved; original roots
+remain intact. This is explicitly retained isolated-diagnostic data, not continuous
+admission or an imported WI experiment. Candidate worker startup reported STOPPED.
+The publisher exposed two defects before commissioning could pass: SQLite WAL
+bookkeeping cannot always operate through a physically read-only directory; older
+provider metadata lacks latency fields. Source connections remain `mode=ro` plus
+`query_only`, with directory write access only for SQLite bookkeeping. No immutable
+mode is used on active files. Missing latency is UNKNOWN with an explicit sample
+count, not fabricated or treated as a software crash. The final image must recheck
+these paths. No provider acquisition was restarted during these tests.
+
+Nuremberg's allocated filesystem reports 4,143,677,440 usable bytes. Chrooted SFTP
+login and `/incoming` confinement passed through a host-key-pinned connection.
+A protected recovery key was generated there with the tested age binary, mode
+0600; only its public recipient reached Helsinki. Neither private key entered a
+report, repository, upload account or archive. Actual encrypted-generation and
+restore receipts remain necessary before recovery acceptance.
+
+The deliberate second review resolved cross-identity command-file permissions,
+UTC CLI parsing, WAL snapshot access, legacy metadata compatibility, source/error
+classification, replay code binding, export capacity accounting, failure receipts,
+log bounds and narrow backup mounts. Financial values still use the single existing
+Decimal engine. Native research has no signer, Alpha membership or Live path;
+existing v1/v2 gates are preserved. Reports include code digests, UTC bounds/cutoff,
+policy/cohort/config identities and separate cumulative/interval scope. Core money,
+risk, ledger and reconciliation semantics were not replaced.
+
+The tracked-repository consumer review covered 727 paths and 266 Python modules,
+CLI/entry points, dynamic import sites, installed assets, schedules, dependency
+locks, migrations, historical readers and documentation links. Three modules have
+only test/entry/manual static consumers: the CLI is the declared entry point;
+latency benchmark helpers remain an offline research API with unique tests; the
+Copy signal outcome accessor preserves a historical schema/public research contract.
+The old WI producer wrapper remains only for supported historical import/parity
+consumers and is absent from all new service/backup dependencies. No demonstrated
+safe deletion justified breaking these consumers; apparent duplication is retained
+for those explicit reasons. This is a reachability review, not proof that every
+line is necessary. Six changed Mermaid diagrams were rendered and visually checked;
+other views retain their semantics with refreshed delta-review metadata.
+
+Local evidence: full suite 1,410 passed / 4 explicit opt-in skips; subsequent
+focused fixes passed their affected tests, typing (266 modules), Ruff, compilation,
+Standards, secret and diff checks. Installed-wheel desktop/mobile/keyboard tests
+are maintained in hosted CI and include finite cached-read p95 measurements on a
+specified synthetic dataset; they do not establish production or owner comprehension.
+Final exact-release gates, host scheduling/recovery and public access remain separate
+acceptance rows; no blanket ENGINEERING_COMPLETE/PRODUCT_ACCEPTED claim is made here.

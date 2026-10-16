@@ -3,6 +3,7 @@ flowchart LR
   CI["CI / build service\nno live credentials\n[EXTERNAL]"]:::external
   Public["Public venue APIs\nuntrusted input\n[EXTERNAL]"]:::external
   AuthVenue["Authenticated venue boundary\naccount and order APIs\n[EXTERNAL]"]:::external
+  Access["Cloudflare Access / Tunnel\n[EXTERNAL; commissioning blocked]"]:::external
   Web3["Web3 signer / chain boundary\n[FUTURE]"]:::future
 
   subgraph LOCAL["Trusted local runtime boundary [CURRENT]"]
@@ -10,6 +11,9 @@ flowchart LR
     Control["SHADOW-only Control Kernel\nno Live or credential authority"]:::application
     Core["Domain, strategy, risk, execution, reconciliation"]:::current
     Adapter["Polymarket adapter\nSDK confinement"]:::adapter
+    Web["Private Console: RS256 issuer/audience/role\nloopback; CSRF and replay checks"]:::application
+    Publisher["Read-only snapshot publisher\nno provider network"]:::application
+    Queue[("Dedicated command queue\nno direct financial writes")]:::storage
     Scan["Redaction and tracked-file secret scan"]:::risk
   end
 
@@ -23,6 +27,11 @@ flowchart LR
   end
 
   Operator -->|commands / approvals; assumptions are preview-only| CLI
+  Access -->|signed identity; no public origin route| Web
+  Publisher -->|private published JSON| Web
+  DB -->|SQLite Backup API snapshot| Publisher
+  Web ==>|validated request receipt| Queue
+  Queue -->|worker checks current durable authority| Core
   CLI --> Core
   CLI --> Control
   Control -.->|gates new stale-price Shadow intents| Core

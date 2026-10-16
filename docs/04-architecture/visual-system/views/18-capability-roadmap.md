@@ -5,8 +5,8 @@
 - **Scope:** Foundation/MVP/limited-live capabilities, target orchestration and platform boundaries, and future multi-market/Web3/institutional categories.
 - **Architecture status:** MIXED
 - **Audience:** Owner, roadmap reviewers, architects, developers, and risk reviewers.
-- **Source commit:** `a1b95235dbf430cb8fcc356e4ac4951a3359ccf9`
-- **Reviewed:** 2026-09-06
+- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- **Reviewed:** 2026-10-16
 
 ## Mermaid diagram
 
@@ -21,14 +21,15 @@ flowchart LR
     N4["SHADOW-only Control Kernel: versioned desired / observed state and audit"]:::current
     N5["Authenticated reads and bounded guarded tiny-live Copy tools"]:::risk
     N6["Wallet Intelligence Stages 1-4B\nDATA_ONLY selection and continuous Shadow portfolio"]:::current
+    N7["Bounded private Console, native research, interval reports, encrypted recovery tooling"]:::current
   end
 
   subgraph NEXT["Next architecture priorities [TARGET]"]
-    T0["Evidence-backed strategy validation\noff-host backup and external alerts"]:::target
+    T0["Nonempty numerical usefulness\nand verified external alerts"]:::target
     T1["Strategy orchestration and conflict resolution"]:::target
     T2["Portfolio and capital allocation"]:::target
     T3["OMS / Transaction Manager and generalized ledger"]:::target
-    T4["Adapter registry, operator console, portable runtime hardening"]:::target
+    T4["Adapter registry and generalized execution console"]:::target
   end
 
   subgraph LATER["Later optional capabilities [FUTURE]"]

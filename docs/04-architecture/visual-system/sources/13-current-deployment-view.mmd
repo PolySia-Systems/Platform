@@ -1,79 +1,39 @@
-flowchart LR
-  Operator["Owner / Operator\n[CURRENT]"]:::current
-  GitHost["GitHub repository / CI\nPython 3.14 checks verified\n[EXTERNAL]"]:::external
-  PublicAPI["Polymarket public endpoints\n[EXTERNAL]"]:::external
-  SecureAPI["Polymarket authenticated endpoints\n[EXTERNAL]"]:::external
-  PolyCop["PolyCop discovery source\n[EXTERNAL]"]:::external
-
-  subgraph WORKSTATION["Owner Windows workstation [CURRENT]"]
-    Repo["Local Git repository\nmain branch"]:::storage
-    Conda["Conda environment: PolySia\nPython 3.14.7"]:::current
-    Process["Operator-run polysia CLI\nmodular monolith"]:::application
-    Secrets["Ignored local .env\nsecret boundary; values never diagrammed"]:::risk
-    SQLite[("SQLite databases / local files\nignored runtime state")]:::storage
+flowchart TB
+  CI["GitHub hosted CI and retained release assets\nexact source / archive / schema identities [CURRENT]"]:::current
+  API["Public Polymarket / PolyCop endpoints [EXTERNAL]"]:::external
+  Access["Cloudflare Access + Tunnel\nverified owner only; setup BLOCKED [TARGET]"]:::target
+  subgraph PRIMARY["Helsinki: implemented ownership; activation requires a dated receipt"]
+    Worker["Worker UID 10101\nDATA_ONLY; bounded GET; no signer [CURRENT]"]:::current
+    Authority[("Private durable counters and STOP [CURRENT]")]:::risk
+    Financial[("Separate financial / telemetry SQLite [CURRENT]")]:::current
+    Publisher["Publisher UID 10101\nnetwork none; financial snapshot only [CURRENT]"]:::current
+    Published[("Private canonical JSON and immutable exports [CURRENT]")]:::current
+    Queue[("Command queue; dedicated shared group [CURRENT]")]:::risk
+    Web["Console UID 10102\nloopback; publication RO; no financial mount [CURRENT]"]:::current
+    Backup["Coordinated snapshots and public-recipient encryption\nnetwork isolated; no decryption key [CURRENT software]"]:::current
   end
-
-  subgraph SERVER["Hetzner Helsinki Ubuntu host [CURRENT]"]
-    Release["Read-only verified Git archive release\nexact deployed revision"]:::storage
-    Container["Non-root Docker monitor and reconciliation\nDATA_ONLY; no published port"]:::application
-    WalletJobs["Scheduled Docker Wallet Intelligence jobs\nStages 1-4A; DATA_ONLY"]:::application
-    ShadowWorker["Persistent Docker Wallet Intelligence worker\nStage 4B; DATA_ONLY"]:::application
-    Timers["Persistent systemd timers\nscheduled Stage 1-4A jobs and backups"]:::observability
-    ShadowService["Persistent systemd service\nStage 4B worker supervision"]:::observability
-    ServerSecrets["/etc/polysia/polysia.env\nroot-only 0600"]:::risk
-    IntelligenceStore[("Intelligence store\nwallet-intelligence.sqlite3")]:::storage
-    ShadowStore[("Continuous Shadow store\ncontinuous-shadow.sqlite3")]:::storage
-    TelemetryStore[("Telemetry store\nwallet-intelligence-latency.sqlite3")]:::storage
-    ServerFiles[("/var/lib/polysia\nreports and local backups")]:::storage
-    DockerLogs["Rotating Docker logs\nhealth and reconciliation"]:::observability
+  subgraph SECONDARY["Nuremberg: dedicated 4 GiB bounded allocation [CURRENT]"]
+    Incoming[("Chrooted SFTP ciphertext; two generations [CURRENT software]")]:::current
+    Key["Protected root-only recovery key\noutside upload account [CURRENT]"]:::risk
+    Drill["Isolated decrypt / verify / startup / exact replay\nnetwork none; acquisition disabled [CURRENT software]"]:::current
   end
-
-  Operator --> Process
-  Operator -->|controlled SSH / Docker operations| Container
-  Operator -->|controlled timer operations| Timers
-  Operator -->|controlled service operations| ShadowService
-  Repo --> Conda
-  Conda --> Process
-  Secrets -->|configuration at runtime| Process
-  Process ==>|persistent state| SQLite
-  Process -->|public reads / stream| PublicAPI
-  Process -->|acknowledged reads or guarded action| SecureAPI
-  Repo -.->|push / workflow source| GitHost
-  Repo -.->|verified archive and SHA transfer| Release
-  Release -->|approved image build| Container
-  Release -->|approved image build| WalletJobs
-  Release -->|approved image build| ShadowWorker
-  Timers --> WalletJobs
-  ShadowService --> ShadowWorker
-  ServerSecrets -->|runtime-only configuration| Container
-  ServerSecrets -->|runtime-only configuration| WalletJobs
-  ServerSecrets -->|runtime-only configuration| ShadowWorker
-  Container ==>|persistent state and reports| ServerFiles
-  WalletJobs ==>|Stages 1-4A state| IntelligenceStore
-  ShadowWorker ==>|Stage 4B state| ShadowStore
-  WalletJobs -.->|fail-open latency| TelemetryStore
-  ShadowWorker -.->|fail-open latency| TelemetryStore
-  WalletJobs ==>|reports and backups| ServerFiles
-  ShadowWorker ==>|reports and backups| ServerFiles
-  Container -.->|structured output| DockerLogs
-  WalletJobs -.->|structured output| DockerLogs
-  ShadowWorker -.->|structured output| DockerLogs
-  Container -->|public and authenticated reads only| PublicAPI
-  Container -->|authenticated reads only| SecureAPI
-  WalletJobs -->|public market and trade reads| PublicAPI
-  WalletJobs -->|authorized discovery reads| PolyCop
-  ShadowWorker -->|public market and trade reads| PublicAPI
-
-  subgraph LEGEND["Legend"]
-    L1["CURRENT deployment"]:::current
-    L2["EXTERNAL"]:::external
-    L3["SECRET / SAFETY boundary"]:::risk
-    L4["Persistent local state"]:::storage
-  end
-
+  CI -->|verified immutable artifact| Worker
+  CI -->|independently retained release identity| Drill
+  Authority -->|caps, expiry, STOP| Worker
+  Worker --> API
+  Worker ==>|one financial writer| Financial
+  Financial -->|SQLite Backup API| Publisher
+  Publisher --> Published
+  Published -->|RO mount| Web
+  Web ==>|validated receipt| Queue
+  Queue -->|worker validates authority| Worker
+  Access -.->|required before publication| Web
+  Authority --> Backup
+  Financial --> Backup
+  Backup -->|bounded encrypted upload| Incoming
+  Incoming --> Drill
+  Key -->|secondary only| Drill
   classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
-  classDef application fill:#FFFFFF,stroke:#2563EB,stroke-width:2px,color:#0F172A;
+  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
   classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
-  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2.5px,color:#0F172A;
-  classDef storage fill:#FFFFFF,stroke:#475569,stroke-width:2px,color:#0F172A;
-  classDef observability fill:#FFFFFF,stroke:#9333EA,stroke-width:2px,color:#0F172A;
+  classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2px,color:#0F172A;

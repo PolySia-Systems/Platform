@@ -20,6 +20,7 @@ is authoritative; target and future elements are always labeled.
 - [Developer context packets](adrs/ADR-0018-developer-context-packets.md)
 - [Contract-driven research runs](adrs/ADR-0019-research-run-contracts.md)
 - [Configurable wallet count and immutable reanalysis](adrs/ADR-0020-wallet-flexibility-reanalysis.md)
+- [Independent Platform Shadow and Console](adrs/ADR-0021-independent-platform-shadow.md)
 - [Architecture visualization system](visual-system/README.md)
 - [Diagram index](visual-system/architecture-visualization-index.md)
 
