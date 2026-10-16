@@ -109,10 +109,15 @@ Platform-owned durable acquisition authority, provider-free financial snapshot a
 supported interval reports, and encrypted isolated recovery tooling. The new
 runtime does not require a WI checkout/service. See the [operating procedure](../10-operations/independent-platform-shadow.md)
 and [ADR-0021](../04-architecture/adrs/ADR-0021-independent-platform-shadow.md).
-Implementation is not commissioning. Real observations have not established a
-nonempty numerical usefulness result; source freshness and secure Access setup
-have separate blockers. The [dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
-tracks acceptance and exact artifacts. Current host state requires a runtime query.
+Release v0.2.0 at `e0ad838d78c42739bff9dcce64d391e99bf57ffe` passed the full
+hosted release matrix. Dated 2026-10-16 receipts establish private Helsinki
+supervision and independent Nuremberg encrypted cold recovery of that artifact,
+with STOP and consumed authority preserved. Secure public Access/Tunnel setup
+remains BLOCKED; real observations have not established nonempty numerical
+usefulness, and owner comprehension remains OPEN. The
+[dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
+tracks separate acceptance verdicts and exact artifacts. Current host state still
+requires a runtime query; this release grants no acquisition or Live authority.
 
 ## Historical focus and blockers (dated September evidence)
 
