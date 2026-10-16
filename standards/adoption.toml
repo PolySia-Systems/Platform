@@ -62,6 +62,8 @@ pydantic = "pydantic"
 pydantic_settings = "pydantic-settings"
 structlog = "structlog"
 typer = "typer"
+jwt = "PyJWT"
+waitress = "waitress"
 
 [environment]
 group_applies = true

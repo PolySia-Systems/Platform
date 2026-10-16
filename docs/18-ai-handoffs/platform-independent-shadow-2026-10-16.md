@@ -71,3 +71,23 @@ Account user/membership, Access organization and certificate-pack requests retur
 identity and Access organization therefore remain unverified; public commissioning
 is BLOCKED until a supported protected route is established. No broader permission,
 subscription purchase or guessed identity is assumed. Offline engineering continues.
+
+The next hosted run at `647c2c1` passed container and supply-chain checks but failed
+the CLI surface contract because the new command names were not yet included in
+its exact command inventory. That contract is updated in the Console increment;
+the focused CLI/Console/native/authority suite then passed 17 tests. Full local
+typing passed for 260 source files before that increment. Revalidate the final
+identity through hosted CI.
+
+Console dependencies: PyJWT[crypto] and Waitress, with rationale/notices/rollback
+in `docs/05-security/console-dependencies.md`; canonical locks were regenerated
+without upgrading unrelated pins. Console denial, RS256 issuer/audience/expiry,
+role, CSRF, revision and idempotency cases pass focused tests. Worker receipt
+application and actual protected deployment remain OPEN.
+
+Dependency automation: the scoped repository request to permit workflow-created
+PRs was rejected with HTTP 409: organization policy forbids Actions creating or
+approving PRs. The existing read-only default and protections were preserved.
+Use the authenticated operator's existing `scripts/dependency_locks.py` manual
+generation/review path; no organization-wide permission change or new token is
+authorized by this fallback.

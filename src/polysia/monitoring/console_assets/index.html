@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf" content="{{csrf}}"><meta name="role" content="{{role}}">
+<title>PolySia Console</title><link rel="stylesheet" href="/console.css"><script src="/console.js" defer></script></head>
+<body><a class="skip" href="#main">Skip to operation</a><header><strong>PolySia <span>Console</span></strong><span class="mode">DATA_ONLY · No real orders</span></header>
+<main id="main"><div class="intro"><div><p class="eyebrow">Platform operation</p><h1>Observe. Understand. Decide.</h1><p id="freshness">Loading retained publication…</p></div><a class="button" href="/api/report">Download evidence JSON</a></div>
+<p id="error" role="alert" hidden></p><section class="cards" aria-label="Current operation">
+<article><p>Operation</p><h2 id="operation">UNKNOWN</h2><small id="next">Awaiting publication</small></article>
+<article><p>Control net result</p><h2 id="control">UNKNOWN</h2><small>Frozen prospective policy</small></article>
+<article><p>Target net result</p><h2 id="target">UNKNOWN</h2><small>Comparable observations and capital</small></article>
+<article><p>Target − Control</p><h2 id="delta">UNKNOWN</h2><small id="sample">No measurable profitability evidence</small></article></section>
+<section class="panel"><div class="title"><h2>What the evidence supports</h2><a href="/download/comparison.csv">Export comparison CSV</a></div><p id="scope">Only retained evidence is shown. Page views do not acquire data or renew authority.</p><ul id="reasons"></ul><p id="digest" class="mono"></p></section>
+<section class="panel"><h2>Trace a wallet</h2><label for="wallet-filter">Wallet identity hash</label><input id="wallet-filter" type="search" placeholder="Filter the retained cohort" autocomplete="off"><div class="scroll"><table><thead><tr><th>Identity</th><th>Observation</th><th>Execution eligibility / exclusion</th></tr></thead><tbody id="wallets"></tbody></table></div><p id="wallet-detail" aria-live="polite"></p></section>
+<section class="panel"><h2>Permitted controls</h2><p>Commands return durable receipts. A request is applied only by the supervised worker after its authority checks.</p><div class="controls"><button data-action="export">Request report</button><button data-action="drain">Drain new entries</button><button data-action="stop" class="danger">STOP acquisition</button><button data-action="resume">Resume within authority</button></div><p id="receipt" role="status"></p></section>
+<footer>Research observations are not independent confirmations. UNKNOWN and zero activity do not establish profitability or permission for Live.</footer></main></body></html>

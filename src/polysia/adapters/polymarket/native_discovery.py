@@ -58,17 +58,22 @@ async def discover_native_activity(
              "end": int(cutoff.timestamp()), "limit": 500, "type": "TRADE"},
             max_pages=max_pages, max_requests=max_pages, max_elapsed_seconds=60,
         )
-        verified = []
+        verified: list[datetime] = []
+        latest: dict[str, Any] | None = None
         for row in activity:
             wallet, when = qualifying_trade(row, lower=lower, cutoff=cutoff)
             if wallet != address:
                 raise ValueError("native_activity_wallet_mismatch")
             verified.append(when)
+            if latest is None or when > datetime.fromtimestamp(latest["timestamp"], cutoff.tzinfo):
+                latest = row
         candidates.append({
             "wallet_id": wallet_id, "address": address,
             "last_qualifying_activity": max(verified).isoformat() if verified else None,
             "feed_last_trade": last_trade.isoformat(),
             "complete_activity_rows": len(activity),
+            "market_reference": latest.get("conditionId") if latest else None,
+            "outcome_reference": latest.get("asset") if latest else None,
             "state": "ACTIVITY_CONFIRMED" if verified else "NO_COMPLETE_ACTIVITY",
             "execution_eligibility": "UNKNOWN_REQUIRES_MAPPING_BOOK_AND_FEE_EVIDENCE",
         })

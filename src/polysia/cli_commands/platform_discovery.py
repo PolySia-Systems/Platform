@@ -13,6 +13,7 @@ from typing import Annotated, Any
 import typer
 
 from polysia.adapters.polycop.candidate_wallet_source import PolyCopCandidateWalletSource
+from polysia.adapters.polymarket.bounded_market import BoundedMarketAdapter
 from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
 from polysia.adapters.polymarket.native_discovery import discover_native_activity
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
@@ -53,10 +54,45 @@ def discovery_diagnostic(
 
     async def run() -> dict[str, Any]:
         if route == "native":
-            return await discover_native_activity(
+            discovered = await discover_native_activity(
                 transport, cutoff=cutoff, cohort_limit=policy.cohort_limit,
                 lookback=timedelta(seconds=lookback_seconds),
             )
+            market_adapter = BoundedMarketAdapter(transport)
+            for candidate in discovered["candidates"]:
+                condition, token = candidate["market_reference"], candidate["outcome_reference"]
+                if not isinstance(condition, str) or not isinstance(token, str):
+                    candidate["execution_eligibility"] = "UNKNOWN_MISSING_MARKET_TOKEN"
+                    continue
+                try:
+                    market = await market_adapter.get_market_by_condition_id(condition)
+                    book = await market_adapter.get_order_book(token)
+                    mapped = any(outcome.token_id == token for outcome in market.outcomes)
+                    fee = market.fee_schedule
+                    fee_known = fee is not None and (
+                        fee.enabled is False or fee.rate is not None and fee.exponent is not None
+                    )
+                    current = book.timestamp is not None and (
+                        0 <= (datetime.now(UTC) - book.timestamp).total_seconds() <= 30
+                    )
+                    candidate["execution_eligibility"] = (
+                        "ELIGIBLE_FOR_RESEARCH" if mapped and fee_known and current
+                        and book.asks and book.bids and market.active and not market.closed
+                        else "UNKNOWN_MAPPING_FEE_BOOK_OR_MARKET_STATE"
+                    )
+                    candidate["mapping_verified"] = mapped
+                    candidate["fee_known"] = fee_known
+                    candidate["book_current"] = current
+                except ValueError:
+                    candidate["execution_eligibility"] = "INVALID_MARKET_OR_BOOK_SCHEMA"
+            discovered["frozen_at"] = datetime.now(UTC).isoformat()
+            # Rebind the publication identity after all execution eligibility evidence.
+            import hashlib
+            discovered.pop("digest", None)
+            discovered["digest"] = hashlib.sha256(json.dumps(
+                discovered, sort_keys=True, separators=(",", ":"),
+            ).encode()).hexdigest()
+            return discovered
         dataset = await PolyCopCandidateWalletSource(
             transport=_PolyCopTransport(transport), consistency_attempts=1,
         ).fetch_snapshot()

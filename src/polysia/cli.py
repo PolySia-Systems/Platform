@@ -5,6 +5,7 @@ from collections.abc import Callable
 import typer
 
 from polysia.cli_commands import (
+    console,
     core,
     developer,
     live,
@@ -62,6 +63,7 @@ system_app.command("status")(operations.operator_status)
 system_app.command("report")(operations.operator_report)
 system_app.command("runbook")(operations.operator_runbook)
 system_app.command("observability")(operations.observability_snapshot)
+system_app.command("console")(console.serve_console)
 
 market_app.command("discover")(core.discover_markets)
 market_app.command("stream")(core.stream_market)
