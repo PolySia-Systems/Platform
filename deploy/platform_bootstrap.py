@@ -55,6 +55,9 @@ def container_command(image: str, *, role: str, hostname: str) -> list[str]:
         "--rm",
         "--name",
         "polysia-platform-" + role,
+        "--log-driver=local",
+        "--log-opt=max-size=5m",
+        "--log-opt=max-file=2",
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
@@ -169,6 +172,7 @@ def service_text(image: str, *, role: str, hostname: str) -> str:
         + "\nTimeoutStartSec=180\nTimeoutStopSec=35\nKillMode=control-group\n"
         "CPUQuota=50%\nMemoryMax=640M\nTasksMax=256\n"
         "StandardOutput=journal\nStandardError=journal\n"
+        "LogRateLimitIntervalSec=60s\nLogRateLimitBurst=10\n"
         + ("Restart=on-failure\nRestartSec=10\n" if role == "web" else "")
     )
 

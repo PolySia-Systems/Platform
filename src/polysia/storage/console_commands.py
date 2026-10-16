@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from contextlib import closing
@@ -31,6 +32,11 @@ class ConsoleCommandStore:
             for name in ("parameters", "result"):
                 if name not in columns:
                     connection.execute(f"ALTER TABLE commands ADD COLUMN {name} TEXT")
+
+        if os.name != "nt" and self._path.stat().st_uid == os.geteuid():
+            # Dedicated worker/web IDs share only the setgid control directory.
+            # The web process cannot chmod a worker-owned file, nor needs to.
+            self._path.chmod(0o660)
 
     def submit(
         self,

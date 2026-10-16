@@ -217,6 +217,14 @@ jobs:
             polysia:ci \
             -m polysia.deployment.sqlite_backup \
             init --database /var/lib/polysia/data/polysia.sqlite3
+      - name: Verify separate worker and web command ownership
+        shell: bash
+        run: |
+          mkdir -p .ci-state/control
+          docker run --rm --network none --user 0:0 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'import os; os.chown("/control",10101,10102); os.chmod("/control",0o2770)'
+          docker run --rm --network none --user 10101:10102 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'from pathlib import Path; from polysia.storage.console_commands import ConsoleCommandStore; ConsoleCommandStore(Path("/control/commands.sqlite3")).initialize()'
+          docker run --rm --network none --user 10102:10102 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'from pathlib import Path; from polysia.storage.console_commands import ConsoleCommandStore; s=ConsoleCommandStore(Path("/control/commands.sqlite3")); s.initialize(); assert s.submit(subject="fixture-operator",action="stop",expected_revision=0,idempotency_key="separate-identities-test")["status"]=="REQUESTED"'
+          docker run --rm --network none --user 10101:10102 --volume "$PWD/.ci-state/control:/control" --entrypoint python polysia:ci -c 'from pathlib import Path; from polysia.storage.console_commands import ConsoleCommandStore; s=ConsoleCommandStore(Path("/control/commands.sqlite3")); s.finish(1,status="APPLIED"); assert s.pending()==[]'
       - name: Retain exact tested image
         shell: bash
         run: |
