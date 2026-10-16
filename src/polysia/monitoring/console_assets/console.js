@@ -58,7 +58,7 @@ async function load() {
     text("positions", JSON.stringify({control:state.control?.closing_positions || [],target:state.target?.closing_positions || []},null,2));
     const reasons = document.getElementById("reasons"); reasons.replaceChildren();
     [...(analytical.reasons || []), ...(report.limitations || []), ...(publication.alerts || [])].forEach(value => { const item = document.createElement("li"); item.textContent = value; reasons.append(item); });
-    text("diagnostics", JSON.stringify(publication.diagnostics || {status:"UNKNOWN"}, null, 2));
+    text("diagnostics", JSON.stringify({source:publication.diagnostics || {status:"UNKNOWN"},recovery:publication.backup_health || {status:"UNKNOWN"}}, null, 2));
     wallets();
   } catch (error) { const target = document.getElementById("error"); target.hidden = false; target.textContent = error.message; }
 }

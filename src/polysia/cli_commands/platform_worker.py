@@ -292,6 +292,30 @@ def _publish_retained(value: dict[str, Any]) -> None:
             Path(value["authority"]),
             result["diagnostic"].get("discovery", {}),
         )
+        result["backup_health"] = {}
+        for role in ("backup", "restore"):
+            receipt_file = Path(value["publication"]).parent / (role + "-status.json")
+            try:
+                if receipt_file.stat().st_size > 4096:
+                    raise ValueError("job_receipt_too_large")
+                receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+                checked = receipt.get("checked_at", receipt.get("created_at"))
+                if checked and (now - datetime.fromisoformat(checked)).total_seconds() > 86_400:
+                    receipt = {
+                        **receipt,
+                        "status": "STALE",
+                        "next_action": "inspect " + role + " job",
+                    }
+            except OSError, ValueError:
+                receipt = {"status": "UNKNOWN", "next_action": "inspect " + role + " job"}
+            result["backup_health"][role] = receipt
+            if receipt.get("status") in {
+                "FAILED",
+                "UNKNOWN",
+                "STALE",
+                "RECOVERY_OBJECTIVES_NOT_MET",
+            }:
+                result.setdefault("alerts", []).append(role + " health: " + receipt["status"])
         atomic_json(Path(value["publication"]), result)
         commands = ConsoleCommandStore(Path(value["commands"]))
         commands.initialize()

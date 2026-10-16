@@ -58,6 +58,24 @@ def checked_root(path: str, expected: str) -> Path:
     return root
 
 
+def sftp_command(value: dict[str, Any]) -> list[str]:
+    if re.fullmatch(r"[a-zA-Z0-9.-]+", value["secondary_host"]) is None:
+        raise ValueError("invalid backup destination")
+    return [
+        "sftp",
+        "-oBatchMode=yes",
+        "-oStrictHostKeyChecking=yes",
+        "-oConnectTimeout=15",
+        "-oIdentitiesOnly=yes",
+        "-oUserKnownHostsFile=" + value["known_hosts"],
+        "-i",
+        value["upload_key"],
+        "-b",
+        "-",
+        "polysia-platform-upload@" + value["secondary_host"],
+    ]
+
+
 def backup(value: dict[str, Any]) -> dict[str, Any]:
     try:
         return _backup_generation(value)
@@ -114,21 +132,7 @@ def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
     )
     if target.stat().st_size > MAX_GENERATION or receipt["release_commit"] != manifest["commit"]:
         raise ValueError("backup generation identity or size differs")
-    if re.fullmatch(r"[a-zA-Z0-9.-]+", value["secondary_host"]) is None:
-        raise ValueError("invalid backup destination")
-    ssh = [
-        "sftp",
-        "-oBatchMode=yes",
-        "-oStrictHostKeyChecking=yes",
-        "-oConnectTimeout=15",
-        "-oIdentitiesOnly=yes",
-        "-oUserKnownHostsFile=" + value["known_hosts"],
-        "-i",
-        value["upload_key"],
-        "-b",
-        "-",
-        "polysia-platform-upload@" + value["secondary_host"],
-    ]
+    ssh = sftp_command(value)
     run(
         ssh,
         data=(
@@ -310,19 +314,59 @@ def _restore_generation(value: dict[str, Any]) -> dict[str, Any]:
     return receipt
 
 
+def fetch_restore_status(value: dict[str, Any]) -> dict[str, Any]:
+    root = checked_root(value["output"], "/var/lib/polysia-platform/backup-out")
+    target = root / "restore-status.partial"
+    try:
+        run(sftp_command(value), data=f'get /status/restore-status.json "{target}"\n', timeout=30)
+        if target.is_symlink() or target.stat().st_size > 4096:
+            raise ValueError("secondary_status_size_invalid")
+        receipt = json.loads(target.read_text())
+        allowed = {
+            "status",
+            "release_commit",
+            "checked_at",
+            "measured_RPO_seconds",
+            "measured_RTO_seconds",
+            "acquisition_enabled",
+            "runtime_status",
+            "network",
+        }
+        return {key: receipt[key] for key in allowed if key in receipt}
+    except OSError, ValueError, subprocess.SubprocessError:
+        return {
+            "status": "UNKNOWN",
+            "checked_at": datetime.now(UTC).isoformat(),
+            "next_action": "inspect protected secondary restore journal",
+        }
+    finally:
+        target.unlink(missing_ok=True)
+
+
 def main() -> None:
     import fcntl
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("backup", "restore"))
+    parser.add_argument("mode", choices=("backup", "restore", "status"))
     parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args()
     try:
         value = json.loads(args.config.read_text())
         with Path("/run/lock/polysia-platform-" + args.mode + ".lock").open("a+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            receipt = (backup if args.mode == "backup" else restore)(value)
-        Path(value["receipt"]).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+            operation = {"backup": backup, "restore": restore, "status": fetch_restore_status}[
+                args.mode
+            ]
+            receipt = operation(value)
+            if args.mode != "status":
+                receipt["checked_at"] = datetime.now(UTC).isoformat()
+        output = Path(value["receipt"])
+        output.write_text(json.dumps(receipt, sort_keys=True) + "\n")
+        if args.mode == "restore":
+            output.chmod(0o644)  # Root-owned read-only status directory in SFTP chroot.
+        else:
+            os.chown(output, 0, 10102)
+            output.chmod(0o640)
         print(json.dumps(receipt, sort_keys=True))
         if receipt["status"] == "RECOVERY_OBJECTIVES_NOT_MET":
             raise SystemExit(1)

@@ -303,3 +303,11 @@ force STOP and reject even a retained pending resume while reconciliation remain
 required. A deterministic test enables the acquisition flag and supplies a stale
 resume, and verifies no provider work and a BLOCKED receipt. Recovery compares the
 entire embedded release manifest with the independently retained trusted manifest.
+
+
+Recovery receipts are published locally and in the Console through a separate
+hourly, read-only SFTP status projection. The secondary's `/status` directory is
+root-owned and not writable by the upload identity. Missing/stale/failed receipts
+remain explicit, and no health receipt can activate acquisition or reconcile
+financial authority. This avoids making reporting perform provider reads or
+letting a successful old backup imply current recovery health.

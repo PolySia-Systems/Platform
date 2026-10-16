@@ -129,6 +129,11 @@ allocation and preserve at least 8 GiB on the host. Plaintext includes release,
 configuration, original policy, counters/STOP, financial data, cohort and provider
 provenance. It never includes the recovery or upload private key.
 
+Nuremberg writes a small root-owned receipt under the chroot's read-only `/status`
+directory. A separate hourly primary status job fetches it through the pinned SFTP
+route; the upload identity cannot replace that receipt. Console publication labels
+missing, failed or stale backup/restore receipts explicitly.
+
 The separate Nuremberg restore job retrieves a completed generation, decrypts with
 the protected key, validates the bounded flat archive, all file/SQLite digests and
 an independently retained release manifest, starts the same image without network,
