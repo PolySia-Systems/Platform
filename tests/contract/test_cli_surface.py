@@ -51,6 +51,7 @@ EXPECTED_COMMANDS = {
     },
     "ops": {
         "acceptance-audit",
+        "acquisition-policy",
         "shadow-report",
         "platform-publish",
         "deployment-automation",

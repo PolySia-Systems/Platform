@@ -146,6 +146,12 @@ def discovery_diagnostic(
         # Boundary catch intentionally preserves a terminal receipt and charged
         # authority for every failure; no exception is reported as insufficiency.
         result["reason"] = type(error).__name__
+        cause: BaseException | None = error
+        while cause is not None:
+            if isinstance(cause, AcquisitionBlockedError | IncompleteWalletWindowError):
+                result["root_error_code"] = str(cause)
+                break
+            cause = cause.__cause__
         result["error_code"] = (
             str(error) if isinstance(error, AcquisitionBlockedError | IncompleteWalletWindowError)
             else getattr(error, "error_code", "diagnostic_failed")
@@ -164,3 +170,24 @@ def discovery_diagnostic(
     }, sort_keys=True))
     if result["status"] != "COMPLETE":
         raise typer.Exit(1)
+
+
+def continue_acquisition_policy(
+    previous_manifest: Annotated[Path, typer.Option("--previous-manifest", exists=True)],
+    next_manifest: Annotated[Path, typer.Option("--next-manifest", exists=True)],
+    state: Annotated[Path, typer.Option("--state", exists=True)],
+    authorization_reference: Annotated[str, typer.Option("--authorization-reference")],
+    apply: Annotated[bool, typer.Option("--apply")] = False,
+) -> None:
+    """Explicit owner-directed continuation; never raises caps or erases charges."""
+    old, new = load_policy(previous_manifest), load_policy(next_manifest)
+    authority = AcquisitionAuthority(state, old)
+    before = authority.status()
+    if not apply:
+        typer.echo(json.dumps({"status": "PREVIEW", "before": before,
+                               "replacement_digest": new.digest,
+                               "replacement": new.to_dict()}, sort_keys=True))
+        return
+    updated = authority.transition_policy(new, authorization_reference=authorization_reference)
+    typer.echo(json.dumps({"status": "APPLIED", "before": before,
+                           "after": updated.status()}, sort_keys=True))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
@@ -12,6 +13,11 @@ from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolic
 
 class AcquisitionBlockedError(RuntimeError):
     """Stable reason safe to expose in status without provider payloads."""
+
+    def __init__(self, reason: str, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(reason)
+        self.error_code = reason
+        self.retry_after_seconds = retry_after_seconds
 
 
 class AcquisitionAuthority:
@@ -116,6 +122,46 @@ class AcquisitionAuthority:
             ).rowcount
             if changed != 1:
                 raise AcquisitionBlockedError("authority_mismatched")
+
+    def transition_policy(
+        self, replacement: AcquisitionPolicy, *, authorization_reference: str,
+    ) -> AcquisitionAuthority:
+        """Explicit owner-directed continuation; all lifetime charges survive."""
+        if not 8 <= len(authorization_reference) <= 128:
+            raise AcquisitionBlockedError("explicit_authority_reference_required")
+        if replacement.host != self.policy.host or replacement.policy_id == self.policy.policy_id:
+            raise AcquisitionBlockedError("replacement_identity_invalid")
+        ceilings = (
+            "maximum_requests", "maximum_bytes", "maximum_response_bytes",
+            "window_maximum_requests", "window_maximum_bytes", "cohort_limit",
+            "memory_max_bytes", "cpu_quota_percent",
+        )
+        if any(getattr(replacement, field) > getattr(self.policy, field) for field in ceilings):
+            raise AcquisitionBlockedError("replacement_cannot_raise_ceiling")
+        if (replacement.expires_at - replacement.starts_at
+                > self.policy.expires_at - self.policy.starts_at
+                or replacement.closure_request_reserve < self.policy.closure_request_reserve
+                or replacement.closure_byte_reserve < self.policy.closure_byte_reserve):
+            raise AcquisitionBlockedError("replacement_cannot_reduce_reserve_or_expand_duration")
+        with sqlite3.connect(self._path, timeout=1) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            old = connection.execute("SELECT policy_digest FROM authority").fetchone()
+            if old is None or old[0] != self.policy.digest:
+                raise AcquisitionBlockedError("replacement_predecessor_mismatched")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS policy_transitions ("
+                "old_digest TEXT NOT NULL, new_digest TEXT NOT NULL UNIQUE, "
+                "authorization_reference TEXT NOT NULL, old_policy TEXT NOT NULL, "
+                "new_policy TEXT NOT NULL)"
+            )
+            connection.execute("INSERT INTO policy_transitions VALUES(?,?,?,?,?)", (
+                self.policy.digest, replacement.digest, authorization_reference,
+                json.dumps(self.policy.to_dict(), sort_keys=True),
+                json.dumps(replacement.to_dict(), sort_keys=True),
+            ))
+            connection.execute("UPDATE authority SET policy_digest=? WHERE singleton=1",
+                               (replacement.digest,))
+        return AcquisitionAuthority(self._path, replacement)
 
     def status(self) -> dict[str, object]:
         with sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True) as connection:

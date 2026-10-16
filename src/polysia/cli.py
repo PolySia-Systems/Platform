@@ -148,6 +148,7 @@ wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_che
 
 ops_app.command("deployment-readiness")(operations.deployment_readiness)
 ops_app.command("shadow-report")(shadow_reporting.shadow_report)
+ops_app.command("acquisition-policy")(platform_discovery.continue_acquisition_policy)
 ops_app.command("release-manifest")(operations.release_manifest)
 ops_app.command("deployment-automation")(operations.deployment_automation)
 ops_app.command("final-handoff")(operations.final_handoff)

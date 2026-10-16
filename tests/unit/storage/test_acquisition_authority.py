@@ -109,3 +109,25 @@ def test_resume_preserves_charges_and_cannot_extend_expiry(tmp_path: Path) -> No
     assert authority.status()["requests_charged"] == 1
     with pytest.raises(AcquisitionBlockedError, match="not_current"):
         authority.resume(now=NOW + timedelta(hours=2), host="host")
+
+
+def test_explicit_continuation_preserves_charges_stop_and_numeric_ceilings(tmp_path: Path) -> None:
+    authority = AcquisitionAuthority(tmp_path / "continuation.sqlite3", policy())
+    authority.initialize()
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    authority.stop()
+    replacement = replace(policy(), policy_id="followup",
+                          starts_at=NOW + timedelta(hours=1),
+                          expires_at=NOW + timedelta(hours=2))
+    with pytest.raises(AcquisitionBlockedError, match="raise_ceiling"):
+        authority.transition_policy(replace(replacement, maximum_requests=4),
+                                    authorization_reference="owner-execution-test")
+    updated = authority.transition_policy(
+        replacement, authorization_reference="owner-execution-test",
+    )
+    updated.initialize()
+    assert updated.status()["requests_charged"] == 1
+    assert updated.status()["bytes_charged"] == 1024
+    assert updated.status()["stopped"] is True
+    with pytest.raises(AcquisitionBlockedError, match="mismatched"):
+        authority.reserve(ENDPOINT, now=NOW, host="host")

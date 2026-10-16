@@ -137,3 +137,21 @@ activity with unchanged filters. This reduces the work rather than widening the
 diagnostic. Raw provider responses and query/trace/digest metadata are now retained
 privately before successful charge settlement. Exact cursor failure reasons are
 preserved. No unchanged diagnostic is authorized by this finding.
+
+The changed-workload follow-up used tested merge artifact
+`4265f4b708730da03b4ca6a2960f25f8870d79b9` (source `24e573e`), archive
+`9cb75d36377da8212a93b21ec743b5d2c3560afa6cae4b11267a5b27ee3789f2`.
+It reused the original manifest and all prior counters. The seed sample contained
+500 rows; one wallet had 4 complete activity rows and passed current mapping,
+fee and book checks. Shadow failed closed at the source boundary because the
+manifest omitted Gamma `/events`, used by the existing trade normalizer.
+At 06:42:03 UTC the combined charge was 10 requests / 1,978,349 bytes, zero uncertain
+requests. No economic conclusion or continuous admission is supported.
+
+An explicit continuation command now records predecessor/new policy digests and
+the owner-execution reference, keeps every request/byte charge and STOP unchanged,
+and rejects higher numeric ceilings, lower closure reserves or a longer run
+duration. It permits a new bounded diagnostic window and the specifically required
+public metadata endpoint under the owner's existing delegation. Ordinary
+initialization still rejects replacing an active policy. This is an explicit
+audited action, not automatic allowance renewal or reopening a WI campaign.

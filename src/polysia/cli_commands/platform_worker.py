@@ -86,6 +86,8 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     or os.getenv("LIVE_TRADING_ENABLED", "false").lower() != "false"):
                 raise ValueError("research_runtime_safety_flags_invalid")
             discovery = json.loads(Path(value["cohort"]).read_text())["discovery"]
+            if value["admission"].get("mode") != "CONTINUOUS":
+                raise ValueError("continuous_admission_required")
             store = ContinuousShadowRepository(database)
             service = native_shadow_service(
                 database, discovery, authority=authority, code_sha=code_sha,
@@ -116,9 +118,11 @@ def worker_tick(config: Path) -> dict[str, Any]:
             except Exception as error:
                 cause: BaseException | None = error
                 reason = getattr(error, "error_code", type(error).__name__)
+                provider_retry = 0
                 while cause is not None:
                     if isinstance(cause, AcquisitionBlockedError):
                         reason = str(cause)
+                        provider_retry = cause.retry_after_seconds or 0
                         break
                     cause = cause.__cause__
                 result.update(
@@ -128,6 +132,10 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 if reason in {"request_budget_exhausted", "byte_budget_exhausted"}:
                     service.drain("polymarket-native")
                     result["status"] = "DRAINING"
+                elif reason in {"request_window_exhausted", "byte_window_exhausted"}:
+                    result.update(status="WAITING_AUTHORIZATION_WINDOW", retry_at=(
+                        datetime.now(UTC) + timedelta(seconds=policy.window_seconds)
+                    ).isoformat())
                 elif reason.startswith("provider_http_") and reason not in {
                     "provider_http_429", "provider_http_500", "provider_http_502",
                     "provider_http_503", "provider_http_504",
@@ -140,11 +148,15 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     failures = int(prior.get("transient_failures", 0)) + 1
                     result["transient_failures"] = failures
                     result["retry_at"] = (
-                        datetime.now(UTC) + timedelta(seconds=60 * 2**min(failures, 3))
+                        datetime.now(UTC) + timedelta(
+                            seconds=max(provider_retry, 60 * 2**min(failures, 3)),
+                        )
                     ).isoformat()
                     if failures >= 3:
                         authority.stop()
                         result["status"] = "BLOCKED"
+                else:
+                    authority.stop()
         result["authority"] = authority.status()
         atomic_json(Path(value["status"]), result)
         return result
