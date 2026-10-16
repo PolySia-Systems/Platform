@@ -205,6 +205,25 @@ def test_console_operator_tasks_and_protected_downloads(
             context.request.get(origin + "/api/report").json()["report"]["analytical_digest"]
             == digest
         )
+        durations = []
+        for _ in range(25):
+            started = time.perf_counter()
+            assert context.request.get(origin + "/api/report").status == 200
+            durations.append((time.perf_counter() - started) * 1000)
+        p95 = sorted(durations)[23]
+        (output / f"cache-latency-{width}.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "synthetic one observation and one wallet",
+                    "samples": 25,
+                    "p95_ms": p95,
+                    "target_ms": 2000,
+                    "provider_calls": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert p95 < 2000
         denied = browser.new_context(ignore_https_errors=True)
         assert denied.request.get(origin + "/api/report").status == 403
         reader = browser.new_context(

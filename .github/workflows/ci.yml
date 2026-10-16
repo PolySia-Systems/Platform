@@ -257,7 +257,7 @@ jobs:
         if: always()
         with:
           name: console-browser-evidence
-          path: output/playwright/*.png
+          path: output/playwright/*
           if-no-files-found: error
           retention-days: 14
 

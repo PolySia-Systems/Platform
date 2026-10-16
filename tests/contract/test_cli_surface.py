@@ -54,6 +54,7 @@ EXPECTED_COMMANDS = {
         "acquisition-policy",
         "shadow-report",
         "platform-publish",
+        "platform-stop",
         "platform-backup",
         "platform-restore-verify",
         "deployment-automation",

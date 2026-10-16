@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import socket
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -259,7 +260,8 @@ def platform_publish(
             else {"status": "UNAVAILABLE", "reason": "new_epoch_no_retained_cohort"}
         )
         result["diagnostics"] = retained_diagnostics(
-            Path(value["authority"]), result["diagnostic"].get("discovery", {}),
+            Path(value["authority"]),
+            result["diagnostic"].get("discovery", {}),
         )
         atomic_json(Path(value["publication"]), result)
         commands = ConsoleCommandStore(Path(value["commands"]))
@@ -303,3 +305,33 @@ def platform_publish(
                     commands.finish(
                         revision, status="FAILED", result={"reason": type(error).__name__}
                     )
+
+
+def platform_stop(
+    config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
+) -> None:
+    """Protected administrative STOP when Console/Cloudflare is unavailable."""
+    value = json.loads(config.read_text(encoding="utf-8"))
+    policy = load_policy(Path(value["manifest"]))
+    authority = AcquisitionAuthority(Path(value["authority"]), policy)
+    authority.initialize()
+    authority.stop()  # STOP does not need fresh provider access or admission.
+    commands = ConsoleCommandStore(Path(value["commands"]))
+    commands.initialize()
+    try:
+        receipt = commands.submit(
+            subject="protected-administrative-route",
+            action="stop",
+            expected_revision=int(str(commands.status()["revision"])),
+            idempotency_key=str(uuid.uuid4()),
+        )
+        commands.finish(int(str(receipt["revision"])), status="APPLIED")
+    except ValueError:
+        # A racing queue revision cannot undo the durable authority STOP.
+        receipt = {"status": "STOP_APPLIED_RECEIPT_REVISION_RACED"}
+    typer.echo(
+        json.dumps(
+            {"status": "STOPPED", "authority": authority.status(), "receipt": receipt},
+            sort_keys=True,
+        )
+    )

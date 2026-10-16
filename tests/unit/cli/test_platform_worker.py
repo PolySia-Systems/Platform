@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from polysia.cli_commands.platform_worker import worker_tick
+from polysia.cli_commands.platform_worker import platform_stop, worker_tick
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
 from polysia.storage.acquisition_authority import AcquisitionAuthority
 from polysia.storage.console_commands import ConsoleCommandStore
@@ -53,6 +53,11 @@ def test_stop_is_applied_even_with_missing_cohort_and_without_acquisition(
     assert authority.status()["requests_charged"] == 0
     assert commands.status()["receipts"][0]["status"] == "APPLIED"
     assert not (tmp_path / "financial.sqlite3").exists()
+    authority.resume(now=datetime.now(UTC), host=socket.gethostname())
+    platform_stop(config)
+    assert authority.status()["stopped"] is True
+    assert authority.status()["requests_charged"] == 0
+    assert commands.status()["receipts"][0]["status"] == "APPLIED"
 
 
 def test_export_bounds_are_durable_and_do_not_modify_stop(tmp_path: Path) -> None:
