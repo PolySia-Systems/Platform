@@ -30,9 +30,12 @@ def console_fixture(tmp_path: Path) -> Any:
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
 
+    import polysia
     from polysia.monitoring.console import AccessVerifier, ConsoleApplication
     from polysia.storage.console_commands import ConsoleCommandStore
 
+    if os.getenv("POLYSIA_REQUIRE_WHEEL") == "1":
+        assert "site-packages" in str(Path(polysia.__file__).resolve())
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
     now = datetime.now(UTC)
