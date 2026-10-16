@@ -16,10 +16,13 @@ def manifest(image: Path, *, image_id: str, commit: str) -> dict[str, object]:
         raise ValueError("release requires exact image ID")
     with image.open("rb") as stream:
         archive_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    with Path("deploy/platform_bootstrap.py").open("rb") as stream:
+        bootstrap_digest = hashlib.file_digest(stream, "sha256").hexdigest()
     return {
         "schema_version": "platform-release/v1", "commit": commit,
         "image_id": image_id, "archive_sha256": archive_digest,
         "archive_name": image.name,
+        "bootstrap_sha256": bootstrap_digest,
         "python": ">=3.14,<3.15", "financial_schema": 9,
         "defaults": {"TRADING_MODE": "DATA_ONLY", "LIVE_TRADING_ENABLED": False},
         "standards_release": "v0.5.2",

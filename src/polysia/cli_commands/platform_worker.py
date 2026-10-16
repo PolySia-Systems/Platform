@@ -95,6 +95,8 @@ def worker_tick(config: Path) -> dict[str, Any]:
             experiment = store.active_experiment("polymarket-native")
             if experiment is None:
                 experiment = service.start("polymarket-native")
+            if experiment.config.code_sha != code_sha:
+                raise ValueError("active_financial_session_requires_pinned_release")
             for revision, action in commands.pending():
                 if action == "drain":
                     experiment = service.drain("polymarket-native")
