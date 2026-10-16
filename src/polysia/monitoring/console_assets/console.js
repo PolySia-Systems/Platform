@@ -49,7 +49,7 @@ async function load() {
     text("target", measured ? window?.target?.net_result ?? economics.target?.net_pnl : "NO MEASURABLE RESULT");
     text("delta", measured ? window?.target_minus_control ?? economics.control_target_net_delta : "UNKNOWN");
     text("sample", `${economics.total_observations || 0} observations · ${economics.unknown_observations || 0} UNKNOWN`);
-    text("scope", report.scope || "No supported financial-session report yet.");
+    text("scope", (report.scope || "No supported financial-session report yet.") + (publication.dataset_role ? " · Data role: " + publication.dataset_role : ""));
     text("digest", report.analytical_digest ? `Analytical SHA-256: ${report.analytical_digest}` : "No analytical digest yet.");
     const state = window || analytical.financial_state || {}, table = document.getElementById("financial-state"); table.replaceChildren();
     [["opening_cash","Opening cash"],["closing_cash","Closing cash"],["realized_before_fees","Realized before recorded fees"],["unrealized_after_hypothetical_exit_fees","Unrealized / liquidation result"],["recorded_fees","Recorded fees"],["hypothetical_exit_fees","Hypothetical exit fees"],["fill_embedded_slippage","Fill-embedded slippage"],["net_result","Net result"],["operating_costs","Operating costs"]].forEach(([key,label]) => {

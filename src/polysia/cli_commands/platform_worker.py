@@ -53,6 +53,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
             prior = json.loads(Path(value["status"]).read_text())
         result: dict[str, Any] = {
             "status": "STOPPED",
+            "dataset_role": value.get("dataset_role", "new_platform_epoch"),
             "release_commit": code_sha,
             "policy_digest": policy.digest,
             "last_attempt": datetime.now(UTC).isoformat(),
