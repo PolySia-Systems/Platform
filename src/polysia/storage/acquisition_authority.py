@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
@@ -42,7 +42,9 @@ class AcquisitionAuthority:
             ):
                 raise AcquisitionBlockedError("authority_policy_changed")
 
-    def reserve(self, endpoint: str, *, now: datetime, host: str) -> str:
+    def reserve(
+        self, endpoint: str, *, now: datetime, host: str, closure: bool = False,
+    ) -> str:
         if now.tzinfo is None or now.utcoffset() is None:
             raise AcquisitionBlockedError("clock_not_aware")
         if host != self.policy.host or endpoint not in self.policy.endpoints:
@@ -59,10 +61,23 @@ class AcquisitionAuthority:
                 "SELECT COUNT(*), COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0) "
                 "FROM reservations"
             ).fetchone()
-            if count >= self.policy.maximum_requests:
+            reserve_requests = 0 if closure else self.policy.closure_request_reserve
+            reserve_bytes = 0 if closure else self.policy.closure_byte_reserve
+            if count >= self.policy.maximum_requests - reserve_requests:
                 raise AcquisitionBlockedError("request_budget_exhausted")
-            if charged + self.policy.maximum_response_bytes > self.policy.maximum_bytes:
+            if (charged + self.policy.maximum_response_bytes
+                    > self.policy.maximum_bytes - reserve_bytes):
                 raise AcquisitionBlockedError("byte_budget_exhausted")
+            window_start = now - timedelta(seconds=self.policy.window_seconds)
+            window_count, window_bytes = connection.execute(
+                "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0) "
+                "FROM reservations WHERE attempted_at>=?", (window_start.isoformat(),),
+            ).fetchone()
+            if window_count >= self.policy.window_maximum_requests:
+                raise AcquisitionBlockedError("request_window_exhausted")
+            if (window_bytes + self.policy.maximum_response_bytes
+                    > self.policy.window_maximum_bytes):
+                raise AcquisitionBlockedError("byte_window_exhausted")
             connection.execute(
                 "INSERT INTO reservations VALUES(?,?,?,NULL,'IN_FLIGHT',?)",
                 (request_id, endpoint, self.policy.maximum_response_bytes, now.isoformat()),
@@ -85,6 +100,18 @@ class AcquisitionAuthority:
     def stop(self) -> None:
         with sqlite3.connect(self._path) as connection:
             connection.execute("UPDATE authority SET stopped=1 WHERE singleton=1")
+
+    def resume(self, *, now: datetime, host: str) -> None:
+        if (now.tzinfo is None or now.utcoffset() is None or host != self.policy.host
+                or not self.policy.starts_at <= now < self.policy.expires_at):
+            raise AcquisitionBlockedError("authority_not_current")
+        with sqlite3.connect(self._path) as connection:
+            changed = connection.execute(
+                "UPDATE authority SET stopped=0 WHERE singleton=1 AND policy_digest=?",
+                (self.policy.digest,),
+            ).rowcount
+            if changed != 1:
+                raise AcquisitionBlockedError("authority_mismatched")
 
     def status(self) -> dict[str, object]:
         with sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True) as connection:

@@ -66,3 +66,19 @@ class ConsoleCommandStore:
         return {"revision": rows[0][0] if rows else 0,
                 "receipts": [dict(zip(("revision", "action", "status", "created_at"), row,
                                       strict=True)) for row in rows]}
+
+    def pending(self) -> list[tuple[int, str]]:
+        with sqlite3.connect(self._path) as connection:
+            return [(int(row[0]), str(row[1])) for row in connection.execute(
+                "SELECT revision, action FROM commands WHERE status='REQUESTED' "
+                "ORDER BY revision LIMIT 30",
+            )]
+
+    def finish(self, revision: int, *, status: str) -> None:
+        if status not in {"APPLIED", "BLOCKED", "FAILED"}:
+            raise ValueError("invalid terminal receipt")
+        with sqlite3.connect(self._path) as connection:
+            connection.execute(
+                "UPDATE commands SET status=? WHERE revision=? AND status='REQUESTED'",
+                (status, revision),
+            )

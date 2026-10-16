@@ -91,3 +91,17 @@ approving PRs. The existing read-only default and protections were preserved.
 Use the authenticated operator's existing `scripts/dependency_locks.py` manual
 generation/review path; no organization-wide permission change or new token is
 authorized by this fallback.
+
+Native runtime increment: `continuous-shadow-native-research-v1` keeps the old
+v1/v2 meanings and gates unchanged. The native policy/cohort/code are bound in
+persisted config. An offline nonempty integration test persists wallet and mixed
+follower simulations under `NATIVE_RESEARCH`, with no Alpha/Stress membership.
+Continuous admission requires matching nonempty diagnostic/resource evidence;
+isolated diagnostics use a distinct admission mode and root.
+
+Worker ticks and report publication are separate commands. Acquisition stays
+disabled unless explicitly enabled in protected configuration. Durable STOP is
+processed before missing cohort data or retry delay; expiry and finite transient
+retry accounting block the affected operation. Per-window limits and closure
+reserves remain inside lifetime totals. Focused authority/STOP tests: 7 passed;
+native/report integration tests: 2 passed. Full typing: 263 files passed.

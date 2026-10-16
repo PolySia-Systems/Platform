@@ -29,8 +29,9 @@ class _NoRedirect(HTTPRedirectHandler):
 class BoundedPublicTransport:
     """No hidden retries, redirects, credentials or external mutation methods."""
 
-    def __init__(self, authority: AcquisitionAuthority) -> None:
+    def __init__(self, authority: AcquisitionAuthority, *, closure: bool = False) -> None:
         self.authority = authority
+        self._closure = closure
 
     async def get_json(
         self, base_url: str, path: str, params: Mapping[str, str | int | bool], *,
@@ -46,7 +47,7 @@ class BoundedPublicTransport:
         if shutil.disk_usage(".").free < policy.minimum_free_disk_bytes:
             raise AcquisitionBlockedError("disk_reserve_exhausted")
         request_id = self.authority.reserve(
-            endpoint, now=datetime.now(UTC), host=socket.gethostname(),
+            endpoint, now=datetime.now(UTC), host=socket.gethostname(), closure=self._closure,
         )
         query = urlencode({key: str(value).lower() if isinstance(value, bool) else value
                            for key, value in params.items()})

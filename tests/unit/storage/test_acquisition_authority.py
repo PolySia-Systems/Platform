@@ -74,3 +74,38 @@ def test_byte_reserve_blocks_before_partial_request(tmp_path: Path) -> None:
     with pytest.raises(AcquisitionBlockedError, match="byte_budget"):
         authority.reserve(ENDPOINT, now=NOW, host="host")
     assert authority.status()["requests_charged"] == 1
+
+
+def test_closure_and_window_limits_do_not_create_extra_authority(tmp_path: Path) -> None:
+    bounded = replace(policy(), closure_request_reserve=1, closure_byte_reserve=1024,
+                      window_maximum_requests=2)
+    authority = AcquisitionAuthority(tmp_path / "reserve.sqlite3", bounded)
+    authority.initialize()
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    with pytest.raises(AcquisitionBlockedError, match="request_budget"):
+        authority.reserve(ENDPOINT, now=NOW, host="host")
+    with pytest.raises(AcquisitionBlockedError, match="request_window"):
+        authority.reserve(ENDPOINT, now=NOW, host="host", closure=True)
+    # A later accounting window renews only the window, not consumed totals.
+    later = NOW + timedelta(seconds=3601)
+    bounded = replace(bounded, expires_at=NOW + timedelta(hours=2))
+    other = AcquisitionAuthority(tmp_path / "later.sqlite3", bounded)
+    other.initialize()
+    other.reserve(ENDPOINT, now=NOW, host="host")
+    other.reserve(ENDPOINT, now=NOW, host="host")
+    other.reserve(ENDPOINT, now=later, host="host", closure=True)
+    assert other.status()["requests_charged"] == 3
+    with pytest.raises(AcquisitionBlockedError, match="request_budget"):
+        other.reserve(ENDPOINT, now=later, host="host", closure=True)
+
+
+def test_resume_preserves_charges_and_cannot_extend_expiry(tmp_path: Path) -> None:
+    authority = AcquisitionAuthority(tmp_path / "resume.sqlite3", policy())
+    authority.initialize()
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    authority.stop()
+    authority.resume(now=NOW, host="host")
+    assert authority.status()["requests_charged"] == 1
+    with pytest.raises(AcquisitionBlockedError, match="not_current"):
+        authority.resume(now=NOW + timedelta(hours=2), host="host")

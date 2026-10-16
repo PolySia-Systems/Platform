@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,8 @@ from polysia.adapters.polycop.candidate_wallet_source import PolyCopCandidateWal
 from polysia.adapters.polymarket.bounded_market import BoundedMarketAdapter
 from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
 from polysia.adapters.polymarket.native_discovery import discover_native_activity
+from polysia.application.services.shadow_reporting import ShadowReportingService
+from polysia.cli_support.native_research import native_shadow_service
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 
@@ -42,6 +45,7 @@ def discovery_diagnostic(
     output: Annotated[Path, typer.Option("--output")],
     route: Annotated[str, typer.Option("--route")] = "native",
     lookback_seconds: Annotated[int, typer.Option("--lookback-seconds", min=1, max=3600)] = 60,
+    shadow_cycles: Annotated[int, typer.Option("--shadow-cycles", min=0, max=3)] = 0,
 ) -> None:
     """Complete one charged diagnostic and atomically publish its receipt."""
     if route not in {"native", "polycop"}:
@@ -111,6 +115,31 @@ def discovery_diagnostic(
     }
     try:
         result["discovery"] = asyncio.run(run())
+        if route == "native" and shadow_cycles:
+            code_sha = Path("/opt/polysia/BUILD_COMMIT").read_text().strip()
+            discovery = result["discovery"]
+            database = output.parent / "isolated-shadow.sqlite3"
+            if database.exists():
+                raise ValueError("diagnostic financial root already exists")
+            service = native_shadow_service(
+                database, discovery, authority=authority, code_sha=code_sha,
+                admission={"contract": "native-research-admission/v1",
+                           "code_sha": code_sha, "cohort_digest": discovery["digest"],
+                           "mode": "ISOLATED_DIAGNOSTIC"},
+            )
+            experiment = service.start("polymarket-native")
+            simulations = 0
+            for _ in range(shadow_cycles):
+                time.sleep(policy.cadence_seconds)
+                outcome = asyncio.run(service.poll("polymarket-native"))
+                simulations += outcome.simulated_count
+            service.drain("polymarket-native")
+            result["shadow"] = {
+                "experiment_id": experiment.experiment_id,
+                "persisted_simulations": simulations,
+                "report": ShadowReportingService(database).report(experiment.experiment_id),
+                "admission": "NONEMPTY" if simulations else "INSUFFICIENT_NONEMPTY_EVIDENCE",
+            }
         result["status"] = "COMPLETE"
     except Exception as error:
         # Boundary catch intentionally preserves a terminal receipt and charged

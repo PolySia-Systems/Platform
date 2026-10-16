@@ -32,6 +32,7 @@ EXPECTED_COMMANDS = {
     "research": {
         "backtest",
         "discovery-diagnostic",
+        "platform-tick",
         "evaluate",
         "evaluate-extended",
         "fill-audit",
@@ -51,6 +52,7 @@ EXPECTED_COMMANDS = {
     "ops": {
         "acceptance-audit",
         "shadow-report",
+        "platform-publish",
         "deployment-automation",
         "deployment-readiness",
         "final-handoff",

@@ -11,6 +11,7 @@ from polysia.cli_commands import (
     live,
     operations,
     platform_discovery,
+    platform_worker,
     research,
     shadow_reporting,
     wallet_intelligence,
@@ -78,6 +79,8 @@ research_app.command("fill-audit")(research.fill_simulation_audit)
 research_app.command("shadow-replay")(research.shadow_historical_replay)
 research_app.command("source-benchmark")(research.source_benchmark)
 research_app.command("discovery-diagnostic")(platform_discovery.discovery_diagnostic)
+research_app.command("platform-tick")(platform_worker.platform_tick)
+ops_app.command("platform-publish")(platform_worker.platform_publish)
 research_app.command("prospective-replay")(research.prospective_replay)
 research_app.command("prospective-reanalyze")(research.prospective_reanalyze)
 research_app.command("prospective-collect")(research.prospective_collect)

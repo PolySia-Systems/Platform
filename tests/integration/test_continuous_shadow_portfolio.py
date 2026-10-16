@@ -380,6 +380,69 @@ async def test_shared_report_snapshots_nonempty_accounting_deterministically(
 
 
 @pytest.mark.asyncio
+async def test_native_research_uses_same_engine_without_alpha_membership(tmp_path: Path) -> None:
+    database = tmp_path / "source.sqlite3"
+    _seed_stage3(database)
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    candidate = replace(candidates[0], pools=("NATIVE_RESEARCH",),
+                        alpha_rank=None, stress_rank=None)
+    frozen = ContinuousSelectionSnapshot.create(
+        source_id="polymarket-native", selection_run_id="native-run",
+        source_snapshot_id="d" * 64, feature_set_version="complete-native-activity/v1",
+        policy_id="native-recent-activity", policy_version="v1",
+        ranking_version="activity-recency-identity/v1", published_at=NOW,
+        candidates=(candidate,),
+    )
+
+    class FrozenPort:
+        def current_snapshot(self, source_id: str) -> ContinuousSelectionSnapshot:
+            assert source_id == frozen.source_id
+            return frozen
+
+    admission = {"contract": "native-research-admission/v1", "code_sha": "a" * 40,
+                 "cohort_digest": "d" * 64, "mode": "ISOLATED_DIAGNOSTIC"}
+    config = ContinuousShadowConfig(
+        code_sha="a" * 40, runtime_version="continuous-shadow-native-research-v1",
+        selection_policy="native-recent-activity-v1", wallet_count=1,
+        selection_observed_at=NOW, selection_preflight_digest="d" * 64,
+        capacity_evidence=admission,
+    )
+    shadow = _shadow_database(database)
+    clock, scenario = _Clock(NOW), _Scenario()
+    service = ContinuousShadowService(
+        ContinuousShadowRepository(shadow), FrozenPort(), ContinuousShadowLeaseRepository(shadow),
+        lambda leaders: _Source(dict(leaders), scenario), _MarketPort(clock),
+        config=config, clock=clock, automatic_rollover=False,
+    )
+    experiment = service.start("polymarket-native")
+    scenario.events[candidate.wallet_id] = [_EventSpec(
+        "native-buy", LeaderTradeAction.BUY, NOW + timedelta(seconds=100), Decimal("0.40"),
+    )]
+    clock.value = NOW + timedelta(minutes=2)
+    outcome = await service.poll("polymarket-native")
+    assert outcome.simulated_count == 2  # Wallet and mixed follower; no Alpha/Stress copies.
+    with sqlite3.connect(shadow) as connection:
+        assert connection.execute(
+            "SELECT DISTINCT pool_class FROM continuous_shadow_evaluations",
+        ).fetchall() == [("NATIVE_RESEARCH",)]
+    assert ContinuousShadowRepository(shadow).opportunity_report(
+        experiment.experiment_id,
+    )["copyability"]["policy_id"] == "native-recent-activity"
+
+    blocked = replace(config, capacity_evidence={**admission, "mode": "CONTINUOUS",
+                                                "persisted_simulations": 0,
+                                                "resource_admitted": True})
+    refused = ContinuousShadowService(
+        ContinuousShadowRepository(tmp_path / "refused.sqlite3"), FrozenPort(),
+        ContinuousShadowLeaseRepository(tmp_path / "refused.sqlite3"),
+        lambda leaders: _Source(dict(leaders), scenario), _MarketPort(clock),
+        config=blocked, clock=clock,
+    )
+    with pytest.raises(ContinuousShadowError, match="nonempty"):
+        refused.start("polymarket-native")
+
+
+@pytest.mark.asyncio
 async def test_bounded_shadow_freezes_top_alpha_from_larger_stage3_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

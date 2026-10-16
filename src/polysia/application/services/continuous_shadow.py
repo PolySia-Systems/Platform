@@ -426,6 +426,14 @@ class ContinuousShadowService:
 
     def _current_selection(self, source_id: str) -> ContinuousSelectionSnapshot:
         snapshot = self._candidate_port.current_snapshot(source_id)
+        if self._config.runtime_version == "continuous-shadow-native-research-v1":
+            if (snapshot.policy_id != "native-recent-activity"
+                    or snapshot.policy_version != "v1"
+                    or snapshot.source_snapshot_id != self._config.selection_preflight_digest
+                    or len(snapshot.candidates) != self._config.wallet_count
+                    or any(item.pools != ("NATIVE_RESEARCH",) for item in snapshot.candidates)):
+                raise ContinuousSelectionUnavailableError("native frozen selection mismatch")
+            return snapshot
         count = self._config.wallet_count
         if count is None:
             return snapshot
@@ -475,6 +483,25 @@ class ContinuousShadowService:
         )
 
     def _require_new_period_capacity(self) -> None:
+        if self._config.runtime_version == "continuous-shadow-native-research-v1":
+            observed = self._config.selection_observed_at
+            if (observed is None or observed > self._now()
+                    or self._now() - observed > timedelta(hours=4)):
+                raise ContinuousShadowError("native research eligibility evidence is stale")
+            evidence = self._config.capacity_evidence or {}
+            if (evidence.get("contract") != "native-research-admission/v1"
+                    or evidence.get("code_sha") != self._config.code_sha
+                    or evidence.get("cohort_digest") != self._config.selection_preflight_digest
+                    or evidence.get("mode") not in {"ISOLATED_DIAGNOSTIC", "CONTINUOUS"}):
+                raise ContinuousShadowError("native research requires matching admission evidence")
+            simulations = evidence.get("persisted_simulations")
+            if evidence["mode"] == "CONTINUOUS" and (
+                not isinstance(simulations, int) or isinstance(simulations, bool)
+                or simulations < 1
+                or evidence.get("resource_admitted") is not True
+            ):
+                raise ContinuousShadowError("native continuous admission lacks nonempty evidence")
+            return
         if self._config.runtime_version != "continuous-shadow-runtime-v2":
             return
         assert self._config.wallet_count is not None
@@ -1877,6 +1904,8 @@ def _merge_candidates(
 
 
 def _pool_class(pools: tuple[str, ...]) -> str:
+    if pools == ("NATIVE_RESEARCH",):
+        return "NATIVE_RESEARCH"
     alpha = "SHADOW_ALPHA" in pools
     stress = "SHADOW_STRESS" in pools
     if alpha and stress:
