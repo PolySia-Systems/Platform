@@ -32,7 +32,7 @@ Original WI and Standards repositories remain unchanged.
 - Supplied hostname resolves through the proxy; public HTTPS verification failed
   during TLS negotiation. Secure Console access is not yet established.
 
-## Work map
+## Initial work map (historical)
 
 | Milestone | Acceptance | State / dependency |
 |---|---|---|
@@ -42,7 +42,7 @@ Original WI and Standards repositories remain unchanged.
 | D: operation | Secure Console, bounded jobs, supervision, cleanup and required checks | OPEN |
 | E: commissioning | Exact artifact, protected access, isolated restore, durable observation | OPEN; A-D and verified permissions |
 
-## Acceptance ledger
+## Initial acceptance ledger (historical)
 
 Engineering, reporting, operational usefulness, reliability, Human View,
 independent secure deployment/recovery, and repository cleanup are OPEN.
@@ -51,7 +51,10 @@ from automated checks. No acquisition has been started by this execution.
 
 ## Incremental evidence
 
-Draft delivery PR: [#190](https://github.com/PolySia-Systems/Platform/pull/190).
+Entries in this section describe successive candidates and findings; the final
+release and acceptance section below supersedes their pending states.
+
+Delivery PR: [#190](https://github.com/PolySia-Systems/Platform/pull/190).
 Foundation commit: `5646048`. Focused classifier tests: 16 passed. Standards
 full validation, focused Ruff, secret scan and diff checks passed. Hosted quality,
 container and supply-chain jobs passed for that commit; Windows was still running
@@ -262,7 +265,7 @@ existing v1/v2 gates are preserved. Reports include code digests, UTC bounds/cut
 policy/cohort/config identities and separate cumulative/interval scope. Core money,
 risk, ledger and reconciliation semantics were not replaced.
 
-The tracked-repository consumer review covered 727 paths and 266 Python modules,
+The final tracked-repository consumer review covered 729 paths and 266 Python modules,
 CLI/entry points, dynamic import sites, installed assets, schedules, dependency
 locks, migrations, historical readers and documentation links. Three modules have
 only test/entry/manual static consumers: the CLI is the declared entry point;
@@ -337,3 +340,13 @@ serving cached or archived financial values; tampering fails closed while the
 control page remains available. Recovery tests reject traversal, symlinks,
 duplicate entries and oversized members. Provider-budget windows reject non-UTC
 clocks before reservations, preserving consistent UTC window accounting.
+
+PR #190 merged as `3c203a1a65e75831215a2550c3401c35d6466de6` after
+[CI 38879693167](https://github.com/PolySia-Systems/Platform/actions/runs/38879693167)
+passed all selected release gates, including Windows. Linux reported 1,422 passed
+and four explicit opt-in skips. Review of the main-build browser screenshots
+found overly fragmented mobile table labels. A final presentation fix gives
+tables a readable minimum width inside named, keyboard-focusable scroll regions.
+Desktop/mobile browser tests exercise horizontal keyboard scrolling without
+weakening CSP; both passed locally. The release must include that fix and its own
+exact hosted artifact evidence. No new provider acquisition is involved.

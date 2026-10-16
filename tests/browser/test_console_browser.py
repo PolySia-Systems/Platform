@@ -197,6 +197,17 @@ def test_console_operator_tasks_and_protected_downloads(
         expect(page.locator("#control")).to_have_text("-1")
         expect(page.locator("#authority-window")).to_contain_text("11 / 40 requests")
         expect(page.locator("#reasons")).to_contain_text("499 excluded: before activity window")
+        if width < 480:
+            financial_region = page.get_by_role("region", name="Control and Target financial state")
+            financial_region.focus()
+            page.keyboard.press("ArrowRight")
+            page.wait_for_function(
+                "() => document.querySelector('#report-section .scroll').scrollLeft > 0"
+            )
+            page.keyboard.press("ArrowLeft")
+            page.wait_for_function(
+                "() => document.querySelector('#report-section .scroll').scrollLeft === 0"
+            )
         page.get_by_label("Wallet identity hash").fill("123")
         page.get_by_role("button", name="fixture-wallet-123").click()
         expect(page.locator("#wallet-detail")).to_contain_text("book_stale")
