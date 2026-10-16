@@ -46,3 +46,36 @@ are maintained tests, with screenshots retained separately. Rollback can remove
 the browser job and development dependency together; runtime behavior is unchanged.
 The WSGI choice is a scoped deviation from the larger default web stack: this
 cached interface needs neither ASGI tasks nor a second background supervisor.
+
+## Dedicated host edge connector
+
+The protected deployment uses official `cloudflare/cloudflared` 2026.10.1
+Linux amd64, 40,227,032 bytes, SHA-256
+`3bfc539f45d2620c71debb7a86be0efa737ed5ccbad9eb85c787116900e5c586`.
+Both hosts independently fetched and verified this exact asset. It is a separately
+pinned host connector, not a Python dependency or rebuilt application image.
+Upstream is maintained by Cloudflare and licensed Apache-2.0; retain upstream
+license/notice obligations with distribution. Sources: [official release](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.1)
+and [license](https://github.com/cloudflare/cloudflared/blob/master/LICENSE).
+
+A tunnel exposes the loopback server through owner-only Access without opening a
+public origin port. The official binary avoids changing host packages or unrelated
+connectors. Alternatives are the official container, with another image/runtime
+boundary, or a source build, with extra build/provenance maintenance. A direct
+public origin would change the approved network boundary. No Workers/Pages
+service or larger application stack is introduced.
+
+Install only at `/usr/local/libexec/polysia-platform/cloudflared-2026.10.1`.
+The dedicated unit disables automatic updates, runs as DynamicUser with no
+capabilities and strict filesystem protections, and caps memory at 192 MiB,
+CPU at 25% and tasks at 64. LoadCredential supplies the root-only tunnel token to
+`--token-file`; a management API credential is unnecessary for runtime. Edge
+policy and application RS256 validation remain independent requirements.
+Upgrades need a reviewed pin, verified hash, resource/security assessment and
+scoped startup/denial checks; retain the original pin for rollback.
+
+Rollback disables/stops only `polysia-platform-tunnel.service` and stops its web
+unit, retaining Access protection, private reports and recovery inputs. Reverting
+the connector never changes financial schemas, renews authority or activates
+acquisition. Secondary copies stay dormant until primary fencing and authority
+reconciliation; do not activate both as automatic failover.

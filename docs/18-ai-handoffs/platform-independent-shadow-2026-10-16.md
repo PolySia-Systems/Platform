@@ -1,7 +1,7 @@
 # Independent Platform execution
 
-Date: 2026-10-16. Status: ENGINEERING_COMPLETE; private backend commissioned;
-public access BLOCKED. PRODUCT_ACCEPTED is not claimed. This is the single
+Date: 2026-10-16. Status: ENGINEERING_COMPLETE; protected public Console and
+independent recovery commissioned. PRODUCT_ACCEPTED is not claimed. This is the single
 execution record; the delivery PR owns ordinary resume. Runtime rows below are
 dated observations, not live status.
 
@@ -21,8 +21,8 @@ passed. Subsequent Markdown-only receipts do not change this runtime artifact.
 | Reporting correctness | PASS | Nonempty deterministic Decimal/UTC fixtures, supported interval and gap tests; installed retained report and cold restore reproduce the same analytical digest |
 | Operational usefulness | OPEN | Actual retained diagnostic has zero opportunities; source freshness is insufficient under the frozen profile; no continuous admission |
 | Reliability and diagnosis | PASS within tested scope | Durable STOP/charges survive promotion and restore; bounded failure, duplicate, expiry and recovery-fence tests; installed schedules and terminal publication verified |
-| Human View | OPEN | Automated desktop/mobile/keyboard journeys pass; actual owner comprehension has no receipt |
-| Secure independent deployment and recovery | BLOCKED overall | Private backend and isolated recovery PASS; owner-only Access/Tunnel and public denial checks cannot be completed with the available API permission |
+| Human View | OPEN | Automated desktop/mobile/keyboard journeys pass; actual owner login/render confirmed; comprehension has no receipt |
+| Secure independent deployment and recovery | PASS within tested scope | Owner-only Access/Tunnel, verified TLS, public and origin denial, actual owner login, cold financial recovery and isolated frontend startup verified |
 | Clean maintainable repository | PASS | Final 729-path/266-module consumer review, documented compatibility retentions, resolved material code findings and current documentation |
 | Economic evidence | OPEN / UNKNOWN | Zero observed simulated opportunities is no measurable Control/Target result; no profitability or Live conclusion |
 
@@ -507,7 +507,7 @@ backup/restore receipts. Protected receipt locations are
 `/var/lib/polysia-platform/publication/restore-status.json` and, on Nuremberg,
 `/srv/polysia-platform-backups/status/restore-status.json`.
 
-### Durable supervision and remaining external conditions
+### Durable supervision and original access checkpoint (superseded)
 
 Final `is-enabled`/`is-active` checks returned enabled/active for every timer:
 
@@ -526,36 +526,139 @@ uses only host paths and retained artifacts. No laptop scheduler/tunnel/key is
 required. WI and Standards reference checkouts remained clean at their starting
 identities; no WI campaign, data or unrelated service was changed.
 
-The web unit is deliberately inactive; a direct listener check found no port 8765.
-Public authentication/direct-origin acceptance cannot be claimed from a stopped
-web unit or synthetic JWT tests. The original supplied DNS record is unchanged.
-Cloudflare API Access creation returned 403. The browser tool independently requires
-action-time confirmation for an action that "Creates or materially expands
-security-sensitive access"; pre-approval does not satisfy that tool rule. The owner
-requested no questions, so that affected action remains blocked without a bypass.
+At the 13:24 UTC checkpoint the web unit was inactive with no port 8765 listener.
+Access creation had returned 403. Browser security changes required per-action
+confirmation, so no unprotected route was published. This access blocker is
+superseded by the scoped-token commissioning below. The original supplied DNS
+record remains unchanged.
 
-Remaining actions are specific external conditions, not an engineering backlog:
+### Protected public commissioning, 14:01-14:07 UTC
 
-- Cloudflare account operator: provide the scoped Access/Tunnel write capability,
-  then apply the already recorded single-owner application/role map and dedicated
-  Tunnel to loopback. Use the unused covered `console.movafegh.com` fallback if
-  retaining free TLS; the requested deeper hostname lacks current free coverage.
-  Verify unauthenticated/direct-origin denial before publishing any route. No paid
-  upgrade, guessed identity or anonymous origin is authorized.
-- Credential owner: rotate the existing shared Cloudflare credential exposed by
-  the earlier parser exception, preserving its other consumers. No secret value
-  was committed or included in these receipts. This operational security dependency
-  remains open; source secret-scan success is not credential rotation.
-- Research/source owner: operational usefulness needs materially new source
-  evidence and nonempty, fully valued frozen-policy activity plus matching resource
-  admission. Do not rerun the unchanged empty diagnostic, widen freshness merely
-  for a pass, reset counters, renew expired authority implicitly or restart WI.
-- Owner: actual comprehension remains OPEN until the protected Console can be
-  used and an actual receipt exists. Automated journeys cannot supply that verdict.
+The owner created a scoped management token and explicitly authorized its use.
+The verified account identity became the sole Access allow rule and Console
+operator identity; no email/domain wildcard, Everyone or service-token bypass
+was introduced. The requested deep hostname still lacks free certificate coverage.
+The previously authorized unused, covered fallback
+[PolySia Console](https://console.movafegh.com) now serves the application with
+normal certificate verification and no paid upgrade.
 
-Rollback selects the retained compatible release with durable STOP, preserves all
-post-cutover evidence and reconciles the newest authority before any resume.
-Schema downgrades, spent-allowance restoration and automatic failover remain
-prohibited. All independently authorized engineering, release, private supervision
-and recovery work is complete; secure public commissioning and product acceptance
-remain explicitly BLOCKED/OPEN as listed above.
+| New dedicated asset | Identity / scope |
+|---|---|
+| Access application `PolySia Console` | `c65bae4d-e931-43e4-a642-26c4238b20e6`; `console.movafegh.com` |
+| Access policy `Verified owner only` | `0c3a3bc0-03ea-4888-826e-1f1db54d63a6`; one verified owner email only |
+| Tunnel `polysia-platform-console` | `c0ba9e0c-f079-4a70-8e1a-538ffd33be57` |
+| Proxied CNAME | `console.movafegh.com` to that tunnel's `cfargotunnel.com` hostname; record `4ed563bfeced0463d260f5b9038d719c` |
+
+Access uses the verified team issuer and exact application audience; its session
+is four hours with HttpOnly/Strict cookies. Application validation independently
+requires the signed RS256 assertion and explicit owner role. Tunnel ingress is
+only this hostname to `http://127.0.0.1:8765`, with a terminal 404 rule. DNS was
+published after the owner policy, private-origin denials and connector health
+were verified. The original proxied A record to `37.27.8.79` and unrelated
+`FriendsHetzner` tunnel were preserved.
+
+Helsinki runs the unchanged v0.2.0 image in `polysia-platform-web.service`.
+The static web unit is pulled in by enabled `polysia-platform-tunnel.service`;
+both were active at 14:06 UTC. The application container has 128 MiB RAM and
+0.25 CPU, identity 10102, read-only publication and a separate command queue,
+without a financial-store mount. The connector is the independently verified
+official `cloudflared` 2026.10.1 binary pinned in the
+[dependency decision](../05-security/console-dependencies.md).
+Its unit uses DynamicUser, strict filesystem/kernel protections, no capabilities,
+192 MiB RAM, 25% CPU, 64 tasks and bounded logs. Automatic updates are disabled.
+The root-only runtime token is delivered through systemd LoadCredential and
+`--token-file`; its value is absent from command arguments and environment.
+The separate management API token is a root-only administrative input, not a
+runtime or recovery dependency. No laptop scheduler, connector or secret file
+is needed for serving.
+
+Installed checks passed:
+
+- `systemd-analyze verify` returned success for the connector unit. Host-wide
+  diagnostics also reported removed/ignored `CPUAccounting` settings in existing
+  `xfs_scrub_all.service` and `system-xfs_scrub.slice`; these unrelated host
+  advisories were not changed or treated as connector validation findings.
+- Missing-assertion loopback GETs returned 403 for `/`, `/api/report`,
+  `/api/health`, `/api/commands`, `/download/comparison.csv`, `/console.js` and
+  `/console.css`. Only `127.0.0.1:8765` was listening; an external connection to
+  the origin's port 8765 was unreachable.
+- Public HTTPS requests without cookies and with JSON Accept returned 403 for
+  those seven real routes/assets. Unauthenticated `POST /api/commands` with an
+  empty object also returned 403. Ordinary browser navigation reached the named
+  Access login under normally verified TLS; no certificate exception was used.
+- The owner completed email login personally and supplied actual Console
+  contents. Direct browser inspection independently confirmed the authenticated
+  render, STOPPED, zero observations, NO MEASURABLE RESULT, UNKNOWN difference,
+  11 charged requests and the unchanged analytical digest. The retained page
+  was published at 14:02:09 UTC. No owner control was submitted for this check;
+  login/render is not a comprehension or real-command acceptance receipt.
+- At 14:07:33 UTC the API reported a healthy dedicated tunnel with four
+  connections and exactly the verified owner-only allow policy. All five
+  existing timers remained enabled/active. Read-only authority SQL still showed
+  STOP and 11 COMPLETE reservations totaling 2,371,503 bytes. Acquisition
+  remained false, authority expired and the original proxied A record unchanged.
+
+An immediate first origin probe preceded readiness and was retried after startup;
+all stated HTTP assertions use the ready service. Early probes are not successes.
+
+### Protected frontend recovery inputs
+
+Nuremberg independently downloaded and hash-verified the same pinned connector.
+Its mode-0700 `/etc/polysia-platform-recovery/console` directory retains selected
+web configuration, dedicated tunnel token, public-setup receipts and unit
+templates. Credential files are root-owned mode 0600. It has an independently
+generated CSRF secret. These remain outside the upload identity and encrypted
+financial generations; the management API token was not copied. Configuration,
+credential or unit changes must refresh this protected recovery set through
+the verified administrative route.
+
+At 14:01:24 UTC the same released application started with network none,
+128 MiB, 0.25 CPU, read-only root and no financial-store mount, using recovery
+configuration and independent CSRF. Six missing-identity paths and an anonymous
+command request returned 403; receipt `ISOLATED_CONSOLE_STARTUP_VERIFIED` is
+retained in that directory. One GET probe used a nonexistent asset path; real
+`/console.js` and `/console.css` denials were separately verified on primary and
+public edge. Initial in-container Python probes timed out under the shared quota.
+A host probe joined the same isolated network namespace and passed without
+changing application limits, isolation or assertions. This is frontend startup
+evidence, not a new financial replay or RTO measurement.
+Temporary roots and containers were removed. The secondary connector remains
+inactive, with templates retained but not installed for activation. The earlier
+complete financial recovery and its RPO/RTO remain unchanged-artifact evidence.
+
+For manual failover, fence the primary and reconcile current authority before
+activating a writer. The recovery worker's authority fence still applies.
+Refresh paths and generate independent CSRF; do not promote stale spent
+allowance or activate both connectors/writers as automatic failover.
+
+### Remaining acceptance and credential actions
+
+- Credential owner: rotate the older shared Cloudflare credential exposed by
+  the recorded parser exception while preserving other consumers. Revoke or
+  equivalently rotate the new administrative token supplied in chat after setup;
+  it expires 23 October and serving does not depend on it. No secret value was
+  committed; source secret-scan success is not credential rotation.
+- Research/source owner: usefulness needs materially new source evidence and
+  nonempty, fully valued frozen-policy activity plus matching resource admission.
+  Do not rerun the unchanged empty diagnostic, widen freshness for a pass, reset
+  counters, renew expired authority implicitly or restart WI.
+- Owner: authenticated access is confirmed. Actual comprehension remains OPEN
+  until interpreting results, exclusions and controls has a human receipt.
+  Automated journeys and login cannot supply that verdict.
+
+Rollback stops only dedicated connector/web units, leaving Access denial in place
+and retaining reports, credentials and ciphertext. Backend rollback selects the
+compatible retained release with durable STOP, preserves later evidence and
+reconciles newest authority before resume. Schema downgrades, spent-allowance
+restoration and automatic failover remain prohibited. Authorized engineering,
+release, secure serving, supervision and tested recovery are complete within the
+stated scope. Product usefulness/comprehension and credential rotation remain
+open; no acquisition or Live activation is part of this completion.
+
+This commissioning receipt changes four Markdown files only. Local
+`git diff --check`, `python -m polysia.security.secret_scan` and
+`python scripts/validate_standards.py --mode full` passed. The docs/link/size gate
+is `python scripts/check_changed_docs.py --base origin/main --head HEAD` on the
+committed receipt. The unchanged exact v0.2.0 full release checks above remain
+applicable; no application rebuild or duplicate full runtime matrix is required
+for these editorial receipts. Deployment denial/startup checks are stated above.
