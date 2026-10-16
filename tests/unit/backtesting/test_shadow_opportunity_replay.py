@@ -58,6 +58,19 @@ def test_all_opportunities_enter_both_policies_but_shared_depth_is_not_reused() 
     }
 
 
+def test_additional_financial_state_preserves_the_v1_digest_and_money_identity() -> None:
+    row = _row("financial", book_hash="one", fee_enabled=True)
+    historical = replay_shadow_opportunities((row,), experiment_id="period-1")
+    extended = replay_shadow_opportunities((row,), experiment_id="period-1",
+                                           include_financial_state=True)
+    assert historical["report"] == extended["report"]
+    for state in extended["financial_state"].values():
+        assert state["closing_cash"] is not None
+        if state["accounting_identity_delta"] is not None:
+            assert abs(Decimal(state["accounting_identity_delta"])) < Decimal("0.000001")
+        assert state["slippage_convention"] == "already embedded in fills; do not subtract again"
+
+
 def test_future_book_is_unknown_without_lookahead() -> None:
     report = replay_shadow_opportunities(
         (_row("future", book_hash="future", book_at=NOW + timedelta(seconds=1)),),

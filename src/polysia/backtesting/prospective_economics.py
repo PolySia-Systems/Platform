@@ -67,6 +67,9 @@ class PolicyEconomicMetrics:
     maximum_drawdown: Decimal
     remaining_positions: tuple[dict[str, str], ...]
     valuation_status: str
+    realized_before_fees: Decimal = ZERO
+    known_liquidation_value: Decimal = ZERO
+    hypothetical_liquidation_fees: Decimal = ZERO
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -84,6 +87,33 @@ class PolicyEconomicMetrics:
             "remaining_positions": list(self.remaining_positions),
             "slippage": _text(self.slippage),
             "valuation_status": self.valuation_status,
+        }
+
+    def financial_state(self) -> dict[str, object]:
+        """Additional state for new reports; preserve the historical v1 digest."""
+        complete = self.valuation_status == "MEASURED"
+        unrealized = self.known_liquidation_value - self.exposure if complete else None
+        identity = (None if self.net_pnl is None or unrealized is None else
+                    self.net_pnl - (self.realized_before_fees + unrealized - self.fees))
+        return {
+            "opening_cash": _text(CONTRACT_V1.initial_capital), "opening_positions": [],
+            "capital_flows": "0", "closing_cash": _text(self.cash),
+            "closing_positions": list(self.remaining_positions),
+            "realized_before_fees": _text(self.realized_before_fees),
+            "unrealized_after_hypothetical_exit_fees": _optional_text(unrealized),
+            "known_liquidation_value": _text(self.known_liquidation_value),
+            "recorded_fees": _text(self.fees),
+            "hypothetical_exit_fees": _text(self.hypothetical_liquidation_fees),
+            "fill_embedded_slippage": _text(self.slippage),
+            "slippage_convention": "already embedded in fills; do not subtract again",
+            "gross_convention": (
+                "net plus recorded fees and fill slippage; exit costs remain included"
+            ),
+            "net_result": _optional_text(self.net_pnl),
+            "accounting_identity_delta": _optional_text(identity),
+            "unresolved_positions": sum(row["valuation_status"] == "UNKNOWN"
+                                         for row in self.remaining_positions),
+            "operating_costs": "UNALLOCATED_NOT_INCLUDED",
         }
 
 
@@ -293,6 +323,7 @@ def _finish(
     events: tuple[CanonicalResearchEvent, ...],
 ) -> PolicyEconomicMetrics:
     liquidation = ZERO
+    liquidation_fees = ZERO
     rows: list[dict[str, str]] = []
     unknown = False
     cutoff = max((event.observed_time for event in events), default=None)
@@ -312,6 +343,7 @@ def _finish(
         else:
             value = evidence.notional - evidence.recorded_fee
             liquidation += value
+            liquidation_fees += evidence.recorded_fee
         rows.append(
             {
                 "cost_basis": _text(position.cost_basis),
@@ -340,6 +372,9 @@ def _finish(
         maximum_drawdown=book.max_drawdown,
         remaining_positions=tuple(rows),
         valuation_status="UNKNOWN" if unknown else "MEASURED",
+        realized_before_fees=book.realized,
+        known_liquidation_value=liquidation,
+        hypothetical_liquidation_fees=liquidation_fees,
     )
 
 

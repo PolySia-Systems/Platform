@@ -55,7 +55,7 @@ class BoundedPublicTransport:
         query = urlencode({key: str(value).lower() if isinstance(value, bool) else value
                            for key, value in params.items()})
         request = Request(endpoint + "?" + query, headers={
-            "Accept": "application/json", "User-Agent": "PolySia/0.1 public research",
+            "Accept": "application/json", "User-Agent": "PolySia public research",
         })
         started = time.monotonic_ns()
         try:
@@ -63,6 +63,7 @@ class BoundedPublicTransport:
                 raw = reply.read(policy.maximum_response_bytes + 1)
                 trace_id = reply.headers.get("x-trace-id")
         except HTTPError as error:
+            self._retain_failure(request_id, endpoint, f"provider_http_{error.code}", started)
             # Failure bodies/in-flight costs remain fully reserved. Do not
             # retry geographic/auth/rate-limit failures or print provider URLs.
             retry = error.headers.get("Retry-After", "") if error.headers else ""
@@ -73,6 +74,7 @@ class BoundedPublicTransport:
                 f"provider_http_{error.code}", retry_after_seconds=retry_seconds,
             ) from None
         except (URLError, TimeoutError, OSError):
+            self._retain_failure(request_id, endpoint, "provider_transport_failed", started)
             raise AcquisitionBlockedError("provider_transport_failed") from None
         if len(raw) > policy.maximum_response_bytes:
             raise AcquisitionBlockedError("response_size_outside_reservation")
@@ -109,3 +111,21 @@ class BoundedPublicTransport:
         }, sort_keys=True), encoding="utf-8")
         if os.name != "nt":
             metadata.chmod(0o600)
+
+    def _retain_failure(self, request_id: str, endpoint: str, reason: str, started: int) -> None:
+        root = self.authority.evidence_root
+        try:
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target = root / (request_id + ".failure.json")
+            target.write_text(json.dumps({
+                "endpoint": endpoint, "reason": reason,
+                "observed_at": datetime.now(UTC).isoformat(),
+                "latency_ms": (time.monotonic_ns() - started) // 1_000_000,
+                "response_bytes": "UNKNOWN_FULL_RESERVATION_CHARGED",
+            }, sort_keys=True), encoding="utf-8")
+            if os.name != "nt":
+                target.chmod(0o600)
+        except OSError:
+            # Authority still retains the uncertain reservation even if this
+            # auxiliary diagnostic fails; preserve the original provider failure.
+            return

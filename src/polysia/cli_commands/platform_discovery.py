@@ -20,6 +20,7 @@ from polysia.adapters.polymarket.data_api_v2 import IncompleteWalletWindowError
 from polysia.adapters.polymarket.native_discovery import discover_native_activity
 from polysia.application.services.shadow_reporting import ShadowReportingService
 from polysia.cli_support.native_research import native_shadow_service
+from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 
@@ -49,6 +50,26 @@ def discovery_diagnostic(
     shadow_cycles: Annotated[int, typer.Option("--shadow-cycles", min=0, max=3)] = 0,
 ) -> None:
     """Complete one charged diagnostic and atomically publish its receipt."""
+    with workflow_lock(state.with_suffix(".diagnostic.lock")):
+        if output.exists() or (
+            shadow_cycles and (output.parent / "isolated-shadow.sqlite3").exists()
+        ):
+            raise typer.BadParameter("diagnostic output must be a new isolated root")
+        _execute_diagnostic(manifest, state, output, route, lookback_seconds, shadow_cycles)
+
+
+class NoEligibleEvidence(ValueError):
+    """Source receipt establishes insufficiency; no simulation is invented."""
+
+
+def _execute_diagnostic(
+    manifest: Path,
+    state: Path,
+    output: Path,
+    route: str,
+    lookback_seconds: int,
+    shadow_cycles: int,
+) -> None:
     if route not in {"native", "polycop"}:
         raise typer.BadParameter("route must be native or polycop")
     policy = load_policy(manifest)
@@ -60,7 +81,9 @@ def discovery_diagnostic(
     async def run() -> dict[str, Any]:
         if route == "native":
             discovered = await discover_native_activity(
-                transport, cutoff=cutoff, cohort_limit=policy.cohort_limit,
+                transport,
+                cutoff=cutoff,
+                cohort_limit=policy.cohort_limit,
                 lookback=timedelta(seconds=lookback_seconds),
             )
             market_adapter = BoundedMarketAdapter(transport)
@@ -81,41 +104,79 @@ def discovery_diagnostic(
                         0 <= (datetime.now(UTC) - book.timestamp).total_seconds() <= 30
                     )
                     candidate["execution_eligibility"] = (
-                        "ELIGIBLE_FOR_RESEARCH" if mapped and fee_known and current
-                        and book.asks and book.bids and market.active and not market.closed
+                        "ELIGIBLE_FOR_RESEARCH"
+                        if mapped
+                        and fee_known
+                        and current
+                        and book.asks
+                        and book.bids
+                        and market.active
+                        and not market.closed
                         else "UNKNOWN_MAPPING_FEE_BOOK_OR_MARKET_STATE"
                     )
                     candidate["mapping_verified"] = mapped
                     candidate["fee_known"] = fee_known
                     candidate["book_current"] = current
+                    candidate["exclusions"] = [
+                        reason
+                        for passed, reason in (
+                            (mapped, "market_token_mapping_unverified"),
+                            (fee_known, "fee_evidence_missing"),
+                            (current, "book_stale_or_timestamp_missing"),
+                            (bool(book.asks and book.bids), "executable_depth_missing"),
+                            (market.active and not market.closed, "market_not_active"),
+                        )
+                        if not passed
+                    ]
                 except ValueError:
                     candidate["execution_eligibility"] = "INVALID_MARKET_OR_BOOK_SCHEMA"
             discovered["frozen_at"] = datetime.now(UTC).isoformat()
             # Rebind the publication identity after all execution eligibility evidence.
             import hashlib
+
             discovered.pop("digest", None)
-            discovered["digest"] = hashlib.sha256(json.dumps(
-                discovered, sort_keys=True, separators=(",", ":"),
-            ).encode()).hexdigest()
+            discovered["digest"] = hashlib.sha256(
+                json.dumps(
+                    discovered,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
             return discovered
         dataset = await PolyCopCandidateWalletSource(
-            transport=_PolyCopTransport(transport), consistency_attempts=1,
+            transport=_PolyCopTransport(transport),
+            consistency_attempts=1,
         ).fetch_snapshot()
         return {
-            "source": dataset.source_id, "schema_version": dataset.schema_version,
+            "source": dataset.source_id,
+            "schema_version": dataset.schema_version,
             "dataset_digest": dataset.dataset_digest,
             "source_total_pages": dataset.source_total_pages,
-            "records": len(dataset.records), "cutoff": dataset.fetched_at.isoformat(),
+            "records": len(dataset.records),
+            "cutoff": dataset.fetched_at.isoformat(),
             "policy": "polycop-discovery/v1",
         }
 
     result: dict[str, Any] = {
-        "schema_version": "platform-discovery-diagnostic/v1", "route": route,
-        "policy_digest": policy.digest, "started_at": cutoff.isoformat(),
-        "status": "FAILED", "real_orders": False,
+        "schema_version": "platform-discovery-diagnostic/v1",
+        "route": route,
+        "policy_digest": policy.digest,
+        "started_at": cutoff.isoformat(),
+        "status": "FAILED",
+        "real_orders": False,
     }
+    database: Path | None = None
+    experiment_id: str | None = None
     try:
         result["discovery"] = asyncio.run(run())
+        if route == "native" and not any(
+            row.get("execution_eligibility") == "ELIGIBLE_FOR_RESEARCH"
+            for row in result["discovery"]["candidates"]
+        ):
+            result["status"] = result["discovery"]["source_condition"]
+            if result["status"] == "SAMPLED":
+                result["status"] = "INSUFFICIENT_ELIGIBLE_EVIDENCE"
+            raise NoEligibleEvidence("no_eligible_native_cohort")
         if route == "native" and shadow_cycles:
             code_sha = Path("/opt/polysia/BUILD_COMMIT").read_text().strip()
             discovery = result["discovery"]
@@ -123,12 +184,19 @@ def discovery_diagnostic(
             if database.exists():
                 raise ValueError("diagnostic financial root already exists")
             service = native_shadow_service(
-                database, discovery, authority=authority, code_sha=code_sha,
-                admission={"contract": "native-research-admission/v1",
-                           "code_sha": code_sha, "cohort_digest": discovery["digest"],
-                           "mode": "ISOLATED_DIAGNOSTIC"},
+                database,
+                discovery,
+                authority=authority,
+                code_sha=code_sha,
+                admission={
+                    "contract": "native-research-admission/v1",
+                    "code_sha": code_sha,
+                    "cohort_digest": discovery["digest"],
+                    "mode": "ISOLATED_DIAGNOSTIC",
+                },
             )
             experiment = service.start("polymarket-native")
+            experiment_id = experiment.experiment_id
             simulations = 0
             for _ in range(shadow_cycles):
                 time.sleep(policy.cadence_seconds)
@@ -153,10 +221,21 @@ def discovery_diagnostic(
                 break
             cause = cause.__cause__
         result["error_code"] = (
-            str(error) if isinstance(error, AcquisitionBlockedError | IncompleteWalletWindowError)
+            str(error)
+            if isinstance(error, AcquisitionBlockedError | IncompleteWalletWindowError)
             else getattr(error, "error_code", "diagnostic_failed")
         )
         result["next_action"] = "inspect retained diagnostic; do not repeat unchanged workload"
+        if database is not None and database.exists() and experiment_id is not None:
+            try:
+                result["partial_shadow_report"] = ShadowReportingService(database).report(
+                    experiment_id
+                )
+            except Exception as report_error:
+                result["partial_shadow_report"] = {
+                    "status": "UNAVAILABLE_INTEGRITY_REVIEW_REQUIRED",
+                    "error_type": type(report_error).__name__,
+                }
     result["authority"] = authority.status()
     result["completed_at"] = datetime.now(UTC).isoformat()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -165,9 +244,11 @@ def discovery_diagnostic(
     if os.name != "nt":
         temporary.chmod(0o600)
     temporary.replace(output)
-    typer.echo(json.dumps({
-        key: result[key] for key in ("status", "policy_digest", "authority")
-    }, sort_keys=True))
+    typer.echo(
+        json.dumps(
+            {key: result[key] for key in ("status", "policy_digest", "authority")}, sort_keys=True
+        )
+    )
     if result["status"] != "COMPLETE":
         raise typer.Exit(1)
 
@@ -184,10 +265,21 @@ def continue_acquisition_policy(
     authority = AcquisitionAuthority(state, old)
     before = authority.status()
     if not apply:
-        typer.echo(json.dumps({"status": "PREVIEW", "before": before,
-                               "replacement_digest": new.digest,
-                               "replacement": new.to_dict()}, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "PREVIEW",
+                    "before": before,
+                    "replacement_digest": new.digest,
+                    "replacement": new.to_dict(),
+                },
+                sort_keys=True,
+            )
+        )
         return
     updated = authority.transition_policy(new, authorization_reference=authorization_reference)
-    typer.echo(json.dumps({"status": "APPLIED", "before": before,
-                           "after": updated.status()}, sort_keys=True))
+    typer.echo(
+        json.dumps(
+            {"status": "APPLIED", "before": before, "after": updated.status()}, sort_keys=True
+        )
+    )

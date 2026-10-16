@@ -61,3 +61,6 @@ Polymarket Python SDK/
 # Local backup and source-export products.
 PolySia-pre-migration-*.tar.gz
 PolySia-source-*.tar.gz
+
+# Synthetic browser acceptance evidence.
+/output/playwright/

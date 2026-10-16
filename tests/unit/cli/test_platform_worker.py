@@ -53,3 +53,18 @@ def test_stop_is_applied_even_with_missing_cohort_and_without_acquisition(
     assert authority.status()["requests_charged"] == 0
     assert commands.status()["receipts"][0]["status"] == "APPLIED"
     assert not (tmp_path / "financial.sqlite3").exists()
+
+
+def test_export_bounds_are_durable_and_do_not_modify_stop(tmp_path: Path) -> None:
+    commands = ConsoleCommandStore(tmp_path / "commands.sqlite3")
+    commands.initialize()
+    bounds = {"start": "2026-10-16T00:00:00+00:00", "end": "2026-10-16T01:00:00+00:00"}
+    receipt = commands.submit(subject="owner", action="export", expected_revision=0,
+                              idempotency_key="retained-range-request", parameters=bounds)
+    assert commands.parameters(int(receipt["revision"])) == bounds
+    with pytest.raises(ValueError, match="unsupported_command_parameters"):
+        commands.submit(subject="owner", action="stop", expected_revision=1,
+                        idempotency_key="stop-cannot-carry-range", parameters=bounds)
+    commands.finish(1, status="BLOCKED", result={"reason": "UNSUPPORTED_RANGE"})
+    assert commands.status()["receipts"][0]["result"] == {"reason": "UNSUPPORTED_RANGE"}
+    assert commands.pending() == []

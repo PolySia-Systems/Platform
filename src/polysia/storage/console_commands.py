@@ -6,7 +6,10 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import closing
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 
 class ConsoleCommandStore:
@@ -15,7 +18,7 @@ class ConsoleCommandStore:
 
     def initialize(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self._path) as connection:
+        with closing(sqlite3.connect(self._path)) as connection, connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS commands (
                     revision INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,19 +27,44 @@ class ConsoleCommandStore:
                     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                 );
             """)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(commands)")}
+            for name in ("parameters", "result"):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE commands ADD COLUMN {name} TEXT")
 
     def submit(
-        self, *, subject: str, action: str, expected_revision: int, idempotency_key: str,
+        self,
+        *,
+        subject: str,
+        action: str,
+        expected_revision: int,
+        idempotency_key: str,
+        parameters: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         if action not in {"stop", "drain", "resume", "export"}:
             raise ValueError("unsupported_command")
-        if (type(expected_revision) is not int or expected_revision < 0
-                or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", idempotency_key)):
+        if (
+            type(expected_revision) is not int
+            or expected_revision < 0
+            or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", idempotency_key)
+        ):
             raise ValueError("invalid_command_identity")
-        digest = hashlib.sha256(json.dumps({
-            "actor": subject, "action": action, "expected_revision": expected_revision,
-        }, sort_keys=True).encode()).hexdigest()
-        with sqlite3.connect(self._path, timeout=1) as connection:
+        payload: dict[str, Any] = {
+            "actor": subject,
+            "action": action,
+            "expected_revision": expected_revision,
+        }
+        if parameters is not None and not isinstance(parameters, dict):
+            raise ValueError("command_parameters_object_required")
+        if parameters:
+            if action != "export" or set(parameters) != {"start", "end"}:
+                raise ValueError("unsupported_command_parameters")
+            start, end = (datetime.fromisoformat(parameters[key]) for key in ("start", "end"))
+            if start >= end or any(item.utcoffset() != timedelta(0) for item in (start, end)):
+                raise ValueError("paired_increasing_UTC_bounds_required")
+            payload["parameters"] = parameters
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT revision, digest, status FROM commands WHERE idempotency_key=?",
@@ -52,33 +80,59 @@ class ConsoleCommandStore:
             if revision != expected_revision:
                 raise ValueError("revision_conflict")
             row = connection.execute(
-                "INSERT INTO commands(idempotency_key,actor,action,digest,status) "
-                "VALUES(?,?,?,?,'REQUESTED')", (idempotency_key, subject, action, digest),
+                "INSERT INTO commands(idempotency_key,actor,action,digest,status,parameters) "
+                "VALUES(?,?,?,?,'REQUESTED',?)",
+                (idempotency_key, subject, action, digest, json.dumps(parameters or {})),
             )
             return {"revision": row.lastrowid, "status": "REQUESTED"}
 
     def status(self) -> dict[str, object]:
-        with sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True) as connection:
+        with closing(
+            sqlite3.connect(
+                f"{self._path.resolve().as_uri()}?mode=ro",
+                uri=True,
+            )
+        ) as connection:
             rows = connection.execute(
-                "SELECT revision, action, status, created_at FROM commands "
+                "SELECT revision, action, status, created_at, result FROM commands "
                 "ORDER BY revision DESC LIMIT 30"
             ).fetchall()
-        return {"revision": rows[0][0] if rows else 0,
-                "receipts": [dict(zip(("revision", "action", "status", "created_at"), row,
-                                      strict=True)) for row in rows]}
+        return {
+            "revision": rows[0][0] if rows else 0,
+            "receipts": [
+                dict(
+                    zip(
+                        ("revision", "action", "status", "created_at", "result"),
+                        (*row[:4], json.loads(row[4]) if row[4] else None),
+                        strict=True,
+                    )
+                )
+                for row in rows
+            ],
+        }
 
     def pending(self) -> list[tuple[int, str]]:
-        with sqlite3.connect(self._path) as connection:
-            return [(int(row[0]), str(row[1])) for row in connection.execute(
-                "SELECT revision, action FROM commands WHERE status='REQUESTED' "
-                "ORDER BY revision LIMIT 30",
-            )]
+        with closing(sqlite3.connect(self._path)) as connection, connection:
+            return [
+                (int(row[0]), str(row[1]))
+                for row in connection.execute(
+                    "SELECT revision, action FROM commands WHERE status='REQUESTED' "
+                    "ORDER BY revision LIMIT 30",
+                )
+            ]
 
-    def finish(self, revision: int, *, status: str) -> None:
+    def parameters(self, revision: int) -> dict[str, Any]:
+        with closing(sqlite3.connect(self._path)) as connection:
+            row = connection.execute(
+                "SELECT parameters FROM commands WHERE revision=?", (revision,)
+            ).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+
+    def finish(self, revision: int, *, status: str, result: dict[str, Any] | None = None) -> None:
         if status not in {"APPLIED", "BLOCKED", "FAILED"}:
             raise ValueError("invalid terminal receipt")
-        with sqlite3.connect(self._path) as connection:
+        with closing(sqlite3.connect(self._path)) as connection, connection:
             connection.execute(
-                "UPDATE commands SET status=? WHERE revision=? AND status='REQUESTED'",
-                (status, revision),
+                "UPDATE commands SET status=?,result=? WHERE revision=? AND status='REQUESTED'",
+                (status, json.dumps(result), revision),
             )

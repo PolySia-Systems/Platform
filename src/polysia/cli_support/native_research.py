@@ -22,11 +22,14 @@ from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.application.services.continuous_shadow import ContinuousShadowService
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
+from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
+from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
 from polysia.storage.acquisition_authority import AcquisitionAuthority
 from polysia.storage.continuous_shadow import (
     ContinuousShadowLeaseRepository,
     ContinuousShadowRepository,
 )
+from polysia.storage.latency_telemetry import LatencyTelemetryStore
 
 
 class NativeSnapshotPort:
@@ -85,7 +88,10 @@ def native_shadow_service(
         capacity_evidence=admission, period_duration_seconds=86_400,
         poll_interval_seconds=authority.policy.cadence_seconds, initial_lookback_minutes=1,
         source_max_pages=4, source_max_requests=4,
+        period_max_storage_bytes=67_108_864,
     )
+    telemetry = LatencyTelemetryStore(database.with_name("native-latency.sqlite3"))
+    telemetry.initialize()
     return ContinuousShadowService(
         ContinuousShadowRepository(database), port, ContinuousShadowLeaseRepository(database),
         lambda leaders: PolymarketCopyTradingSource(
@@ -95,4 +101,5 @@ def native_shadow_service(
         BoundedMarketAdapter(transport), config=config, concurrency=1,
         maximum_pages_per_wallet=4, maximum_selection_age=timedelta(hours=4),
         automatic_rollover=False,
+        latency_recorder=LatencyRecorder(telemetry, load_runtime_identity(venue_id="polymarket")),
     )

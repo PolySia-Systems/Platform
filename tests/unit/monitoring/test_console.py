@@ -55,6 +55,21 @@ def test_unauthenticated_downloads_assets_and_origin_are_denied(tmp_path: Path) 
     assert request(app, path="/../../secret")[0] == "404 Not Found"
 
 
+def test_stop_path_survives_missing_report_publication(tmp_path: Path) -> None:
+    app = application(tmp_path)
+    (tmp_path / "publication.json").unlink()
+    status, headers, _ = request(app)
+    assert status == "200 OK"
+    assert request(app, path="/console.js")[0] == "200 OK"
+    assert request(app, path="/api/report")[0] == "503 Service Unavailable"
+    cookie = headers["Set-Cookie"].split(";")[0]
+    body = {"action": "stop", "expected_revision": 0,
+            "idempotency_key": "stop-without-publication", "csrf": cookie.split("=", 1)[1]}
+    assert request(app, path="/api/commands", method="POST", body=body, cookie=cookie)[0] == (
+        "202 Accepted"
+    )
+
+
 def test_csrf_roles_revision_and_idempotency_fail_closed(tmp_path: Path) -> None:
     app = application(tmp_path)
     _, headers, _ = request(app)

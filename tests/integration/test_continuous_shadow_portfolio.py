@@ -443,6 +443,56 @@ async def test_native_research_uses_same_engine_without_alpha_membership(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_calendar_interval_reconstructs_opening_positions_and_rejects_unknown_bounds(
+    tmp_path: Path,
+) -> None:
+    from polysia.application.services.shadow_reporting import (
+        ShadowReportingService,
+        UnsupportedReportingWindow,
+        comparison_csv,
+    )
+
+    database = tmp_path / "source.sqlite3"
+    _seed_stage3(database)
+    _add_alpha_membership_for_first_wallet(database)
+    clock, scenario = _Clock(NOW), _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [_EventSpec(
+        "window-buy", LeaderTradeAction.BUY, NOW + timedelta(seconds=100), Decimal("0.40"),
+    )]
+    clock.value = NOW + timedelta(seconds=120)
+    await service.poll("polycop")
+    scenario.events[candidates[0].wallet_id].append(_EventSpec(
+        "window-sell", LeaderTradeAction.SELL, NOW + timedelta(seconds=220), Decimal("0.40"),
+    ))
+    clock.value = NOW + timedelta(seconds=240)
+    await service.poll("polycop")
+    clock.value = NOW + timedelta(seconds=300)
+    await service.poll("polycop")
+    reporting = ShadowReportingService(_shadow_database(database))
+    first = reporting.report(experiment.experiment_id, start=NOW + timedelta(seconds=121),
+                             end=NOW + timedelta(seconds=241))
+    repeated = reporting.report(experiment.experiment_id, start=NOW + timedelta(seconds=121),
+                                end=NOW + timedelta(seconds=241))
+    window = first["analytical"]["selected_window"]
+    assert window["control"]["opening_positions"]
+    assert window["control"]["closing_positions"] == []
+    assert window["observation_count"] == 1
+    assert first["analytical_digest"] == repeated["analytical_digest"]
+    cumulative = first["analytical"]["report"]["control"]["net_pnl"]
+    assert Decimal(window["control"]["net_result"]) != Decimal(cumulative)
+    assert "opening_cash" in comparison_csv(first)
+    with pytest.raises(UnsupportedReportingWindow, match="outside_retained"):
+        reporting.report(experiment.experiment_id, start=NOW - timedelta(days=1),
+                         end=NOW + timedelta(seconds=241))
+    with pytest.raises(UnsupportedReportingWindow, match="stale"):
+        reporting.report(experiment.experiment_id, start=NOW + timedelta(seconds=200),
+                         end=NOW + timedelta(seconds=241))
+
+
+@pytest.mark.asyncio
 async def test_bounded_shadow_freezes_top_alpha_from_larger_stage3_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2845,3 +2895,116 @@ async def test_verified_restore_allows_processing_after_accounting_block(
     assert recovered.poll_run_id
     results = ContinuousShadowRepository(shadow).results(experiment.experiment_id, limit=10)
     assert results["accounting"]["ledger_balanced"] is True
+
+
+@pytest.mark.asyncio
+async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+    import sys
+
+    from polysia.deployment import platform_recovery as recovery
+    from polysia.deployment.recovery_bundle import sha256_file
+    from polysia.storage.acquisition_authority import AcquisitionAuthority
+    from polysia.storage.console_commands import ConsoleCommandStore
+    from tests.unit.storage.test_acquisition_authority import ENDPOINT, policy
+
+    database, service, clock, scenario = _started_service(tmp_path, name="backup")
+    experiment = service._store.active_experiment("polycop")
+    assert experiment is not None
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    wallet = candidates[0].wallet_id
+    scenario.events[wallet] = [
+        _EventSpec(
+            "recovery-buy",
+            LeaderTradeAction.BUY,
+            NOW + timedelta(seconds=100),
+            Decimal("0.40"),
+        )
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    assert (await service.poll("polycop")).simulated_count > 0
+    authority = AcquisitionAuthority(tmp_path / "authority.sqlite3", policy())
+    authority.initialize()
+    # Unknown in-flight stays charged.
+    authority.reserve(ENDPOINT, now=policy().starts_at, host="host")
+    authority.stop()
+    commands = ConsoleCommandStore(tmp_path / "commands.sqlite3")
+    commands.initialize()
+    manifest = tmp_path / "policy.json"
+    manifest.write_text(json.dumps(policy().to_dict()))
+    image = tmp_path / "polysia-image.tar.gz"
+    image.write_bytes(b"immutable image fixture")
+    release = tmp_path / "trusted-release.json"
+    release.write_text(
+        json.dumps(
+            {
+                "commit": "a" * 40,
+                "archive_sha256": sha256_file(image),
+                "image_id": "sha256:" + "b" * 64,
+                "financial_schema": 9,
+            }
+        )
+    )
+    config = tmp_path / "worker.json"
+    config.write_text(
+        json.dumps(
+            {
+                "database": str(_shadow_database(database)),
+                "source_id": "polycop",
+                "authority": str(tmp_path / "authority.sqlite3"),
+                "commands": str(tmp_path / "commands.sqlite3"),
+                "release_commit": "a" * 40,
+                "manifest": str(manifest),
+                "cohort": str(tmp_path / "cohort.json"),
+                "acquisition_enabled": True,
+            }
+        )
+    )
+    # This fixture copies the encryption stream unchanged; cryptographic roundtrip
+    # is a separate real-age container gate. Here we exercise coordinated recovery.
+    original = subprocess.Popen
+
+    def fake_age(args: list[str], **kwargs: Any) -> Any:
+        return original(
+            [
+                sys.executable,
+                "-c",
+                "import pathlib,sys;pathlib.Path(sys.argv[1]).write_bytes(sys.stdin.buffer.read())",
+                args[-1],
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(recovery.subprocess, "Popen", fake_age)
+    monkeypatch.setattr(recovery.shutil, "which", lambda _: "age-fixture")
+    target = tmp_path / "fixture.tar"
+    result = recovery.create_encrypted_backup(
+        config,
+        image_archive=image,
+        release_manifest=release,
+        recipient="age1fixture",
+        output=target,
+    )
+    assert result["size_bytes"] > 0
+    restored = tmp_path / "isolated"
+    receipt = recovery.extract_and_verify_recovery(
+        target, restored, trusted_release_manifest=release
+    )
+    assert receipt["status"] == "VERIFIED_ISOLATED_RESTORE"
+    assert receipt["analytical_digest"]
+    safe = json.loads((restored / "recovery-runtime.json").read_text())
+    assert safe["acquisition_enabled"] is False
+    assert Path(safe["database"]).parent == restored
+    recovered_authority = AcquisitionAuthority(Path(safe["authority"]), policy())
+    assert recovered_authority.status()["stopped"] is True
+    assert recovered_authority.status()["requests_charged"] == 1
+    assert recovered_authority.status()["bytes_charged"] == 1024
+    assert authority.status() == recovered_authority.status()
+    release.write_text(json.dumps({"commit": "c" * 40}))
+    with pytest.raises(ValueError, match="independently retained"):
+        recovery.extract_and_verify_recovery(
+            target, tmp_path / "untrusted", trusted_release_manifest=release
+        )

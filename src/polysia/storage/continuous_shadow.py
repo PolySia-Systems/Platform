@@ -2451,7 +2451,10 @@ class ContinuousShadowRepository:
             ],
         }
 
-    def opportunity_report(self, experiment_id: str) -> dict[str, object]:
+    def opportunity_report(
+        self, experiment_id: str, *, include_financial_state: bool = False,
+        include_retained_evidence: bool = False,
+    ) -> dict[str, object]:
         """Replay an explicit snapshot on demand; never on the polling hot path."""
 
         connection = self._connect(read_only=True)
@@ -2612,7 +2615,8 @@ class ContinuousShadowRepository:
         if len(code_shas) != 1 or "UNKNOWN" in code_shas:
             reasons.append("code_identity_unverified")
         replay = replay_shadow_opportunities(
-            tuple(evidence), experiment_id=experiment_id, settlements=tuple(settlements)
+            tuple(evidence), experiment_id=experiment_id, settlements=tuple(settlements),
+            include_financial_state=include_financial_state,
         )
         from polysia.backtesting.shadow_matched_control import verify_matched_wallet_control
 
@@ -2666,8 +2670,11 @@ class ContinuousShadowRepository:
             "FINAL" if experiment["lifecycle"] == "FINALIZED" and not reasons
             else "PROVISIONAL"
         )
+        extra: dict[str, object] = {}
+        if include_retained_evidence:
+            extra["retained_evidence"] = {"opportunities": evidence, "settlements": settlements}
         return {
-            **replay,
+            **replay, **extra,
             "matched_control": matched_control,
             "status": status,
             "reasons": reasons,

@@ -57,4 +57,20 @@ async def test_incomplete_native_walk_cannot_publish_candidate_snapshot() -> Non
 async def test_future_activity_is_excluded_before_cohort_freeze() -> None:
     result = await discover_native_activity(Transport(future=True), cutoff=NOW, cohort_limit=1)
     assert result["candidates"] == []
-    assert result["excluded"] == {"invalid_or_out_of_window_trade": 1}
+    assert result["excluded"] == {"after_cutoff": 1}
+
+
+@pytest.mark.asyncio
+async def test_stale_seed_has_explicit_source_condition_and_no_wallet_requests() -> None:
+    from datetime import timedelta
+
+    transport = Transport()
+    result = await discover_native_activity(
+        transport, cutoff=NOW + timedelta(minutes=4), cohort_limit=1,
+        lookback=timedelta(seconds=60),
+    )
+    assert result["source_condition"] == "DEGRADED_SOURCE_FRESHNESS"
+    assert result["seed_newest_age_seconds"] == 241
+    assert result["excluded"] == {"before_activity_window": 1}
+    assert result["candidates"] == []
+    assert len(transport.calls) == 1

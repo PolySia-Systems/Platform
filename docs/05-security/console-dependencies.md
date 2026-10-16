@@ -25,3 +25,24 @@ or weakening of authentication is permitted as a fallback.
 
 Sources: [PyJWT usage](https://pyjwt.readthedocs.io/en/latest/usage.html) and
 [Waitress documentation](https://docs.pylonsproject.org/projects/waitress/en/latest/).
+
+The runtime image also installs Debian trixie `age=1.2.1-1+b5` (BSD-3-Clause)
+for public-recipient authenticated encryption. Its exact dpkg inventory is retained
+and hashed into the release manifest; the real encryption/decryption smoke is a
+container gate. A missing reviewed version fails the build. The recovery private
+key is generated and retained only on Nuremberg, outside the upload identity.
+Using an established tool avoids implementing encryption. Host package changes
+and a separate host encryption daemon are unnecessary. Rollback stops the new
+backup service and retains existing encrypted generations and the protected key.
+See [Debian package](https://packages.debian.org/trixie/age) and
+[upstream](https://github.com/FiloSottile/age).
+
+Playwright 1.64.0 is a development-only browser acceptance dependency with its
+upstream Apache-2.0 notices and pinned transitive dependencies in the development
+lock. CI installs Chromium for an explicit synthetic localhost HTTPS fixture;
+certificate exceptions and test identities never enter the production Console.
+Desktop/mobile, keyboard, protected downloads, durable STOP and reader denial
+are maintained tests, with screenshots retained separately. Rollback can remove
+the browser job and development dependency together; runtime behavior is unchanged.
+The WSGI choice is a scoped deviation from the larger default web stack: this
+cached interface needs neither ASGI tasks nor a second background supervisor.

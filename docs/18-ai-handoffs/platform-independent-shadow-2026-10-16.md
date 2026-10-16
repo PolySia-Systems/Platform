@@ -155,3 +155,47 @@ duration. It permits a new bounded diagnostic window and the specifically requir
 public metadata endpoint under the owner's existing delegation. Ordinary
 initialization still rejects replacing an active policy. This is an explicit
 audited action, not automatic allowance renewal or reopening a WI campaign.
+
+
+## Preserved continuation and source freshness
+
+Continuation 002 used tested merge `7f471bb4b1117fa36ef9346441f48169ed0abd28`
+(source `62ae9ad`, CI 38863512604), archive SHA-256
+`f552b2715af03d40d121ffda136de6ca029875aaa3016a329669472c6fd7390e`.
+It added Gamma `/events` with identical numeric ceilings and carried all charges.
+Effective policy digest `22ac683ec9da57615c214b581588f734ae484b5a8d0fbf83315a26a0f314edcb`.
+At 07:04:47 UTC all 500 sampled seeds were outside the 60-second profile.
+The newest source timestamp was 07:01:06 UTC, age 221.686 seconds at receipt.
+No financial root was started. The combined 11 requests / 2,371,503 bytes
+and zero uncertain requests remain charged. Durable STOP was explicitly set
+and verified without network access. Do not repeat this unchanged diagnostic or
+widen freshness bounds merely to obtain nonempty observations.
+
+Browser read-only verification established the existing Zero Trust team and an
+active super-admin owner identity; only that verified identity may be mapped.
+The edge certificate covers `*.movafegh.com` and the apex, not the requested
+`platform.polysia.movafegh.com`. Covering deeper names requires a paid feature,
+which is outside authority. The unused single-level `console.movafegh.com` is the
+prompt-authorized fallback candidate; the original record remains unchanged.
+Access, origin and fallback publication still require verified deployment receipts.
+A credential-parser exception exposed an existing credential in the tool error
+stream. It is excluded from repository/report content; sanitized management
+boundaries replace raw parser errors. Rotation of that existing shared credential
+must preserve its other consumers and remains an operator security dependency.
+
+Offline interval-report/recovery tests reconstruct a nonempty financial state,
+replay the same analytical digest and retain consumed authority/STOP. Encryption
+is separately verified using real age in the container gate. Synthetic desktop
+and mobile browser acceptance passes locally, including keyboard CSV download,
+JWT-protected evidence, wallet exclusions, reader controls and durable STOP.
+These fixtures do not establish actual source usefulness or owner comprehension.
+
+
+Planned scoped Cloudflare assets, recorded before mutation: one self-hosted
+`PolySia Console` application for unused `console.movafegh.com`, one explicit
+verified-owner email allow policy (no Everyone, bypass, service-token or domain
+wildcard), one dedicated Helsinki tunnel to loopback port 8765, and that single
+new DNS record. Reuse the existing verified team issuer. Retain returned IDs and
+configuration privately. Rollback removes only the new record/application/tunnel
+by their recorded IDs and stops the dedicated connector; it preserves all existing
+records, Access configuration and services. Create protection before any route.

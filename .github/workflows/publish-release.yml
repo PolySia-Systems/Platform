@@ -44,10 +44,10 @@ jobs:
           from pathlib import Path
           run = json.loads(Path('run.json').read_text())
           assert run['conclusion'] == 'success'
-          assert run['event'] == 'push' and run['headBranch'] == 'main'
+          assert run['event'] in ('push', 'workflow_dispatch') and run['headBranch'] == 'main'
           assert run['workflowName'] == 'CI'
           jobs = {job['name']: job['conclusion'] for job in run['jobs']}
-          for name in ('quality', 'container', 'Windows Compatibility', 'supply-chain', 'CI Gate'):
+          for name in ('quality', 'container', 'Windows Compatibility', 'supply-chain', 'browser-acceptance', 'CI Gate'):
               assert jobs.get(name) == 'success', (name, jobs.get(name))
           PY
           gh run download "$CI_RUN_ID" -n polysia-release-image -D release
@@ -64,6 +64,9 @@ jobs:
           manifest = json.loads(Path('release/manifest.json').read_text())
           assert manifest['commit'] == run['headSha']
           assert manifest['archive_name'] == 'polysia-image.tar.gz'
+          assert hashlib.sha256(Path('release/platform_backup.py').read_bytes()).hexdigest() == manifest['backup_job_sha256']
+          assert hashlib.sha256(Path('release/platform_bootstrap.py').read_bytes()).hexdigest() == manifest['bootstrap_sha256']
+          assert hashlib.sha256(Path('release/os-packages.txt').read_bytes()).hexdigest() == manifest['os_packages_sha256']
           with Path('release/polysia-image.tar.gz').open('rb') as stream:
               assert hashlib.file_digest(stream, 'sha256').hexdigest() == manifest['archive_sha256']
           Path('release-notes.md').write_text(

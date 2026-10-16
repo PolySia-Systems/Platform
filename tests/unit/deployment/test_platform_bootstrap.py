@@ -35,3 +35,16 @@ def test_process_mounts_enforce_web_and_publisher_boundaries() -> None:
     assert "Restart=on-failure" in service_text(image, role="web", hostname="host")
     with pytest.raises(ValueError, match="unsafe systemd"):
         service_text(image, role="worker", hostname="bad host")
+
+
+def test_backup_job_isolated_mounts_and_immutable_image() -> None:
+    from deploy.platform_backup import checked_root, isolated
+
+    args = isolated("sha256:" + "a" * 64, "/private:/run/recovery-key:ro", user="0:0")
+    assert args[args.index("--network") + 1] == "none"
+    assert "--read-only" in args
+    assert "/private:/run/recovery-key:ro" in args
+    with pytest.raises(ValueError, match="immutable"):
+        isolated("polysia:latest")
+    with pytest.raises(ValueError, match="dedicated allocation"):
+        checked_root("/var/lib/../", "/srv/polysia-platform-backups")

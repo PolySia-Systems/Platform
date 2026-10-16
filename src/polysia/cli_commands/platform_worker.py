@@ -12,10 +12,14 @@ from typing import Annotated, Any
 
 import typer
 
-from polysia.application.services.shadow_reporting import ShadowReportingService
+from polysia.application.services.shadow_reporting import (
+    ShadowReportingService,
+    UnsupportedReportingWindow,
+)
 from polysia.cli_commands.platform_discovery import load_policy
 from polysia.cli_support.native_research import native_shadow_service
 from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
+from polysia.monitoring.platform_diagnostics import retained_diagnostics
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
@@ -46,8 +50,10 @@ def worker_tick(config: Path) -> dict[str, Any]:
         if Path(value["status"]).exists():
             prior = json.loads(Path(value["status"]).read_text())
         result: dict[str, Any] = {
-            "status": "STOPPED", "release_commit": code_sha,
-            "policy_digest": policy.digest, "last_attempt": datetime.now(UTC).isoformat(),
+            "status": "STOPPED",
+            "release_commit": code_sha,
+            "policy_digest": policy.digest,
+            "last_attempt": datetime.now(UTC).isoformat(),
             "real_orders": False,
             "last_success": prior.get("last_success"),
         }
@@ -74,23 +80,35 @@ def worker_tick(config: Path) -> dict[str, Any]:
         elif value.get("acquisition_enabled") is not True:
             result["reason"] = "acquisition_not_enabled"
         elif not policy.starts_at <= datetime.now(UTC) < policy.expires_at:
-            result.update(status="TERMINAL", reason="authority_expired",
-                          next_action="inspect final retained evidence; acquisition is disabled")
-        elif (prior.get("retry_at")
-              and datetime.fromisoformat(prior["retry_at"]) > datetime.now(UTC)):
-            result.update(status="WAITING_RETRY", retry_at=prior["retry_at"],
-                          transient_failures=prior.get("transient_failures", 0),
-                          reason=prior.get("reason"))
+            result.update(
+                status="TERMINAL",
+                reason="authority_expired",
+                next_action="inspect final retained evidence; acquisition is disabled",
+            )
+        elif prior.get("retry_at") and datetime.fromisoformat(prior["retry_at"]) > datetime.now(
+            UTC
+        ):
+            result.update(
+                status="WAITING_RETRY",
+                retry_at=prior["retry_at"],
+                transient_failures=prior.get("transient_failures", 0),
+                reason=prior.get("reason"),
+            )
         else:
-            if (os.getenv("TRADING_MODE", "DATA_ONLY") != "DATA_ONLY"
-                    or os.getenv("LIVE_TRADING_ENABLED", "false").lower() != "false"):
+            if (
+                os.getenv("TRADING_MODE", "DATA_ONLY") != "DATA_ONLY"
+                or os.getenv("LIVE_TRADING_ENABLED", "false").lower() != "false"
+            ):
                 raise ValueError("research_runtime_safety_flags_invalid")
             discovery = json.loads(Path(value["cohort"]).read_text())["discovery"]
             if value["admission"].get("mode") != "CONTINUOUS":
                 raise ValueError("continuous_admission_required")
             store = ContinuousShadowRepository(database)
             service = native_shadow_service(
-                database, discovery, authority=authority, code_sha=code_sha,
+                database,
+                discovery,
+                authority=authority,
+                code_sha=code_sha,
                 admission=value["admission"],
             )
             store.initialize()
@@ -105,16 +123,25 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     commands.finish(revision, status="APPLIED")
             if experiment.lifecycle.value == "DRAINING":
                 service = native_shadow_service(
-                    database, discovery, authority=authority, code_sha=code_sha,
-                    admission=value["admission"], closure=True,
+                    database,
+                    discovery,
+                    authority=authority,
+                    code_sha=code_sha,
+                    admission=value["admission"],
+                    closure=True,
                 )
             try:
                 outcome = asyncio.run(service.poll("polymarket-native"))
-                result.update(status="OBSERVING", experiment_id=outcome.experiment.experiment_id,
-                              last_success=datetime.now(UTC).isoformat(),
-                              health=store.health("polymarket-native", now=datetime.now(UTC),
-                                                  poll_interval_seconds=policy.cadence_seconds
-                                                  ).to_dict())
+                result.update(
+                    status="OBSERVING",
+                    experiment_id=outcome.experiment.experiment_id,
+                    last_success=datetime.now(UTC).isoformat(),
+                    health=store.health(
+                        "polymarket-native",
+                        now=datetime.now(UTC),
+                        poll_interval_seconds=policy.cadence_seconds,
+                    ).to_dict(),
+                )
             except Exception as error:
                 cause: BaseException | None = error
                 reason = getattr(error, "error_code", type(error).__name__)
@@ -126,30 +153,43 @@ def worker_tick(config: Path) -> dict[str, Any]:
                         break
                     cause = cause.__cause__
                 result.update(
-                    status="FAILED", reason=reason,
+                    status="FAILED",
+                    reason=reason,
                     next_action="inspect retained failure; do not expand limits",
                 )
                 if reason in {"request_budget_exhausted", "byte_budget_exhausted"}:
                     service.drain("polymarket-native")
                     result["status"] = "DRAINING"
                 elif reason in {"request_window_exhausted", "byte_window_exhausted"}:
-                    result.update(status="WAITING_AUTHORIZATION_WINDOW", retry_at=(
-                        datetime.now(UTC) + timedelta(seconds=policy.window_seconds)
-                    ).isoformat())
+                    result.update(
+                        status="WAITING_AUTHORIZATION_WINDOW",
+                        retry_at=(
+                            datetime.now(UTC) + timedelta(seconds=policy.window_seconds)
+                        ).isoformat(),
+                    )
                 elif reason.startswith("provider_http_") and reason not in {
-                    "provider_http_429", "provider_http_500", "provider_http_502",
-                    "provider_http_503", "provider_http_504",
+                    "provider_http_429",
+                    "provider_http_500",
+                    "provider_http_502",
+                    "provider_http_503",
+                    "provider_http_504",
                 }:
                     authority.stop()
                     result["status"] = "BLOCKED"
-                elif reason in {"provider_transport_failed", "provider_http_429",
-                                "provider_http_500", "provider_http_502",
-                                "provider_http_503", "provider_http_504"}:
+                elif reason in {
+                    "provider_transport_failed",
+                    "provider_http_429",
+                    "provider_http_500",
+                    "provider_http_502",
+                    "provider_http_503",
+                    "provider_http_504",
+                }:
                     failures = int(prior.get("transient_failures", 0)) + 1
                     result["transient_failures"] = failures
                     result["retry_at"] = (
-                        datetime.now(UTC) + timedelta(
-                            seconds=max(provider_retry, 60 * 2**min(failures, 3)),
+                        datetime.now(UTC)
+                        + timedelta(
+                            seconds=max(provider_retry, 60 * 2 ** min(failures, 3)),
                         )
                     ).isoformat()
                     if failures >= 3:
@@ -171,9 +211,12 @@ def platform_tick(
         status_path = Path(value["status"])
         result = worker_tick(config)
     except Exception as error:
-        result = {"status": "FAILED", "reason": type(error).__name__,
-                  "last_attempt": datetime.now(UTC).isoformat(),
-                  "next_action": "inspect configuration or state; acquisition is blocked"}
+        result = {
+            "status": "FAILED",
+            "reason": type(error).__name__,
+            "last_attempt": datetime.now(UTC).isoformat(),
+            "next_action": "inspect configuration or state; acquisition is blocked",
+        }
         if "status_path" in locals():
             atomic_json(status_path, result)
     typer.echo(json.dumps({"status": result["status"], "reason": result.get("reason")}))
@@ -188,20 +231,75 @@ def platform_publish(
     value = json.loads(config.read_text(encoding="utf-8"))
     with workflow_lock(Path(value["publication"]).with_suffix(".publisher.lock")):
         result = json.loads(Path(value["status"]).read_text(encoding="utf-8"))
-        result["published_at"] = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
+        result["published_at"] = now.isoformat()
+        last_attempt = result.get("last_attempt")
+        if last_attempt and (now - datetime.fromisoformat(last_attempt)).total_seconds() > 180:
+            result.update(status="STALE_WORKER_RECEIPT", next_action="inspect worker journal")
         database = Path(value["database"])
         if database.exists():
             experiment = ContinuousShadowRepository(database).latest_experiment("polymarket-native")
             if experiment:
-                result["report"] = ShadowReportingService(database).report(experiment.experiment_id)
+                reporting = ShadowReportingService(database)
+                result["report"] = reporting.report(experiment.experiment_id)
+                midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                cutoff = result["report"]["analytical"].get("source_poll_cutoff")
+                try:
+                    result["daily_report"] = reporting.report(
+                        experiment.experiment_id,
+                        start=midnight,
+                        end=datetime.fromisoformat(cutoff) if cutoff else now,
+                    )
+                except UnsupportedReportingWindow as error:
+                    result["daily_report"] = {"status": "UNSUPPORTED_RANGE", "reason": str(error)}
         cohort = Path(value["cohort"])
         result["diagnostic"] = (
-            json.loads(cohort.read_text(encoding="utf-8")) if cohort.exists()
+            json.loads(cohort.read_text(encoding="utf-8"))
+            if cohort.exists()
             else {"status": "UNAVAILABLE", "reason": "new_epoch_no_retained_cohort"}
+        )
+        result["diagnostics"] = retained_diagnostics(
+            Path(value["authority"]), result["diagnostic"].get("discovery", {}),
         )
         atomic_json(Path(value["publication"]), result)
         commands = ConsoleCommandStore(Path(value["commands"]))
         commands.initialize()
         for revision, action in commands.pending():
             if action == "export":
-                commands.finish(revision, status="APPLIED")
+                try:
+                    if "report" not in result:
+                        raise UnsupportedReportingWindow("no_retained_financial_session")
+                    parameters = commands.parameters(revision)
+                    report = ShadowReportingService(database).report(
+                        result["report"]["analytical"]["experiment_id"],
+                        start=datetime.fromisoformat(parameters["start"]) if parameters else None,
+                        end=datetime.fromisoformat(parameters["end"]) if parameters else None,
+                    )
+                    archive = Path(value["publication"]).parent / "reports"
+                    archive.mkdir(exist_ok=True)
+                    target = archive / (report["analytical_digest"] + ".json")
+                    if not target.exists():
+                        if sum(path.stat().st_size for path in archive.glob("*.json")) > 33_554_432:
+                            raise ValueError("report_archive_capacity_reached")
+                        atomic_json(target, report)
+                    commands.finish(
+                        revision,
+                        status="APPLIED",
+                        result={
+                            "analytical_digest": report["analytical_digest"],
+                            "download": "/reports/" + target.name,
+                        },
+                    )
+                except UnsupportedReportingWindow as error:
+                    commands.finish(
+                        revision,
+                        status="BLOCKED",
+                        result={
+                            "reason": "UNSUPPORTED_RANGE",
+                            "detail": str(error),
+                        },
+                    )
+                except (OSError, ValueError) as error:
+                    commands.finish(
+                        revision, status="FAILED", result={"reason": type(error).__name__}
+                    )
