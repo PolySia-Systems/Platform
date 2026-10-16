@@ -36,6 +36,9 @@ async function load() {
     const response = await fetch("/api/report", {credentials:"same-origin"});
     if (!response.ok) throw new Error(`Publication unavailable (${response.status})`);
     publication = await response.json();
+    const healthResponse = await fetch("/api/health");
+    const health = await healthResponse.json();
+    if (health.status === "FAILED") { const alert = document.getElementById("error"); alert.hidden = false; alert.textContent = "Report publisher failed; this is retained data. " + readable(health.next_action); }
     const report = publication.report || {}, analytical = report.analytical || {}, economics = analytical.report || {};
     const age = (Date.now() - Date.parse(publication.published_at)) / 1000;
     text("operation", age > 180 ? "STALE PUBLICATION" : publication.status || "UNKNOWN"); text("next", age > 180 ? "Inspect the report publisher; this is retained state." : publication.next_action);

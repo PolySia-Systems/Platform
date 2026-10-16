@@ -150,6 +150,8 @@ class AcquisitionAuthority:
         if replacement.host != self.policy.host or replacement.policy_id == self.policy.policy_id:
             raise AcquisitionBlockedError("replacement_identity_invalid")
         ceilings = (
+            "timeout_seconds",
+            "backup_generations",
             "maximum_requests",
             "maximum_bytes",
             "maximum_response_bytes",
@@ -162,7 +164,9 @@ class AcquisitionAuthority:
         if any(getattr(replacement, field) > getattr(self.policy, field) for field in ceilings):
             raise AcquisitionBlockedError("replacement_cannot_raise_ceiling")
         if (
-            replacement.expires_at - replacement.starts_at
+            replacement.minimum_free_disk_bytes < self.policy.minimum_free_disk_bytes
+            or replacement.cadence_seconds < self.policy.cadence_seconds
+            or replacement.expires_at - replacement.starts_at
             > self.policy.expires_at - self.policy.starts_at
             or replacement.closure_request_reserve < self.policy.closure_request_reserve
             or replacement.closure_byte_reserve < self.policy.closure_byte_reserve

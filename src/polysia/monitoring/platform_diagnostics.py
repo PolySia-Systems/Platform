@@ -26,6 +26,7 @@ def retained_diagnostics(authority: Path, discovery: dict[str, Any]) -> dict[str
                 "rate_limits": 0,
                 "failures": 0,
                 "latencies_ms": [],
+                "unknown_latency_count": 0,
                 "last_attempt": None,
             },
         )
@@ -33,11 +34,14 @@ def retained_diagnostics(authority: Path, discovery: dict[str, Any]) -> dict[str
         item["known_bytes"] += value.get("bytes", 0)
         item["rate_limits"] += value.get("reason") == "provider_http_429"
         item["failures"] += "reason" in value
-        item["latencies_ms"].append(value["latency_ms"])
+        if type(value.get("latency_ms")) is int and value["latency_ms"] >= 0:
+            item["latencies_ms"].append(value["latency_ms"])
+        else:
+            item["unknown_latency_count"] += 1
         item["last_attempt"] = max(item["last_attempt"] or "", value["observed_at"])
     for item in endpoints.values():
         samples = sorted(item.pop("latencies_ms"))
-        item["latency_p95_ms"] = samples[math.ceil(len(samples) * 0.95) - 1]
+        item["latency_p95_ms"] = samples[math.ceil(len(samples) * 0.95) - 1] if samples else None
         item["latency_sample_count"] = len(samples)
     candidates = discovery.get("candidates", [])
     coverage = {"candidate_denominator": len(candidates)}

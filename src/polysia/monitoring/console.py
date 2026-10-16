@@ -164,6 +164,17 @@ class ConsoleApplication:
                 return respond("200 OK", self._commands.status())
             except sqlite3.DatabaseError:
                 return respond("503 Service Unavailable", {"reason": "command_store_unavailable"})
+        if path == "/api/health":
+            try:
+                status_file = self._publication.parent / "publisher-status.json"
+                if status_file.stat().st_size > 4096:
+                    raise ValueError("health_receipt_too_large")
+                return respond("200 OK", json.loads(status_file.read_text(encoding="utf-8")))
+            except OSError, ValueError:
+                return respond(
+                    "503 Service Unavailable",
+                    {"status": "UNKNOWN", "reason": "publisher_receipt_missing"},
+                )
         if path in {"/console.css", "/console.js"}:
             asset = Path(__file__).with_name("console_assets") / path.removeprefix("/")
             media = "text/css" if path.endswith("css") else "text/javascript"

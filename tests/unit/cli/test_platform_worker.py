@@ -143,3 +143,23 @@ def test_report_cli_preserves_explicit_UTC_boundaries(
     assert result.exit_code == 0, result.output
     assert seen[0]["start"].utcoffset() == timedelta(0)
     assert seen[0]["end"].utcoffset() == timedelta(0)
+
+
+def test_publisher_failure_keeps_last_good_publication_and_terminal_health(tmp_path: Path) -> None:
+    import typer
+
+    from polysia.cli_commands.platform_worker import platform_publish
+
+    publication = tmp_path / "publication.json"
+    publication.write_text('{"status":"last-known-good"}')
+    config = tmp_path / "worker.json"
+    config.write_text(
+        json.dumps({"publication": str(publication), "status": str(tmp_path / "missing.json")})
+    )
+    with pytest.raises(typer.Exit) as failed:
+        platform_publish(config)
+    assert failed.value.exit_code == 1
+    assert json.loads(publication.read_text())["status"] == "last-known-good"
+    receipt = json.loads((tmp_path / "publisher-status.json").read_text())
+    assert receipt["status"] == "FAILED"
+    assert receipt["reason"] == "FileNotFoundError"

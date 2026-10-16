@@ -29,7 +29,7 @@ def test_process_mounts_enforce_web_and_publisher_boundaries() -> None:
     publisher = container_command(image, role="publisher", hostname="host")
     assert not any("/state" in argument or "docker.sock" in argument for argument in web)
     assert "/var/lib/polysia-platform/publication:/publication:ro" in web
-    assert "/var/lib/polysia-platform/worker:/state:ro" in publisher
+    assert "/var/lib/polysia-platform/worker:/state:rw" in publisher
     assert publisher[publisher.index("--network") + 1] == "none"
     assert "/var/lib/polysia-platform/worker:/state:rw" in worker
     assert "Restart=on-failure" in service_text(image, role="web", hostname="host")

@@ -101,7 +101,7 @@ def container_command(image: str, *, role: str, hostname: str) -> list[str]:
             "--volume",
             f"{config_root}/manifest.json:/config/manifest.json:ro",
             "--volume",
-            f"{state_root}/worker:/state:{'ro' if role == 'publisher' else 'rw'}",
+            f"{state_root}/worker:/state:rw",
         ]
     args += [
         "--volume",
@@ -167,8 +167,7 @@ def service_text(image: str, *, role: str, hostname: str) -> str:
         + ("simple" if role == "web" else "oneshot")
         + "\nExecStart="
         + " ".join(command)
-        + "\nExecStop=-/usr/bin/docker stop -t 25 polysia-platform-"
-        + role
+        + ("\nExecStop=/usr/bin/docker stop -t 25 polysia-platform-web" if role == "web" else "")
         + "\nTimeoutStartSec=180\nTimeoutStopSec=35\nKillMode=control-group\n"
         "CPUQuota=50%\nMemoryMax=640M\nTasksMax=256\n"
         "StandardOutput=journal\nStandardError=journal\n"

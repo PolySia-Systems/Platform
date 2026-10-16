@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import socket
+import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -230,6 +231,23 @@ def platform_publish(
 ) -> None:
     """Publish from retained evidence; this command performs no provider reads."""
     value = json.loads(config.read_text(encoding="utf-8"))
+    status_path = Path(value["publication"]).parent / "publisher-status.json"
+    try:
+        _publish_retained(value)
+    except Exception as error:
+        receipt = {
+            "status": "FAILED",
+            "reason": type(error).__name__,
+            "checked_at": datetime.now(UTC).isoformat(),
+            "next_action": "inspect report publisher; retained publication may be stale",
+        }
+        atomic_json(status_path, receipt)
+        typer.echo(json.dumps(receipt, sort_keys=True))
+        raise typer.Exit(1) from None
+    atomic_json(status_path, {"status": "PUBLISHED", "checked_at": datetime.now(UTC).isoformat()})
+
+
+def _publish_retained(value: dict[str, Any]) -> None:
     with workflow_lock(Path(value["publication"]).with_suffix(".publisher.lock")):
         result = json.loads(Path(value["status"]).read_text(encoding="utf-8"))
         now = datetime.now(UTC)
@@ -281,7 +299,11 @@ def platform_publish(
                     archive.mkdir(exist_ok=True)
                     target = archive / (report["analytical_digest"] + ".json")
                     if not target.exists():
-                        if sum(path.stat().st_size for path in archive.glob("*.json")) > 33_554_432:
+                        if (
+                            sum(path.stat().st_size for path in archive.glob("*.json"))
+                            + len(json.dumps(report, sort_keys=True).encode())
+                            > 33_554_432
+                        ):
                             raise ValueError("report_archive_capacity_reached")
                         atomic_json(target, report)
                     commands.finish(
@@ -301,7 +323,7 @@ def platform_publish(
                             "detail": str(error),
                         },
                     )
-                except (OSError, ValueError) as error:
+                except (OSError, ValueError, sqlite3.DatabaseError) as error:
                     commands.finish(
                         revision, status="FAILED", result={"reason": type(error).__name__}
                     )

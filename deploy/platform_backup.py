@@ -71,7 +71,8 @@ def backup(value: dict[str, Any]) -> dict[str, Any]:
     recipient = Path(value["recipient_file"]).read_text().strip()
     args = isolated(
         value["image_id"],
-        "/etc/polysia-platform:/config:ro",
+        "/etc/polysia-platform/worker.json:/config/worker.json:ro",
+        "/etc/polysia-platform/manifest.json:/config/manifest.json:ro",
         "/var/lib/polysia-platform/worker:/state:rw",
         "/var/lib/polysia-platform/control:/control:ro",
         "/var/lib/polysia-platform/publication:/publication:ro",
@@ -138,7 +139,12 @@ def restore(value: dict[str, Any]) -> dict[str, Any]:
     generations = sorted((p for p in incoming.iterdir() if NAME.fullmatch(p.name)), reverse=True)
     if not generations:
         raise ValueError("no_complete_generation")
-    source = generations[0]
+    selected = value.get("generation")
+    if selected and (not isinstance(selected, str) or NAME.fullmatch(selected) is None):
+        raise ValueError("invalid_selected_generation")
+    source = incoming / selected if selected and NAME.fullmatch(selected) else generations[0]
+    if selected and source not in generations:
+        raise ValueError("selected_complete_generation_unavailable")
     if source.is_symlink() or not 0 < source.stat().st_size <= MAX_GENERATION:
         raise ValueError("invalid_generation")
     stage_root = vault / "restore"
@@ -210,8 +216,7 @@ def restore(value: dict[str, Any]) -> dict[str, Any]:
     metadata = json.loads((stage / "bundle/platform-recovery.json").read_text())
     age = (datetime.now(UTC) - datetime.fromisoformat(metadata["created_at"])).total_seconds()
     elapsed = time.monotonic() - started
-    if not 0 <= age <= 86_400 or elapsed > 3600:
-        raise ValueError("recovery_RPO_or_RTO_outside_limits")
+    objectives_met = 0 <= age <= 86_400 and elapsed <= 3600
     for old in generations[2:]:
         if old.is_symlink():
             raise ValueError("backup generation cannot be a symlink")
@@ -223,7 +228,11 @@ def restore(value: dict[str, Any]) -> dict[str, Any]:
             shutil.rmtree(old)
     # Ciphertext remains authoritative; remove only this freshly verified staging tar.
     tar.unlink()
+    if not objectives_met:
+        receipt["status"] = "RECOVERY_OBJECTIVES_NOT_MET"
     receipt.update(
+        rpo_met=0 <= age <= 86_400,
+        rto_met=elapsed <= 3600,
         filename=source.name,
         measured_RPO_seconds=round(age, 3),
         measured_RTO_seconds=round(elapsed, 3),
@@ -247,7 +256,17 @@ def main() -> None:
             receipt = (backup if args.mode == "backup" else restore)(value)
         Path(value["receipt"]).write_text(json.dumps(receipt, sort_keys=True) + "\n")
         print(json.dumps(receipt, sort_keys=True))
+        if receipt["status"] == "RECOVERY_OBJECTIVES_NOT_MET":
+            raise SystemExit(1)
     except Exception as error:
+        failure = {
+            "status": "FAILED",
+            "error_type": type(error).__name__,
+            "checked_at": datetime.now(UTC).isoformat(),
+            "next_action": "inspect private job configuration and retained generations",
+        }
+        if "value" in locals() and value.get("receipt"):
+            Path(value["receipt"]).write_text(json.dumps(failure, sort_keys=True) + "\n")
         print(
             json.dumps(
                 {
