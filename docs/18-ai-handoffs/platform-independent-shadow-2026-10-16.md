@@ -48,3 +48,26 @@ Engineering, reporting, operational usefulness, reliability, Human View,
 independent secure deployment/recovery, and repository cleanup are OPEN.
 Economic evidence is UNKNOWN. Owner comprehension is OPEN and cannot be inferred
 from automated checks. No acquisition has been started by this execution.
+
+## Incremental evidence
+
+Draft delivery PR: [#190](https://github.com/PolySia-Systems/Platform/pull/190).
+Foundation commit: `5646048`. Focused classifier tests: 16 passed. Standards
+full validation, focused Ruff, secret scan and diff checks passed. Hosted quality,
+container and supply-chain jobs passed for that commit; Windows was still running
+at the last query. These are not final-release results.
+
+The next increment adds a shared snapshot reporting service/CLI, new Platform
+durable acquisition reservations, a finite two-route diagnostic and retained
+hosted image/promotion manifests. Focused tests: 44 passed, 46 deselected.
+The accounting fixture contains persisted simulated activity and verifies identical
+analytical digests with network access disabled. These fixtures are not economic
+observations. Native activity eligibility remains distinct from execution eligibility.
+
+Access setup: the existing protected provider credential can read zone DNS,
+Access applications and tunnels. The supplied record matches the selected origin.
+Account user/membership, Access organization and certificate-pack requests return
+403. No existing Access application/allowlist or Tunnel was found. The owner
+identity and Access organization therefore remain unverified; public commissioning
+is BLOCKED until a supported protected route is established. No broader permission,
+subscription purchase or guessed identity is assumed. Offline engineering continues.

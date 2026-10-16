@@ -137,6 +137,13 @@ jobs:
           .wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
           .wheel-smoke/bin/python -c "import polysia"
           .wheel-smoke/bin/python -m polysia.cli --help
+      - uses: actions/upload-artifact@v7
+        if: needs.changes.outputs.package == 'true'
+        with:
+          name: polysia-wheel
+          path: dist/*
+          retention-days: 30
+          if-no-files-found: error
 
   windows-compatibility:
     name: Windows Compatibility
@@ -176,7 +183,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - run: docker build --tag polysia:ci .
+      - run: docker build --build-arg POLYSIA_BUILD_COMMIT="$GITHUB_SHA" --tag polysia:ci .
       - run: docker run --rm polysia:ci system health
       - shell: bash
         run: |
@@ -194,6 +201,20 @@ jobs:
             polysia:ci \
             -m polysia.deployment.sqlite_backup \
             init --database /var/lib/polysia/data/polysia.sqlite3
+      - name: Retain exact tested image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-image
+          docker save polysia:ci | gzip > release-image/polysia-image.tar.gz
+          docker image inspect polysia:ci --format '{{.Id}}' > release-image/image-id.txt
+          python scripts/release_manifest.py --image release-image/polysia-image.tar.gz --image-id-file release-image/image-id.txt --commit "$GITHUB_SHA" --output release-image/manifest.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: polysia-release-image
+          path: release-image/*
+          retention-days: 30
+          if-no-files-found: error
 
   supply-chain:
     needs: changes

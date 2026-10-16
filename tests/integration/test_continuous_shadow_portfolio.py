@@ -341,6 +341,45 @@ def _shadow_database(source_database: Path) -> Path:
 
 
 @pytest.mark.asyncio
+async def test_shared_report_snapshots_nonempty_accounting_deterministically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysia.application.services.shadow_reporting import (
+        ShadowReportingService,
+        comparison_csv,
+    )
+
+    database = tmp_path / "wallet-intelligence.sqlite3"
+    _seed_stage3(database)
+    _add_alpha_membership_for_first_wallet(database)
+    clock = _Clock(NOW)
+    scenario = _Scenario()
+    service = _service(database, scenario, _MarketPort(clock), clock)
+    experiment = service.start("polycop")
+    _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
+    scenario.events[candidates[0].wallet_id] = [
+        _EventSpec("report-buy", LeaderTradeAction.BUY,
+                   NOW + timedelta(seconds=100), Decimal("0.40")),
+    ]
+    clock.value = NOW + timedelta(minutes=2)
+    outcome = await service.poll("polycop")
+    assert outcome.simulated_count > 0
+    def offline(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("report attempted network I/O")
+
+    monkeypatch.setattr("socket.socket.connect", offline)
+    reporting = ShadowReportingService(_shadow_database(database))
+    first = reporting.report(experiment.experiment_id)
+    second = reporting.report(experiment.experiment_id)
+    assert first["analytical_digest"] == second["analytical_digest"]
+    assert first["analytical"] == second["analytical"]
+    assert first["provider_calls"] == 0
+    assert first["analytical"]["opportunity_count"] == 1
+    assert "polysia-report-" not in json.dumps(first["analytical"])
+    assert first["analytical_digest"] in comparison_csv(first)
+
+
+@pytest.mark.asyncio
 async def test_bounded_shadow_freezes_top_alpha_from_larger_stage3_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

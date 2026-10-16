@@ -1,0 +1,76 @@
+name: Publish tested release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful full CI push run on main containing release artifacts
+        required: true
+      tag:
+        description: New immutable release tag
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: platform-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CI_RUN_ID: ${{ inputs.ci_run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify run and retain tested artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$CI_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh run view "$CI_RUN_ID" --json conclusion,event,headBranch,headSha,workflowName,jobs > run.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          run = json.loads(Path('run.json').read_text())
+          assert run['conclusion'] == 'success'
+          assert run['event'] == 'push' and run['headBranch'] == 'main'
+          assert run['workflowName'] == 'CI'
+          jobs = {job['name']: job['conclusion'] for job in run['jobs']}
+          for name in ('quality', 'container', 'Windows Compatibility', 'supply-chain', 'CI Gate'):
+              assert jobs.get(name) == 'success', (name, jobs.get(name))
+          PY
+          gh run download "$CI_RUN_ID" -n polysia-release-image -D release
+          gh run download "$CI_RUN_ID" -n polysia-wheel -D release
+          gh run download "$CI_RUN_ID" -n polysia-sbom -D release
+      - name: Verify archive and publish retained release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          run = json.loads(Path('run.json').read_text())
+          manifest = json.loads(Path('release/manifest.json').read_text())
+          assert manifest['commit'] == run['headSha']
+          assert manifest['archive_name'] == 'polysia-image.tar.gz'
+          with Path('release/polysia-image.tar.gz').open('rb') as stream:
+              assert hashlib.file_digest(stream, 'sha256').hexdigest() == manifest['archive_sha256']
+          Path('release-notes.md').write_text(
+              'Tested DATA_ONLY artifact from commit `' + run['headSha'] + '`.\n\n'
+              'Source, image and archive identities are in manifest.json. '
+              'Commissioning and observational acceptance require separate receipts.\n'
+          )
+          Path('commit.txt').write_text(run['headSha'])
+          PY
+          gh release create "$RELEASE_TAG" release/* --target "$(cat commit.txt)" --title "$RELEASE_TAG" --notes-file release-notes.md --fail-on-no-commits

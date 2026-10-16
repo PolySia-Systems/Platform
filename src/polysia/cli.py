@@ -9,7 +9,9 @@ from polysia.cli_commands import (
     developer,
     live,
     operations,
+    platform_discovery,
     research,
+    shadow_reporting,
     wallet_intelligence,
     wallet_intelligence_research,
     wallet_intelligence_workflow,
@@ -73,6 +75,7 @@ research_app.command("evaluate-extended")(research.strategy_evaluation_extended)
 research_app.command("fill-audit")(research.fill_simulation_audit)
 research_app.command("shadow-replay")(research.shadow_historical_replay)
 research_app.command("source-benchmark")(research.source_benchmark)
+research_app.command("discovery-diagnostic")(platform_discovery.discovery_diagnostic)
 research_app.command("prospective-replay")(research.prospective_replay)
 research_app.command("prospective-reanalyze")(research.prospective_reanalyze)
 research_app.command("prospective-collect")(research.prospective_collect)
@@ -139,6 +142,7 @@ wallet_intelligence_app.command("backup")(wallet_intelligence.backup)
 wallet_intelligence_app.command("restore-check")(wallet_intelligence.restore_check)
 
 ops_app.command("deployment-readiness")(operations.deployment_readiness)
+ops_app.command("shadow-report")(shadow_reporting.shadow_report)
 ops_app.command("release-manifest")(operations.release_manifest)
 ops_app.command("deployment-automation")(operations.deployment_automation)
 ops_app.command("final-handoff")(operations.final_handoff)

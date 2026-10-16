@@ -1,0 +1,102 @@
+"""Persist reservations before network I/O; restart never refunds uncertainty."""
+
+from __future__ import annotations
+
+import sqlite3
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
+
+
+class AcquisitionBlockedError(RuntimeError):
+    """Stable reason safe to expose in status without provider payloads."""
+
+
+class AcquisitionAuthority:
+    def __init__(self, path: Path, policy: AcquisitionPolicy) -> None:
+        self._path = path
+        self.policy = policy
+
+    def initialize(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self._path) as connection:
+            connection.executescript("""
+                CREATE TABLE IF NOT EXISTS authority (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    policy_digest TEXT NOT NULL, stopped INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS reservations (
+                    request_id TEXT PRIMARY KEY, endpoint TEXT NOT NULL,
+                    reserved_bytes INTEGER NOT NULL, actual_bytes INTEGER,
+                    status TEXT NOT NULL, attempted_at TEXT NOT NULL
+                );
+            """)
+            connection.execute(
+                "INSERT OR IGNORE INTO authority(singleton, policy_digest) VALUES(1, ?)",
+                (self.policy.digest,),
+            )
+            if connection.execute("SELECT policy_digest FROM authority").fetchone()[0] != (
+                self.policy.digest
+            ):
+                raise AcquisitionBlockedError("authority_policy_changed")
+
+    def reserve(self, endpoint: str, *, now: datetime, host: str) -> str:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise AcquisitionBlockedError("clock_not_aware")
+        if host != self.policy.host or endpoint not in self.policy.endpoints:
+            raise AcquisitionBlockedError("host_or_endpoint_not_authorized")
+        if not self.policy.starts_at <= now < self.policy.expires_at:
+            raise AcquisitionBlockedError("authority_not_current")
+        request_id = uuid.uuid4().hex
+        with sqlite3.connect(self._path, timeout=1) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT policy_digest, stopped FROM authority").fetchone()
+            if row is None or row[0] != self.policy.digest or row[1]:
+                raise AcquisitionBlockedError("authority_stopped_or_mismatched")
+            count, charged = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0) "
+                "FROM reservations"
+            ).fetchone()
+            if count >= self.policy.maximum_requests:
+                raise AcquisitionBlockedError("request_budget_exhausted")
+            if charged + self.policy.maximum_response_bytes > self.policy.maximum_bytes:
+                raise AcquisitionBlockedError("byte_budget_exhausted")
+            connection.execute(
+                "INSERT INTO reservations VALUES(?,?,?,NULL,'IN_FLIGHT',?)",
+                (request_id, endpoint, self.policy.maximum_response_bytes, now.isoformat()),
+            )
+        return request_id
+
+    def settle(self, request_id: str, *, response_bytes: int) -> None:
+        if (type(response_bytes) is not int or response_bytes < 0
+                or response_bytes > self.policy.maximum_response_bytes):
+            raise AcquisitionBlockedError("response_size_outside_reservation")
+        with sqlite3.connect(self._path) as connection:
+            changed = connection.execute(
+                "UPDATE reservations SET actual_bytes=?, status='COMPLETE' "
+                "WHERE request_id=? AND actual_bytes IS NULL",
+                (response_bytes, request_id),
+            ).rowcount
+            if changed != 1:
+                raise AcquisitionBlockedError("reservation_unknown_or_already_settled")
+
+    def stop(self) -> None:
+        with sqlite3.connect(self._path) as connection:
+            connection.execute("UPDATE authority SET stopped=1 WHERE singleton=1")
+
+    def status(self) -> dict[str, object]:
+        with sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            authority = connection.execute(
+                "SELECT policy_digest, stopped FROM authority"
+            ).fetchone()
+            count, charged, uncertain = connection.execute(
+                "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0),"
+                "COALESCE(SUM(actual_bytes IS NULL),0) FROM reservations"
+            ).fetchone()
+        return {
+            "policy_digest": authority[0], "stopped": bool(authority[1]),
+            "requests_charged": count, "bytes_charged": charged,
+            "uncertain_requests": uncertain,
+        }
