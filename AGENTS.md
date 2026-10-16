@@ -58,12 +58,12 @@ when required. Historical files are evidence, not automatically current truth.
 ### Adopted PolySia Standards
 
 This repository adopts the exact immutable
-`PolySia-Systems/Standards@v0.4.0` release at commit
-`4ee4e6aca8f0a38379f18029f8db71828cd00759`, selecting only `PRF-BASE` and
+`PolySia-Systems/Standards@v0.5.2` release at commit
+`2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c`, selecting only `PRF-BASE` and
 `PRF-PYS`. The authoritative consumer record and resolved applicability set are
 [`standards/adoption.toml`](standards/adoption.toml) and
 [`standards/conformance.toml`](standards/conformance.toml), with the human review
-at [`docs/00-governance/standards-conformance-v0.4.0.md`](docs/00-governance/standards-conformance-v0.4.0.md).
+at [`docs/00-governance/standards-conformance-v0.5.2.md`](docs/00-governance/standards-conformance-v0.5.2.md).
 
 Within that selected set, the pinned Standards release owns requirement meaning,
 levels, Profile conditions, and exception semantics. This repository owns its

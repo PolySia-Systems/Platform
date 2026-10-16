@@ -35,6 +35,7 @@ class ChangeMap:
 PYTHON_PATTERNS = (
     "src/**",
     "tests/**",
+    "deploy/**",
     "scripts/*.py",
     "scripts/**/*.py",
     "pyproject.toml",
@@ -92,16 +93,17 @@ COMPREHENSIVE_PATTERNS = (
 LIGHTWEIGHT_PATTERNS = (
     "*.md",
     "**/*.md",
-    "docs/**",
-    "plans/**",
-    "prompts/**",
-    "standards/**",
+    "docs/**/*.svg",
+    "docs/**/*.mmd",
     ".github/CODEOWNERS",
     ".gitignore",
     ".gitattributes",
     "LICENSE",
     "LICENSE.*",
 )
+
+# Data files under documentation can be executable contracts. Only explicitly
+# editorial formats above may skip behavioral checks; unknown paths fail closed.
 
 
 def _normalize(path: str) -> str:
