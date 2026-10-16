@@ -14,13 +14,27 @@ from polysia.storage.console_commands import ConsoleCommandStore
 
 
 def test_stop_is_applied_even_with_missing_cohort_and_without_acquisition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = datetime.now(UTC)
     policy = AcquisitionPolicy(
-        "worker-test", socket.gethostname(), now - timedelta(minutes=1),
-        now + timedelta(hours=1), ("https://data-api.polymarket.com/v2/trades",),
-        10, 10_240, 1024, 10, 4096, 1, 60, 30, 2, 100_000_000, 25,
+        "worker-test",
+        socket.gethostname(),
+        now - timedelta(minutes=1),
+        now + timedelta(hours=1),
+        ("https://data-api.polymarket.com/v2/trades",),
+        10,
+        10_240,
+        1024,
+        10,
+        4096,
+        1,
+        60,
+        30,
+        2,
+        100_000_000,
+        25,
     )
     manifest = tmp_path / "policy.json"
     manifest.write_text(json.dumps(policy.to_dict()))
@@ -30,15 +44,24 @@ def test_stop_is_applied_even_with_missing_cohort_and_without_acquisition(
     commands_path = tmp_path / "commands.sqlite3"
     commands = ConsoleCommandStore(commands_path)
     commands.initialize()
-    commands.submit(subject="owner", action="stop", expected_revision=0,
-                    idempotency_key="stop-before-any-data")
+    commands.submit(
+        subject="owner", action="stop", expected_revision=0, idempotency_key="stop-before-any-data"
+    )
     config = tmp_path / "worker.json"
-    config.write_text(json.dumps({
-        "database": str(tmp_path / "financial.sqlite3"), "release_commit": "a" * 40,
-        "manifest": str(manifest), "authority": str(authority_path),
-        "commands": str(commands_path), "status": str(tmp_path / "status.json"),
-        "cohort": str(tmp_path / "missing.json"), "acquisition_enabled": False,
-    }))
+    config.write_text(
+        json.dumps(
+            {
+                "database": str(tmp_path / "financial.sqlite3"),
+                "release_commit": "a" * 40,
+                "manifest": str(manifest),
+                "authority": str(authority_path),
+                "commands": str(commands_path),
+                "status": str(tmp_path / "status.json"),
+                "cohort": str(tmp_path / "missing.json"),
+                "acquisition_enabled": False,
+            }
+        )
+    )
     original = Path.read_text
 
     def read(path: Path, *args: object, **kwargs: object) -> str:
@@ -64,12 +87,59 @@ def test_export_bounds_are_durable_and_do_not_modify_stop(tmp_path: Path) -> Non
     commands = ConsoleCommandStore(tmp_path / "commands.sqlite3")
     commands.initialize()
     bounds = {"start": "2026-10-16T00:00:00+00:00", "end": "2026-10-16T01:00:00+00:00"}
-    receipt = commands.submit(subject="owner", action="export", expected_revision=0,
-                              idempotency_key="retained-range-request", parameters=bounds)
+    receipt = commands.submit(
+        subject="owner",
+        action="export",
+        expected_revision=0,
+        idempotency_key="retained-range-request",
+        parameters=bounds,
+    )
     assert commands.parameters(int(receipt["revision"])) == bounds
     with pytest.raises(ValueError, match="unsupported_command_parameters"):
-        commands.submit(subject="owner", action="stop", expected_revision=1,
-                        idempotency_key="stop-cannot-carry-range", parameters=bounds)
+        commands.submit(
+            subject="owner",
+            action="stop",
+            expected_revision=1,
+            idempotency_key="stop-cannot-carry-range",
+            parameters=bounds,
+        )
     commands.finish(1, status="BLOCKED", result={"reason": "UNSUPPORTED_RANGE"})
     assert commands.status()["receipts"][0]["result"] == {"reason": "UNSUPPORTED_RANGE"}
     assert commands.pending() == []
+
+
+def test_report_cli_preserves_explicit_UTC_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from polysia.cli import app
+    from polysia.cli_commands.shadow_reporting import ShadowReportingService
+
+    database = tmp_path / "retained.sqlite3"
+    database.touch()
+    seen = []
+
+    def report(self: object, experiment_id: str, **bounds: object) -> dict[str, object]:
+        seen.append(bounds)
+        return {"provider_calls": 0}
+
+    monkeypatch.setattr(ShadowReportingService, "report", report)
+    result = CliRunner().invoke(
+        app,
+        [
+            "ops",
+            "shadow-report",
+            "--database",
+            str(database),
+            "--experiment-id",
+            "retained",
+            "--start",
+            "2026-10-16T00:00:00Z",
+            "--end",
+            "2026-10-16T01:00:00+00:00",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen[0]["start"].utcoffset() == timedelta(0)
+    assert seen[0]["end"].utcoffset() == timedelta(0)

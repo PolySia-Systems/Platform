@@ -22,8 +22,14 @@ def shadow_report(
     database: Annotated[Path, typer.Option("--database", exists=True, dir_okay=False)],
     experiment_id: Annotated[str, typer.Option("--experiment-id")],
     output_format: Annotated[str, typer.Option("--format")] = "json",
-    start: Annotated[datetime | None, typer.Option("--start")] = None,
-    end: Annotated[datetime | None, typer.Option("--end")] = None,
+    start: Annotated[
+        datetime | None,
+        typer.Option("--start", formats=["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"]),
+    ] = None,
+    end: Annotated[
+        datetime | None,
+        typer.Option("--end", formats=["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"]),
+    ] = None,
 ) -> None:
     """Snapshot one financial session and report without acquiring provider data."""
     if output_format not in {"json", "csv"}:
@@ -33,12 +39,23 @@ def shadow_report(
     except UnsupportedReportingWindow as error:
         typer.echo(json.dumps({"status": "UNSUPPORTED_RANGE", "reason": str(error)}), err=True)
         raise typer.Exit(2) from None
-    except (OSError, ValueError, sqlite3.DatabaseError, ContinuousShadowStoreError):
-        typer.echo(json.dumps({
-            "status": "FAILED", "reason": "snapshot_or_report_invalid",
-            "next_action": "inspect financial-store integrity and experiment identity",
-        }), err=True)
+    except OSError, ValueError, sqlite3.DatabaseError, ContinuousShadowStoreError:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "FAILED",
+                    "reason": "snapshot_or_report_invalid",
+                    "next_action": "inspect financial-store integrity and experiment identity",
+                }
+            ),
+            err=True,
+        )
         raise typer.Exit(1) from None
-    typer.echo(comparison_csv(report) if output_format == "csv" else json.dumps(
-        report, sort_keys=True,
-    ))
+    typer.echo(
+        comparison_csv(report)
+        if output_format == "csv"
+        else json.dumps(
+            report,
+            sort_keys=True,
+        )
+    )
