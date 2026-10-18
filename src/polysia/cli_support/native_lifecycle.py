@@ -14,6 +14,7 @@ from polysia.adapters.polymarket.data_api_v2 import IncompleteWalletWindowError
 from polysia.adapters.polymarket.native_discovery import revalidate_native_cohort
 from polysia.application.ports.continuous_shadow import ContinuousPollOutcome
 from polysia.cli_support.native_research import NativeSnapshotPort, native_shadow_service
+from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
 
@@ -63,6 +64,7 @@ async def native_lifecycle_poll(
                               or active.config.selection_preflight_digest != discovery["digest"]
                               or active.config.capacity_evidence != admission):
         raise AcquisitionBlockedError("active_financial_session_requires_pinned_release")
+    close_only = active is not None and active.lifecycle is ContinuousShadowLifecycle.DRAINING
     refreshed = None
     if refresh_path.exists():
         if refresh_path.stat().st_size > 1_048_576:
@@ -78,7 +80,10 @@ async def native_lifecycle_poll(
         raise AcquisitionBlockedError("native_cohort_clock_regressed")
     # Revalidation is charged to the same standing authority, at most once per
     # three hours when successful, and only in an already durable due slot.
-    if age >= timedelta(hours=3):
+    # Entry eligibility is unnecessary for the retained cohort's close-only work.
+    # Never spend the closure reserve rediscovering whether new exposure is eligible;
+    # the service still requires complete source and current market evidence to close.
+    if age >= timedelta(hours=3) and not close_only:
         transport = BoundedPublicTransport(authority)
         try:
             refreshed = await revalidate_native_cohort(
@@ -100,7 +105,7 @@ async def native_lifecycle_poll(
     service = native_shadow_service(
         database, discovery, authority=authority, code_sha=code_sha, admission=admission,
         persistent=True, refreshed_discovery=refreshed, clock=clock,
-        closure=active is not None and active.lifecycle.value == "DRAINING",
+        closure=close_only,
     )
     if active is None:
         service.start("polymarket-native")

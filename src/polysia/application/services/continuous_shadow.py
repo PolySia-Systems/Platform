@@ -485,7 +485,7 @@ class ContinuousShadowService:
             candidates=tuple(selected),
         )
 
-    def _require_new_period_capacity(self) -> None:
+    def _require_new_period_capacity(self, *, close_only: bool = False) -> None:
         if self._config.runtime_version in {
             "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
         }:
@@ -494,7 +494,7 @@ class ContinuousShadowService:
             if persistent:
                 observed = self._current_selection("polymarket-native").published_at
             if (observed is None or observed > self._now()
-                    or self._now() - observed > timedelta(hours=4)):
+                    or (not close_only and self._now() - observed > timedelta(hours=4))):
                 raise ContinuousShadowError("native research eligibility evidence is stale")
             evidence = self._config.capacity_evidence or {}
             if (evidence.get("contract") != "native-research-admission/v1"
@@ -580,7 +580,9 @@ class ContinuousShadowService:
             )
         self._guard_accounting(experiment)
         if self._config.runtime_version == "continuous-shadow-native-research-v2":
-            self._require_new_period_capacity()
+            self._require_new_period_capacity(
+                close_only=experiment.lifecycle is ContinuousShadowLifecycle.DRAINING,
+            )
         event_count, storage_bytes = self._store.period_usage(experiment.experiment_id)
         if (
             self._config.period_max_storage_bytes > 0

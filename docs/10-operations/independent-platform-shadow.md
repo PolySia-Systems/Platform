@@ -75,6 +75,13 @@ Successful receipts are cached in `cohort-revalidation.json` beside authority
 Retries are finite and charged; incomplete or insufficient evidence cannot advance
 financial watermarks or replace a cohort. No admission carries across releases.
 
+An already DRAINING session does not revalidate entry eligibility or spend its
+closure reserve on cohort rediscovery. It retains the admitted identities and
+uses the existing complete-source/current-market close-only path. Stale cohort
+eligibility cannot admit new exposure. STOP, admission/policy expiry, absolute
+request/byte and window ceilings still apply; missing or ambiguous closure
+evidence retains inventory and uncertainty. Restart never replenishes authority.
+
 The financial session has no daily time reset. Event/storage ceilings and explicit
 drain/finalize remain enforced with open inventory and pending observations.
 Daily/UTC reports view retained state, not fresh capital. A changed cohort or

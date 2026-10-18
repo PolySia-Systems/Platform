@@ -54,10 +54,13 @@ def native_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     faults = {"incomplete": False, "stale": False}
 
     class Transport:
+        def __init__(self, standing_authority):
+            self.authority = standing_authority
+
         async def get_json(self, _base, _path, params, **_kwargs):
             calls.append(dict(params))
-            request = authority.reserve(ENDPOINT, now=clock(), host="host")
-            authority.settle(request, response_bytes=100)
+            request = self.authority.reserve(ENDPOINT, now=clock(), host="host")
+            self.authority.settle(request, response_bytes=100)
             return {"data": [] if faults["stale"] else [{
                 "proxy_wallet": ADDRESS, "timestamp": int(clock().timestamp()) - 1,
                 "price": "0.5", "size": "2", "side": "BUY", "type": "TRADE",
@@ -67,7 +70,7 @@ def native_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 "has_more": faults["incomplete"],
             }}
 
-    monkeypatch.setattr(native_lifecycle, "BoundedPublicTransport", lambda _: Transport())
+    monkeypatch.setattr(native_lifecycle, "BoundedPublicTransport", Transport)
     monkeypatch.setattr(native_lifecycle, "BoundedMarketAdapter", lambda _: market)
     monkeypatch.setattr(native_research, "BoundedMarketAdapter", lambda _: market)
     monkeypatch.setattr(native_research, "PolymarketCopyTradingSource",
@@ -86,6 +89,203 @@ async def tick(runtime):
         root / "financial.sqlite3", discovered, authority=authority, code_sha="a" * 40,
         admission=admission, refresh_path=root / "refresh.json", clock=clock,
     )
+
+
+async def _draining_inventory(runtime, monkeypatch, *, limit="requests"):
+    """Real portfolio composition; only the provider I/O is deterministic."""
+    from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
+    from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
+
+    root, clock, scenario, _, discovered, admission, _, _ = runtime
+    bounded = replace(
+        policy(), expires_at=NOW + timedelta(hours=72),
+        maximum_requests=3 if limit == "requests" else 20,
+        maximum_bytes=3072, closure_request_reserve=1, closure_byte_reserve=1024,
+    )
+    authority = AcquisitionAuthority(root / "drain-authority.sqlite3", bounded)
+    authority.initialize()
+    runtime = (*runtime[:3], authority, *runtime[4:])
+    first = await tick(runtime)
+    wallet = discovered["candidates"][0]["wallet_id"]
+    clock.value += timedelta(minutes=2)
+    scenario.events[wallet] = [_EventSpec(
+        "open-before-drain", LeaderTradeAction.BUY,
+        clock() - timedelta(seconds=20), Decimal("0.40"),
+    )]
+    await tick(runtime)
+    store = ContinuousShadowRepository(root / "financial.sqlite3")
+    assert store.open_position_count(first.experiment.experiment_id) == 2
+    for _ in range(2):
+        request = authority.reserve(ENDPOINT, now=clock(), host="host")
+        authority.settle(request, response_bytes=1024)
+    store.transition(first.experiment.experiment_id, lifecycle=ContinuousShadowLifecycle.DRAINING,
+                     transitioned_at=clock())
+    market = _MarketPort(clock)
+    market.closed = True
+    calls = []
+
+    def offline_read(transport, base, path, params):
+        calls.append(transport._closure)
+        request = transport.authority.reserve(
+            ENDPOINT, now=clock(), host="host", closure=transport._closure,
+        )
+        transport.authority.settle(request, response_bytes=1024)
+        return {}
+
+    class ChargedMarket:
+        def __init__(self, transport):
+            self.transport = transport
+
+        async def get_market_by_condition_id(self, market_id):
+            await self.transport.get_json("fixture", "/market", {})
+            return await market.get_market_by_condition_id(market_id)
+
+        async def get_order_book(self, token_id):
+            return await market.get_order_book(token_id)
+
+    monkeypatch.setattr(BoundedPublicTransport, "_read", offline_read)
+    monkeypatch.setattr(native_research, "BoundedMarketAdapter", ChargedMarket)
+    clock.value = NOW + timedelta(hours=4, minutes=2)
+    return runtime, store, first.experiment, market, calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["requests", "bytes"])
+async def test_stale_draining_cohort_uses_reserve_for_closure_not_entry_revalidation(
+    native_runtime, monkeypatch, limit,
+):
+    runtime, store, original, _, calls = await _draining_inventory(
+        native_runtime, monkeypatch, limit=limit,
+    )
+    root, clock, scenario, authority, discovered, _, discovery_calls, _ = runtime
+    # A new BUY is visible in the complete source window but may not create exposure.
+    wallet = discovered["candidates"][0]["wallet_id"]
+    scenario.events[wallet].append(_EventSpec(
+        "buy-during-drain", LeaderTradeAction.BUY, clock() - timedelta(seconds=10), Decimal("0.40"),
+    ))
+    before = store.results(original.experiment_id, limit=10)
+    outcome = await tick(runtime)
+    assert outcome.experiment.experiment_id == original.experiment_id
+    assert outcome.experiment.config == original.config
+    assert outcome.experiment.lifecycle.value == "DRAINING"
+    assert outcome.settlement_count == 2
+    assert store.open_position_count(original.experiment_id) == 0
+    assert store.pending_observation_count(original.experiment_id) == 0
+    assert outcome.simulated_count == 0
+    assert calls == [True]
+    assert discovery_calls == []
+    assert not (root / "refresh.json").exists()
+    assert authority.status()["requests_charged"] == 3
+    assert authority.status()["bytes_charged"] == 3072
+    after = store.results(original.experiment_id, limit=10)
+    assert after["follower"]["initial_cash"] == before["follower"]["initial_cash"]
+    # Restart cannot replenish authority. Flat completion needs no new request.
+    await tick(runtime)
+    assert authority.status()["requests_charged"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocker", ["stop", "admission", "policy", "total", "window"])
+async def test_close_only_keeps_authority_expiry_stop_total_and_window_gates(
+    native_runtime, monkeypatch, blocker,
+):
+    runtime, store, original, _, calls = await _draining_inventory(native_runtime, monkeypatch)
+    _, clock, _, authority, _, admission, _, _ = runtime
+    before = store.results(original.experiment_id, limit=10)
+    if blocker == "stop":
+        authority.stop()
+    elif blocker == "admission":
+        admission["expires_at"] = clock().isoformat()
+    elif blocker == "policy":
+        clock.value = authority.policy.expires_at
+    elif blocker == "total":
+        authority.reserve(ENDPOINT, now=clock(), host="host", closure=True)
+    else:
+        # Existing two charges fall within a five-hour window; no reset on restart.
+        bounded = replace(authority.policy, window_seconds=18_000, window_maximum_requests=2)
+        other = AcquisitionAuthority(runtime[0] / "window-authority.sqlite3", bounded)
+        other.initialize()
+        for _ in range(2):
+            other.reserve(ENDPOINT, now=NOW, host="host")
+        runtime = (*runtime[:3], other, *runtime[4:])
+        authority = other
+    if blocker in {"stop", "admission", "policy"}:
+        with pytest.raises(AcquisitionBlockedError):
+            await tick(runtime)
+    else:
+        # Market failures are retained as missing evidence/backlog by the existing
+        # portfolio engine. They cannot manufacture a settlement.
+        outcome = await tick(runtime)
+        assert outcome.settlement_count == 0
+        with pytest.raises(AcquisitionBlockedError, match=(
+            "request_budget_exhausted" if blocker == "total" else "request_window_exhausted"
+        )):
+            authority.reserve(ENDPOINT, now=clock(), host="host", closure=True)
+    after = store.results(original.experiment_id, limit=10)
+    assert store.open_position_count(original.experiment_id) == 2
+    assert after["follower"]["cash"] == before["follower"]["cash"]
+    if blocker in {"stop", "admission", "policy"}:
+        assert after["polls"]["succeeded"] == before["polls"]["succeeded"]
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_close_only_ambiguous_settlement_retains_inventory_without_revalidation(
+    native_runtime, monkeypatch,
+):
+    runtime, store, original, market, calls = await _draining_inventory(native_runtime, monkeypatch)
+    market.ambiguous_settlement = True
+    outcome = await tick(runtime)
+    assert outcome.settlement_count == 0
+    assert outcome.settlement_backlog_count == 2
+    assert store.open_position_count(original.experiment_id) == 2
+    assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_real_worker_restarts_make_close_only_progress_at_four_hours(
+    native_runtime, monkeypatch,
+):
+    import asyncio
+
+    from polysia.cli_commands import platform_worker as worker
+
+    runtime, store, original, _, calls = await _draining_inventory(native_runtime, monkeypatch)
+    root, clock, _, authority, discovered, admission, _, _ = runtime
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock()
+
+    monkeypatch.setattr(worker, "datetime", Clock)
+    original_read = Path.read_text
+
+    def read(path, *args, **kwargs):
+        if path.as_posix() == "/opt/polysia/BUILD_COMMIT":
+            return "a" * 40
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    (root / "manifest.json").write_text(json.dumps(authority.policy.to_dict()))
+    (root / "cohort.json").write_text(json.dumps({"discovery": discovered}))
+    config = root / "worker.json"
+    config.write_text(json.dumps({
+        "database": str(root / "financial.sqlite3"), "release_commit": "a" * 40,
+        "manifest": str(root / "manifest.json"), "authority": str(authority._path),
+        "commands": str(root / "commands.sqlite3"), "status": str(root / "status.json"),
+        "cohort": str(root / "cohort.json"), "acquisition_enabled": True, "admission": admission,
+    }))
+    first = await asyncio.to_thread(worker.worker_tick, config)
+    assert first["status"] == "OBSERVING"
+    assert first["experiment_id"] == original.experiment_id
+    assert store.open_position_count(original.experiment_id) == 0
+    assert calls == [True]
+    assert first["authority"]["requests_charged"] == 3
+    clock.value += timedelta(seconds=authority.policy.cadence_seconds)
+    second = await asyncio.to_thread(worker.worker_tick, config)
+    assert second["status"] == "OBSERVING"
+    assert second["authority"] == first["authority"]
 
 
 @pytest.mark.asyncio
