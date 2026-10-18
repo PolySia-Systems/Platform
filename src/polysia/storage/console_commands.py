@@ -118,13 +118,28 @@ class ConsoleCommandStore:
             ],
         }
 
-    def pending(self) -> list[tuple[int, str]]:
+    def block_superseded_resumes(self) -> None:
+        """A later STOP fences all earlier resume work, including after restart."""
+        with closing(sqlite3.connect(self._path)) as connection, connection:
+            connection.execute(
+                "UPDATE commands SET status='BLOCKED', result=? "
+                "WHERE action='resume' AND status='REQUESTED' AND revision < "
+                "(SELECT COALESCE(MAX(revision),0) FROM commands WHERE action='stop')",
+                (json.dumps({"reason": "superseded_by_stop"}),),
+            )
+
+    def pending(self, *, actions: tuple[str, ...] | None = None) -> list[tuple[int, str]]:
+        condition = "" if actions is None else " AND action IN (" + ",".join(
+            "?" for _ in actions
+        ) + ")"
         with closing(sqlite3.connect(self._path)) as connection, connection:
             return [
                 (int(row[0]), str(row[1]))
                 for row in connection.execute(
                     "SELECT revision, action FROM commands WHERE status='REQUESTED' "
-                    "ORDER BY revision LIMIT 30",
+                    + condition + " ORDER BY CASE WHEN action='stop' THEN 0 ELSE 1 END, "
+                    "revision LIMIT 30",
+                    actions or (),
                 )
             ]
 

@@ -125,7 +125,7 @@ class AcquisitionAuthority:
     def resume(self, *, now: datetime, host: str) -> None:
         if (
             now.tzinfo is None
-            or now.utcoffset() is None
+            or now.utcoffset() != timedelta(0)
             or host != self.policy.host
             or not self.policy.starts_at <= now < self.policy.expires_at
         ):
@@ -149,6 +149,15 @@ class AcquisitionAuthority:
             raise AcquisitionBlockedError("explicit_authority_reference_required")
         if replacement.host != self.policy.host or replacement.policy_id == self.policy.policy_id:
             raise AcquisitionBlockedError("replacement_identity_invalid")
+        if not set(replacement.endpoints).issubset(self.policy.endpoints):
+            raise AcquisitionBlockedError("replacement_cannot_expand_endpoints")
+        if replacement.window_seconds < self.policy.window_seconds:
+            raise AcquisitionBlockedError("replacement_cannot_shorten_rate_window")
+        # These are evidence-retention promises, not expendable request ceilings.
+        # Changing either direction needs a separately reviewed storage policy.
+        if (replacement.retention_days != self.policy.retention_days
+                or replacement.backup_generations != self.policy.backup_generations):
+            raise AcquisitionBlockedError("replacement_retention_contract_changed")
         ceilings = (
             "timeout_seconds",
             "backup_generations",

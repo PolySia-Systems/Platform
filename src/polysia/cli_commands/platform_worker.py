@@ -21,6 +21,7 @@ from polysia.application.services.shadow_reporting import (
 from polysia.cli_commands.platform_discovery import load_policy
 from polysia.cli_support.native_research import native_shadow_service
 from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
+from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
 from polysia.monitoring.platform_diagnostics import retained_diagnostics
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 from polysia.storage.console_commands import ConsoleCommandStore
@@ -51,6 +52,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
             authority.stop()
         commands = ConsoleCommandStore(Path(value["commands"]))
         commands.initialize()
+        commands.block_superseded_resumes()
         prior = {}
         if Path(value["status"]).exists():
             prior = json.loads(Path(value["status"]).read_text())
@@ -68,18 +70,28 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 "maximum_bytes": policy.maximum_bytes,
             },
             "last_success": prior.get("last_success"),
+            "last_poll_started_at": prior.get("last_poll_started_at"),
+            "next_due_at": prior.get("next_due_at"),
         }
         # Consume command receipts before any acquisition. Effects are idempotent;
         # a crash before finishing a receipt safely repeats the same requested effect.
-        for revision, action in commands.pending():
+        for revision, action in commands.pending(actions=("stop", "resume", "drain")):
             if action == "stop":
                 authority.stop()
             elif action == "resume":
-                if recovery_fenced:
+                blocker = (
+                    "recovery_authority_reconciliation_required" if recovery_fenced else
+                    "authority_not_current"
+                    if not policy.starts_at <= datetime.now(UTC) < policy.expires_at else
+                    "acquisition_not_enabled" if value.get("acquisition_enabled") is not True else
+                    "continuous_admission_required"
+                    if value.get("admission", {}).get("mode") != "CONTINUOUS" else None
+                )
+                if blocker:
                     commands.finish(
                         revision,
                         status="BLOCKED",
-                        result={"reason": "recovery_authority_reconciliation_required"},
+                        result={"reason": blocker},
                     )
                     continue
                 try:
@@ -88,11 +100,22 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     commands.finish(revision, status="BLOCKED", result={"reason": error.error_code})
                     continue
             elif action == "drain":
-                # Retain this receipt until the financial service is available.
-                continue
-            elif action == "export":
-                # The independent report timer performs the bounded snapshot job.
-                continue
+                try:
+                    store = ContinuousShadowRepository(database)
+                    active = (
+                        store.active_experiment("polymarket-native") if database.exists() else None
+                    )
+                    if active is None:
+                        commands.finish(revision, status="BLOCKED",
+                                        result={"reason": "no_active_financial_session"})
+                        continue
+                    store.transition(active.experiment_id,
+                                     lifecycle=ContinuousShadowLifecycle.DRAINING,
+                                     transitioned_at=datetime.now(UTC))
+                except (OSError, ValueError, sqlite3.DatabaseError) as error:
+                    commands.finish(revision, status="FAILED",
+                                    result={"reason": type(error).__name__})
+                    continue
             commands.finish(revision, status="APPLIED")
         if authority.status()["stopped"]:
             result["reason"] = (
@@ -125,12 +148,31 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 transient_failures=prior.get("transient_failures", 0),
                 reason=prior.get("reason"),
             )
+        elif prior.get("last_poll_started_at") and datetime.fromisoformat(
+            prior["last_poll_started_at"]
+        ) > datetime.now(UTC):
+            authority.stop()
+            result.update(status="BLOCKED", reason="worker_clock_regressed",
+                          next_action="Inspect the UTC clock; preserve counters before resume.")
+        elif prior.get("next_due_at") and datetime.fromisoformat(
+            prior["next_due_at"]
+        ) > datetime.now(UTC):
+            result.update(status="WAITING_CADENCE", reason="scheduled_poll_not_due",
+                          next_due_at=prior["next_due_at"],
+                          last_poll_started_at=prior.get("last_poll_started_at"))
         else:
             if (
                 os.getenv("TRADING_MODE", "DATA_ONLY") != "DATA_ONLY"
                 or os.getenv("LIVE_TRADING_ENABLED", "false").lower() != "false"
             ):
                 raise AcquisitionBlockedError("research_runtime_safety_flags_invalid")
+            # Persist before any source/preparation I/O. A crash consumes this due
+            # slot rather than allowing a restart to poll again immediately.
+            started = datetime.now(UTC)
+            result.update(status="POLL_IN_PROGRESS", last_poll_started_at=started.isoformat(),
+                          next_due_at=(started + timedelta(
+                              seconds=policy.cadence_seconds)).isoformat())
+            atomic_json(Path(value["status"]), result)
             discovery = json.loads(Path(value["cohort"]).read_text())["discovery"]
             if value["admission"].get("mode") != "CONTINUOUS":
                 raise AcquisitionBlockedError("continuous_admission_required")
@@ -148,10 +190,6 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 experiment = service.start("polymarket-native")
             if experiment.config.code_sha != code_sha:
                 raise AcquisitionBlockedError("active_financial_session_requires_pinned_release")
-            for revision, action in commands.pending():
-                if action == "drain":
-                    experiment = service.drain("polymarket-native")
-                    commands.finish(revision, status="APPLIED")
             if experiment.lifecycle.value == "DRAINING":
                 service = native_shadow_service(
                     database,
@@ -249,6 +287,12 @@ def platform_tick(
             "next_action": "inspect configuration or state; acquisition is blocked",
         }
         if "status_path" in locals():
+            try:
+                checkpoint = json.loads(status_path.read_text(encoding="utf-8"))
+                for field in ("last_poll_started_at", "next_due_at", "last_success"):
+                    result[field] = checkpoint.get(field)
+            except (OSError, ValueError):
+                pass  # No durable timing checkpoint exists to preserve.
             atomic_json(status_path, result)
     typer.echo(json.dumps({"status": result["status"], "reason": result.get("reason")}))
     if result["status"] == "FAILED":
@@ -337,7 +381,7 @@ def _publish_retained(value: dict[str, Any]) -> None:
         atomic_json(Path(value["publication"]), result)
         commands = ConsoleCommandStore(Path(value["commands"]))
         commands.initialize()
-        for revision, action in commands.pending():
+        for revision, action in commands.pending(actions=("export",)):
             if action == "export":
                 try:
                     if "report" not in result:

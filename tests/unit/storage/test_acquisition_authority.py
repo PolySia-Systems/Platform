@@ -141,3 +141,46 @@ def test_budget_windows_reject_non_UTC_clocks_before_reservation(tmp_path: Path)
     with pytest.raises(AcquisitionBlockedError, match="clock_not_UTC"):
         authority.reserve(ENDPOINT, now=NOW.astimezone(timezone(timedelta(hours=3))), host="host")
     assert authority.status()["requests_charged"] == 0
+
+
+@pytest.mark.parametrize("changes,reason", [
+    ({"window_seconds": 1}, "shorten_rate_window"),
+    ({"retention_days": 1}, "retention_contract"),
+    ({"backup_generations": 3}, "retention_contract"),
+    ({"endpoints": (ENDPOINT, "https://example.com/new")}, "expand_endpoints"),
+    ({"cadence_seconds": 1}, "reduce_reserve"),
+    ({"cohort_limit": 3}, "raise_ceiling"),
+    ({"window_maximum_requests": 301}, "raise_ceiling"),
+    ({"window_maximum_bytes": 16_777_217}, "raise_ceiling"),
+])
+def test_continuation_cannot_weaken_any_standing_envelope(
+    tmp_path: Path, changes: dict[str, object], reason: str,
+) -> None:
+    authority = AcquisitionAuthority(tmp_path / "rate.sqlite3", policy())
+    authority.initialize()
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    with pytest.raises(AcquisitionBlockedError, match=reason):
+        authority.transition_policy(
+            replace(policy(), policy_id="changed", **changes),  # type: ignore[arg-type]
+            authorization_reference="owner-test-continuation",
+        )
+    assert authority.status()["uncertain_requests"] == 1
+    assert authority.status()["policy_digest"] == policy().digest
+
+
+def test_stricter_continuation_preserves_hourly_window_and_uncertainty(tmp_path: Path) -> None:
+    original = replace(policy(), window_maximum_requests=1)
+    authority = AcquisitionAuthority(tmp_path / "standing.sqlite3", original)
+    authority.initialize()
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    stricter = replace(original, policy_id="stricter", maximum_requests=2,
+                       cadence_seconds=120, memory_max_bytes=90_000_000)
+    continued = authority.transition_policy(stricter, authorization_reference="owner-test-stricter")
+    restarted = AcquisitionAuthority(tmp_path / "standing.sqlite3", stricter)
+    restarted.initialize()
+    with pytest.raises(AcquisitionBlockedError, match="request_window"):
+        restarted.reserve(ENDPOINT, now=NOW + timedelta(seconds=2), host="host")
+    continued.stop()
+    assert restarted.status()["stopped"] is True
+    assert restarted.status()["uncertain_requests"] == 1
+    assert restarted.status()["bytes_charged"] == 1024
