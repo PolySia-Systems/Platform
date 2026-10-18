@@ -88,7 +88,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
           cache: pip
           cache-dependency-path: locks/requirements-dev-py314.txt
       - name: Diff and path/link checks
@@ -155,7 +155,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
           cache: pip
           cache-dependency-path: locks/requirements-dev-py314.txt
       - name: Install compatibility environment
@@ -261,7 +261,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
       - run: python -m pip install -r locks/requirements-dev-py314.txt
       - run: python -m build --wheel --no-isolation
       - run: python -m pip install --no-deps dist/*.whl
@@ -287,7 +287,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
           cache: pip
           cache-dependency-path: locks/requirements-dev-py314.txt
       - run: python -m venv "$RUNNER_TEMP/polysia-audit-venv"
@@ -327,22 +327,66 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
       - uses: actions/download-artifact@v7
         with:
           name: polysia-release-image
           path: release-image
       - name: Fresh supervised installation and trusted private HTTPS
+        id: private_install
         run: |
           sudo "$(command -v python)" scripts/installation_acceptance.py \
             --artifact-directory release-image --commit "$GITHUB_SHA" \
-            --output "$RUNNER_TEMP/installation-receipt.json"
+            --output "$RUNNER_TEMP/installation-receipt.json" \
+            --browser-handoff "$RUNNER_TEMP/browser-fixture-handoff.json"
       - name: Retain installation acceptance
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: polysia-installation-acceptance
           path: ${{ runner.temp }}/installation-receipt.json
+          if-no-files-found: warn
+      - name: Prepare explicit browser and recovery fixture dependencies
+        if: ${{ !cancelled() && steps.private_install.outcome == 'success' }}
+        run: |
+          python -m pip install -r locks/requirements-dev-py314.txt
+          python -m pip install --no-deps -e .
+          python -m playwright install --with-deps firefox
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libnss3-tools
+      - name: Installed desktop mobile and keyboard journeys with isolated trust
+        if: ${{ !cancelled() && steps.private_install.outcome == 'success' }}
+        run: |
+          python scripts/installed_browser_acceptance.py --handoff "$RUNNER_TEMP/browser-fixture-handoff.json" \
+            --output "$RUNNER_TEMP/installed-browser-receipt.json"
+      - name: Real own-domain ACME issuance renewal and recovery
+        if: ${{ !cancelled() && steps.private_install.outcome == 'success' }}
+        run: |
+          IMAGE_ID=$(python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["RUNNER_TEMP"])/"installation-receipt.json").read_text())["image_id"])')
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT "$(command -v python)" scripts/gateway_acme_acceptance.py \
+            --image-id "$IMAGE_ID" --output "$RUNNER_TEMP/acme-receipt.json"
+      - name: Retain isolated ACME acceptance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: polysia-acme-acceptance
+          path: ${{ runner.temp }}/acme-receipt.json
+          if-no-files-found: warn
+      - name: Real backup destination replacement and nonempty replacement recovery
+        if: ${{ !cancelled() && steps.private_install.outcome == 'success' }}
+        run: |
+          IMAGE_ID=$(python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["RUNNER_TEMP"])/"installation-receipt.json").read_text())["image_id"])')
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT "$(command -v python)" scripts/backup_destination_acceptance.py \
+            --artifact-directory release-image --image-id "$IMAGE_ID" --commit "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/backup-destination-receipt.json"
+      - name: Retain browser and nonempty recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: polysia-product-acceptance
+          path: |
+            ${{ runner.temp }}/installed-browser-receipt.json
+            ${{ runner.temp }}/backup-destination-receipt.json
           if-no-files-found: warn
 
   ci-gate:
