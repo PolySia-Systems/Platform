@@ -252,7 +252,6 @@ def test_dependency_automation_workflow_registers_push_and_dispatch() -> None:
     assert text.startswith("name: Dependency automation\n")
     assert "\n  push:\n" in text
     assert "\n  pull_request:\n" in text
-    assert "\n  workflow_dispatch: {}\n" in text
     assert "noop:" in text
     assert "github.event_name == 'push'" in text
     assert not any(line.startswith("- ") for line in text.splitlines()), (
@@ -260,6 +259,11 @@ def test_dependency_automation_workflow_registers_push_and_dispatch() -> None:
     )
     loaded = safe_load(text)
     assert loaded["name"] == "Dependency automation"
+    events = loaded.get("on", loaded.get(True))
+    assert "push" in events and "pull_request" in events
+    dispatch = events["workflow_dispatch"]
+    assert dispatch["inputs"]["publish"]["type"] == "boolean"
+    assert dispatch["inputs"]["publish"]["default"] is False
 
 
 def test_scheduled_publication_reuses_an_existing_validated_branch_or_pr() -> None:

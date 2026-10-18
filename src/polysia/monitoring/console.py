@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 import jwt
 
+from polysia.application.services.report_integrity import verify_analytical_digest
 from polysia.application.services.shadow_reporting import comparison_csv
 from polysia.storage.console_commands import ConsoleCommandStore
 
@@ -204,7 +205,7 @@ class ConsoleApplication:
                 if archive.is_symlink() or archive.stat().st_size > MAX_PUBLICATION_BYTES:
                     raise ValueError("invalid_archived_report")
                 report = json.loads(archive.read_text(encoding="utf-8"))
-                _verify_analytical_digest(report)
+                verify_analytical_digest(report)
                 if report["analytical_digest"] != archive.stem:
                     raise ValueError("archived_report_identity_differs")
                 headers.append(
@@ -258,16 +259,6 @@ class ConsoleApplication:
             if not isinstance(result, dict):
                 raise ValueError("invalid_publication")
             if "report" in result:
-                _verify_analytical_digest(result["report"])
+                verify_analytical_digest(result["report"])
             self._cache, self._cache_key = result, key
         return self._cache
-
-
-def _verify_analytical_digest(report: Any) -> None:
-    if not isinstance(report, dict) or not isinstance(report.get("analytical"), dict):
-        raise ValueError("invalid_analytical_report")
-    encoded = json.dumps(report["analytical"], sort_keys=True, separators=(",", ":")).encode()
-    if not hmac.compare_digest(
-        hashlib.sha256(encoded).hexdigest(), str(report.get("analytical_digest", ""))
-    ):
-        raise ValueError("analytical_report_digest_differs")

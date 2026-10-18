@@ -38,6 +38,7 @@ def test_packaging_dependency_container_and_windows_changes_are_explicit() -> No
     powershell = classify_paths(("scripts/operator-check.ps1",))
 
     assert package.python and package.package and package.dependencies and package.windows
+    assert package.container
     assert runtime_lock == ChangeMap(
         quality=True,
         python=True,
@@ -106,3 +107,12 @@ def test_executable_or_unclassified_document_assets_fail_closed(path: str) -> No
 def test_deployment_selects_behavioral_contract_checks() -> None:
     result = classify_paths(("deploy/migrations/upgrade.sql",))
     assert result.python and result.container
+
+
+@pytest.mark.parametrize("path", [
+    "src/polysia/cli_commands/platform_worker.py",
+    "src/polysia/cli_support/native_lifecycle.py",
+    "pyproject.toml",
+])
+def test_installed_runtime_entry_points_select_container_contract(path: str) -> None:
+    assert classify_paths((path,)).container

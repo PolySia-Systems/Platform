@@ -10,7 +10,9 @@ Python 3.14 is required. CI builds the wheel and immutable image, tests the imag
 retains their source/archive/config identities, performs the supply-chain checks,
 and exercises the installed wheel in a synthetic HTTPS desktop/mobile browser.
 The release workflow promotes the retained assets from a successful full main CI
-run; it does not rebuild them. Use `v0.2.0` for the declared distribution version.
+run; it does not rebuild them. The engineering patch declares `v0.2.1`;
+`v0.2.0` remains the compatible historical release. Only a dated promotion
+receipt establishes which artifact is installed.
 A full manual main CI run is supported when automatic classification omits a gate.
 Never promote a PR merge-test identity as the final main release.
 
@@ -61,6 +63,32 @@ records the predecessor/new manifests and authorization reference while retainin
 all lifetime charges and STOP. It cannot raise ceilings or reduce reserves. It is
 not an automatic campaign renewal. Continuous native operation additionally needs
 nonempty diagnostic/resource admission for the matching code and cohort.
+
+Persistent native composition uses `continuous-shadow-native-research-v2` for a
+new admitted financial session. Admission includes UTC `expires_at`, matching
+code/original cohort, nonempty persisted simulations and resource approval. Every
+due tick checks admission and authority before source work. The same identities
+are revalidated after three hours through complete wallet-activity walks and
+mapping/fee/current-book checks; the original frozen lookback is preserved.
+Successful receipts are cached in `cohort-revalidation.json` beside authority
+(or protected `cohort_refresh` configuration), binding code/original cohort.
+Retries are finite and charged; incomplete or insufficient evidence cannot advance
+financial watermarks or replace a cohort. No admission carries across releases.
+
+The financial session has no daily time reset. Event/storage ceilings and explicit
+drain/finalize remain enforced with open inventory and pending observations.
+Daily/UTC reports view retained state, not fresh capital. A changed cohort or
+release needs a controlled compatible financial-session decision while flat using
+existing preparation/transition controls. Preserve old roots and release-specific
+replay. No new session/acquisition is activated by patch deployment.
+
+The minute supervisor enforces manifest cadence through a durable pre-I/O due
+slot retained across crash/restart. `WAITING_CADENCE`, `WAITING_RETRY` and
+`WAITING_WORKER` distinguish ordinary scheduling/overlap; a regressed UTC clock
+blocks source work. Controls precede waiting. STOP bypasses queue backlog, fences
+earlier resume work and needs no financial/provider access. Drain without a
+financial session returns a blocked receipt. Exports have a separate publisher
+queue. STOP and expiry never imply that existing positions settled.
 
 ```bash
 polysia ops shadow-report --database FINANCIAL_SQLITE --experiment-id EXPERIMENT
@@ -135,6 +163,13 @@ Ordinary browser navigation must reach the named Access login with normal TLS.
 The owner completes email login personally; never collect OTPs in chat. Restarting
 this route does not renew acquisition authority.
 
+Visible Console pages perform serialized read-only refresh approximately every
+20 seconds with a 10-second request deadline. Hidden pages suspend refresh and
+refresh immediately on return. Local aging continues during network failure;
+worker age, publication age and retained financial cutoff are separate. A fresh
+publisher cannot make an old worker receipt healthy. Background reads do not
+resubmit commands or clear user-entered boundaries/filters.
+
 If Access is unavailable, use the existing protected administrative SSH route and
 the installed immutable image, with the same worker configuration/state mounts:
 
@@ -181,6 +216,13 @@ and forces acquisition disabled. RPO <=24h and RTO <=60m require measured receip
 not an SFTP login. The recovery root is not an automatically promoted second writer.
 Fence the old primary and reconcile the newest authority before any real failover;
 a stale backup cannot restore spent allowance.
+
+New backups also retain the bounded immutable `reports/` archive under the same
+encrypted inventory. Restore verifies report digests and recreates download paths.
+Historical APPLIED export receipts whose artifacts cannot be recovered become
+explicit FAILED receipts with their prior result retained, on a separate restored
+command-store copy. The verified original snapshot remains unchanged. Recovered
+exports are independent frozen results, not permission to query a provider.
 
 The protected secondary directory `/etc/polysia-platform-recovery/console`
 retains web configuration, unit templates, the dedicated runtime token and

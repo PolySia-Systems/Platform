@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -73,21 +74,35 @@ class NativeSnapshotPort:
 def native_shadow_service(
     database: Path, discovery: dict[str, Any], *, authority: AcquisitionAuthority,
     code_sha: str, admission: dict[str, Any], closure: bool = False,
+    persistent: bool = False, refreshed_discovery: dict[str, Any] | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ContinuousShadowService:
-    port = NativeSnapshotPort(discovery)
+    initial = NativeSnapshotPort(discovery)
+    port = initial if refreshed_discovery is None else NativeSnapshotPort(refreshed_discovery)
+    if refreshed_discovery is not None and (
+        refreshed_discovery.get("original_cohort_digest") != discovery["digest"]
+        or {(c.wallet_id, c.address) for c in port.snapshot.candidates}
+        != {(c.wallet_id, c.address) for c in initial.snapshot.candidates}
+        or port.snapshot.published_at < initial.snapshot.published_at
+    ):
+        raise ValueError("native revalidation cannot replace admitted identities")
     if len(port.snapshot.candidates) > authority.policy.cohort_limit:
         raise ValueError("native cohort exceeds acquisition policy")
     transport = BoundedPublicTransport(authority, closure=closure)
     config = ContinuousShadowConfig(
-        code_sha=code_sha, runtime_version="continuous-shadow-native-research-v1",
+        code_sha=code_sha, runtime_version=(
+            "continuous-shadow-native-research-v2" if persistent
+            else "continuous-shadow-native-research-v1"
+        ),
         policy_version="native-research-shadow-policy/v1",
         selection_policy="native-recent-activity-v1",
         wallet_count=len(port.snapshot.candidates),
-        selection_observed_at=port.snapshot.published_at,
-        selection_preflight_digest=port.snapshot.source_snapshot_id,
-        capacity_evidence=admission, period_duration_seconds=86_400,
+        selection_observed_at=initial.snapshot.published_at,
+        selection_preflight_digest=initial.snapshot.source_snapshot_id,
+        capacity_evidence=admission, period_duration_seconds=0 if persistent else 86_400,
         poll_interval_seconds=authority.policy.cadence_seconds, initial_lookback_minutes=1,
         source_max_pages=4, source_max_requests=4,
+        maximum_selection_age_hours=4,
         period_max_storage_bytes=67_108_864,
     )
     telemetry = LatencyTelemetryStore(database.with_name("native-latency.sqlite3"))
@@ -101,5 +116,6 @@ def native_shadow_service(
         BoundedMarketAdapter(transport), config=config, concurrency=1,
         maximum_pages_per_wallet=4, maximum_selection_age=timedelta(hours=4),
         automatic_rollover=False,
+        clock=clock,
         latency_recorder=LatencyRecorder(telemetry, load_runtime_identity(venue_id="polymarket")),
     )

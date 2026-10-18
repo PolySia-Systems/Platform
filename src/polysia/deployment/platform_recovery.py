@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -14,6 +15,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from polysia.application.services.report_integrity import (
+    MAX_REPORT_ARCHIVE_BYTES,
+    MAX_REPORT_BYTES,
+    verify_analytical_digest,
+)
 from polysia.application.services.shadow_reporting import ShadowReportingService
 from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
 from polysia.deployment.recovery_bundle import (
@@ -23,6 +29,7 @@ from polysia.deployment.recovery_bundle import (
     sha256_file,
 )
 from polysia.deployment.sqlite_backup import backup_sqlite_database, verify_sqlite_backup
+from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
 
 MAX_BUNDLE_BYTES = 536_870_912
@@ -141,6 +148,25 @@ def create_encrypted_backup(
                 if source.is_symlink():
                     raise ValueError("evidence cannot contain symlinks")
                 shutil.copy2(source, bundle / ("evidence-" + source.name))
+        archived_reports = []
+        archive_bytes = 0
+        if value.get("publication"):
+            report_archive = Path(value["publication"]).parent / "reports"
+            if report_archive.is_symlink():
+                raise ValueError("report archive cannot be a symlink")
+            for source in sorted(report_archive.glob("*.json")):
+                size = source.stat().st_size
+                archive_bytes += size
+                if (source.is_symlink() or not re.fullmatch(r"[a-f0-9]{64}\.json", source.name)
+                        or size > MAX_REPORT_BYTES or archive_bytes > MAX_REPORT_ARCHIVE_BYTES):
+                    raise ValueError("report recovery inventory exceeds bounds")
+                retained_report = json.loads(source.read_text(encoding="utf-8"))
+                verify_analytical_digest(retained_report)
+                if retained_report["analytical_digest"] != source.stem:
+                    raise ValueError("report recovery identity mismatch")
+                name = "report-" + source.name
+                shutil.copy2(source, bundle / name)
+                archived_reports.append(name)
         files = {path.name: sha256_file(path) for path in bundle.iterdir() if path.is_file()}
         total = sum(path.stat().st_size for path in bundle.iterdir())
         if total > MAX_PAYLOAD_BYTES:
@@ -150,6 +176,7 @@ def create_encrypted_backup(
             "created_at": now.isoformat(),
             "release_commit": value["release_commit"],
             "files": files,
+            "reports": archived_reports,
             "report_experiment_id": (
                 None if report is None else report["analytical"]["experiment_id"]
             ),
@@ -263,6 +290,23 @@ def extract_and_verify_recovery(
             if report["analytical_digest"] != metadata["analytical_digest"]:
                 raise ValueError("restored analytical replay differs")
     safe_config = json.loads((destination / "worker-config.json").read_text())
+    report_archive = destination / "reports"
+    report_archive.mkdir(mode=0o700)
+    archive_bytes = 0
+    for name in metadata.get("reports", []):
+        if not isinstance(name, str) or not re.fullmatch(r"report-[a-f0-9]{64}\.json", name):
+            raise ValueError("invalid recovered report name")
+        source = destination / name
+        archive_bytes += source.stat().st_size
+        if (name not in metadata["files"] or source.stat().st_size > MAX_REPORT_BYTES
+                or archive_bytes > MAX_REPORT_ARCHIVE_BYTES):
+            raise ValueError("recovered report exceeds inventory bounds")
+        retained_report = json.loads(source.read_text(encoding="utf-8"))
+        verify_analytical_digest(retained_report)
+        expected_digest = name.removeprefix("report-").removesuffix(".json")
+        if retained_report["analytical_digest"] != expected_digest:
+            raise ValueError("recovered report identity mismatch")
+        shutil.copy2(source, report_archive / name.removeprefix("report-"))
     for record in bundle.databases:
         safe_config["database" if record.role == "financial" else record.role] = str(
             destination / record.filename,
@@ -277,6 +321,14 @@ def extract_and_verify_recovery(
         safe_config["database"] = str(destination / "financial.sqlite3")
     safe_config["acquisition_enabled"] = False
     safe_config["recovery_requires_authority_reconciliation"] = True
+    runtime_commands = backup_sqlite_database(
+        Path(safe_config["commands"]), destination, keep=1, prefix="restored-commands-",
+        minimum_free_bytes=16_777_216,
+    )
+    safe_config["commands"] = str(runtime_commands.backup_path)
+    reconciled = ConsoleCommandStore(runtime_commands.backup_path).reconcile_report_downloads(
+        report_archive,
+    )
     (destination / "recovery-runtime.json").write_text(json.dumps(safe_config, sort_keys=True))
     return {
         "status": "VERIFIED_ISOLATED_RESTORE",
@@ -284,4 +336,6 @@ def extract_and_verify_recovery(
         "analytical_digest": metadata["analytical_digest"],
         "acquisition_enabled": False,
         "real_orders": False,
+        "restored_reports": len(metadata.get("reports", [])),
+        "unavailable_report_receipts": reconciled,
     }

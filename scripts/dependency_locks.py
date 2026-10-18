@@ -341,7 +341,13 @@ def _pr_changed_files(repository: str, number: int) -> tuple[str, ...]:
 
 
 def _git_text(repository: str, ref: str, path: str) -> str:
-    payload = _gh_json((f"repos/{repository}/contents/{path}", "-F", f"ref={ref}"))
+    try:
+        payload = _gh_json(("--method", "GET", f"repos/{repository}/contents/{path}",
+                            "-F", f"ref={ref}"))
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"GitHub contents GET failed for {path} at {ref} (exit {error.returncode})"
+        ) from None
     if not isinstance(payload, dict):
         raise RuntimeError(f"unable to read {path} at {ref}")
     return base64.b64decode(str(payload["content"])).decode("utf-8")
@@ -450,6 +456,12 @@ def evaluate_lock_sync(
         return {
             "status": "reject",
             "reason": "build-backend, registry, URL, VCS, or path dependency change",
+            "files": files,
+        }
+    if sdk_changed:
+        return {
+            "status": "noop", "ecosystem": "pip", "decision": "human_review",
+            "reason": "SDK compatibility and approval review required before lock generation",
             "files": files,
         }
     if intent == "generate":

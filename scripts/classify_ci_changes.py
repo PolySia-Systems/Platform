@@ -51,6 +51,7 @@ PACKAGE_PATTERNS = (
     "Makefile",
 )
 CONTAINER_PATTERNS = (
+    "pyproject.toml",
     "Dockerfile",
     "compose.yaml",
     "docker-compose.yml",
@@ -62,6 +63,8 @@ CONTAINER_PATTERNS = (
     "src/polysia/deployment/**",
     "src/polysia/cli.py",
     "src/polysia/cli_commands/core.py",
+    "src/polysia/cli_commands/platform_*.py",
+    "src/polysia/cli_support/native_*.py",
 )
 DEPENDENCY_PATTERNS = (
     "pyproject.toml",

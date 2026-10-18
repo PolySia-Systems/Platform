@@ -4,13 +4,13 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-09-28 |
+| Review date | 2026-10-18 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Primary runtime | CPython `3.14.7` |
 | Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.7.1` |
-| Conformance status | `STANDARDS_V0_4_0_FULLY_ENFORCED` |
+| Conformance status | `STANDARDS_V0_5_2_SELECTED_PROFILES_ENFORCED` |
 
 This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
@@ -103,6 +103,13 @@ additional venues, AI/ML, and production Live automation remain TARGET or
 FUTURE unless an approved document proves otherwise.
 
 ## Independent Platform increment (2026-10-16)
+
+The 18 October engineering patch declares v0.2.1 and addresses native persistent
+session/revalidation, durable cadence and control priority, authority continuation,
+Console aging, retained-export recovery and scoped dependency tooling. Deployment
+keeps acquisition disabled. Exact release/host verification and remaining
+acceptance are recorded separately in the delivery PR and dated execution record;
+the implementation description alone is not a deployment or product verdict.
 
 CURRENT code provides a bounded private Console, native research profile,
 Platform-owned durable acquisition authority, provider-free financial snapshot and

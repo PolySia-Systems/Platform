@@ -88,6 +88,7 @@ def console_fixture(tmp_path: Path) -> Any:
             {
                 "status": "SYNTHETIC TEST FIXTURE",
                 "published_at": now.isoformat(),
+                "last_attempt": now.isoformat(),
                 "next_action": "Fixture only; no acquisition",
                 "authority_window": {
                     "expires_at": "2026-10-16T12:00:00+00:00",
@@ -255,4 +256,70 @@ def test_console_operator_tasks_and_protected_downloads(
         read_page = reader.new_page()
         read_page.goto(origin)
         expect(read_page.get_by_role("button", name="STOP acquisition")).to_be_disabled()
+        browser.close()
+
+
+def test_console_ages_recovers_refreshes_and_observes_async_receipts(console_fixture: Any) -> None:
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, commands, _digest = console_fixture
+    with sync_playwright() as runtime:
+        options = {"channel": "chrome"} if os.name == "nt" else {}
+        browser = runtime.chromium.launch(**options)
+        context = browser.new_context(
+            ignore_https_errors=True,
+            extra_http_headers={"Cf-Access-Jwt-Assertion": token("fixture-owner")},
+        )
+        retained = context.request.get(origin + "/api/report").json()
+        retained["status"] = "OBSERVING"
+        state = {"unavailable": False, "reads": 0, "posts": 0}
+        page = context.new_page()
+        page.clock.install(time=datetime.now(UTC))
+
+        def report(route: Any) -> None:
+            state["reads"] += 1
+            route.fulfill(status=503 if state["unavailable"] else 200, json=retained)
+
+        page.route("**/api/report", report)
+        page.route("**/api/health", lambda route: route.fulfill(json={"status": "PUBLISHED"}))
+        page.on("request", lambda request: state.update(posts=state["posts"] + 1)
+                if request.method == "POST" else None)
+        page.goto(origin)
+        expect(page.locator("#operation")).to_have_text("OBSERVING")
+        page.locator("#wallet-filter").fill("fixture")
+        page.locator("#report-start").fill("2026-10-16T00:00")
+        page.get_by_role("button", name="STOP acquisition").click()
+        expect(page.locator("#receipts")).to_contain_text("REQUESTED")
+        commands.finish(1, status="APPLIED")
+        page.clock.fast_forward(21000)
+        expect(page.locator("#receipts")).to_contain_text("APPLIED")
+        assert state["posts"] == 1
+        assert page.locator("#wallet-filter").input_value() == "fixture"
+        assert page.locator("#report-start").input_value() == "2026-10-16T00:00"
+        state["unavailable"] = True
+        page.clock.fast_forward(21000)
+        expect(page.locator("#error")).to_be_visible()
+        page.clock.fast_forward(600000)
+        expect(page.locator("#operation")).to_have_text("STALE PUBLICATION")
+        # Deterministically exercise the visibility-event contract in Chromium.
+        page.evaluate("""() => {
+          Object.defineProperty(document, 'hidden', {configurable:true,get:()=>true});
+          document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        reads = state["reads"]
+        page.clock.fast_forward(60000)
+        assert state["reads"] == reads
+        state["unavailable"] = False
+        now = page.evaluate("new Date().toISOString()")
+        retained["published_at"] = now
+        page.evaluate("""() => {
+          Object.defineProperty(document, 'hidden', {configurable:true,get:()=>false});
+          document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        expect(page.locator("#operation")).to_have_text("STALE WORKER RECEIPT")
+        expect(page.locator("#error")).to_be_hidden()
+        retained["last_attempt"] = now
+        page.clock.fast_forward(21000)
+        expect(page.locator("#operation")).to_have_text("OBSERVING")
+        assert state["posts"] == 1
         browser.close()
