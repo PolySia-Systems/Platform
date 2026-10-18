@@ -59,7 +59,9 @@ async def native_lifecycle_poll(
     active = store.active_experiment("polymarket-native")
     if active is not None and (active.config.code_sha != code_sha
                               or active.config.runtime_version
-                              != "continuous-shadow-native-research-v2"):
+                              != "continuous-shadow-native-research-v2"
+                              or active.config.selection_preflight_digest != discovery["digest"]
+                              or active.config.capacity_evidence != admission):
         raise AcquisitionBlockedError("active_financial_session_requires_pinned_release")
     refreshed = None
     if refresh_path.exists():

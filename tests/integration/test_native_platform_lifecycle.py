@@ -126,7 +126,7 @@ async def test_actual_native_composition_crosses_four_hours_midnight_and_25_hour
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["admission", "authority", "stale", "incomplete"])
+@pytest.mark.parametrize("failure", ["admission", "authority", "stale", "incomplete", "new_cohort"])
 async def test_expired_or_incomplete_evidence_never_advances_financial_state(
     native_runtime, failure: str,
 ):
@@ -141,6 +141,17 @@ async def test_expired_or_incomplete_evidence_never_advances_financial_state(
         admission["expires_at"] = clock().isoformat()
     elif failure == "authority":
         authority.stop()
+    elif failure == "new_cohort":
+        discovered = native_runtime[4]
+        discovered["candidates"][0]["address"] = "0x" + "2" * 40
+        discovered["candidates"][0]["wallet_id"] = normalize_evm_wallet(
+            "polygon", discovered["candidates"][0]["address"],
+        )[0]
+        unsigned = {key: value for key, value in discovered.items() if key != "digest"}
+        discovered["digest"] = hashlib.sha256(json.dumps(
+            unsigned, sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        admission["cohort_digest"] = discovered["digest"]
     else:
         faults[failure] = True
     with pytest.raises((AcquisitionBlockedError, IncompleteWalletWindowError)):
@@ -149,7 +160,7 @@ async def test_expired_or_incomplete_evidence_never_advances_financial_state(
     assert after["polls"]["succeeded"] == before["polls"]["succeeded"]
     assert after["follower"]["cash"] == before["follower"]["cash"]
     assert not (root / "refresh.json").exists()
-    if failure in {"admission", "authority"}:
+    if failure in {"admission", "authority", "new_cohort"}:
         assert calls == []
 
 
