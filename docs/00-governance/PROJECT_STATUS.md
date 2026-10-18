@@ -104,12 +104,18 @@ FUTURE unless an approved document proves otherwise.
 
 ## Independent Platform increment (2026-10-16)
 
-The 18 October engineering patch declares v0.2.1 and addresses native persistent
+The 18 October engineering patch v0.2.1 addresses native persistent
 session/revalidation, durable cadence and control priority, authority continuation,
-Console aging, retained-export recovery and scoped dependency tooling. Deployment
-keeps acquisition disabled. Exact release/host verification and remaining
-acceptance are recorded separately in the delivery PR and dated execution record;
-the implementation description alone is not a deployment or product verdict.
+Console aging, retained-export recovery and scoped dependency tooling. Dated
+18 October receipts record source `d14094d57d76575e2b3bcd78f27f431c5a7ee8bc`
+deployed on Helsinki and retained/tested for cold recovery on Nuremberg with
+acquisition disabled and STOP/charges preserved. The fresh isolated drill measured
+RPO 64.171 seconds and RTO 41.746 seconds. See the
+[completion report](https://github.com/PolySia-Systems/Platform/pull/195) and
+[dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#engineering-patch-commissioning---18-october-2026).
+Engineering completion and disabled deployment are achieved within tested scope;
+observation sufficiency and product acceptance remain unclaimed. These dated
+receipts are not perpetual live-host truth.
 
 CURRENT code provides a bounded private Console, native research profile,
 Platform-owned durable acquisition authority, provider-free financial snapshot and
