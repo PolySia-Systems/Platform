@@ -2,6 +2,19 @@
 
 Date: 2026-10-16. Status: Accepted under the owner's execution delegation.
 
+## Deferred external source value gate
+
+FUTURE Goldsky integration has no implementation, placeholder UI, account or
+enabled connector in this release. Its use case must first demonstrate material
+incremental coverage or provenance that current bounded Data API v2 ingestion
+cannot supply at an acceptable measured cost. A proposal must verify v2
+availability, historical/current coverage and gaps, reorg/finality semantics,
+source/event provenance and cross-source deduplication; duplicated observations
+do not become independent evidence. Record quota, storage, operating cost,
+failure/rollback and access terms before acquisition authorization. Existing
+venue-neutral source ports remain the extension boundary. No special framework
+or production dependency is added for this deferred possibility.
+
 ## Context
 
 CURRENT Platform has native public readers, PolyCop ingestion and separate

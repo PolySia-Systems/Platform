@@ -25,7 +25,9 @@ execution API. Caddy's administration API is disabled. Client identity headers
 are stripped and replaced only after authentication; Host/Origin, CSRF, bounded
 requests, command idempotency and role checks remain application gates. Basic
 credentials may be cached by browsers; revocation removes the gateway account
-and restarts the dedicated gateway, denying subsequent requests. Basic has no
+and recreates both the backend and dedicated gateway, denying subsequent requests.
+Atomic replacement of a bind-mounted configuration alone does not reload its
+inode in an existing container. Basic has no
 Cloudflare MFA/session semantics. A separately retained CA private key is never
 transferred for browser trust; only its public certificate crosses SSH.
 
@@ -49,3 +51,10 @@ does not alter financial stores, STOP, authority, DNS or Cloudflare policy.
 Acceptance receipts in PR #198 determine tested implementation scope. Human
 usability trials and authorized publicly trusted domain commissioning remain
 EXTERNAL; this decision does not claim they passed.
+
+The native financial session also keeps a small durable identity marker beside
+its database. Losing a database while retaining its marker fails closed rather
+than initializing new cash. Backup includes that marker when present. Missing,
+empty or identity-mismatched retained authority similarly cannot initialize new
+allowance. Config rollback restores hash-checked units/configuration with their
+ownership/modes and leaves a restart fence; it never downgrades financial data.

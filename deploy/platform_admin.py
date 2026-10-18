@@ -331,13 +331,46 @@ def image_json(image: str, code: str, value: dict) -> str:
     return result.stdout
 
 
-def configure(value: dict, *, image: str, allow_change: bool = False) -> dict:
+def configure(
+    value: dict, *, image: str, allow_change: bool = False, cloudflare: dict | None = None
+) -> dict:
     """Stage validated access/configuration before any activation."""
     validate(value)
     current = core.CONFIG_ROOT / "installation.json"
     if current.exists() and validate(json.loads(current.read_text())) != value and not allow_change:
         raise ValueError("existing configuration differs; use an explicit maintenance change")
     if value["profile"] == "cloudflare":
+        if cloudflare:
+            if (core.CONFIG_ROOT / "web.json").exists():
+                raise ValueError(
+                    "existing Cloudflare identity is preserved; no identity replacement"
+                )
+            issuer = cloudflare["issuer"]
+            if (
+                re.fullmatch(r"https://[a-z0-9-]+\.cloudflareaccess\.com", issuer) is None
+                or re.fullmatch(r"[a-f0-9]{64}", cloudflare["audience"]) is None
+                or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", cloudflare["owner"]) is None
+            ):
+                raise ValueError(
+                    "valid Access issuer, application audience and owner email required"
+                )
+            atomic(core.CONFIG_ROOT / "csrf-secret", secrets.token_hex(32), mode=0o640)
+            os.chown(core.CONFIG_ROOT / "csrf-secret", 0, 10102)
+            atomic(
+                core.CONFIG_ROOT / "web.json",
+                {
+                    "issuer": issuer,
+                    "audience": cloudflare["audience"],
+                    "roles": {cloudflare["owner"]: "operator"},
+                    "origin": "https://" + value["hostname"],
+                    "port": 8765,
+                    "commands": "/control/commands.sqlite3",
+                    "publication": "/publication/publication.json",
+                    "csrf_secret_file": "/config/csrf-secret",
+                },
+                mode=0o640,
+            )
+            os.chown(core.CONFIG_ROOT / "web.json", 0, 10102)
         if not (core.CONFIG_ROOT / "web.json").exists():
             return {
                 "status": "ACCESS_CONFIGURATION_REQUIRED",
@@ -345,7 +378,13 @@ def configure(value: dict, *, image: str, allow_change: bool = False) -> dict:
                 "through the guided administrative entry.",
             }
         atomic(current, value)
-        return {"status": "EXISTING_CLOUDFLARE_PRESERVED"}
+        return {
+            "status": "EXISTING_CLOUDFLARE_PRESERVED"
+            if not cloudflare
+            else "CLOUDFLARE_BACKEND_CONFIGURED",
+            "origin": "https://" + value["hostname"],
+            "route": "EXTERNAL_OWNER_COMMISSIONING_REQUIRED" if cloudflare else "PRESERVED",
+        }
     caddy = install_gateway()
     access = core.CONFIG_ROOT / "gateway-credentials.json"
     if access.exists():
@@ -1138,6 +1177,9 @@ def main() -> None:
     parser.add_argument("--profile", choices=("private", "own-domain", "cloudflare"))
     parser.add_argument("--hostname")
     parser.add_argument("--public-opt-in", action="store_true")
+    parser.add_argument("--access-issuer")
+    parser.add_argument("--access-audience")
+    parser.add_argument("--access-owner")
     parser.add_argument("--noninteractive", action="store_true")
     parser.add_argument("--backup-mode", choices=("none", "local", "sftp"))
     parser.add_argument("--recipient-file", type=Path)
@@ -1168,14 +1210,16 @@ def main() -> None:
     if args.action in {"stop", "uninstall"}:
         result = protected_stop()
         if args.action == "uninstall":
-            core.run(
-                "systemctl",
-                "disable",
-                "--now",
-                "polysia-platform-worker.timer",
-                "polysia-platform-publisher.timer",
-                "polysia-platform-gateway.service",
-            )
+            for name in (
+                "worker.timer",
+                "publisher.timer",
+                "gateway.service",
+                "health.timer",
+                "backup.timer",
+                "recovery-status.timer",
+            ):
+                if (core.SERVICE_ROOT / ("polysia-platform-" + name)).exists():
+                    core.run("systemctl", "disable", "--now", "polysia-platform-" + name)
             core.run("systemctl", "stop", "polysia-platform-web.service")
         print(json.dumps(result))
         return
@@ -1234,8 +1278,29 @@ def main() -> None:
     if args.action == "restore":
         proof = restore_installation(args, value, image=receipt["image_id"])
         phase(value, "RESTORE_VERIFIED", restore=proof)
+    cf = None
+    if profile == "cloudflare" and not (core.CONFIG_ROOT / "web.json").exists():
+        supplied = (args.access_issuer, args.access_audience, args.access_owner)
+        if not all(supplied) and not args.noninteractive:
+            print("Create your owner-only Access application and Tunnel to 127.0.0.1:8765.")
+            print(
+                "This configures the verifier; DNS, ingress and account setup remain owner actions."
+            )
+            supplied = (
+                args.access_issuer
+                or input("Access issuer https://TEAM.cloudflareaccess.com: ").strip(),
+                args.access_audience or input("Access application audience: ").strip(),
+                args.access_owner or input("Authorized operator email: ").strip(),
+            )
+        if any(supplied) and not all(supplied):
+            parser.error("provide all three --access-issuer, --access-audience and --access-owner")
+        if all(supplied):
+            cf = dict(zip(("issuer", "audience", "owner"), supplied, strict=True))
     access = configure(
-        value, image=receipt["image_id"], allow_change=args.action in {"configure", "update"}
+        value,
+        image=receipt["image_id"],
+        allow_change=args.action in {"configure", "update"},
+        cloudflare=cf,
     )
     phase(value, "CONFIGURATION_STAGED", access=access)
     if access["status"] == "ACCESS_CONFIGURATION_REQUIRED":

@@ -91,14 +91,26 @@ the [architecture documentation](docs/04-architecture/README.md).
 
 ## Requirements and installation
 
-- CPython `>=3.14,<3.15`
+- CPython `3.14.8` (`>=3.14,<3.15` supported)
 - Git
 - A local virtual environment or the existing `PolySia` Conda environment
 
 ```powershell
-conda activate PolySia
-python -m pip install -e ".[dev]"
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r locks/requirements-dev-py314.txt
+python -m pip install --no-deps -e .
 ```
+
+On Linux activate with `source .venv/bin/activate`. Initial dependency bootstrap
+downloads packages; the fixture commands below then run without provider access
+or secrets. The explicit Windows Conda bootstrap remains available through
+`environment.yml` and `locks/conda-win-64.lock`; install the pip lock afterward.
+See the [developer entry and change map](docs/03-requirements/developer-context-packet.md#developer-entry).
+
+For a destination server, use the [guided administrative installation](docs/10-operations/independent-platform-shadow.md#release-and-isolated-roots)
+instead of a development environment. The engineering candidate is `0.3.0`;
+release/deployment status is recorded separately in PR #198 and the dated receipt.
 
 Copy `.env.example` to an ignored `.env` only when local overrides are needed.
 Never commit or display the resulting values.
@@ -116,11 +128,11 @@ Run local health and paper-only examples:
 
 ```powershell
 polysia system health
-polysia market discover --limit 10
 polysia research paper-trade --token-id YOUR_TOKEN_ID --order-size 1
+python -m pytest -q tests/integration/test_native_drain_transport.py tests/unit/monitoring/test_console.py
 ```
 
-`market discover` uses public venue data. `research paper-trade` uses a
+`research paper-trade` uses a
 deterministic local simulation and does not call Live trading APIs. Its output
 is marked not economically ready because the demo has no recorded fee or
 terminal evidence. `research backtest --input EVENTS.jsonl --evidence EVIDENCE.json`
@@ -151,6 +163,7 @@ python -m ruff check .
 python -m mypy src
 python -m pytest -q
 python -m pip check
+python scripts/dependency_locks.py check
 python -m polysia.security.secret_scan
 python -m build
 ```

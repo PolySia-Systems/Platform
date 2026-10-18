@@ -4,17 +4,26 @@
 
 | Field | Value |
 |---|---|
-| Review date | 2026-10-18 |
+| Review date | 2026-10-19 |
 | Source-of-truth branch | `main` |
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Primary runtime | CPython `3.14.7` |
-| Supported CI runtime | Python `3.14` only (`>=3.14,<3.15`) |
+| Engineering runtime baseline | CPython `3.14.8`; deployed patch requires a dated host receipt |
+| Supported CI runtime | Python `3.14.8` (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.7.1` |
 | Conformance status | `STANDARDS_V0_5_2_SELECTED_PROFILES_ENFORCED` |
 
 This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
+
+The `0.3.0` engineering candidate adds guided single-server maintenance, optional
+private/own-domain HTTPS, explicit unconfigured/demo operation and destination
+replacement/recovery. [PR #198](https://github.com/PolySia-Systems/Platform/pull/198)
+owns its remaining exact-artifact acceptance and delivery checklist. It is not
+ENGINEERING_COMPLETE or a deployment claim until those receipts pass. Existing
+Cloudflare protection, STOP, consumed authority and disabled acquisition remain
+hard boundaries. Public commissioning, unfamiliar-user/developer trials and
+new nonempty economic observations remain separately authorized external work.
 
 ## Truth ownership
 

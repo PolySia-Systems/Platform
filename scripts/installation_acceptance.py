@@ -25,7 +25,12 @@ from urllib.request import Request, urlopen
 
 
 def run(*args: str) -> str:
-    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=300).stdout
+    result = subprocess.run(args, check=False, capture_output=True, text=True, timeout=300)
+    if result.returncode:
+        # Only this disposable fixture's subprocess diagnostics, never credential files.
+        print(result.stderr[-12000:], file=sys.stderr)
+        result.check_returncode()
+    return result.stdout
 
 
 def main() -> None:
@@ -296,4 +301,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        for unit in ("web", "gateway", "worker", "publisher"):
+            subprocess.run(
+                ["journalctl", "--no-pager", "-n", "20", "-u", "polysia-platform-" + unit],
+                check=False,
+                timeout=10,
+            )
+        raise

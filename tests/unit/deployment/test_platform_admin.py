@@ -79,3 +79,50 @@ def test_gateway_backend_has_no_tcp_or_financial_mount_and_stop_survives_queue_f
     assert "CPUQuota=25%" in gateway and "MemoryMax=192M" in gateway
     assert "InaccessiblePaths=/var/lib/polysia-platform/worker" in gateway
     assert "CAP_NET_BIND_SERVICE" not in gateway
+
+
+def test_legacy_backup_registration_preserves_destination_and_requires_fresh_proof(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    original = json.dumps({"secondary_host": "retained.invalid", "upload_key": "retained"})
+    (tmp_path / "backup.json").write_text(original)
+    assert admin.retained_backup() == {
+        "mode": "sftp",
+        "protection": "RETAINED_REVERIFY_REQUIRED",
+    }
+    assert (tmp_path / "backup.json").read_text() == original
+    assert not (tmp_path / "backup-job.json").exists()
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="Linux host ownership contract")
+def test_rollback_restores_content_permissions_and_fences_without_touching_financial_data(
+    tmp_path,
+    monkeypatch,
+):
+    config, services, install, state = [
+        tmp_path / name for name in ("config", "units", "install", "state")
+    ]
+    for root in (config, services, install, state):
+        root.mkdir()
+    monkeypatch.setattr(core, "CONFIG_ROOT", config)
+    monkeypatch.setattr(core, "SERVICE_ROOT", services)
+    monkeypatch.setattr(core, "INSTALL_ROOT", install)
+    monkeypatch.setattr(core, "STATE_ROOT", state)
+    monkeypatch.setattr(core, "activation_preflight", lambda commit: None)
+    monkeypatch.setattr(core, "run", lambda *args: "")
+    monkeypatch.setattr(admin.subprocess, "run", lambda *args, **kwargs: None)
+    (config / "worker.json").write_text(json.dumps({"release_commit": "a" * 40}))
+    (config / "web.json").write_text('{"roles":{"retained":"reader"}}')
+    (config / "web.json").chmod(0o640)
+    financial = state / "financial.sqlite3"
+    financial.write_bytes(b"retained-financial-evidence")
+    receipt = admin.preserve_rollback()
+    assert receipt["files"][str(config / "web.json")]["mode"] == 0o640
+    (config / "web.json").write_text("new configuration")
+    assert admin.rollback()["worker"] == "FENCED"
+    assert json.loads((config / "web.json").read_text())["roles"] == {"retained": "reader"}
+    assert (config / "web.json").stat().st_mode & 0o777 == 0o640
+    assert financial.read_bytes() == b"retained-financial-evidence"
+    assert (config / "restart-fenced").exists()
