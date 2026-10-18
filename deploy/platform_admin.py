@@ -24,6 +24,7 @@ import time
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 if __name__.startswith("deploy."):
@@ -250,7 +251,12 @@ def preflight(value: dict) -> None:
             pass
     # An existing installation owns its bound listeners. Its activation path
     # validates/stops only dedicated units; a fresh install may not claim a port.
-    if not (core.CONFIG_ROOT / "installation.json").exists():
+    retained_web = (
+        (core.CONFIG_ROOT / "worker.json").is_file()
+        and (core.CONFIG_ROOT / "web.json").is_file()
+        and (core.SERVICE_ROOT / "polysia-platform-web.service").is_file()
+    )
+    if not (core.CONFIG_ROOT / "installation.json").exists() and not retained_web:
         ports = (
             (8443,)
             if value["profile"] == "private"
@@ -498,12 +504,13 @@ def activate(value: dict, *, image: str) -> None:
         os.chown(worker, 0, 10102)
     else:
         previous = json.loads(worker.read_text())
+        previous["backup_mode"] = value["backup"]["mode"]
         if previous["release_commit"] != value["commit"]:
             # The bootstrap's activation preflight already refused incompatible
             # inventory, pinned sessions, admission and active acquisition.
             previous["release_commit"] = value["commit"]
-            atomic(worker, previous, mode=0o640)
-            os.chown(worker, 0, 10102)
+        atomic(worker, previous, mode=0o640)
+        os.chown(worker, 0, 10102)
     for role in ("worker", "publisher", "web"):
         text = core.service_text(
             image,
@@ -909,6 +916,7 @@ def configure_backup(args: argparse.Namespace) -> dict:
         receipt = {**outcome, "checked_at": datetime.now(UTC).isoformat()}
         atomic(core.STATE_ROOT / "publication/backup-status.json", receipt, mode=0o640)
         os.chown(core.STATE_ROOT / "publication/backup-status.json", 0, 10102)
+        install_health(current)
     return outcome
 
 
@@ -1180,6 +1188,9 @@ def main() -> None:
     parser.add_argument("--access-issuer")
     parser.add_argument("--access-audience")
     parser.add_argument("--access-owner")
+    parser.add_argument("--operator", action="append", default=[])
+    parser.add_argument("--reader", action="append", default=[])
+    parser.add_argument("--remove-user", action="append", default=[])
     parser.add_argument("--noninteractive", action="store_true")
     parser.add_argument("--backup-mode", choices=("none", "local", "sftp"))
     parser.add_argument("--recipient-file", type=Path)
@@ -1225,6 +1236,26 @@ def main() -> None:
         return
     prior_file = core.CONFIG_ROOT / "installation.json"
     prior = validate(json.loads(prior_file.read_text())) if prior_file.exists() else {}
+    if (
+        not prior
+        and (core.CONFIG_ROOT / "worker.json").is_file()
+        and (core.CONFIG_ROOT / "web.json").is_file()
+    ):
+        # Register the existing protected deployment without changing its access
+        # mechanism or treating its listener as an unrelated fresh-port conflict.
+        web = json.loads((core.CONFIG_ROOT / "web.json").read_text())
+        worker = json.loads((core.CONFIG_ROOT / "worker.json").read_text())
+        prior = validate(
+            {
+                "schema": SCHEMA,
+                "commit": worker["release_commit"],
+                "profile": web.get("profile", "cloudflare"),
+                "hostname": urlsplit(web["origin"]).hostname,
+                "public_opt_in": web.get("profile") == "own-domain",
+                "roles": {"owner": "operator", "reader": "reader"},
+                "backup": retained_backup(),
+            }
+        )
     profile = args.profile or prior.get("profile")
     if profile is None:
         if args.noninteractive:
@@ -1242,6 +1273,19 @@ def main() -> None:
         hostname = input(
             "Your hostname (DNS/ingress commissioning requires your authorization): "
         ).strip()
+    roles = dict(prior.get("roles", {"owner": "operator", "reader": "reader"}))
+    if (args.operator or args.reader or args.remove_user) and args.action != "configure":
+        parser.error("identity changes require the configure action")
+    if profile == "cloudflare" and (args.operator or args.reader or args.remove_user):
+        parser.error(
+            "local user options apply only to the gateway; existing Cloudflare stays preserved"
+        )
+    for name in args.remove_user:
+        if name not in roles:
+            parser.error("cannot remove an unconfigured local user")
+        del roles[name]
+    roles.update(dict.fromkeys(args.reader, "reader"))
+    roles.update(dict.fromkeys(args.operator, "operator"))
     value = validate(
         {
             "schema": SCHEMA,
@@ -1249,7 +1293,7 @@ def main() -> None:
             "profile": profile,
             "hostname": hostname,
             "public_opt_in": args.public_opt_in or prior.get("public_opt_in", False),
-            "roles": prior.get("roles", {"owner": "operator", "reader": "reader"}),
+            "roles": roles,
             "backup": prior.get("backup", retained_backup()),
         }
     )

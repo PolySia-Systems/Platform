@@ -93,8 +93,10 @@ that a new route/login was commissioned.
 
 The private gateway CA is not globally installed. Retain its public fingerprint
 with SSH host verification and use a dedicated browser trust context. Basic
-credentials can remain in the browser cache; removing an account and rerunning
-validated access configuration recreates the backend and gateway, so subsequent
+credentials can remain in the browser cache. Use `configure --remove-user USER`
+to revoke, or `configure --reader USER` / `configure --operator USER` to add or
+change a local role. At least one operator must remain. Validated access
+configuration recreates the backend and gateway, so subsequent
 requests are denied. Protect the root-only credential handoff. No password-reset
 endpoint or root-capable browser settings are exposed. The certificate health
 timer checks actual local TLS with explicit trust, publishes expiry/failure and

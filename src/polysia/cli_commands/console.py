@@ -20,7 +20,12 @@ def serve_console(
     from waitress import serve  # type: ignore[import-untyped]
 
     value: dict[str, Any] = json.loads(config.read_text(encoding="utf-8"))
-    verifier, identity_header, listener = console_identity(value)
+    try:
+        verifier, identity_header, listener = console_identity(value)
+    except (ValueError, OSError) as error:
+        # One bounded line survives the service's deliberate journal rate limit.
+        typer.echo("console_identity_invalid: " + str(error)[:500], err=True)
+        raise typer.Exit(1) from None
     secret = Path(value["csrf_secret_file"]).read_bytes()
     store = ConsoleCommandStore(Path(value["commands"]))
     store.initialize()

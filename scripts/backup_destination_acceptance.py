@@ -151,6 +151,7 @@ def main() -> None:
     ):
         raise ValueError("fresh disposable GitHub-runner installation required")
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from deploy import platform_admin as admin
     from deploy import platform_backup as backup
     from deploy import platform_bootstrap as bootstrap
 
@@ -359,7 +360,60 @@ def main() -> None:
             )
             == archived
         )
-        verify_browser(args.image_id, stage / "bundle", archived, root)
+        # Exercise the actual replacement import, not just its decrypt/replay
+        # primitive. Primary paths have already been made unavailable.
+        replacement = root / "replacement-host"
+        for name in ("config", "state/worker", "state/control", "state/publication"):
+            target = replacement / name
+            target.mkdir(parents=True, mode=0o750, exist_ok=True)
+            if name.startswith("state/"):
+                os.chown(target, 10101, 10102)
+                target.chmod(0o700 if name == "state/worker" else 0o2770)
+        bootstrap.CONFIG_ROOT = replacement / "config"
+        bootstrap.STATE_ROOT = replacement / "state"
+        admin.core = bootstrap
+        imported = admin.restore_installation(
+            argparse.Namespace(archive=source, recovery_key=root / "server-B/keys/recovery-key"),
+            {"commit": args.commit},
+            image=args.image_id,
+        )
+        assert imported["worker"] == "FENCED"
+        assert (replacement / "config/restart-fenced").exists()
+        retained = json.loads((replacement / "config/worker.json").read_text())
+        assert retained["acquisition_enabled"] is False
+        assert retained["recovery_requires_authority_reconciliation"] is True
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "10101:10102",
+            "--memory",
+            "512m",
+            "--cpus",
+            ".5",
+            "--volume",
+            str(replacement / "config/worker.json") + ":/config/worker.json:ro",
+            "--volume",
+            str(replacement / "config/manifest.json") + ":/config/manifest.json:ro",
+            "--volume",
+            str(replacement / "state/worker") + ":/state:rw",
+            "--volume",
+            str(replacement / "state/control") + ":/control:rw",
+            "--volume",
+            str(replacement / "state/publication") + ":/publication:rw",
+            args.image_id,
+            "ops",
+            "platform-publish",
+            "--config",
+            "/config/worker.json",
+        )
+        verify_browser(
+            args.image_id, stage / "bundle", archived, root, restored_state=replacement / "state"
+        )
         elapsed = time.monotonic() - started
         assert elapsed < 3600 and proof["measured_RPO_seconds"] < 86400
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -400,18 +454,20 @@ def main() -> None:
         )
 
 
-def verify_browser(image: str, bundle: Path, archived: dict, root: Path) -> None:
+def verify_browser(
+    image: str, bundle: Path, archived: dict, root: Path, *, restored_state: Path
+) -> None:
     """Real restored image, private trusted HTTPS, archive download and durable command route."""
     browser = root / "browser"
     browser.mkdir(mode=0o755)
     for name in ("publication", "control"):
         (browser / name).mkdir(mode=0o2770)
         os.chown(browser / name, 10101, 10102)
-    shutil.copytree(bundle / "reports", browser / "publication/reports")
-    shutil.copy2(bundle / "publication.json", browser / "publication/publication.json")
-    safe = json.loads((bundle / "recovery-runtime.json").read_text())
-    commands = bundle / Path(safe["commands"]).name
-    shutil.copy2(commands, browser / "control/commands.sqlite3")
+    shutil.copytree(restored_state / "publication/reports", browser / "publication/reports")
+    shutil.copy2(
+        restored_state / "publication/publication.json", browser / "publication/publication.json"
+    )
+    shutil.copy2(restored_state / "control/commands.sqlite3", browser / "control/commands.sqlite3")
     for path in browser.rglob("*"):
         os.chown(path, 10101, 10102)
         path.chmod(0o2770 if path.is_dir() else 0o660)

@@ -136,7 +136,11 @@ def console_identity(value: dict[str, Any]) -> tuple[Any, str, dict[str, Any]]:
         or parent.st_uid not in {0, os.geteuid()}
         or parent.st_gid != os.getegid()
     ):
-        raise ValueError("backend socket directory ownership/permissions are not protected")
+        raise ValueError(
+            "backend socket directory is not protected: "
+            f"uid={parent.st_uid} gid={parent.st_gid} mode={parent.st_mode & 0o777:o}; "
+            f"expected uid=0/{os.geteuid()} gid={os.getegid()} other=0",
+        )
     return (
         GatewayVerifier(value["roles"]),
         GATEWAY_IDENTITY_HEADER,

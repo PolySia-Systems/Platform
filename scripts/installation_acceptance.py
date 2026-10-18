@@ -235,16 +235,16 @@ def main() -> None:
     finally:
         publication.write_bytes(original)
     # A revoked credential is rejected on every subsequent request, including cached browsers.
-    caddyfile = config / "Caddyfile"
-    caddyfile.write_text(
-        "\n".join(
-            line
-            for line in caddyfile.read_text().splitlines()
-            if not line.strip().startswith("reader ")
-        )
-        + "\n"
+    run(
+        sys.executable,
+        str(artifact / "platform_admin.py"),
+        "configure",
+        "--noninteractive",
+        "--artifact-directory",
+        str(artifact),
+        "--remove-user",
+        "reader",
     )
-    run("systemctl", "restart", "polysia-platform-gateway.service")
     assert request(user="reader")[0] == 401
     run(sys.executable, str(artifact / "platform_admin.py"), "stop", "--noninteractive")
     assert (config / "restart-fenced").exists()

@@ -131,6 +131,21 @@ def test_protected_stop_does_not_recreate_missing_authority(installed_worker):
     )
 
 
+def test_protected_stop_persists_before_command_store_failure(installed_worker, monkeypatch):
+    import sqlite3
+
+    config, _, _, authority, _ = installed_worker
+    charged = authority.status()
+
+    def unavailable(store):
+        raise sqlite3.OperationalError("fixture command store is read-only")
+
+    monkeypatch.setattr(ConsoleCommandStore, "initialize", unavailable)
+    with pytest.raises(sqlite3.OperationalError, match="read-only"):
+        worker.platform_stop(config)
+    assert authority.status() == {**charged, "stopped": True}
+
+
 def test_due_checkpoint_survives_restart_and_crash_without_delaying_stop(
     installed_worker,
     monkeypatch: pytest.MonkeyPatch,
