@@ -662,3 +662,117 @@ is `python scripts/check_changed_docs.py --base origin/main --head HEAD` on the
 committed receipt. The unchanged exact v0.2.0 full release checks above remain
 applicable; no application rebuild or duplicate full runtime matrix is required
 for these editorial receipts. Deployment denial/startup checks are stated above.
+
+## Engineering patch commissioning - 18 October 2026
+
+This dated receipt extends the existing record for the owner-authorized
+18 October engineering completion. It does not renew acquisition authority.
+The completion report and criterion dispositions are in
+[PR #195](https://github.com/PolySia-Systems/Platform/pull/195);
+[test-only PR #196](https://github.com/PolySia-Systems/Platform/pull/196)
+settles an already-started browser read before measuring hidden-tab requests.
+No application or safety assertion was weakened.
+
+### Exact release and installation
+
+[Release v0.2.1](https://github.com/PolySia-Systems/Platform/releases/tag/v0.2.1)
+is source `d14094d57d76575e2b3bcd78f27f431c5a7ee8bc`.
+[Full exact-main CI 39126576450](https://github.com/PolySia-Systems/Platform/actions/runs/39126576450)
+passed quality, Windows, container, supply-chain, installed-wheel browser and
+CI Gate. Linux and Windows each passed 1,455 tests with five explicit opt-in
+skips; the browser job passed three tests. Standards full, compile, Ruff, mypy
+(268 modules), pip integrity, deterministic locks, secret scan, build,
+audit/SBOM and installed-package/container checks passed.
+[Publication 39127373711](https://github.com/PolySia-Systems/Platform/actions/runs/39127373711)
+promoted those retained artifacts; neither host rebuilt an image.
+
+| Identity | SHA-256 / value |
+|---|---|
+| Image archive | `9f2efffda92028248c0dcb308fb7b4c5c450d5e41a76c3e5c817571eae013296` |
+| Release manifest | `066129fefcf46251797735567d6a204de2d984b59c7b6f6eea6ffc2538ae3a0c` |
+| Wheel | `f299c3c03f155d475f2ef38d256a300bcd1f25fd643dbed6d28157bd3ac83b34` |
+| CI image identity (manifest) | `sha256:484c286059a73b735664ce23e9e22559d86026883055357c24c9141529eade6a` |
+| Installed image identity on both hosts | `sha256:c1c391fdd2c13bf93c7200daef013e93af43e9aecfcec9a3348d6809ac6b8fbb` |
+| Financial schema | `9`, unchanged |
+| Standards | `v0.5.2`, `2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c`, PRF-BASE/PRF-PYS only |
+
+Both hosts downloaded directly from the published release and verified the
+seven deployment/recovery assets they retain (manifest, image, OS inventory,
+bootstrap, backup job, wheel and SBOM), manifest/source/schema and archive-bound image
+identities. Docker/OCI store addressing accounts for the two image identifiers;
+the tested bootstrap verifies their common archive/config binding. Installed
+`BUILD_COMMIT` and package version on the primary web process are the above
+source and `0.2.1`. Nuremberg used that same image for the isolated restore.
+
+### Disabled primary and protected cold recovery
+
+At 12:34:45 UTC Helsinki (`37.27.8.79`) reported STOPPED, acquisition disabled,
+empty admission, the same stopped policy digest
+`22ac683ec9da57615c214b581588f734ae484b5a8d0fbf83315a26a0f314edcb`,
+11 requests, 2,371,503 charged bytes and zero uncertain requests. Promotion
+compared the complete authority/reservation rows before and after; none changed.
+The financial data was retained rather than retagged or refunded. The report
+still reproduces analytical digest
+`afd041eaaf58eaada4c68f6734cce0a7e56ea86a0ac4f31f34d3875ec3e7d6ee`.
+There is no newly admitted continuous session or measurable economic sample.
+
+Worker, publisher, backup and recovery-status timers are enabled/active.
+Primary web and the existing dedicated tunnel are active; the origin is bound
+only to `127.0.0.1:8765`. Missing-identity GETs to `/`, `/api/report`,
+`/api/commands`, `/api/health`, `/console.js`, `/console.css`, and a command POST
+all returned 403. Normal-TLS public anonymous JSON returned 403. The web process
+uses UID/GID 10102, publication read-only and no financial-store mount.
+The 16 October owner-login receipt remains historical; no new owner acceptance
+is inferred. Cloudflare credentials, Access policy, DNS, organization settings
+and unrelated services were not changed; exposed credentials were not used.
+
+Nuremberg (`91.99.29.4`) independently retains the new assets under its
+release-specific recovery root. Its protected web unit template now names the
+new image; its connector remains inactive. Existing key/credential boundaries,
+resource limits, encrypted-vault allocation and cold-only role were preserved.
+
+### Fresh encrypted recovery proof
+
+At 12:32:04 UTC the new release completed and uploaded
+`platform-20261018T123147Z.tar.age` (80,004,360 bytes), SHA-256
+`e1ae0eb70fda6f26c59f8d81db0c69aa340400d8ed79ca8d4ff3cc611188caac`.
+At 12:33:02 UTC Nuremberg returned `VERIFIED_ISOLATED_RESTORE` using the
+independently retained trusted release manifest and new image. It reproduced
+the exact analytical digest above, validated database/inventory integrity and
+preserved already charged authority in-drill, and started the fenced worker STOPPED with
+`network=none`, `acquisition_enabled=false`, `real_orders=false`.
+
+Measured RPO was **64.171 seconds** and RTO **41.746 seconds**, within the
+existing 24-hour/one-hour objectives. These measure this isolated data/application
+drill, not full incident-to-public-service failover. The four primary timers and
+secondary restore timer are enabled/active; fetched recovery health appears in
+the primary publication. Secondary inspection at 12:34:44 UTC verified the
+ciphertext hash, two retained complete generations, inactive connector and
+removal of decrypted drill roots. Restored SQL is verified during the drill;
+it is deliberately unavailable for post-cleanup inspection.
+
+This production generation had zero retained exports and zero unavailable export
+receipts. Nonempty selected-period/archive/APPLIED-download preservation and
+explicit reconciliation of missing historical results were verified separately
+by the deterministic financial/recovery fixture in final CI; the empty
+production archive is not presented as nonempty evidence.
+
+### Compatibility, rollback and acceptance boundaries
+
+The retained v0.2.0 root `e0ad838d78c42739bff9dcce64d391e99bf57ffe` remains.
+Root-only pre-promotion worker/job configurations and dedicated service units
+are under `/opt/polysia-platform/public-releases/` followed by the new source SHA
+and `/promotion-before/`. For rollback, stop the dedicated timers/web, select
+those compatible saved configurations/units and retained image, reload systemd
+and restart only the dedicated services with acquisition disabled and durable
+STOP. Preserve all SQLite stores, report archives, current charges and later
+evidence; never restore spent allowance. A newly admitted persistent-v2 session
+must not be silently opened by old code. Old financial roots and release-specific
+replay remain available for controlled compatibility decisions.
+
+`ENGINEERING_COMPLETE` and `DEPLOYED_WITH_ACQUISITION_DISABLED` are achieved
+within the stated engineering and verification scope. `OBSERVATION_SUFFICIENT`
+and `PRODUCT_ACCEPTED` are not achieved. New bounded observation needs separately
+authorized current numeric authority and matching admission. Previously exposed
+credential closure and actual owner comprehension remain separate owner actions.
+No acquisition renewal, WI restart, Live action or new paid service occurred.
