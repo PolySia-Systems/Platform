@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 from contextlib import closing
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 INSTALL_ROOT = Path("/opt/polysia-platform")
@@ -239,12 +239,22 @@ def activation_preflight(commit: str) -> None:
         raise ValueError("disable acquisition and reconcile admission before release activation")
     if value.get("release_commit") == commit:
         return
-    authority = STATE_ROOT / "worker" / "authority.sqlite3"
+
+    def retained_path(field: str, default: str) -> Path:
+        path = PurePosixPath(value.get(field, "/state/" + default))
+        if (
+            path.parent != PurePosixPath("/state")
+            or re.fullmatch(r"[a-zA-Z0-9_.-]+", path.name) is None
+        ):
+            raise ValueError("worker database path is outside dedicated state")
+        return STATE_ROOT / "worker" / path.name
+
+    authority = retained_path("authority", "authority.sqlite3")
     if authority.exists():
         with closing(sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True)) as connection:
             if connection.execute("SELECT stopped FROM authority").fetchone() != (1,):
                 raise ValueError("durable authority STOP required before activation")
-    database = STATE_ROOT / "worker" / "financial.sqlite3"
+    database = retained_path("database", "financial.sqlite3")
     if not database.exists():
         return
     with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:

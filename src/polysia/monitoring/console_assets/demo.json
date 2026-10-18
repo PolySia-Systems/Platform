@@ -1,0 +1,17 @@
+{
+  "status": "DEMO_ONLY",
+  "dataset_role": "OFFLINE_DEMO_NOT_PRODUCTION_EVIDENCE",
+  "real_orders": false,
+  "next_action": "Explore this offline example. Return to retained evidence for your installation's status.",
+  "diagnostic": {
+    "discovery": {
+      "source_rows": 2,
+      "unique_wallets": 2,
+      "candidates": [
+        {"wallet_id": "demo-wallet-a", "state": "FICTIONAL_EXAMPLE", "execution_eligibility": "NOT_AUTHORIZED"},
+        {"wallet_id": "demo-wallet-b", "state": "FICTIONAL_EXAMPLE", "execution_eligibility": "INSUFFICIENT_EVIDENCE"}
+      ]
+    }
+  },
+  "alerts": ["Demo rows are fictional and stored separately. They never enter financial reports, authority or exports."]
+}

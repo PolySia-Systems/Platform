@@ -3,11 +3,19 @@ let publication = {}, revision = 0, inFlight = null;
 let refreshTimer = null, publisherFailure = null, reportFailure = null;
 let renderedWallets = "", renderedReceipts = "";
 const REFRESH_MS = 20000;
+const IS_DEMO = document.querySelector('meta[name="dataset-mode"]').content === "demo";
+// Keep English interface messages together; no translation framework is required.
+const STATUS_TEXT = {UNCONFIGURED:"Observation is not configured", STOPPED:"Acquisition is stopped", OBSERVING:"Observation active", WAITING_CADENCE:"Waiting for the next scheduled observation", WAITING_RETRY:"Waiting before a bounded retry", WAITING_SOURCE_EVIDENCE:"Waiting for complete source evidence", DRAINING:"Closing existing inventory only", FAILED:"An operation failed", BLOCKED:"An operation needs attention", UNKNOWN:"Current state is unknown", "STALE PUBLICATION":"Retained report is out of date", "STALE WORKER RECEIPT":"Worker status is out of date"};
 function ageSeconds(value) {
   const stamp = Date.parse(value);
   return Number.isFinite(stamp) ? (Date.now() - stamp) / 1000 : null;
 }
 function freshness() {
+  if (IS_DEMO) {
+    text("operation", "Offline demonstration"); text("next", publication.next_action);
+    text("freshness", "Fictional example only. No financial result or acquisition authority.");
+    return;
+  }
   const publisherAge = ageSeconds(publication.published_at);
   const workerAge = ageSeconds(publication.last_attempt);
   let operation = publication.status || "UNKNOWN", next = publication.next_action;
@@ -16,7 +24,7 @@ function freshness() {
   } else if (workerAge == null || workerAge < -5 || workerAge > 180) {
     operation = "STALE WORKER RECEIPT"; next = "Inspect the worker; publication is retained data.";
   }
-  text("operation", operation); text("next", next);
+  text("operation", STATUS_TEXT[operation] || operation.replaceAll("_", " ")); text("next", next);
   const age = value => value == null ? "UNKNOWN" : `${Math.max(0, Math.floor(value))} seconds`;
   text("freshness", `Worker receipt age: ${age(workerAge)} · Publisher age: ${age(publisherAge)} · Financial cutoff: ${readable(publication.report?.analytical?.source_poll_cutoff)}`);
   const alert = document.getElementById("error");
@@ -53,7 +61,9 @@ function wallets() {
 }
 async function loadOnce() {
   const signal = AbortSignal.timeout(10000);
-  try { const commandResponse = await fetch("/api/commands", {signal, cache:"no-store", credentials:"same-origin"});
+  try { const commandResponse = IS_DEMO ? null : await fetch("/api/commands", {signal, cache:"no-store", credentials:"same-origin"});
+    if (IS_DEMO) { text("receipt", "Demo is read-only. Commands use retained evidence only."); }
+    else {
     if (!commandResponse.ok) throw new Error("Command receipt service unavailable.");
     if (commandResponse.ok) {
       const commands = await commandResponse.json(); revision = commands.revision;
@@ -72,21 +82,27 @@ async function loadOnce() {
         list.append(li);
       });
       }
-    } }
+    } } }
   catch { text("receipt", "Command receipt service unavailable; inspect the protected recovery route."); }
   try {
-    const response = await fetch("/api/report", {signal, cache:"no-store", credentials:"same-origin"});
+    const response = await fetch(IS_DEMO ? "/api/demo" : "/api/report", {signal, cache:"no-store", credentials:"same-origin"});
     if (!response.ok) throw new Error(`Publication unavailable (${response.status})`);
     publication = await response.json();
     reportFailure = null;
-    try {
+    try { if (!IS_DEMO) {
       const healthResponse = await fetch("/api/health", {signal, cache:"no-store", credentials:"same-origin"});
       if (!healthResponse.ok) throw new Error("Publisher health unavailable; inspect retained receipts.");
       const health = await healthResponse.json();
       publisherFailure = health.status === "FAILED"
         ? "Report publisher failed; this is retained data. " + readable(health.next_action)
         : health.status === "UNKNOWN" ? "Publisher health is UNKNOWN; inspect retained receipts." : null;
-    } catch (error) { publisherFailure = error.message; }
+    } } catch (error) { publisherFailure = error.message; }
+    const installed = publication.installation || {};
+    const observing = publication.status === "OBSERVING";
+    text("setup-state", IS_DEMO ? "Offline demo · all controls are disabled" : `Installed release: ${installed.version || publication.package_version || "UNKNOWN"} · Browser access: ${installed.profile || "protected"} · ${observing ? "Observation active" : "Observation is not authorized or is stopped"}`);
+    const protection = publication.backup_health?.backup;
+    text("protection-state", IS_DEMO ? "Demo has no backup or recovery claim." : protection?.status === "UNPROTECTED" ? "UNPROTECTED — no backup destination is selected. Choose and verify one through the administrative entry." : `Backup: ${readable(protection?.status)} · Last check: ${readable(protection?.checked_at || protection?.created_at)} · Independent restore: ${readable(publication.backup_health?.restore?.status)}`);
+    text("installation-details", JSON.stringify({installed,worker_release:publication.release_commit,publisher_release:publication.publisher_release_commit,status:publication.status}, null, 2));
     const report = publication.report || {}, analytical = report.analytical || {}, economics = analytical.report || {};
     freshness();
     const measured = Number(economics.evaluated_observations || 0) > 0;
@@ -116,7 +132,7 @@ async function loadOnce() {
 }
 document.getElementById("wallet-filter").addEventListener("input", wallets);
 document.querySelectorAll("button[data-action]").forEach(button => {
-  button.disabled = document.querySelector('meta[name="role"]').content !== "operator";
+  button.disabled = IS_DEMO || document.querySelector('meta[name="role"]').content !== "operator";
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
@@ -141,3 +157,8 @@ document.addEventListener("visibilitychange", () => {
 });
 setInterval(() => { if (!document.hidden) freshness(); }, 1000);
 load().finally(scheduleRefresh);
+if (IS_DEMO) {
+  document.querySelector('a[href="/api/report"]').href = "/api/demo";
+  const comparison = document.querySelector('a[href="/download/comparison.csv"]');
+  comparison.removeAttribute("href"); comparison.setAttribute("aria-disabled", "true");
+}

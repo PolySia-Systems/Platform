@@ -209,6 +209,22 @@ def test_legacy_retained_metadata_does_not_invent_latency_or_break_reports(tmp_p
     assert endpoint["known_bytes"] == 128
 
 
+def test_demo_is_separate_read_only_and_available_without_financial_publication(tmp_path: Path):
+    app = application(tmp_path)
+    (tmp_path / "publication.json").unlink()
+    status, _, page = request(app, path="/demo")
+    assert status == "200 OK"
+    assert b'name="role" content="reader"' in page
+    assert b'name="dataset-mode" content="demo"' in page
+    status, _, body = request(app, path="/api/demo")
+    assert status == "200 OK"
+    demo = json.loads(body)
+    assert demo["dataset_role"] == "OFFLINE_DEMO_NOT_PRODUCTION_EVIDENCE"
+    assert "report" not in demo and demo["real_orders"] is False
+    assert request(app, path="/api/report")[0] == "503 Service Unavailable"
+    assert request(app, path="/api/demo", token="unverified")[0] == "403 Forbidden"
+
+
 def test_tampered_published_or_archived_financial_values_are_not_served(tmp_path: Path) -> None:
     app = application(tmp_path)
     invalid = {"analytical": {"net_result": "999"}, "analytical_digest": "a" * 64}

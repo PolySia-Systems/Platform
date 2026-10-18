@@ -62,25 +62,42 @@ def worker_tick(config: Path) -> dict[str, Any]:
         if value.get("installation_state") == "UNCONFIGURED":
             if value.get("acquisition_enabled") is not False or value.get("admission"):
                 raise AcquisitionBlockedError("unconfigured_installation_cannot_acquire")
+            if database.exists() or Path(value["authority"]).exists():
+                raise AcquisitionBlockedError("unconfigured_state_conflicts_with_retained_evidence")
             commands = ConsoleCommandStore(Path(value["commands"]))
             commands.initialize()
             commands.block_superseded_resumes()
             for revision, action in commands.pending(actions=("stop", "resume", "drain")):
                 commands.finish(
-                    revision, status="APPLIED" if action == "stop" else "BLOCKED",
+                    revision,
+                    status="APPLIED" if action == "stop" else "BLOCKED",
                     result={"reason": "no_acquisition_authority"},
                 )
             setup_result = {
-                "status": "UNCONFIGURED", "release_commit": code_sha,
-                "last_attempt": datetime.now(UTC).isoformat(), "real_orders": False,
-                "acquisition_enabled": False, "reason": "no_acquisition_authority",
+                "status": "UNCONFIGURED",
+                "release_commit": code_sha,
+                "last_attempt": datetime.now(UTC).isoformat(),
+                "real_orders": False,
+                "acquisition_enabled": False,
+                "reason": "no_acquisition_authority",
                 "next_action": "Read retained evidence or use the separate fixture demo. "
-                               "Observation requires separately approved authority and admission.",
+                "Observation requires separately approved authority and admission.",
             }
             atomic_json(Path(value["status"]), setup_result)
             return setup_result
         policy = load_policy(Path(value["manifest"]))
-        authority = AcquisitionAuthority(Path(value["authority"]), policy)
+        authority_path = Path(value["authority"])
+        if authority_path.is_symlink() or not authority_path.is_file():
+            raise AcquisitionBlockedError("retained_authority_missing_do_not_reinitialize")
+        authority = AcquisitionAuthority(authority_path, policy)
+        try:
+            existing_authority = authority.status()
+        except sqlite3.DatabaseError, TypeError, IndexError:
+            raise AcquisitionBlockedError(
+                "retained_authority_invalid_do_not_reinitialize",
+            ) from None
+        if existing_authority["policy_digest"] != policy.digest:
+            raise AcquisitionBlockedError("authority_policy_changed")
         authority.initialize()
         recovery_fenced = value.get("recovery_requires_authority_reconciliation") is True
         if recovery_fenced:
@@ -117,12 +134,15 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 authority.stop()
             elif action == "resume":
                 blocker = (
-                    "recovery_authority_reconciliation_required" if recovery_fenced else
-                    "authority_not_current"
-                    if not policy.starts_at <= datetime.now(UTC) < policy.expires_at else
-                    "acquisition_not_enabled" if value.get("acquisition_enabled") is not True else
-                    "continuous_admission_required"
-                    if value.get("admission", {}).get("mode") != "CONTINUOUS" else None
+                    "recovery_authority_reconciliation_required"
+                    if recovery_fenced
+                    else "authority_not_current"
+                    if not policy.starts_at <= datetime.now(UTC) < policy.expires_at
+                    else "acquisition_not_enabled"
+                    if value.get("acquisition_enabled") is not True
+                    else "continuous_admission_required"
+                    if value.get("admission", {}).get("mode") != "CONTINUOUS"
+                    else None
                 )
                 if blocker:
                     commands.finish(
@@ -143,15 +163,21 @@ def worker_tick(config: Path) -> dict[str, Any]:
                         store.active_experiment("polymarket-native") if database.exists() else None
                     )
                     if active is None:
-                        commands.finish(revision, status="BLOCKED",
-                                        result={"reason": "no_active_financial_session"})
+                        commands.finish(
+                            revision,
+                            status="BLOCKED",
+                            result={"reason": "no_active_financial_session"},
+                        )
                         continue
-                    store.transition(active.experiment_id,
-                                     lifecycle=ContinuousShadowLifecycle.DRAINING,
-                                     transitioned_at=datetime.now(UTC))
+                    store.transition(
+                        active.experiment_id,
+                        lifecycle=ContinuousShadowLifecycle.DRAINING,
+                        transitioned_at=datetime.now(UTC),
+                    )
                 except (OSError, ValueError, sqlite3.DatabaseError) as error:
-                    commands.finish(revision, status="FAILED",
-                                    result={"reason": type(error).__name__})
+                    commands.finish(
+                        revision, status="FAILED", result={"reason": type(error).__name__}
+                    )
                     continue
             commands.finish(revision, status="APPLIED")
         if authority.status()["stopped"]:
@@ -189,14 +215,20 @@ def worker_tick(config: Path) -> dict[str, Any]:
             prior["last_poll_started_at"]
         ) > datetime.now(UTC):
             authority.stop()
-            result.update(status="BLOCKED", reason="worker_clock_regressed",
-                          next_action="Inspect the UTC clock; preserve counters before resume.")
+            result.update(
+                status="BLOCKED",
+                reason="worker_clock_regressed",
+                next_action="Inspect the UTC clock; preserve counters before resume.",
+            )
         elif prior.get("next_due_at") and datetime.fromisoformat(
             prior["next_due_at"]
         ) > datetime.now(UTC):
-            result.update(status="WAITING_CADENCE", reason="scheduled_poll_not_due",
-                          next_due_at=prior["next_due_at"],
-                          last_poll_started_at=prior.get("last_poll_started_at"))
+            result.update(
+                status="WAITING_CADENCE",
+                reason="scheduled_poll_not_due",
+                next_due_at=prior["next_due_at"],
+                last_poll_started_at=prior.get("last_poll_started_at"),
+            )
         else:
             if (
                 os.getenv("TRADING_MODE", "DATA_ONLY") != "DATA_ONLY"
@@ -206,22 +238,33 @@ def worker_tick(config: Path) -> dict[str, Any]:
             # Persist before any source/preparation I/O. A crash consumes this due
             # slot rather than allowing a restart to poll again immediately.
             started = datetime.now(UTC)
-            result.update(status="POLL_IN_PROGRESS", last_poll_started_at=started.isoformat(),
-                          next_due_at=(started + timedelta(
-                              seconds=policy.cadence_seconds)).isoformat())
+            result.update(
+                status="POLL_IN_PROGRESS",
+                last_poll_started_at=started.isoformat(),
+                next_due_at=(started + timedelta(seconds=policy.cadence_seconds)).isoformat(),
+            )
             atomic_json(Path(value["status"]), result)
             discovery = json.loads(Path(value["cohort"]).read_text())["discovery"]
             if value["admission"].get("mode") != "CONTINUOUS":
                 raise AcquisitionBlockedError("continuous_admission_required")
             store = ContinuousShadowRepository(database)
             try:
-                outcome = asyncio.run(native_lifecycle_poll(
-                    database, discovery, authority=authority, code_sha=code_sha,
-                    admission=value["admission"],
-                    refresh_path=Path(value.get("cohort_refresh", str(
-                        Path(value["authority"]).with_name("cohort-revalidation.json")))),
-                    clock=lambda: datetime.now(UTC),
-                ))
+                outcome = asyncio.run(
+                    native_lifecycle_poll(
+                        database,
+                        discovery,
+                        authority=authority,
+                        code_sha=code_sha,
+                        admission=value["admission"],
+                        refresh_path=Path(
+                            value.get(
+                                "cohort_refresh",
+                                str(Path(value["authority"]).with_name("cohort-revalidation.json")),
+                            )
+                        ),
+                        clock=lambda: datetime.now(UTC),
+                    )
+                )
                 result.update(
                     status="OBSERVING",
                     experiment_id=outcome.experiment.experiment_id,
@@ -252,9 +295,11 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 if reason in {"request_budget_exhausted", "byte_budget_exhausted"}:
                     active = store.active_experiment("polymarket-native")
                     if active is not None:
-                        store.transition(active.experiment_id,
-                                         lifecycle=ContinuousShadowLifecycle.DRAINING,
-                                         transitioned_at=datetime.now(UTC))
+                        store.transition(
+                            active.experiment_id,
+                            lifecycle=ContinuousShadowLifecycle.DRAINING,
+                            transitioned_at=datetime.now(UTC),
+                        )
                     result["status"] = "DRAINING"
                 elif reason in {"request_window_exhausted", "byte_window_exhausted"}:
                     result.update(
@@ -296,9 +341,12 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     "native_cohort_revalidation_incomplete",
                 }:
                     failures = int(prior.get("transient_failures", 0)) + 1
-                    result.update(status="WAITING_SOURCE_EVIDENCE", transient_failures=failures,
-                                  retry_at=result["next_due_at"],
-                                  next_action="Await complete fresh evidence for this cohort.")
+                    result.update(
+                        status="WAITING_SOURCE_EVIDENCE",
+                        transient_failures=failures,
+                        retry_at=result["next_due_at"],
+                        next_action="Await complete fresh evidence for this cohort.",
+                    )
                     if failures >= 3:
                         authority.stop()
                         result["status"] = "BLOCKED"
@@ -323,8 +371,9 @@ def platform_tick(
         if isinstance(error, ResearchPublicationError) and str(error) == "workflow_already_running":
             # The owning process holds the durable due slot. Do not overwrite
             # its receipt or turn a normal overlap into a failed worker state.
-            typer.echo(json.dumps({"status": "WAITING_WORKER",
-                                   "reason": "workflow_already_running"}))
+            typer.echo(
+                json.dumps({"status": "WAITING_WORKER", "reason": "workflow_already_running"})
+            )
             return
         result = {
             "status": "FAILED",
@@ -337,7 +386,7 @@ def platform_tick(
                 checkpoint = json.loads(status_path.read_text(encoding="utf-8"))
                 for field in ("last_poll_started_at", "next_due_at", "last_success"):
                     result[field] = checkpoint.get(field)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass  # No durable timing checkpoint exists to preserve.
             atomic_json(status_path, result)
     typer.echo(json.dumps({"status": result["status"], "reason": result.get("reason")}))
@@ -371,12 +420,26 @@ def _publish_retained(value: dict[str, Any]) -> None:
         result = json.loads(Path(value["status"]).read_text(encoding="utf-8"))
         now = datetime.now(UTC)
         result["published_at"] = now.isoformat()
+        from polysia import __version__
+
+        result["package_version"] = __version__
+        build = Path("/opt/polysia/BUILD_COMMIT")
+        result["publisher_release_commit"] = (
+            build.read_text().strip() if build.exists() else "UNKNOWN"
+        )
+        installation = Path(value["publication"]).parent / "installation-status.json"
+        if installation.exists():
+            if installation.is_symlink() or installation.stat().st_size > 4096:
+                raise ValueError("installation_receipt_invalid")
+            result["installation"] = json.loads(installation.read_text())
         last_attempt = result.get("last_attempt")
         if last_attempt and (now - datetime.fromisoformat(last_attempt)).total_seconds() > 180:
             result.update(status="STALE_WORKER_RECEIPT", next_action="inspect worker journal")
         database = Path(value["database"])
         if database.exists():
-            experiment = ContinuousShadowRepository(database).latest_experiment("polymarket-native")
+            experiment = ContinuousShadowRepository(database).latest_experiment(
+                value.get("source_id", "polymarket-native"),
+            )
             if experiment:
                 reporting = ShadowReportingService(database)
                 result["report"] = reporting.report(experiment.experiment_id)
@@ -416,8 +479,11 @@ def _publish_retained(value: dict[str, Any]) -> None:
                     }
             except OSError, ValueError:
                 receipt = (
-                    {"status": "UNPROTECTED", "next_action": "Choose and verify backup protection "
-                     "through the protected administrative entry."}
+                    {
+                        "status": "UNPROTECTED",
+                        "next_action": "Choose and verify backup protection "
+                        "through the protected administrative entry.",
+                    }
                     if value.get("backup_mode") == "none"
                     else {"status": "UNKNOWN", "next_action": "inspect " + role + " job"}
                 )
@@ -452,8 +518,8 @@ def _publish_retained(value: dict[str, Any]) -> None:
                         raise ValueError("report_file_size_limit")
                     if not target.exists():
                         if (
-                            sum(path.stat().st_size for path in archive.glob("*.json"))
-                            + size > MAX_REPORT_ARCHIVE_BYTES
+                            sum(path.stat().st_size for path in archive.glob("*.json")) + size
+                            > MAX_REPORT_ARCHIVE_BYTES
                         ):
                             raise ValueError("report_archive_capacity_reached")
                         atomic_json(target, report)
@@ -488,8 +554,11 @@ def platform_stop(
     """Protected administrative STOP when Console/Cloudflare is unavailable."""
     value = json.loads(config.read_text(encoding="utf-8"))
     policy = load_policy(Path(value["manifest"]))
-    authority = AcquisitionAuthority(Path(value["authority"]), policy)
-    authority.initialize()
+    authority_path = Path(value["authority"])
+    if not authority_path.is_file() or authority_path.is_symlink():
+        raise ValueError("retained authority is missing; fence OS restart and reconcile")
+    authority = AcquisitionAuthority(authority_path, policy)
+    authority.status()  # Validate retained identity; STOP must never initialize fresh allowance.
     authority.stop()  # STOP does not need fresh provider access or admission.
     commands = ConsoleCommandStore(Path(value["commands"]))
     commands.initialize()

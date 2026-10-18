@@ -16,10 +16,12 @@ import re
 import secrets
 import shutil
 import socket
+import sqlite3
 import ssl
 import subprocess
 import tarfile
 import time
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -329,11 +331,11 @@ def image_json(image: str, code: str, value: dict) -> str:
     return result.stdout
 
 
-def configure(value: dict, *, image: str) -> dict:
+def configure(value: dict, *, image: str, allow_change: bool = False) -> dict:
     """Stage validated access/configuration before any activation."""
     validate(value)
     current = core.CONFIG_ROOT / "installation.json"
-    if current.exists() and validate(json.loads(current.read_text())) != value:
+    if current.exists() and validate(json.loads(current.read_text())) != value and not allow_change:
         raise ValueError("existing configuration differs; use an explicit maintenance change")
     if value["profile"] == "cloudflare":
         if not (core.CONFIG_ROOT / "web.json").exists():
@@ -342,6 +344,7 @@ def configure(value: dict, *, image: str) -> dict:
                 "next_action": "Provide your Access issuer, audience and owner identity "
                 "through the guided administrative entry.",
             }
+        atomic(current, value)
         return {"status": "EXISTING_CLOUDFLARE_PRESERVED"}
     caddy = install_gateway()
     access = core.CONFIG_ROOT / "gateway-credentials.json"
@@ -351,10 +354,13 @@ def configure(value: dict, *, image: str) -> dict:
         credentials = {name: secrets.token_urlsafe(32) for name in value["roles"]}
         atomic(access, credentials)
     passwords = {}
-    for name, password in credentials.items():
+    for name in value["roles"]:
+        if name not in credentials:
+            credentials[name] = secrets.token_urlsafe(32)
+        password = credentials[name]
         passwords[name] = subprocess.run(
             [str(caddy), "hash-password", "--algorithm", "bcrypt", "--bcrypt-cost", "10"],
-            input=password,
+            input=password + "\n",
             capture_output=True,
             text=True,
             check=True,
@@ -396,6 +402,7 @@ def configure(value: dict, *, image: str) -> dict:
     staged.replace(core.CONFIG_ROOT / "Caddyfile")
     os.chown(core.CONFIG_ROOT / "Caddyfile", 0, 10102)
     atomic(current, value)
+    atomic(access, {name: credentials[name] for name in value["roles"]})
     return {
         "status": "ACCESS_CONFIGURED",
         "origin": origin,
@@ -426,8 +433,6 @@ def gateway_unit(caddy: Path, *, public: bool) -> str:
 
 
 def activate(value: dict, *, image: str) -> None:
-    if value["profile"] == "cloudflare":
-        return  # Existing protected route is commissioned separately.
     gateway_state = core.STATE_ROOT / "gateway"
     gateway_state.mkdir(exist_ok=True, mode=0o700)
     os.chown(gateway_state, 10102, 10102)
@@ -452,15 +457,40 @@ def activate(value: dict, *, image: str) -> None:
             mode=0o640,
         )
         os.chown(worker, 0, 10102)
+    else:
+        previous = json.loads(worker.read_text())
+        if previous["release_commit"] != value["commit"]:
+            # The bootstrap's activation preflight already refused incompatible
+            # inventory, pinned sessions, admission and active acquisition.
+            previous["release_commit"] = value["commit"]
+            atomic(worker, previous, mode=0o640)
+            os.chown(worker, 0, 10102)
     for role in ("worker", "publisher", "web"):
         text = core.service_text(
             image,
             role=role,
             hostname=socket.gethostname(),
-            gateway=True,
+            gateway=value["profile"] != "cloudflare",
             configured=(core.CONFIG_ROOT / "manifest.json").is_file(),
         )
         atomic(core.SERVICE_ROOT / ("polysia-platform-" + role + ".service"), text, mode=0o644)
+    if value["profile"] == "cloudflare":
+        core.run("systemctl", "daemon-reload")
+        core.run("systemctl", "restart", "polysia-platform-web.service")
+        core.run(
+            "systemctl",
+            "start",
+            "polysia-platform-worker.service",
+            "polysia-platform-publisher.service",
+        )
+        core.run(
+            "systemctl",
+            "enable",
+            "--now",
+            "polysia-platform-worker.timer",
+            "polysia-platform-publisher.timer",
+        )
+        return
     atomic(
         core.SERVICE_ROOT / "polysia-platform-gateway.service",
         gateway_unit(
@@ -470,6 +500,10 @@ def activate(value: dict, *, image: str) -> None:
         mode=0o644,
     )
     core.run("systemctl", "daemon-reload")
+    # Atomic config replacement changes the host inode. Recreate the container
+    # bind mount before enabling the gateway so revocations take effect.
+    core.run("systemctl", "restart", "polysia-platform-web.service")
+    core.run("systemctl", "restart", "polysia-platform-gateway.service")
     core.run("systemctl", "start", "polysia-platform-worker.service")
     core.run("systemctl", "start", "polysia-platform-publisher.service")
     core.run(
@@ -509,10 +543,595 @@ def verify_access(value: dict) -> None:
     raise ValueError("trusted HTTPS is not ready; inspect the gateway/certificate receipt")
 
 
+def publish_health() -> dict:
+    value = json.loads((core.CONFIG_ROOT / "health.json").read_text())
+    if value.get("schema") != "platform-health/v1":
+        raise ValueError("validated health configuration required")
+    receipt = {
+        "status": "UNKNOWN",
+        "component": "gateway",
+        "version": value["version"],
+        "release_commit": value["commit"],
+        "profile": value["profile"],
+        "checked_at": datetime.now(UTC).isoformat(),
+        "backup_mode": value["backup_mode"],
+    }
+    if value["profile"] == "cloudflare":
+        receipt.update(
+            status="EXTERNAL_IDENTITY_CONFIGURED",
+            certificate_trust="CLOUDFLARE",
+            next_action="Use the existing protected route; observation has separate gates.",
+        )
+    else:
+        try:
+            private = value["profile"] == "private"
+            context = ssl.create_default_context(
+                cafile=str(core.CONFIG_ROOT / "gateway-ca.crt") if private else None,
+            )
+            with (
+                socket.create_connection(("127.0.0.1", 8443 if private else 443), timeout=3) as raw,
+                context.wrap_socket(raw, server_hostname=value["hostname"]) as protected,
+            ):
+                peer = protected.getpeercert()
+            expires = ssl.cert_time_to_seconds(peer["notAfter"])
+            remaining = expires - time.time()
+            warning = 3600 if private else 172800
+            receipt.update(
+                status="CERTIFICATE_CURRENT" if remaining > warning else "CERTIFICATE_NEAR_EXPIRY",
+                certificate_trust="PRIVATE_CA" if private else "PUBLIC_CA",
+                expires_at=datetime.fromtimestamp(expires, UTC).isoformat(),
+                last_success=receipt["checked_at"],
+                next_action="No action required."
+                if remaining > warning
+                else "Inspect renewal, domain reachability and dedicated gateway logs.",
+            )
+        except (OSError, ValueError, KeyError):
+            receipt.update(
+                status="FAILED",
+                reason="gateway_tls_unavailable",
+                impact="Browser TLS is unavailable or untrusted; acquisition remains separate.",
+                next_action="Inspect gateway, certificate and hostname; use protected SSH STOP.",
+            )
+    atomic(core.STATE_ROOT / "publication/installation-status.json", receipt, mode=0o640)
+    if os.geteuid() == 0:
+        os.chown(core.STATE_ROOT / "publication/installation-status.json", 10101, 10102)
+    return receipt
+
+
+def install_health(value: dict) -> None:
+    release = core.INSTALL_ROOT / "releases" / value["commit"]
+    manifest = json.loads((release / "manifest.json").read_text())
+    if value["profile"] == "private":
+        ca = core.STATE_ROOT / "gateway/caddy/pki/authorities/local/root.crt"
+        atomic(core.CONFIG_ROOT / "gateway-ca.crt", ca.read_text(), mode=0o640)
+        os.chown(core.CONFIG_ROOT / "gateway-ca.crt", 0, 10102)
+    atomic(
+        core.CONFIG_ROOT / "health.json",
+        {
+            "schema": "platform-health/v1",
+            "commit": value["commit"],
+            "version": manifest.get("version", "UNKNOWN"),
+            "profile": value["profile"],
+            "hostname": value["hostname"],
+            "backup_mode": value["backup"]["mode"],
+        },
+        mode=0o640,
+    )
+    os.chown(core.CONFIG_ROOT / "health.json", 0, 10102)
+    executable = release / "platform_admin.py"
+    atomic(
+        core.SERVICE_ROOT / "polysia-platform-health.service",
+        "[Unit]\nDescription=PolySia local certificate and installation health\n[Service]\n"
+        "Type=oneshot\nUser=10101\nGroup=10102\nExecStart=/usr/bin/python3 "
+        + str(executable)
+        + " health\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\n"
+        "ReadWritePaths=/var/lib/polysia-platform/publication\n"
+        "InaccessiblePaths=/var/lib/polysia-platform/worker /var/lib/polysia-platform/control\n"
+        "MemoryMax=64M\nCPUQuota=10%\nTasksMax=16\nTimeoutStartSec=15\n",
+        mode=0o644,
+    )
+    atomic(
+        core.SERVICE_ROOT / "polysia-platform-health.timer",
+        "[Unit]\nDescription=PolySia local health schedule\n[Timer]\nOnCalendar=*-*-* *:*:15 UTC\n"
+        "Persistent=true\n[Install]\nWantedBy=timers.target\n",
+        mode=0o644,
+    )
+    publish_health()
+    core.run("systemctl", "daemon-reload")
+    core.run("systemctl", "enable", "--now", "polysia-platform-health.timer")
+
+
+def load_backup(commit: str):
+    directory = core.INSTALL_ROOT / "releases" / commit
+    manifest = json.loads((directory / "manifest.json").read_text())
+    path = directory / "platform_backup.py"
+    if (
+        path.is_symlink()
+        or manifest.get("commit") != commit
+        or hashlib.sha256(path.read_bytes()).hexdigest() != manifest["backup_job_sha256"]
+    ):
+        raise ValueError("verified release backup job required")
+    specification = importlib.util.spec_from_file_location("platform_backup", path)
+    if specification is None or specification.loader is None:
+        raise ValueError("verified backup implementation cannot be loaded")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def preserve_rollback() -> dict | None:
+    worker = core.CONFIG_ROOT / "worker.json"
+    if not worker.exists():
+        return None
+    old_commit = json.loads(worker.read_text())["release_commit"]
+    files = [
+        core.CONFIG_ROOT / name
+        for name in (
+            "installation.json",
+            "worker.json",
+            "web.json",
+            "csrf-secret",
+            "Caddyfile",
+            "gateway-credentials.json",
+            "backup-job.json",
+            "backup.json",
+            "backup-status-fetch.json",
+            "health.json",
+            "gateway-ca.crt",
+        )
+    ]
+    files += [
+        core.SERVICE_ROOT / ("polysia-platform-" + name)
+        for name in (
+            "worker.service",
+            "worker.timer",
+            "publisher.service",
+            "publisher.timer",
+            "web.service",
+            "gateway.service",
+            "backup.service",
+            "backup.timer",
+            "recovery-status.service",
+            "recovery-status.timer",
+            "health.service",
+            "health.timer",
+        )
+    ]
+    existing = {}
+    for path in files:
+        if path.is_symlink():
+            raise ValueError("rollback inputs must not be symlinks")
+        if path.exists():
+            stat = path.stat()
+            existing[str(path)] = {
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "mode": stat.st_mode & 0o777,
+                "uid": stat.st_uid,
+                "gid": stat.st_gid,
+            }
+    identity = hashlib.sha256(json.dumps(existing, sort_keys=True).encode()).hexdigest()
+    root = core.INSTALL_ROOT / "checkpoints" / identity
+    if root.resolve() != root:
+        raise ValueError("rollback checkpoint must not traverse symlinks")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for source, metadata in existing.items():
+        digest = metadata["sha256"]
+        target = root / digest
+        if not target.exists():
+            shutil.copy2(source, target)
+            target.chmod(0o600)
+        if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+            raise ValueError("existing rollback checkpoint differs")
+    receipt = {
+        "schema": "platform-rollback/v1",
+        "commit": old_commit,
+        "root": str(root),
+        "files": existing,
+    }
+    atomic(root / "checkpoint.json", receipt)
+    atomic(core.CONFIG_ROOT / "rollback-checkpoint.json", receipt)
+    return receipt
+
+
+def rollback() -> dict:
+    receipt = json.loads((core.CONFIG_ROOT / "rollback-checkpoint.json").read_text())
+    if (
+        receipt.get("schema") != "platform-rollback/v1"
+        or re.fullmatch(r"[a-f0-9]{40}", receipt.get("commit", "")) is None
+    ):
+        raise ValueError("verified compatible rollback checkpoint required")
+    core.activation_preflight(receipt["commit"])
+    root = Path(receipt["root"])
+    if root.resolve() != root or not root.is_relative_to(core.INSTALL_ROOT / "checkpoints"):
+        raise ValueError("rollback checkpoint outside installation")
+    restored = []
+    for target, metadata in receipt["files"].items():
+        digest = metadata["sha256"]
+        path = Path(target)
+        if path.parent not in {core.CONFIG_ROOT, core.SERVICE_ROOT} or path.is_symlink():
+            raise ValueError("rollback destination outside protected configuration")
+        if re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+            raise ValueError("rollback file identity is invalid")
+        saved = root / digest
+        if saved.is_symlink() or hashlib.sha256(saved.read_bytes()).hexdigest() != digest:
+            raise ValueError("rollback configuration identity differs")
+        restored.append((path, saved, metadata))
+    for unit in (
+        "worker.timer",
+        "worker.service",
+        "publisher.timer",
+        "web.service",
+        "gateway.service",
+    ):
+        subprocess.run(
+            ["systemctl", "stop", "polysia-platform-" + unit],
+            capture_output=True,
+            check=False,
+            timeout=40,
+        )
+    for path, saved, metadata in restored:
+        shutil.copy2(saved, path)
+        path.chmod(metadata["mode"])
+        os.chown(path, metadata["uid"], metadata["gid"])
+    core.run("systemctl", "daemon-reload")
+    # Leave workers stopped/fenced for protected inspection; do not downgrade any database.
+    atomic(core.CONFIG_ROOT / "restart-fenced", {"reason": "rollback_requires_review"})
+    return {
+        "status": "COMPATIBLE_CONFIGURATION_RESTORED",
+        "commit": receipt["commit"],
+        "financial_data": "UNCHANGED",
+        "worker": "FENCED",
+        "next_action": "Inspect protected configuration and retained reports before restart.",
+    }
+
+
+def backup_schedule(commit: str, *, enabled: bool) -> None:
+    if not enabled:
+        subprocess.run(
+            ["systemctl", "disable", "--now", "polysia-platform-backup.timer"],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        return
+    executable = core.INSTALL_ROOT / "releases" / commit / "platform_backup.py"
+    unit = (
+        "[Unit]\nDescription=PolySia encrypted backup\nAfter=docker.service\n\n[Service]\n"
+        "Type=oneshot\nExecStart=/usr/bin/python3 "
+        + str(executable)
+        + " backup --config /etc/polysia-platform/backup-job.json\n"
+        "CPUQuota=50%\nMemoryMax=640M\nTasksMax=256\nTimeoutStartSec=600\n"
+        "LogRateLimitIntervalSec=60s\nLogRateLimitBurst=20\n"
+    )
+    atomic(core.SERVICE_ROOT / "polysia-platform-backup.service", unit, mode=0o644)
+    atomic(
+        core.SERVICE_ROOT / "polysia-platform-backup.timer",
+        "[Unit]\nDescription=PolySia daily backup\n[Timer]\nOnCalendar=*-*-* 00:15:00 UTC\n"
+        "Persistent=true\n[Install]\nWantedBy=timers.target\n",
+        mode=0o644,
+    )
+    core.run("systemctl", "daemon-reload")
+    core.run("systemctl", "enable", "--now", "polysia-platform-backup.timer")
+
+
+def configure_backup(args: argparse.Namespace) -> dict:
+    current = validate(json.loads((core.CONFIG_ROOT / "installation.json").read_text()))
+    module = load_backup(current["commit"])
+    mode = args.backup_mode
+    if mode is None:
+        if args.noninteractive:
+            raise ValueError("--backup-mode none/local/sftp is required")
+        choices = {"": "none", "1": "none", "2": "local", "3": "sftp"}
+        print("Backup: 1 none (UNPROTECTED), 2 encrypted local checkpoint, 3 independent SFTP")
+        mode = choices.get(input("Backup choice [1]: ").strip())
+    if mode not in {"none", "local", "sftp"}:
+        raise ValueError("choose none, local or sftp")
+    candidate = {"mode": mode}
+    if mode != "none":
+        if args.recipient_file is None:
+            raise ValueError("a separately held recovery key's public --recipient-file is required")
+        for path in (args.recipient_file, args.known_hosts_file, args.upload_key_file):
+            if path is not None and (
+                not path.is_absolute() or path.is_symlink() or not path.is_file()
+            ):
+                raise ValueError("existing absolute protected backup input files required")
+        release = core.INSTALL_ROOT / "releases" / current["commit"]
+        installed = json.loads((release / "installation-receipt.json").read_text())
+        candidate.update(
+            image_id=installed["image_id"],
+            release=str(release),
+            output=str(core.STATE_ROOT / "backup-out"),
+            recipient_file=str(args.recipient_file),
+            receipt=str(core.STATE_ROOT / "publication/backup-status.json"),
+        )
+        if mode == "sftp":
+            if not args.secondary_host or not args.known_hosts_file or not args.upload_key_file:
+                raise ValueError(
+                    "SFTP host, pinned known-hosts file and root-only upload key required"
+                )
+            if args.upload_key_file.stat().st_mode & 0o077:
+                raise ValueError("upload key must be root-only")
+            candidate.update(
+                secondary_host=args.secondary_host,
+                secondary_port=args.secondary_port,
+                known_hosts=str(args.known_hosts_file),
+                upload_key=str(args.upload_key_file),
+            )
+    outcome = module.change_destination(candidate, recovery_key=args.recovery_key)
+    if outcome["status"] in {"DESTINATION_VERIFIED", "UNPROTECTED"}:
+        backup_schedule(current["commit"], enabled=mode != "none")
+        current["backup"] = {"mode": mode, "protection": outcome.get("protection", "UNPROTECTED")}
+        atomic(core.CONFIG_ROOT / "installation.json", current)
+        worker_file = core.CONFIG_ROOT / "worker.json"
+        worker = json.loads(worker_file.read_text())
+        worker["backup_mode"] = mode
+        atomic(worker_file, worker, mode=0o640)
+        os.chown(worker_file, 0, 10102)
+        receipt = {**outcome, "checked_at": datetime.now(UTC).isoformat()}
+        atomic(core.STATE_ROOT / "publication/backup-status.json", receipt, mode=0o640)
+        os.chown(core.STATE_ROOT / "publication/backup-status.json", 0, 10102)
+    return outcome
+
+
+def retained_backup() -> dict:
+    """Recognize an existing destination without inventing a new restore proof."""
+    for name in ("backup-job.json", "backup.json"):
+        path = core.CONFIG_ROOT / name
+        if path.is_symlink():
+            raise ValueError("retained backup configuration must not be a symlink")
+        if path.exists():
+            candidate = json.loads(path.read_text())
+            mode = candidate.get("mode", "sftp")
+            if mode not in {"none", "local", "sftp"}:
+                raise ValueError("retained backup mode is unsupported")
+            return {"mode": mode, "protection": "RETAINED_REVERIFY_REQUIRED"}
+    return {"mode": "none", "protection": "UNPROTECTED"}
+
+
+def promote_retained_backup(value: dict, *, image: str) -> None:
+    """Keep destination, keys and generations; change only the verified executable."""
+    if value["backup"]["mode"] == "none":
+        return
+    active = core.CONFIG_ROOT / "backup-job.json"
+    source = active if active.exists() else core.CONFIG_ROOT / "backup.json"
+    job = json.loads(source.read_text())
+    job.update(image_id=image, release=str(core.INSTALL_ROOT / "releases" / value["commit"]))
+    atomic(active, job)
+    backup_schedule(value["commit"], enabled=True)
+    # Older installations already fetch the independent restore receipt. Preserve
+    # that configuration and timer, replacing only its manifest-verified script.
+    status_unit = core.SERVICE_ROOT / "polysia-platform-recovery-status.service"
+    if (core.CONFIG_ROOT / "backup-status-fetch.json").is_file() and status_unit.exists():
+        original = status_unit.read_text()
+        updated, count = re.subn(
+            r"/opt/polysia-platform/releases/[a-f0-9]{40}/platform_backup\.py",
+            str(core.INSTALL_ROOT / "releases" / value["commit"] / "platform_backup.py"),
+            original,
+        )
+        if count != 1:
+            raise ValueError("retained recovery-status executable needs explicit inspection")
+        atomic(status_unit, updated, mode=0o644)
+        core.run("systemctl", "daemon-reload")
+
+
+def protected_stop() -> dict:
+    """Fence OS restart, then confirm authority independently of the command store."""
+    atomic(
+        core.CONFIG_ROOT / "restart-fenced",
+        {
+            "reason": "protected_administrative_stop",
+            "checked_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    core.run("systemctl", "stop", "polysia-platform-worker.timer")
+    core.run("systemctl", "stop", "polysia-platform-worker.service")
+    subprocess.run(
+        ["docker", "stop", "-t", "5", "polysia-platform-worker"],
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    result = {
+        "status": "OS_WORKER_FENCED",
+        "data_retained": True,
+        "durable_authority_stop": "NOT_CONFIRMED",
+        "command_receipt": "UNKNOWN",
+        "next_action": "Confirm durable STOP before any restart.",
+    }
+    worker_file = core.CONFIG_ROOT / "worker.json"
+    if not worker_file.is_file():
+        return result
+    worker = json.loads(worker_file.read_text())
+    authority = core.STATE_ROOT / "worker" / Path(worker["authority"]).name
+    if not authority.exists():
+        if (
+            worker.get("installation_state") == "UNCONFIGURED"
+            and worker.get("acquisition_enabled") is False
+        ):
+            result.update(
+                durable_authority_stop="NO_AUTHORITY_CONFIGURED",
+                next_action="No acquisition is authorized; the OS restart fence remains.",
+            )
+        return result
+    release = core.INSTALL_ROOT / "releases" / worker["release_commit"]
+    image = json.loads((release / "installation-receipt.json").read_text())["image_id"]
+    module = load_backup(worker["release_commit"])
+    command = module.isolated(
+        image,
+        f"{core.CONFIG_ROOT}/worker.json:/config/worker.json:ro",
+        f"{core.CONFIG_ROOT}/manifest.json:/config/manifest.json:ro",
+        f"{core.STATE_ROOT}/worker:/state:rw",
+        f"{core.STATE_ROOT}/control:/control:rw",
+    )
+    applied = subprocess.run(
+        command
+        + [
+            "--name",
+            "polysia-platform-protected-stop",
+            image,
+            "ops",
+            "platform-stop",
+            "--config",
+            "/config/worker.json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if applied.returncode == 0:
+        try:
+            receipt = json.loads(applied.stdout)["receipt"]
+            result["command_receipt"] = "RECORDED" if "revision" in receipt else "NOT_CONFIRMED"
+        except (ValueError, KeyError, TypeError):
+            result["command_receipt"] = "NOT_CONFIRMED"
+    try:
+        with closing(sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True)) as connection:
+            if connection.execute("SELECT stopped FROM authority").fetchone() == (1,):
+                result.update(
+                    status="STOPPED",
+                    durable_authority_stop="CONFIRMED",
+                    next_action="Inspect retained evidence; restart remains fenced.",
+                )
+    except sqlite3.DatabaseError:
+        pass
+    return result
+
+
+def restore_installation(args: argparse.Namespace, value: dict, *, image: str) -> dict:
+    """Populate only a fresh replacement through the shared verified crypto/replay path."""
+    if not args.archive or not args.recovery_key:
+        raise ValueError("--archive and separately held --recovery-key are required")
+    worker_root = core.STATE_ROOT / "worker"
+    if any(worker_root.glob("*.sqlite3*")):
+        raise ValueError("replacement restore requires empty financial/authority state")
+    reports = core.STATE_ROOT / "publication/reports"
+    commands = core.STATE_ROOT / "control/commands.sqlite3"
+    if (
+        reports.is_symlink()
+        or (reports.exists() and any(reports.iterdir()))
+        or commands.exists()
+        or commands.is_symlink()
+    ):
+        raise ValueError("replacement reports and command state must be empty before restore")
+    if (
+        args.recovery_key.is_symlink()
+        or not args.recovery_key.is_file()
+        or args.recovery_key.stat().st_mode & 0o077
+        or args.recovery_key.resolve().is_relative_to(core.STATE_ROOT)
+        or args.recovery_key.resolve().is_relative_to(core.CONFIG_ROOT)
+    ):
+        raise ValueError("separately held root-only recovery key required")
+    module = load_backup(value["commit"])
+    stage = core.STATE_ROOT / "replacement-restore"
+    if stage.exists():
+        raise ValueError("prior replacement staging is retained; inspect before another restore")
+    stage.mkdir(mode=0o700)
+    release = core.INSTALL_ROOT / "releases" / value["commit"]
+    proof, stopped, metadata = module.verify_generation(
+        args.archive.resolve(),
+        stage,
+        image=image,
+        trusted=release / "manifest.json",
+        recovery_key=args.recovery_key.resolve(),
+    )
+    bundle = stage / "bundle"
+    # Fence before the first replacement write. An interruption retains this
+    # explicit stopped state and the verified staging evidence for inspection.
+    atomic(core.CONFIG_ROOT / "restart-fenced", {"reason": "replacement_restore_in_progress"})
+    safe = json.loads((bundle / "recovery-runtime.json").read_text())
+    for field, target in (
+        ("database", worker_root / "financial.sqlite3"),
+        ("authority", worker_root / "authority.sqlite3"),
+        ("commands", core.STATE_ROOT / "control/commands.sqlite3"),
+    ):
+        source = bundle / Path(safe[field]).name
+        if source.exists():
+            if target.exists() and field != "commands":
+                raise ValueError("restore cannot replace existing financial evidence")
+            with (
+                closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)) as original,
+                closing(sqlite3.connect(target)) as restored,
+            ):
+                original.backup(restored)
+                if restored.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                    raise ValueError("replacement SQLite integrity differs")
+            os.chown(target, 10101, 10102)
+            target.chmod(0o660 if field == "commands" else 0o640)
+        safe[field] = (
+            "/control/commands.sqlite3" if field == "commands" else "/state/" + target.name
+        )
+    for name, target in (
+        ("policy.json", core.CONFIG_ROOT / "manifest.json"),
+        ("cohort.json", worker_root / "cohort.json"),
+        ("financial-session.json", worker_root / "financial.sqlite3.session.json"),
+    ):
+        source = bundle / name
+        if source.exists():
+            shutil.copy2(source, target)
+            target.chmod(0o640)
+            os.chown(target, 0 if name == "policy.json" else 10101, 10102)
+    safe.update(
+        manifest="/config/manifest.json",
+        cohort="/state/cohort.json",
+        status="/state/status.json",
+        publication="/publication/publication.json",
+        backup_mode="none",
+        acquisition_enabled=False,
+        recovery_requires_authority_reconciliation=True,
+    )
+    atomic(core.CONFIG_ROOT / "worker.json", safe, mode=0o640)
+    os.chown(core.CONFIG_ROOT / "worker.json", 0, 10102)
+    atomic(
+        worker_root / "status.json",
+        {
+            **stopped,
+            "last_attempt": datetime.now(UTC).isoformat(),
+            "reason": "recovery_authority_reconciliation_required",
+            "next_action": "Fence the old primary and reconcile newest consumed authority "
+            "before any separately authorized observation.",
+        },
+        mode=0o640,
+    )
+    os.chown(worker_root / "status.json", 10101, 10102)
+    reports.mkdir(exist_ok=True)
+    for source in (bundle / "reports").glob("*.json"):
+        shutil.copy2(source, reports / source.name)
+        os.chown(reports / source.name, 10101, 10102)
+        (reports / source.name).chmod(0o640)
+    os.chown(reports, 10101, 10102)
+    reports.chmod(0o750)
+    atomic(
+        core.CONFIG_ROOT / "restart-fenced",
+        {"reason": "recovery_requires_authority_reconciliation"},
+    )
+    return {
+        **proof,
+        "financial_data": "RESTORED_WITHOUT_REIDENTIFICATION",
+        "original_created_at": metadata["created_at"],
+        "worker": "FENCED",
+    }
+
+
 def main() -> None:
     global core
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("install", "preflight", "status", "stop", "uninstall"))
+    parser.add_argument(
+        "action",
+        choices=(
+            "install",
+            "configure",
+            "update",
+            "rollback",
+            "restore",
+            "preflight",
+            "status",
+            "stop",
+            "uninstall",
+            "backup",
+            "health",
+        ),
+    )
     parser.add_argument("--tag")
     parser.add_argument("--commit")
     parser.add_argument("--artifact-directory", type=Path)
@@ -520,26 +1139,34 @@ def main() -> None:
     parser.add_argument("--hostname")
     parser.add_argument("--public-opt-in", action="store_true")
     parser.add_argument("--noninteractive", action="store_true")
+    parser.add_argument("--backup-mode", choices=("none", "local", "sftp"))
+    parser.add_argument("--recipient-file", type=Path)
+    parser.add_argument("--secondary-host")
+    parser.add_argument("--secondary-port", type=int, default=22)
+    parser.add_argument("--known-hosts-file", type=Path)
+    parser.add_argument("--upload-key-file", type=Path)
+    parser.add_argument("--recovery-key", type=Path)
+    parser.add_argument("--archive", type=Path)
     args = parser.parse_args()
-    if os.geteuid() != 0:
+    if os.geteuid() != 0 and not (args.action == "health" and os.geteuid() == 10101):
         parser.error("administrative SSH/root access required")
     core = load_core(args)
+    if args.action == "health":
+        print(json.dumps(publish_health(), sort_keys=True))
+        return
+    if args.action == "rollback":
+        print(json.dumps(rollback(), sort_keys=True))
+        return
+    if args.action == "backup":
+        print(json.dumps(configure_backup(args), sort_keys=True))
+        return
     if args.action == "status":
         for name in ("installation.json", "maintenance-receipt.json"):
             path = core.CONFIG_ROOT / name
             print(path.read_text() if path.exists() else name + ": UNCONFIGURED")
         return
     if args.action in {"stop", "uninstall"}:
-        # OS supervision remains independent of browser, identity and command DB.
-        atomic(
-            core.CONFIG_ROOT / "restart-fenced",
-            {
-                "reason": "protected_administrative_stop",
-                "checked_at": datetime.now(UTC).isoformat(),
-            },
-        )
-        core.run("systemctl", "stop", "polysia-platform-worker.timer")
-        core.run("systemctl", "stop", "polysia-platform-worker.service")
+        result = protected_stop()
         if args.action == "uninstall":
             core.run(
                 "systemctl",
@@ -550,18 +1177,11 @@ def main() -> None:
                 "polysia-platform-gateway.service",
             )
             core.run("systemctl", "stop", "polysia-platform-web.service")
-        print(
-            json.dumps(
-                {
-                    "status": "OS_WORKER_FENCED",
-                    "data_retained": True,
-                    "durable_authority_stop": "NOT_CONFIRMED",
-                    "next_action": "Confirm durable STOP before any restart.",
-                }
-            )
-        )
+        print(json.dumps(result))
         return
-    profile = args.profile
+    prior_file = core.CONFIG_ROOT / "installation.json"
+    prior = validate(json.loads(prior_file.read_text())) if prior_file.exists() else {}
+    profile = args.profile or prior.get("profile")
     if profile is None:
         if args.noninteractive:
             parser.error("--profile is required in noninteractive mode")
@@ -573,7 +1193,7 @@ def main() -> None:
         )
         if profile is None:
             parser.error("choose 1, 2 or 3")
-    hostname = "localhost" if profile == "private" else args.hostname
+    hostname = "localhost" if profile == "private" else args.hostname or prior.get("hostname")
     if not hostname and not args.noninteractive:
         hostname = input(
             "Your hostname (DNS/ingress commissioning requires your authorization): "
@@ -581,33 +1201,95 @@ def main() -> None:
     value = validate(
         {
             "schema": SCHEMA,
-            "commit": args.commit,
+            "commit": args.commit or prior.get("commit"),
             "profile": profile,
             "hostname": hostname,
-            "public_opt_in": args.public_opt_in,
-            "roles": {"owner": "operator", "reader": "reader"},
-            "backup": {"mode": "none"},
+            "public_opt_in": args.public_opt_in or prior.get("public_opt_in", False),
+            "roles": prior.get("roles", {"owner": "operator", "reader": "reader"}),
+            "backup": prior.get("backup", retained_backup()),
         }
     )
     preflight(value)
     if args.action == "preflight":
         print(json.dumps({"status": "PREFLIGHT_PASSED", "configuration": value}))
         return
-    directory = args.artifact_directory or fetch_release(args.tag, args.commit)
+    local = Path(__file__).resolve().parent
+    directory = args.artifact_directory or (
+        local
+        if (local / "polysia-image.tar.gz").is_file()
+        else fetch_release(args.tag, value["commit"])
+    )
+    core.activation_preflight(value["commit"])
+    checkpoint_file = core.CONFIG_ROOT / "rollback-checkpoint.json"
+    checkpoint = (
+        preserve_rollback()
+        if prior != value
+        else json.loads(checkpoint_file.read_text())
+        if checkpoint_file.exists()
+        else None
+    )
     phase(value, "PREFLIGHT_PASSED")
-    receipt = core.bootstrap(directory, commit=args.commit, install_units=False)
+    receipt = core.bootstrap(directory, commit=value["commit"], install_units=False)
     phase(value, "ARTIFACT_VERIFIED", image_id=receipt["image_id"])
-    access = configure(value, image=receipt["image_id"])
+    if args.action == "restore":
+        proof = restore_installation(args, value, image=receipt["image_id"])
+        phase(value, "RESTORE_VERIFIED", restore=proof)
+    access = configure(
+        value, image=receipt["image_id"], allow_change=args.action in {"configure", "update"}
+    )
     phase(value, "CONFIGURATION_STAGED", access=access)
-    activate(value, image=receipt["image_id"])
-    verify_access(value)
-    phase(value, "ACTIVATED", access=access, backup="UNPROTECTED", acquisition_enabled=False)
+    if access["status"] == "ACCESS_CONFIGURATION_REQUIRED":
+        print(
+            json.dumps(
+                {
+                    "status": "ACCESS_CONFIGURATION_REQUIRED",
+                    "access": access,
+                    "acquisition_enabled": False,
+                }
+            )
+        )
+        return
+    try:
+        activate(value, image=receipt["image_id"])
+        verify_access(value)
+        promote_retained_backup(value, image=receipt["image_id"])
+        install_health(value)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        atomic(core.CONFIG_ROOT / "restart-fenced", {"reason": "activation_incomplete"})
+        subprocess.run(
+            [
+                "systemctl",
+                "stop",
+                "polysia-platform-worker.timer",
+                "polysia-platform-worker.service",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=40,
+        )
+        phase(
+            value,
+            "ACTIVATION_INCOMPLETE",
+            worker="FENCED",
+            next_action="Inspect dedicated service logs; rerun this exact release or rollback.",
+        )
+        raise ValueError(
+            "activation incomplete; worker restart is fenced; inspect maintenance receipt"
+        ) from None
+    phase(
+        value,
+        "ACTIVATED",
+        access=access,
+        backup=value["backup"],
+        acquisition_enabled=False,
+        rollback_checkpoint=checkpoint,
+    )
     print(
         json.dumps(
             {
                 "status": "SETUP_COMPLETE",
                 "access": access,
-                "backup": "UNPROTECTED",
+                "backup": value["backup"].get("protection", "UNPROTECTED"),
                 "acquisition_enabled": False,
                 "next_action": "Read the Console. Observation needs separate approved authority.",
             }

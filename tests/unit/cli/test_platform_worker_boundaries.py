@@ -70,6 +70,33 @@ def test_stop_bypasses_long_deferred_queue_and_fences_old_resume(installed_worke
     assert not Path(value["database"]).exists()
 
 
+@pytest.mark.parametrize("fault", ["missing", "empty", "missing_authority_row"])
+def test_worker_never_reinitializes_lost_or_incomplete_authority(installed_worker, fault):
+    import sqlite3
+
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    config, value, _, _, _ = installed_worker
+    root = config.parent
+    path = Path(value["authority"])
+    if fault == "missing":
+        path.rename(root / "retained-authority.sqlite3")
+    elif fault == "empty":
+        path.write_bytes(b"")
+    else:
+        with sqlite3.connect(path) as connection:
+            connection.execute("DELETE FROM authority")
+    with pytest.raises(AcquisitionBlockedError, match="do_not_reinitialize"):
+        worker.worker_tick(config)
+    if fault == "missing":
+        assert not path.exists()
+    elif fault == "empty":
+        assert path.stat().st_size == 0
+    else:
+        with sqlite3.connect(path) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM authority").fetchone() == (0,)
+
+
 def test_due_checkpoint_survives_restart_and_crash_without_delaying_stop(
     installed_worker, monkeypatch: pytest.MonkeyPatch,
 ):

@@ -285,7 +285,7 @@ def test_console_ages_recovers_refreshes_and_observes_async_receipts(console_fix
         page.on("request", lambda request: state.update(posts=state["posts"] + 1)
                 if request.method == "POST" else None)
         page.goto(origin)
-        expect(page.locator("#operation")).to_have_text("OBSERVING")
+        expect(page.locator("#operation")).to_have_text("Observation active")
         page.locator("#wallet-filter").fill("fixture")
         page.locator("#report-start").fill("2026-10-16T00:00")
         page.get_by_role("button", name="STOP acquisition").click()
@@ -300,7 +300,7 @@ def test_console_ages_recovers_refreshes_and_observes_async_receipts(console_fix
         page.clock.fast_forward(21000)
         expect(page.locator("#error")).to_be_visible()
         page.clock.fast_forward(600000)
-        expect(page.locator("#operation")).to_have_text("STALE PUBLICATION")
+        expect(page.locator("#operation")).to_have_text("Retained report is out of date")
         # Deterministically exercise the visibility-event contract in Chromium.
         page.evaluate("""() => {
           Object.defineProperty(document, 'hidden', {configurable:true,get:()=>true});
@@ -319,10 +319,10 @@ def test_console_ages_recovers_refreshes_and_observes_async_receipts(console_fix
           Object.defineProperty(document, 'hidden', {configurable:true,get:()=>false});
           document.dispatchEvent(new Event('visibilitychange'));
         }""")
-        expect(page.locator("#operation")).to_have_text("STALE WORKER RECEIPT")
+        expect(page.locator("#operation")).to_have_text("Worker status is out of date")
         expect(page.locator("#error")).to_be_hidden()
         retained["last_attempt"] = now
         page.clock.fast_forward(21000)
-        expect(page.locator("#operation")).to_have_text("OBSERVING")
+        expect(page.locator("#operation")).to_have_text("Observation active")
         assert state["posts"] == 1
         browser.close()

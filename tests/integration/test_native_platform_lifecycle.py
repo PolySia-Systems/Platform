@@ -243,6 +243,21 @@ async def test_close_only_ambiguous_settlement_retains_inventory_without_revalid
 
 
 @pytest.mark.asyncio
+async def test_missing_retained_financial_store_never_creates_a_fresh_session(native_runtime):
+    root = native_runtime[0]
+    first = await tick(native_runtime)
+    database = root / "financial.sqlite3"
+    before = native_runtime[3].status()
+    database.rename(root / "retained-financial.sqlite3")
+    with pytest.raises(AcquisitionBlockedError, match="retained_financial_session_missing"):
+        await tick(native_runtime)
+    assert not database.exists()
+    assert native_runtime[3].status() == before
+    retained = json.loads((root / "financial.sqlite3.session.json").read_text())
+    assert retained["experiment_id"] == first.experiment.experiment_id
+
+
+@pytest.mark.asyncio
 async def test_real_worker_restarts_make_close_only_progress_at_four_hours(
     native_runtime, monkeypatch,
 ):
@@ -387,6 +402,7 @@ def test_real_worker_composition_obeys_cadence_across_restarts(
     monkeypatch.setattr(Path, "read_text", read)
     changed_policy = replace(authority.policy, cadence_seconds=300)
     # Use a new test-only authority, never reset an existing charged policy.
+    AcquisitionAuthority(root / "worker-authority.sqlite3", changed_policy).initialize()
     manifest = root / "manifest.json"
     manifest.write_text(json.dumps(changed_policy.to_dict()))
     cohort = root / "cohort.json"

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
@@ -85,8 +87,11 @@ def gateway_config(
         + " {\n"
         + private
         + "    route {\n        request_header -X-Polysia-User\n"
+        "        request_header -X_Polysia_User\n"
         "        request_header -Cf-Access-Jwt-Assertion\n"
+        "        request_header -Cf_Access_Jwt_Assertion\n"
         "        request_header -X-Forwarded-User\n"
+        "        request_header -X_Forwarded_User\n"
         "        basic_auth bcrypt {\n" + accounts + "\n        }\n"
         "        request_body {\n            max_size 4096\n        }\n"
         "        reverse_proxy unix/" + socket_path + " {\n"
@@ -115,6 +120,8 @@ def console_identity(value: dict[str, Any]) -> tuple[Any, str, dict[str, Any]]:
         )
     if profile not in {"private", "own-domain"} or "port" in value:
         raise ValueError("gateway requires an exclusive Unix-socket backend")
+    if sys.platform == "win32":
+        raise ValueError("gateway backend requires the supported Linux server profile")
     socket = Path(value["unix_socket"])
     if (
         not socket.is_absolute()
@@ -123,6 +130,13 @@ def console_identity(value: dict[str, Any]) -> tuple[Any, str, dict[str, Any]]:
         or socket.parent.is_symlink()
     ):
         raise ValueError("protected backend socket required")
+    parent = socket.parent.stat()
+    if (
+        parent.st_mode & 0o007
+        or parent.st_uid not in {0, os.geteuid()}
+        or parent.st_gid != os.getegid()
+    ):
+        raise ValueError("backend socket directory ownership/permissions are not protected")
     return (
         GatewayVerifier(value["roles"]),
         GATEWAY_IDENTITY_HEADER,

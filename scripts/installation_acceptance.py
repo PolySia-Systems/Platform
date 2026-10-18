@@ -33,6 +33,7 @@ def main() -> None:
     parser.add_argument("--artifact-directory", required=True, type=Path)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--browser-handoff", type=Path)
     args = parser.parse_args()
     config, state = Path("/etc/polysia-platform"), Path("/var/lib/polysia-platform")
     if os.geteuid() != 0 or config.exists() or state.exists():
@@ -83,8 +84,15 @@ def main() -> None:
         staged["image_id"]
         == json.loads((config / "maintenance-receipt.json").read_text())["image_id"]
     )
-    for unit in ("worker.timer", "publisher.timer", "web.service", "gateway.service"):
+    for unit in (
+        "worker.timer",
+        "publisher.timer",
+        "web.service",
+        "gateway.service",
+        "health.timer",
+    ):
         assert run("systemctl", "is-active", "polysia-platform-" + unit).strip() == "active"
+    run("systemctl", "start", "polysia-platform-health.service")
     ca = state / "gateway/caddy/pki/authorities/local/root.crt"
     deadline = time.monotonic() + 40
     while not ca.exists() and time.monotonic() < deadline:
@@ -130,6 +138,16 @@ def main() -> None:
         request(
             user="reader",
             headers={"X-Polysia-User": "owner"},
+            method="POST",
+            path="/api/commands",
+            body={},
+        )[0]
+        == 403
+    )
+    assert (
+        request(
+            user="reader",
+            headers={"X_Polysia_User": "owner"},
             method="POST",
             path="/api/commands",
             body={},
@@ -238,6 +256,19 @@ def main() -> None:
         == "no"
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if args.browser_handoff:
+        args.browser_handoff.write_text(
+            json.dumps(
+                {
+                    "username": "owner",
+                    "password": accounts["owner"],
+                    "ca_certificate": ca.read_text(),
+                    "fixture_only": True,
+                }
+            )
+        )
+        args.browser_handoff.chmod(0o600)
+        os.chown(args.browser_handoff, int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"]))
     args.output.write_text(
         json.dumps(
             {

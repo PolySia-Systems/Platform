@@ -189,7 +189,10 @@ class ConsoleApplication:
             asset = Path(__file__).with_name("console_assets") / path.removeprefix("/")
             media = "text/css" if path.endswith("css") else "text/javascript"
             return respond("200 OK", asset.read_text(encoding="utf-8"), media=media)
-        if path == "/":
+        if path == "/api/demo":
+            demo = Path(__file__).with_name("console_assets") / "demo.json"
+            return respond("200 OK", json.loads(demo.read_text(encoding="utf-8")))
+        if path in {"/", "/demo"}:
             csrf = self._csrf(subject)
             headers.append(
                 (
@@ -205,7 +208,8 @@ class ConsoleApplication:
                     encoding="utf-8",
                 )
                 .replace("{{csrf}}", html.escape(csrf, quote=True))
-                .replace("{{role}}", role)
+                .replace("{{role}}", "reader" if path == "/demo" else role)
+                .replace("{{dataset_mode}}", "demo" if path == "/demo" else "retained")
             )
             return respond("200 OK", document, media="text/html; charset=utf-8")
         if isinstance(path, str) and re.fullmatch(r"/reports/[a-f0-9]{64}\.json", path):

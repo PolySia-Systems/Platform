@@ -1,10 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf" content="{{csrf}}"><meta name="role" content="{{role}}">
+<meta name="dataset-mode" content="{{dataset_mode}}">
 <title>PolySia Console</title><link rel="stylesheet" href="/console.css"><script src="/console.js" defer></script></head>
 <body><a class="skip" href="#main">Skip to operation</a><header><strong>PolySia <span>Console</span></strong><span class="mode">DATA_ONLY · No real orders</span></header>
 <nav aria-label="Console sections"><a href="#main">Overview</a><a href="#wallet-section">Wallets &amp; Sources</a><a href="#report-section">Shadow &amp; Reports</a><a href="#operation-section">Operations</a></nav>
 <main id="main"><div class="intro"><div><p class="eyebrow">Platform operation</p><h1>Observe. Understand. Decide.</h1><p id="freshness">Loading retained publication…</p></div><a class="button" href="/api/report">Download evidence JSON</a></div>
+<section class="panel" aria-label="Installation and protection"><h2>Ready for the next step</h2><p id="setup-state">Checking installation and access…</p><p id="protection-state">Backup protection is UNKNOWN.</p><a href="/demo">Try the offline read-only demo</a> · <a href="/">Return to retained evidence</a><details><summary>Technical installation details</summary><pre id="installation-details"></pre></details></section>
 <p id="error" role="alert" hidden></p><section class="cards" aria-label="Current operation">
 <article><p>Operation</p><h2 id="operation">UNKNOWN</h2><small id="next">Awaiting publication</small></article>
 <article><p>Control net result</p><h2 id="control">UNKNOWN</h2><small>Frozen prospective policy</small></article>
