@@ -47,12 +47,32 @@ Unattended merge is limited to verified low-risk development or Actions patch
 updates after `CI Gate`. Runtime, SDK, Python/Conda, major, `0.x` minor,
 trading/financial, and sensitive security changes stay open for owner review.
 
-Weekly scheduled refresh uses the same pip-compile command. It opens no PR
-when the resolution is unchanged. Runtime lock drift in that PR requires
-review. The workflow also has an unfiltered `push` trigger with a cheap
+Weekly refresh uses the same pip-compile command and retains changed proposals
+as artifacts for 14 days. Scheduled/default manual runs create no branches or
+PRs: organization policy denies Actions creating/approving PRs. Optional manual
+`publish=true` first checks existing capability and falls back to the retained
+artifact without creating a branch when unavailable. That input grants no new
+permission and changes no organization setting. The workflow has an unfiltered
+`push` trigger with a cheap
 success job; omitting that trigger leaves GitHub's push evaluation with zero
 jobs, which prevents `workflow_dispatch` registration. Manual refresh is
 `gh workflow run "Dependency automation" --ref main`.
+
+The supported maintainer path uses existing authenticated access, never a new
+broad token. Start from clean current main on a focused branch, run
+`python scripts/dependency_locks.py refresh --scope pip --upgrade`, inspect the
+declaration/lock diff, run `python scripts/dependency_locks.py check`, and open
+a draft PR. Do not copy old proposals over current dependencies; compare the
+artifact's `pyproject.toml` and source revision before any use, or regenerate.
+Keep runtime/SDK/build-system changes for explicit compatibility review. Changing
+SDK approval constants is not compatibility evidence. SDK declaration changes
+are classified for human review before any automatic lock generation; build-system
+changes retain their rejection/review path even inside a development group.
+
+GitHub content reads explicitly use GET with the immutable ref. The optional
+publication failure path passes lowercase shell booleans and invokes the same
+head/PR-aware cleanup predicate tested through the actual workflow shell. Changed
+heads or any existing PR prevent orphan deletion. No failed gate is merged.
 
 ## 2026-07-11 verification evidence
 
@@ -88,8 +108,9 @@ run unrelated jobs.
 ## Rollback
 
 1. Revert the dependency automation merge on `main`.
-2. Disable repository auto-merge and the `main` ruleset/branch protection.
-3. Disable Dependabot Security Updates if they must be removed with the revert.
+2. Disable only the affected automation workflow if required; preserve `main`
+   protection, required checks and organization security policy.
+3. Preserve security-update discovery; disposition affected proposals explicitly.
 4. Restore previous pip lock filenames only by reverting the same merge; do not
    keep both generated generations.
 

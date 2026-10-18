@@ -49,3 +49,19 @@ The Console still has no financial mount. This keeps one financial writer and
 avoids falsely declaring an active database immutable. Waitress/PyJWT are the
 smaller cached-WSGI equivalent of the default web-stack proposal; notices,
 maintenance, test evidence and rollback are in the Console dependency decision.
+
+18 October refinement: new admitted persistent native sessions use the explicit
+`continuous-shadow-native-research-v2` configuration. Their financial session has
+no arbitrary daily time rollover; event/storage limits, authority/expiry and
+explicit drain/finalize still bound operation. Calendar reporting windows do not
+reset cash, positions, checkpoints or pending observations. Historical v1/v2
+configurations keep their original limits and replay semantics.
+
+Revalidation refreshes only already admitted wallet identities using complete
+bounded activity walks and current mapping/fee/book evidence under the same
+request/byte authority. Successful receipts bind original cohort and release;
+they cannot replace a cohort or manufacture resource admission. Continuous
+admission has explicit expiry and is checked on every tick. Changed code/financial
+configuration needs a controlled compatible session decision; the deployed stopped
+old session is never silently migrated or funded. Existing prepared transitions
+remain for explicit safe session changes; automatic daily rollover is not enabled.

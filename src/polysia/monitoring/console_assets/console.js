@@ -1,5 +1,39 @@
 "use strict";
-let publication = {}, revision = 0;
+let publication = {}, revision = 0, inFlight = null;
+let refreshTimer = null, publisherFailure = null, reportFailure = null;
+let renderedWallets = "", renderedReceipts = "";
+const REFRESH_MS = 20000;
+function ageSeconds(value) {
+  const stamp = Date.parse(value);
+  return Number.isFinite(stamp) ? (Date.now() - stamp) / 1000 : null;
+}
+function freshness() {
+  const publisherAge = ageSeconds(publication.published_at);
+  const workerAge = ageSeconds(publication.last_attempt);
+  let operation = publication.status || "UNKNOWN", next = publication.next_action;
+  if (publisherAge == null || publisherAge < -5 || publisherAge > 180) {
+    operation = "STALE PUBLICATION"; next = "Inspect the publisher; this is retained state.";
+  } else if (workerAge == null || workerAge < -5 || workerAge > 180) {
+    operation = "STALE WORKER RECEIPT"; next = "Inspect the worker; publication is retained data.";
+  }
+  text("operation", operation); text("next", next);
+  const age = value => value == null ? "UNKNOWN" : `${Math.max(0, Math.floor(value))} seconds`;
+  text("freshness", `Worker receipt age: ${age(workerAge)} · Publisher age: ${age(publisherAge)} · Financial cutoff: ${readable(publication.report?.analytical?.source_poll_cutoff)}`);
+  const alert = document.getElementById("error");
+  alert.hidden = !publisherFailure && !reportFailure;
+  alert.textContent = reportFailure || publisherFailure || "";
+}
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  if (!document.hidden) refreshTimer = setTimeout(async () => {
+    await load(); scheduleRefresh();
+  }, REFRESH_MS);
+}
+async function load() {
+  if (inFlight) return inFlight;
+  inFlight = loadOnce().finally(() => { inFlight = null; });
+  return inFlight;
+}
 const text = (id, value) => { document.getElementById(id).textContent = value ?? "UNKNOWN"; };
 const readable = value => value == null ? "UNKNOWN" : String(value);
 function wallets() {
@@ -17,9 +51,16 @@ function wallets() {
   });
   if (!rows.length) { const tr = document.createElement("tr"), td = document.createElement("td"); td.colSpan = 3; td.textContent = "No retained cohort is available."; tr.append(td); body.append(tr); }
 }
-async function load() {
-  try { const commandResponse = await fetch("/api/commands"); if (commandResponse.ok) {
+async function loadOnce() {
+  const signal = AbortSignal.timeout(10000);
+  try { const commandResponse = await fetch("/api/commands", {signal, cache:"no-store", credentials:"same-origin"});
+    if (!commandResponse.ok) throw new Error("Command receipt service unavailable.");
+    if (commandResponse.ok) {
       const commands = await commandResponse.json(); revision = commands.revision;
+      if (document.getElementById("receipt").textContent.startsWith("Command receipt service unavailable")) text("receipt", "");
+      const receiptKey = JSON.stringify(commands.receipts || []);
+      if (receiptKey !== renderedReceipts) {
+      renderedReceipts = receiptKey;
       const list = document.getElementById("receipts"); list.replaceChildren();
       (commands.receipts || []).forEach(row => {
         const li = document.createElement("li");
@@ -30,19 +71,24 @@ async function load() {
         }
         list.append(li);
       });
+      }
     } }
   catch { text("receipt", "Command receipt service unavailable; inspect the protected recovery route."); }
   try {
-    const response = await fetch("/api/report", {credentials:"same-origin"});
+    const response = await fetch("/api/report", {signal, cache:"no-store", credentials:"same-origin"});
     if (!response.ok) throw new Error(`Publication unavailable (${response.status})`);
     publication = await response.json();
-    const healthResponse = await fetch("/api/health");
-    const health = await healthResponse.json();
-    if (health.status === "FAILED") { const alert = document.getElementById("error"); alert.hidden = false; alert.textContent = "Report publisher failed; this is retained data. " + readable(health.next_action); }
+    reportFailure = null;
+    try {
+      const healthResponse = await fetch("/api/health", {signal, cache:"no-store", credentials:"same-origin"});
+      if (!healthResponse.ok) throw new Error("Publisher health unavailable; inspect retained receipts.");
+      const health = await healthResponse.json();
+      publisherFailure = health.status === "FAILED"
+        ? "Report publisher failed; this is retained data. " + readable(health.next_action)
+        : health.status === "UNKNOWN" ? "Publisher health is UNKNOWN; inspect retained receipts." : null;
+    } catch (error) { publisherFailure = error.message; }
     const report = publication.report || {}, analytical = report.analytical || {}, economics = analytical.report || {};
-    const age = (Date.now() - Date.parse(publication.published_at)) / 1000;
-    text("operation", age > 180 ? "STALE PUBLICATION" : publication.status || "UNKNOWN"); text("next", age > 180 ? "Inspect the report publisher; this is retained state." : publication.next_action);
-    text("freshness", `Retained publication: ${readable(publication.published_at)} · live service health requires a current worker receipt`);
+    freshness();
     const measured = Number(economics.evaluated_observations || 0) > 0;
     const window = analytical.selected_window;
     text("control", measured ? window?.control?.net_result ?? economics.control?.net_pnl : "NO MEASURABLE RESULT");
@@ -63,8 +109,10 @@ async function load() {
     const reasons = document.getElementById("reasons"); reasons.replaceChildren();
     [...(analytical.reasons || []), ...exclusionRows, ...(report.limitations || []), ...(publication.alerts || [])].forEach(value => { const item = document.createElement("li"); item.textContent = value; reasons.append(item); });
     text("diagnostics", JSON.stringify({source:publication.diagnostics || {status:"UNKNOWN"},recovery:publication.backup_health || {status:"UNKNOWN"}}, null, 2));
-    wallets();
-  } catch (error) { const target = document.getElementById("error"); target.hidden = false; target.textContent = error.message; }
+    const walletKey = JSON.stringify(publication.diagnostic?.discovery?.candidates || []);
+    if (walletKey !== renderedWallets) { wallets(); renderedWallets = walletKey; }
+  } catch (error) { reportFailure = error.message; }
+  freshness();
 }
 document.getElementById("wallet-filter").addEventListener("input", wallets);
 document.querySelectorAll("button[data-action]").forEach(button => {
@@ -79,7 +127,7 @@ document.querySelectorAll("button[data-action]").forEach(button => {
         if (Boolean(start) !== Boolean(end)) throw new Error("Enter both UTC boundaries.");
         if (start && end) { parameters.start = new Date(start + "Z").toISOString(); parameters.end = new Date(end + "Z").toISOString(); }
       }
-      const response = await fetch("/api/commands", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:button.dataset.action,parameters,expected_revision:revision,idempotency_key:crypto.randomUUID(),csrf:document.querySelector('meta[name="csrf"]').content})});
+      const response = await fetch("/api/commands", {method:"POST", signal:AbortSignal.timeout(10000), credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:button.dataset.action,parameters,expected_revision:revision,idempotency_key:crypto.randomUUID(),csrf:document.querySelector('meta[name="csrf"]').content})});
       const receipt = await response.json();
       text("receipt", response.ok ? `Command ${receipt.revision}: ${receipt.status}` : readable(receipt.reason));
       await load();
@@ -87,4 +135,9 @@ document.querySelectorAll("button[data-action]").forEach(button => {
     finally { button.disabled = false; }
   });
 });
-load();
+document.addEventListener("visibilitychange", () => {
+  clearTimeout(refreshTimer);
+  if (!document.hidden) { load().finally(scheduleRefresh); freshness(); }
+});
+setInterval(() => { if (!document.hidden) freshness(); }, 1000);
+load().finally(scheduleRefresh);

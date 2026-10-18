@@ -8,7 +8,12 @@ on:
   pull_request:
   schedule:
     - cron: "47 5 * * 1"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Attempt Actions publication only after capability preflight"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -248,11 +253,15 @@ jobs:
             locks/requirements-dev-py314.txt
             locks/requirements-runtime-py314.txt
             pyproject.toml
-          retention-days: 1
+          retention-days: 14
+      - name: Maintainer publication path
+        run: |
+          echo "Validated proposals are retained as artifacts; no scheduled branch is created."
+          echo "Maintainer: regenerate from current main with scripts/dependency_locks.py, review and open a draft PR."
 
   scheduled-publish:
     needs: scheduled-generate
-    if: needs.scheduled-generate.outputs.changed == 'true'
+    if: needs.scheduled-generate.outputs.changed == 'true' && github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -261,6 +270,18 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v7
+      - id: capability
+        name: Check existing Actions publication permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api --method GET "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" > "$RUNNER_TEMP/capability.json"; then
+            python -c "import json,os,pathlib; value=json.loads(pathlib.Path(os.environ['RUNNER_TEMP'],'capability.json').read_text()); print('allowed='+str(value.get('can_approve_pull_request_reviews') is True).lower())" >> "$GITHUB_OUTPUT"
+          else
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.capability.outputs.allowed != 'true'
+        run: echo "Automated publication unavailable; retained artifacts and authenticated maintainer generation remain available. No branch was created."
       - uses: actions/download-artifact@v8
         with:
           name: polysia-scheduled-locks
@@ -268,7 +289,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - env:
+      - if: steps.capability.outputs.allowed == 'true'
+        env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python scripts/dependency_locks.py lock-sync-validate --artifact "$RUNNER_TEMP/scheduled-locks"
@@ -291,7 +313,7 @@ jobs:
           PLAN_BRANCH=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['branch'])")
           PLAN_SHA=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['sha'])")
           PLAN_PR=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['pull_request'])")
-          DELETE_ON_FAIL=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['delete_on_failed_open'])")
+          DELETE_ON_FAIL=$(python -c "import json,pathlib; print(str(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['delete_on_failed_open']).lower())")
           PLAN_REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['reason'])")
           echo "scheduled publication plan: $PLAN_ACTION $PLAN_BRANCH $PLAN_REASON"
           if [ "$PLAN_ACTION" = "stop" ]; then

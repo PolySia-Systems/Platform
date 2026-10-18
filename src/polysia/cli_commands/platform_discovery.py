@@ -17,7 +17,10 @@ from polysia.adapters.polycop.candidate_wallet_source import PolyCopCandidateWal
 from polysia.adapters.polymarket.bounded_market import BoundedMarketAdapter
 from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
 from polysia.adapters.polymarket.data_api_v2 import IncompleteWalletWindowError
-from polysia.adapters.polymarket.native_discovery import discover_native_activity
+from polysia.adapters.polymarket.native_discovery import (
+    discover_native_activity,
+    verify_native_eligibility,
+)
 from polysia.application.services.shadow_reporting import ShadowReportingService
 from polysia.cli_support.native_research import native_shadow_service
 from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
@@ -86,50 +89,8 @@ def _execute_diagnostic(
                 cohort_limit=policy.cohort_limit,
                 lookback=timedelta(seconds=lookback_seconds),
             )
-            market_adapter = BoundedMarketAdapter(transport)
-            for candidate in discovered["candidates"]:
-                condition, token = candidate["market_reference"], candidate["outcome_reference"]
-                if not isinstance(condition, str) or not isinstance(token, str):
-                    candidate["execution_eligibility"] = "UNKNOWN_MISSING_MARKET_TOKEN"
-                    continue
-                try:
-                    market = await market_adapter.get_market_by_condition_id(condition)
-                    book = await market_adapter.get_order_book(token)
-                    mapped = any(outcome.token_id == token for outcome in market.outcomes)
-                    fee = market.fee_schedule
-                    fee_known = fee is not None and (
-                        fee.enabled is False or fee.rate is not None and fee.exponent is not None
-                    )
-                    current = book.timestamp is not None and (
-                        0 <= (datetime.now(UTC) - book.timestamp).total_seconds() <= 30
-                    )
-                    candidate["execution_eligibility"] = (
-                        "ELIGIBLE_FOR_RESEARCH"
-                        if mapped
-                        and fee_known
-                        and current
-                        and book.asks
-                        and book.bids
-                        and market.active
-                        and not market.closed
-                        else "UNKNOWN_MAPPING_FEE_BOOK_OR_MARKET_STATE"
-                    )
-                    candidate["mapping_verified"] = mapped
-                    candidate["fee_known"] = fee_known
-                    candidate["book_current"] = current
-                    candidate["exclusions"] = [
-                        reason
-                        for passed, reason in (
-                            (mapped, "market_token_mapping_unverified"),
-                            (fee_known, "fee_evidence_missing"),
-                            (current, "book_stale_or_timestamp_missing"),
-                            (bool(book.asks and book.bids), "executable_depth_missing"),
-                            (market.active and not market.closed, "market_not_active"),
-                        )
-                        if not passed
-                    ]
-                except ValueError:
-                    candidate["execution_eligibility"] = "INVALID_MARKET_OR_BOOK_SCHEMA"
+            await verify_native_eligibility(discovered, BoundedMarketAdapter(transport),
+                                            clock=lambda: datetime.now(UTC))
             discovered["frozen_at"] = datetime.now(UTC).isoformat()
             # Rebind the publication identity after all execution eligibility evidence.
             import hashlib

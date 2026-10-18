@@ -2926,6 +2926,8 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     ]
     clock.value = NOW + timedelta(minutes=2)
     assert (await service.poll("polycop")).simulated_count > 0
+    clock.value = NOW + timedelta(minutes=4)
+    await service.poll("polycop")
     authority = AcquisitionAuthority(tmp_path / "authority.sqlite3", policy())
     authority.initialize()
     # Unknown in-flight stays charged.
@@ -2933,6 +2935,23 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     authority.stop()
     commands = ConsoleCommandStore(tmp_path / "commands.sqlite3")
     commands.initialize()
+    from polysia.application.services.shadow_reporting import ShadowReportingService
+
+    archived = ShadowReportingService(_shadow_database(database)).report(
+        experiment.experiment_id, start=NOW, end=NOW + timedelta(seconds=121),
+    )
+    archive_directory = tmp_path / "publication" / "reports"
+    archive_directory.mkdir(parents=True)
+    archive_name = archived["analytical_digest"] + ".json"
+    (archive_directory / archive_name).write_text(json.dumps(archived, sort_keys=True))
+    download = "/reports/" + archive_name
+    commands.submit(subject="owner", action="export", expected_revision=0,
+                    idempotency_key="nonempty-period-export-before-backup")
+    commands.finish(1, status="APPLIED", result={"download": download,
+                                              "analytical_digest": archived["analytical_digest"]})
+    commands.submit(subject="owner", action="export", expected_revision=1,
+                    idempotency_key="legacy-missing-report-before-backup")
+    commands.finish(2, status="APPLIED", result={"download": "/reports/" + "c" * 64 + ".json"})
     manifest = tmp_path / "policy.json"
     manifest.write_text(json.dumps(policy().to_dict()))
     image = tmp_path / "polysia-image.tar.gz"
@@ -2960,6 +2979,7 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
                 "manifest": str(manifest),
                 "cohort": str(tmp_path / "cohort.json"),
                 "acquisition_enabled": True,
+                "publication": str(tmp_path / "publication" / "publication.json"),
             }
         )
     )
@@ -2995,8 +3015,20 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     )
     assert receipt["status"] == "VERIFIED_ISOLATED_RESTORE"
     assert receipt["analytical_digest"]
+    assert receipt["restored_reports"] == 1
+    assert receipt["unavailable_report_receipts"] == 1
+    recovered_report = json.loads((restored / "reports" / archive_name).read_text())
+    assert recovered_report == archived
+    assert recovered_report["analytical"]["selected_window"]["observation_count"] > 0
     safe = json.loads((restored / "recovery-runtime.json").read_text())
     assert safe["acquisition_enabled"] is False
+    recovered_commands = ConsoleCommandStore(Path(safe["commands"]))
+    receipts = recovered_commands.status()["receipts"]
+    assert receipts[0]["status"] == "FAILED"
+    assert receipts[0]["result"]["reason"] == "retained_report_unavailable_after_restore"
+    assert receipts[1]["status"] == "APPLIED"
+    assert receipts[1]["result"]["download"] == download
+    assert commands.status()["receipts"][0]["status"] == "APPLIED"
     assert Path(safe["database"]).parent == restored
     recovered_authority = AcquisitionAuthority(Path(safe["authority"]), policy())
     assert recovered_authority.status()["stopped"] is True

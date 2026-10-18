@@ -65,7 +65,7 @@ The earlier frozen Stage 4B backup remains documented in
 - [Master Operating Charter](00-governance/master-operating-charter.md)
 - [Document control](00-governance/document-control.md)
 - [Adopted Standards record](../standards/adoption.toml)
-- [Standards conformance review](00-governance/standards-conformance-v0.4.0.md)
+- [Standards conformance review](00-governance/standards-conformance-v0.5.2.md)
 
 ## Evidence
 

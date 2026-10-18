@@ -161,7 +161,10 @@ class ContinuousShadowConfig:
             ):
                 raise ValueError("legacy Shadow runtime cannot acquire new period limits")
         else:
-            if not 3_600 <= self.period_duration_seconds <= 86_400:
+            persistent_native = self.runtime_version == "continuous-shadow-native-research-v2"
+            if not (persistent_native and self.period_duration_seconds == 0) and not (
+                3_600 <= self.period_duration_seconds <= 86_400
+            ):
                 raise ValueError("period_duration_seconds must be within [3600, 86400]")
             if not 1 <= self.period_max_events <= 100_000:
                 raise ValueError("period_max_events must be within [1, 100000]")
@@ -177,10 +180,13 @@ class ContinuousShadowConfig:
         if self.runtime_version not in {
             "continuous-shadow-runtime-v1", "continuous-shadow-runtime-v2",
             "continuous-shadow-native-research-v1",
+            "continuous-shadow-native-research-v2",
             "continuous-shadow-runtime-legacy-v0",
         }:
             raise ValueError("continuous Shadow runtime version is unsupported")
-        if self.runtime_version == "continuous-shadow-native-research-v1" and (
+        if self.runtime_version in {
+            "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
+        } and (
                     self.code_sha is None or self.wallet_count is None
                     or not 1 <= self.wallet_count <= 10
                     or self.selection_policy != "native-recent-activity-v1"
@@ -274,6 +280,7 @@ class ContinuousShadowConfig:
         }
         if self.runtime_version in {
             "continuous-shadow-runtime-v2", "continuous-shadow-native-research-v1",
+            "continuous-shadow-native-research-v2",
         }:
             payload.update({
                 "selection_policy": self.selection_policy,

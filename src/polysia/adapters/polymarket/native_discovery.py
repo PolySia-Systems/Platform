@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from polysia.adapters.polymarket.bounded_market import BoundedMarketAdapter
 from polysia.adapters.polymarket.data_api_v2 import (
     DATA_API_BASE_URL,
     DATA_API_V2_ACTIVITY_PATH,
@@ -191,3 +193,108 @@ def qualifying_trade(
     ):
         raise ValueError("invalid or out of window trade")
     return address, when
+
+
+async def verify_native_eligibility(
+    discovered: dict[str, Any], market_adapter: BoundedMarketAdapter,
+    *, clock: Callable[[], datetime],
+) -> None:
+    for candidate in discovered["candidates"]:
+        condition, token = candidate["market_reference"], candidate["outcome_reference"]
+        if not isinstance(condition, str) or not isinstance(token, str):
+            candidate["execution_eligibility"] = "UNKNOWN_MISSING_MARKET_TOKEN"
+            continue
+        try:
+            market = await market_adapter.get_market_by_condition_id(condition)
+            book = await market_adapter.get_order_book(token)
+            mapped = any(outcome.token_id == token for outcome in market.outcomes)
+            fee = market.fee_schedule
+            fee_known = fee is not None and (
+                fee.enabled is False or fee.rate is not None and fee.exponent is not None
+            )
+            current = book.timestamp is not None and (
+                0 <= (clock() - book.timestamp).total_seconds() <= 30
+            )
+            candidate["execution_eligibility"] = (
+                "ELIGIBLE_FOR_RESEARCH"
+                if mapped
+                and fee_known
+                and current
+                and book.asks
+                and book.bids
+                and market.active
+                and not market.closed
+                else "UNKNOWN_MAPPING_FEE_BOOK_OR_MARKET_STATE"
+            )
+            candidate["mapping_verified"] = mapped
+            candidate["fee_known"] = fee_known
+            candidate["book_current"] = current
+            candidate["exclusions"] = [
+                reason
+                for passed, reason in (
+                    (mapped, "market_token_mapping_unverified"),
+                    (fee_known, "fee_evidence_missing"),
+                    (current, "book_stale_or_timestamp_missing"),
+                    (bool(book.asks and book.bids), "executable_depth_missing"),
+                    (market.active and not market.closed, "market_not_active"),
+                )
+                if not passed
+            ]
+        except ValueError:
+            candidate["execution_eligibility"] = "INVALID_MARKET_OR_BOOK_SCHEMA"
+
+
+async def revalidate_native_cohort(
+    discovery: dict[str, Any], transport: DataApiV2Transport,
+    market_adapter: BoundedMarketAdapter, *, clock: Callable[[], datetime],
+) -> dict[str, Any]:
+    """Revalidate only admitted identities; never discover or admit replacements."""
+    cutoff = clock()
+    if cutoff.utcoffset() != timedelta(0):
+        raise ValueError("cutoff must be UTC")
+    original_window = datetime.fromisoformat(discovery["cutoff"]) - datetime.fromisoformat(
+        discovery["window_start"]
+    )
+    if not timedelta(0) < original_window <= timedelta(hours=1):
+        raise ValueError("native revalidation window invalid")
+    lower = cutoff - original_window
+    candidates = []
+    for original in discovery["candidates"]:
+        if original["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH":
+            continue
+        rows = await fetch_data_api_v2_window(
+            transport, DATA_API_V2_ACTIVITY_PATH,
+            {"user": original["address"], "start": int(lower.timestamp()),
+             "end": int(cutoff.timestamp()), "limit": 500, "type": "TRADE"},
+            max_pages=4, max_requests=4, max_elapsed_seconds=60,
+        )
+        latest = None
+        latest_at = None
+        for row in rows:
+            address, when = qualifying_trade(row, lower=lower, cutoff=cutoff)
+            if address != original["address"]:
+                raise ValueError("native_activity_wallet_mismatch")
+            if latest_at is None or when > latest_at:
+                latest, latest_at = row, when
+        candidates.append({
+            "wallet_id": original["wallet_id"], "address": original["address"],
+            "state": "ACTIVITY_CONFIRMED" if latest else "NO_COMPLETE_ACTIVITY",
+            "execution_eligibility": "UNKNOWN_REQUIRES_MAPPING_BOOK_AND_FEE_EVIDENCE",
+            "last_qualifying_activity": latest_at.isoformat() if latest_at else None,
+            "complete_activity_rows": len(rows),
+            "market_reference": latest.get("conditionId") if latest else None,
+            "outcome_reference": latest.get("asset") if latest else None,
+        })
+    result = {
+        "profile": PROFILE_VERSION, "source": "polymarket-native",
+        "coverage": "COMPLETE_FIXED_ADMITTED_WALLET_ACTIVITY",
+        "seed_coverage": "NOT_RESAMPLED_FIXED_ADMITTED_COHORT",
+        "original_cohort_digest": discovery["digest"],
+        "cutoff": cutoff.isoformat(), "window_start": lower.isoformat(),
+        "candidates": candidates, "unique_wallets": len(candidates),
+        "source_rows": sum(row["complete_activity_rows"] for row in candidates),
+    }
+    await verify_native_eligibility(result, market_adapter, clock=clock)
+    result["frozen_at"] = clock().isoformat()
+    raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+    return {**result, "digest": hashlib.sha256(raw.encode()).hexdigest()}

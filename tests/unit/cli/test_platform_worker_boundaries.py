@@ -107,3 +107,46 @@ def test_clock_regression_blocks_before_source_access(installed_worker):
     assert result["reason"] == "worker_clock_regressed"
     assert authority.status()["stopped"] is True
     assert authority.status()["requests_charged"] == 0
+
+
+def test_retry_count_survives_cadence_wait_and_stops_after_three_attempts(
+    installed_worker, monkeypatch: pytest.MonkeyPatch,
+):
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    config, value, clock, authority, _ = installed_worker
+    value["acquisition_enabled"] = True
+    config.write_text(json.dumps(value))
+    Path(value["cohort"]).write_text(json.dumps({"discovery": {}}))
+    attempts = []
+
+    async def unavailable(*args, **kwargs):
+        attempts.append(clock.value)
+        raise AcquisitionBlockedError("provider_http_503")
+
+    monkeypatch.setattr(worker, "native_lifecycle_poll", unavailable)
+    assert worker.worker_tick(config)["transient_failures"] == 1
+    clock.value = NOW + timedelta(seconds=60)
+    assert worker.worker_tick(config)["status"] == "WAITING_RETRY"
+    clock.value = NOW + timedelta(seconds=180)
+    assert worker.worker_tick(config)["status"] == "WAITING_CADENCE"
+    clock.value = NOW + timedelta(seconds=300)
+    assert worker.worker_tick(config)["transient_failures"] == 2
+    clock.value = NOW + timedelta(seconds=600)
+    assert worker.worker_tick(config)["status"] == "BLOCKED"
+    assert attempts == [NOW, NOW + timedelta(seconds=300), NOW + timedelta(seconds=600)]
+    assert authority.status()["stopped"] is True
+
+
+def test_overlapping_tick_does_not_replace_owner_checkpoint(installed_worker, capsys):
+    from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
+
+    config, value, _, authority, _ = installed_worker
+    status = Path(value["status"])
+    checkpoint = '{"status":"POLL_IN_PROGRESS","next_due_at":"retained-owner-slot"}'
+    status.write_text(checkpoint)
+    with workflow_lock(Path(value["database"]).with_suffix(".worker.lock")):
+        worker.platform_tick(config)
+    assert json.loads(capsys.readouterr().out)["status"] == "WAITING_WORKER"
+    assert status.read_text() == checkpoint
+    assert authority.status()["requests_charged"] == 0

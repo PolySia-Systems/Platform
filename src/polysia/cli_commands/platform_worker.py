@@ -14,12 +14,18 @@ from typing import Annotated, Any
 
 import typer
 
+from polysia.application.ports.wallet_intelligence_research import ResearchPublicationError
+from polysia.application.services.report_integrity import (
+    MAX_REPORT_ARCHIVE_BYTES,
+    MAX_REPORT_BYTES,
+    verify_analytical_digest,
+)
 from polysia.application.services.shadow_reporting import (
     ShadowReportingService,
     UnsupportedReportingWindow,
 )
 from polysia.cli_commands.platform_discovery import load_policy
-from polysia.cli_support.native_research import native_shadow_service
+from polysia.cli_support.native_lifecycle import native_lifecycle_poll
 from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
 from polysia.monitoring.platform_diagnostics import retained_diagnostics
@@ -72,6 +78,8 @@ def worker_tick(config: Path) -> dict[str, Any]:
             "last_success": prior.get("last_success"),
             "last_poll_started_at": prior.get("last_poll_started_at"),
             "next_due_at": prior.get("next_due_at"),
+            "retry_at": prior.get("retry_at"),
+            "transient_failures": prior.get("transient_failures", 0),
         }
         # Consume command receipts before any acquisition. Effects are idempotent;
         # a crash before finishing a receipt safely repeats the same requested effect.
@@ -177,34 +185,20 @@ def worker_tick(config: Path) -> dict[str, Any]:
             if value["admission"].get("mode") != "CONTINUOUS":
                 raise AcquisitionBlockedError("continuous_admission_required")
             store = ContinuousShadowRepository(database)
-            service = native_shadow_service(
-                database,
-                discovery,
-                authority=authority,
-                code_sha=code_sha,
-                admission=value["admission"],
-            )
-            store.initialize()
-            experiment = store.active_experiment("polymarket-native")
-            if experiment is None:
-                experiment = service.start("polymarket-native")
-            if experiment.config.code_sha != code_sha:
-                raise AcquisitionBlockedError("active_financial_session_requires_pinned_release")
-            if experiment.lifecycle.value == "DRAINING":
-                service = native_shadow_service(
-                    database,
-                    discovery,
-                    authority=authority,
-                    code_sha=code_sha,
-                    admission=value["admission"],
-                    closure=True,
-                )
             try:
-                outcome = asyncio.run(service.poll("polymarket-native"))
+                outcome = asyncio.run(native_lifecycle_poll(
+                    database, discovery, authority=authority, code_sha=code_sha,
+                    admission=value["admission"],
+                    refresh_path=Path(value.get("cohort_refresh", str(
+                        Path(value["authority"]).with_name("cohort-revalidation.json")))),
+                    clock=lambda: datetime.now(UTC),
+                ))
                 result.update(
                     status="OBSERVING",
                     experiment_id=outcome.experiment.experiment_id,
                     last_success=datetime.now(UTC).isoformat(),
+                    retry_at=None,
+                    transient_failures=0,
                     health=store.health(
                         "polymarket-native",
                         now=datetime.now(UTC),
@@ -227,7 +221,11 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     next_action="inspect retained failure; do not expand limits",
                 )
                 if reason in {"request_budget_exhausted", "byte_budget_exhausted"}:
-                    service.drain("polymarket-native")
+                    active = store.active_experiment("polymarket-native")
+                    if active is not None:
+                        store.transition(active.experiment_id,
+                                         lifecycle=ContinuousShadowLifecycle.DRAINING,
+                                         transitioned_at=datetime.now(UTC))
                     result["status"] = "DRAINING"
                 elif reason in {"request_window_exhausted", "byte_window_exhausted"}:
                     result.update(
@@ -264,8 +262,21 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     if failures >= 3:
                         authority.stop()
                         result["status"] = "BLOCKED"
+                elif reason in {
+                    "native_cohort_revalidation_insufficient",
+                    "native_cohort_revalidation_incomplete",
+                }:
+                    failures = int(prior.get("transient_failures", 0)) + 1
+                    result.update(status="WAITING_SOURCE_EVIDENCE", transient_failures=failures,
+                                  retry_at=result["next_due_at"],
+                                  next_action="Await complete fresh evidence for this cohort.")
+                    if failures >= 3:
+                        authority.stop()
+                        result["status"] = "BLOCKED"
                 else:
                     authority.stop()
+                    if reason.startswith("native_") or reason == "authority_not_current":
+                        result["status"] = "BLOCKED"
         result["authority"] = authority.status()
         atomic_json(Path(value["status"]), result)
         return result
@@ -280,6 +291,12 @@ def platform_tick(
         status_path = Path(value["status"])
         result = worker_tick(config)
     except Exception as error:
+        if isinstance(error, ResearchPublicationError) and str(error) == "workflow_already_running":
+            # The owning process holds the durable due slot. Do not overwrite
+            # its receipt or turn a normal overlap into a failed worker state.
+            typer.echo(json.dumps({"status": "WAITING_WORKER",
+                                   "reason": "workflow_already_running"}))
+            return
         result = {
             "status": "FAILED",
             "reason": getattr(error, "error_code", type(error).__name__),
@@ -395,14 +412,18 @@ def _publish_retained(value: dict[str, Any]) -> None:
                     archive = Path(value["publication"]).parent / "reports"
                     archive.mkdir(exist_ok=True)
                     target = archive / (report["analytical_digest"] + ".json")
+                    size = len(json.dumps(report, sort_keys=True).encode()) + 1
+                    if size > MAX_REPORT_BYTES:
+                        raise ValueError("report_file_size_limit")
                     if not target.exists():
                         if (
                             sum(path.stat().st_size for path in archive.glob("*.json"))
-                            + len(json.dumps(report, sort_keys=True).encode())
-                            > 33_554_432
+                            + size > MAX_REPORT_ARCHIVE_BYTES
                         ):
                             raise ValueError("report_archive_capacity_reached")
                         atomic_json(target, report)
+                    else:
+                        verify_analytical_digest(json.loads(target.read_text(encoding="utf-8")))
                     commands.finish(
                         revision,
                         status="APPLIED",

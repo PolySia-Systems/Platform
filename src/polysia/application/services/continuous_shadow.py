@@ -426,10 +426,13 @@ class ContinuousShadowService:
 
     def _current_selection(self, source_id: str) -> ContinuousSelectionSnapshot:
         snapshot = self._candidate_port.current_snapshot(source_id)
-        if self._config.runtime_version == "continuous-shadow-native-research-v1":
+        if self._config.runtime_version in {
+            "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
+        }:
             if (snapshot.policy_id != "native-recent-activity"
                     or snapshot.policy_version != "v1"
-                    or snapshot.source_snapshot_id != self._config.selection_preflight_digest
+                    or (self._config.runtime_version == "continuous-shadow-native-research-v1"
+                        and snapshot.source_snapshot_id != self._config.selection_preflight_digest)
                     or len(snapshot.candidates) != self._config.wallet_count
                     or any(item.pools != ("NATIVE_RESEARCH",) for item in snapshot.candidates)):
                 raise ContinuousSelectionUnavailableError("native frozen selection mismatch")
@@ -483,8 +486,13 @@ class ContinuousShadowService:
         )
 
     def _require_new_period_capacity(self) -> None:
-        if self._config.runtime_version == "continuous-shadow-native-research-v1":
+        if self._config.runtime_version in {
+            "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
+        }:
             observed = self._config.selection_observed_at
+            persistent = self._config.runtime_version == "continuous-shadow-native-research-v2"
+            if persistent:
+                observed = self._current_selection("polymarket-native").published_at
             if (observed is None or observed > self._now()
                     or self._now() - observed > timedelta(hours=4)):
                 raise ContinuousShadowError("native research eligibility evidence is stale")
@@ -501,6 +509,14 @@ class ContinuousShadowService:
                 or evidence.get("resource_admitted") is not True
             ):
                 raise ContinuousShadowError("native continuous admission lacks nonempty evidence")
+            if persistent:
+                try:
+                    expiry = datetime.fromisoformat(str(evidence["expires_at"]))
+                except (KeyError, ValueError) as error:
+                    raise ContinuousShadowError("native_admission_expiry_required") from error
+                if (expiry.utcoffset() != timedelta(0) or expiry <= self._now()
+                        or evidence.get("mode") != "CONTINUOUS"):
+                    raise ContinuousShadowError("native_admission_expired_or_invalid")
             return
         if self._config.runtime_version != "continuous-shadow-runtime-v2":
             return
@@ -563,6 +579,8 @@ class ContinuousShadowService:
                 "Continuous Shadow runtime config differs from the versioned experiment."
             )
         self._guard_accounting(experiment)
+        if self._config.runtime_version == "continuous-shadow-native-research-v2":
+            self._require_new_period_capacity()
         event_count, storage_bytes = self._store.period_usage(experiment.experiment_id)
         if (
             self._config.period_max_storage_bytes > 0
@@ -573,9 +591,11 @@ class ContinuousShadowService:
                 "or finalize through the existing lifecycle."
             )
         age = self._now() - experiment.started_at
-        period_expired = self._config.period_duration_seconds > 0 and (
-            event_count >= self._config.period_max_events
-            or age >= timedelta(seconds=self._config.period_duration_seconds)
+        period_expired = (
+            self._config.period_max_events > 0 and event_count >= self._config.period_max_events
+        ) or (
+            self._config.period_duration_seconds > 0
+            and age >= timedelta(seconds=self._config.period_duration_seconds)
         )
         if period_expired:
             if experiment.lifecycle is ContinuousShadowLifecycle.RUNNING:
@@ -614,8 +634,10 @@ class ContinuousShadowService:
                 event_count, storage_bytes = self._store.period_usage(
                     experiment.experiment_id
                 )
-            elif event_count >= self._config.period_max_events or age >= timedelta(
-                seconds=self._config.period_duration_seconds + 3_600
+            elif (self._config.period_max_events > 0
+                  and event_count >= self._config.period_max_events) or (
+                self._config.period_duration_seconds > 0
+                and age >= timedelta(seconds=self._config.period_duration_seconds + 3_600)
             ):
                 raise ContinuousShadowError(
                     "Continuous Shadow period limit reached with open positions or "
