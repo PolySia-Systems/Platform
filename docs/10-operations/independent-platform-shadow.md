@@ -6,6 +6,55 @@ Historical WI campaigns, roots and authority remain separate and stopped.
 
 ## Release and isolated roots
 
+The new root-only administrative entry is `platform_admin.py`, distributed beside
+the manifest-verified bootstrap in the same exact release. Its installation and
+gateway acceptance are tracked in [PR #198](https://github.com/PolySia-Systems/Platform/pull/198)
+until the new release/commissioning receipt is recorded. The existing commissioned
+Cloudflare route remains the supported production route during this work.
+
+On a supported Ubuntu LTS amd64 server, administrative SSH, Docker/systemd,
+at least 1 GiB available RAM and 8 GiB free staging/rollback space are prerequisites.
+Fresh private setup creates its own reader/operator credentials and configuration;
+it creates no acquisition manifest or admission. Download the administrative entry
+from the selected trusted release origin, then run it with exact tag/source identity:
+
+```bash
+sudo python3 platform_admin.py install --tag EXACT_RELEASE_TAG --commit EXACT_40_HEX_COMMIT
+```
+
+The default guided choice is private SSH access. For noninteractive use add
+`--noninteractive --profile private`. The same validation generates configuration,
+stages/verifies immutable assets, installs supervision and checks actual HTTPS.
+Reruns retain credentials and data. `status`, `preflight`, `stop` and `uninstall`
+are administrative actions; uninstall retains data, keys and generations.
+Protected STOP writes an OS restart fence before stopping the dedicated worker.
+If authority persistence is uncertain, it reports that uncertainty and leaves
+restart fenced. Never delete a fence merely to get a service running.
+
+Private access uses `https://localhost:8443` through an authenticated SSH forward:
+
+```bash
+ssh -N -L 8443:127.0.0.1:8443 YOUR_ADMINISTRATIVE_SSH_DESTINATION
+```
+
+Transfer only `/var/lib/polysia-platform/gateway/caddy/pki/authorities/local/root.crt`
+over the same host-key-verified SSH connection. Verify its SHA-256 on both ends.
+Import that public certificate into a dedicated browser trust context, or use an
+explicit client CA file. Never disable certificate checks or silently trust the
+CA system-wide. The root-only `/etc/polysia-platform/gateway-credentials.json`
+contains the generated browser credential handoff. Keep it private; no owner
+Cloudflare or provider credentials are needed for this profile. Browser reads
+without a manifest show UNCONFIGURED and unknown economics. Choosing no backup
+shows UNPROTECTED rather than a recovery claim.
+
+Own-domain setup uses `--profile own-domain --hostname YOUR_HOSTNAME --public-opt-in`
+and the same authentication/socket path. Only this explicit choice permits
+ports 80/443 for ACME/redirects and authenticated HTTPS application content.
+The existing installation is not converted automatically. Actual public-domain
+commissioning still requires an authorized hostname and ingress; a test CA is
+not publicly trusted evidence. Never apply these flags to change current
+production DNS, Cloudflare policy or ingress in this execution.
+
 Python 3.14 is required. CI builds the wheel and immutable image, tests the image,
 retains their source/archive/config identities, performs the supply-chain checks,
 and exercises the installed wheel in a synthetic HTTPS desktop/mobile browser.

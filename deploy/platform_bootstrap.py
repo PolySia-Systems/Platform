@@ -8,8 +8,11 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tarfile
+from contextlib import closing
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -42,10 +45,31 @@ def verify_artifact(directory: Path, *, commit: str) -> dict[str, Any]:
         with (directory / "os-packages.txt").open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != manifest["os_packages_sha256"]:
                 raise ValueError("release system-package inventory differs")
+    for name, key in (
+        ("platform_bootstrap.py", "bootstrap_sha256"),
+        ("platform_backup.py", "backup_job_sha256"),
+        ("platform_admin.py", "admin_sha256"),
+    ):
+        if manifest.get(key):
+            path = directory / name
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.stat().st_size > 1_048_576
+                or hashlib.sha256(path.read_bytes()).hexdigest() != manifest[key]
+            ):
+                raise ValueError("release administrative asset differs: " + name)
     return manifest
 
 
-def container_command(image: str, *, role: str, hostname: str) -> list[str]:
+def container_command(
+    image: str,
+    *,
+    role: str,
+    hostname: str,
+    gateway: bool = False,
+    configured: bool = True,
+) -> list[str]:
     if role not in {"worker", "publisher", "web"}:
         raise ValueError("unsupported process role")
     config_root, state_root = CONFIG_ROOT.as_posix(), STATE_ROOT.as_posix()
@@ -84,6 +108,9 @@ def container_command(image: str, *, role: str, hostname: str) -> list[str]:
             "--volume",
             f"{config_root}/csrf-secret:/config/csrf-secret:ro",
         ]
+        if gateway:
+            args[args.index("host")] = "none"
+            args += ["--volume", "/run/polysia-platform:/run/polysia-platform:rw"]
     else:
         args += [
             "--user",
@@ -99,10 +126,10 @@ def container_command(image: str, *, role: str, hostname: str) -> list[str]:
             "--volume",
             f"{config_root}/worker.json:/config/worker.json:ro",
             "--volume",
-            f"{config_root}/manifest.json:/config/manifest.json:ro",
-            "--volume",
             f"{state_root}/worker:/state:rw",
         ]
+        if configured:
+            args += ["--volume", f"{config_root}/manifest.json:/config/manifest.json:ro"]
     args += [
         "--volume",
         f"{state_root}/publication:/publication:{'ro' if role == 'web' else 'rw'}",
@@ -157,19 +184,40 @@ def archive_image_ids(directory: Path, manifest: dict[str, Any]) -> tuple[str, .
         return tuple(identities)
 
 
-def service_text(image: str, *, role: str, hostname: str) -> str:
-    command = container_command(image, role=role, hostname=hostname)
+def service_text(
+    image: str,
+    *,
+    role: str,
+    hostname: str,
+    gateway: bool = False,
+    configured: bool = True,
+) -> str:
+    command = container_command(
+        image, role=role, hostname=hostname, gateway=gateway, configured=configured
+    )
     if any(re.search(r"[\s%\n]", argument) for argument in command):
         raise ValueError("unsafe systemd argument")
     return (
         "[Unit]\nDescription=PolySia Platform " + role + "\nAfter=docker.service\n"
-        "Requires=docker.service\n\n[Service]\nType="
+        "Requires=docker.service\n"
+        + (
+            "ConditionPathExists=!/etc/polysia-platform/restart-fenced\n"
+            if role == "worker"
+            else ""
+        )
+        + "\n[Service]\nType="
         + ("simple" if role == "web" else "oneshot")
         + "\nExecStart="
         + " ".join(command)
         + ("\nExecStop=/usr/bin/docker stop -t 25 polysia-platform-web" if role == "web" else "")
         + "\nTimeoutStartSec=180\nTimeoutStopSec=35\nKillMode=control-group\n"
-        "CPUQuota=50%\nMemoryMax=640M\nTasksMax=256\n"
+        + (
+            "RuntimeDirectory=polysia-platform\nRuntimeDirectoryMode=0750\n"
+            "ExecStartPre=/usr/bin/chown 10102:10102 /run/polysia-platform\n"
+            if role == "web" and gateway
+            else ""
+        )
+        + "CPUQuota=50%\nMemoryMax=640M\nTasksMax=256\n"
         "StandardOutput=journal\nStandardError=journal\n"
         "LogRateLimitIntervalSec=60s\nLogRateLimitBurst=10\n"
         + ("Restart=on-failure\nRestartSec=10\n" if role == "web" else "")
@@ -181,7 +229,56 @@ def run(*args: str) -> str:
     return result.stdout.strip()
 
 
-def bootstrap(directory: Path, *, commit: str) -> dict[str, Any]:
+def activation_preflight(commit: str) -> None:
+    """Refuse code/schema changes around active financial identities; never downgrade data."""
+    config = CONFIG_ROOT / "worker.json"
+    if not config.exists():
+        return
+    value = json.loads(config.read_text())
+    if value.get("acquisition_enabled") is not False or value.get("admission"):
+        raise ValueError("disable acquisition and reconcile admission before release activation")
+    if value.get("release_commit") == commit:
+        return
+    authority = STATE_ROOT / "worker" / "authority.sqlite3"
+    if authority.exists():
+        with closing(sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True)) as connection:
+            if connection.execute("SELECT stopped FROM authority").fetchone() != (1,):
+                raise ValueError("durable authority STOP required before activation")
+    database = STATE_ROOT / "worker" / "financial.sqlite3"
+    if not database.exists():
+        return
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
+        if connection.execute(
+            "SELECT schema_version FROM continuous_shadow_metadata"
+        ).fetchall() != [
+            (9,),
+        ]:
+            raise ValueError("incompatible financial schema; retain old executable and data")
+        for experiment, config_json in connection.execute(
+            "SELECT experiment_id,config_json FROM continuous_shadow_experiments "
+            "WHERE lifecycle!='FINALIZED'",
+        ):
+            config_value = json.loads(config_json)
+            if config_value.get("runtime_version") == "continuous-shadow-native-research-v2":
+                raise ValueError(
+                    "active pinned continuous session requires controlled finalization"
+                )
+            positions = connection.execute(
+                "SELECT quantity FROM continuous_shadow_positions WHERE experiment_id=?",
+                (experiment,),
+            ).fetchall()
+            pending = connection.execute(
+                "SELECT COUNT(*) FROM continuous_shadow_pending_observations "
+                "WHERE experiment_id=? AND admission_state='PENDING'",
+                (experiment,),
+            ).fetchone()[0]
+            if any(Decimal(row[0]) != 0 for row in positions) or pending:
+                raise ValueError(
+                    "open inventory or pending observations require retained executable"
+                )
+
+
+def bootstrap(directory: Path, *, commit: str, install_units: bool = True) -> dict[str, Any]:
     import grp
     import pwd
     import socket
@@ -189,6 +286,7 @@ def bootstrap(directory: Path, *, commit: str) -> dict[str, Any]:
     manifest = verify_artifact(directory, commit=commit)
     if os.geteuid() != 0:
         raise PermissionError("administrative bootstrap is required")
+    activation_preflight(commit)
     for root in (INSTALL_ROOT, STATE_ROOT, CONFIG_ROOT):
         if root.is_symlink() or root.resolve() != root:
             raise ValueError("deployment root must be an isolated absolute directory")
@@ -218,6 +316,9 @@ def bootstrap(directory: Path, *, commit: str) -> dict[str, Any]:
             )
     for root in (INSTALL_ROOT, STATE_ROOT, CONFIG_ROOT):
         root.mkdir(mode=0o750, parents=True, exist_ok=True)
+    for root in (INSTALL_ROOT, CONFIG_ROOT, STATE_ROOT):
+        os.chown(root, 0, 10102)
+        root.chmod(0o750)
     for name in ("worker", "publication", "control"):
         root = STATE_ROOT / name
         if root.is_symlink():
@@ -230,6 +331,12 @@ def bootstrap(directory: Path, *, commit: str) -> dict[str, Any]:
         raise ValueError("release root escapes isolated installation")
     release.mkdir(parents=True, exist_ok=True)
     assets = ["manifest.json", "polysia-image.tar.gz"]
+    for name, key in (
+        ("platform_bootstrap.py", "bootstrap_sha256"),
+        ("platform_admin.py", "admin_sha256"),
+    ):
+        if manifest.get(key):
+            assets.append(name)
     if manifest.get("os_packages_sha256"):
         assets.append("os-packages.txt")
     if manifest.get("backup_job_sha256"):
@@ -279,10 +386,16 @@ def bootstrap(directory: Path, *, commit: str) -> dict[str, Any]:
     if installed != commit:
         raise ValueError("installed artifact source mismatch")
     run("docker", "run", "--rm", "--network", "none", image, "system", "health")
+    rollback = release / "units-before"
+    rollback.mkdir(mode=0o700, exist_ok=True)
     for role in ("worker", "publisher", "web"):
-        (SERVICE_ROOT / f"polysia-platform-{role}.service").write_text(
-            service_text(image, role=role, hostname=socket.gethostname()),
-        )
+        target = SERVICE_ROOT / f"polysia-platform-{role}.service"
+        if target.is_symlink():
+            raise ValueError("dedicated service must not be a symlink")
+        if target.exists() and not (rollback / target.name).exists():
+            shutil.copy2(target, rollback / target.name)
+        if install_units:
+            target.write_text(service_text(image, role=role, hostname=socket.gethostname()))
     for role in ("worker", "publisher"):
         (SERVICE_ROOT / f"polysia-platform-{role}.timer").write_text(
             "[Unit]\nDescription=PolySia Platform " + role + " schedule\n\n[Timer]\n"

@@ -240,6 +240,7 @@ jobs:
           mkdir -p release-image
           cp deploy/platform_bootstrap.py release-image/platform_bootstrap.py
           cp deploy/platform_backup.py release-image/platform_backup.py
+          cp deploy/platform_admin.py release-image/platform_admin.py
           docker save polysia:ci | gzip > release-image/polysia-image.tar.gz
           docker image inspect polysia:ci --format '{{.Id}}' > release-image/image-id.txt
           docker run --rm --network none --entrypoint dpkg-query polysia:ci -W age libc6 > release-image/os-packages.txt
@@ -317,6 +318,33 @@ jobs:
           path: artifacts/sbom.json
           retention-days: 14
 
+  installation-acceptance:
+    needs: [changes, container]
+    if: needs.changes.outputs.container == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@v7
+        with:
+          name: polysia-release-image
+          path: release-image
+      - name: Fresh supervised installation and trusted private HTTPS
+        run: |
+          sudo "$(command -v python)" scripts/installation_acceptance.py \
+            --artifact-directory release-image --commit "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/installation-receipt.json"
+      - name: Retain installation acceptance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: polysia-installation-acceptance
+          path: ${{ runner.temp }}/installation-receipt.json
+          if-no-files-found: warn
+
   ci-gate:
     name: CI Gate
     needs:
@@ -326,6 +354,7 @@ jobs:
       - container
       - supply-chain
       - browser-acceptance
+      - installation-acceptance
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -341,6 +370,7 @@ jobs:
       CONTAINER_RESULT: ${{ needs.container.result }}
       SUPPLY_CHAIN_REQUIRED: ${{ needs.changes.outputs.dependencies }}
       SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
+      INSTALLATION_RESULT: ${{ needs.installation-acceptance.result }}
     steps:
       - name: Verify required jobs
         shell: bash
@@ -369,5 +399,6 @@ jobs:
           check_job browser-acceptance "$BROWSER_REQUIRED" "$BROWSER_RESULT"
           check_job windows-compatibility "$WINDOWS_REQUIRED" "$WINDOWS_RESULT"
           check_job container "$CONTAINER_REQUIRED" "$CONTAINER_RESULT"
+          check_job installation-acceptance "$CONTAINER_REQUIRED" "$INSTALLATION_RESULT"
           check_job supply-chain "$SUPPLY_CHAIN_REQUIRED" "$SUPPLY_CHAIN_RESULT"
           echo "All required CI jobs succeeded."

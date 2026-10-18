@@ -50,6 +50,7 @@ def request(
             "PATH_INFO": path,
             "REQUEST_METHOD": method,
             "HTTP_CF_ACCESS_JWT_ASSERTION": token,
+            "HTTP_HOST": "platform.example.com",
             "HTTP_ORIGIN": origin,
             "HTTP_COOKIE": cookie,
             "CONTENT_LENGTH": str(len(raw)),

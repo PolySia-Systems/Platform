@@ -110,7 +110,8 @@ def native_shadow_service(
     return ContinuousShadowService(
         ContinuousShadowRepository(database), port, ContinuousShadowLeaseRepository(database),
         lambda leaders: PolymarketCopyTradingSource(
-            leaders, transport=transport, market_scope=PolymarketMarketScope.ALL_VERIFIED,
+            leaders, transport=transport, clock=clock,
+            market_scope=PolymarketMarketScope.ALL_VERIFIED,
             max_pages=4, max_requests=4, max_elapsed_seconds=30,
         ),
         BoundedMarketAdapter(transport), config=config, concurrency=1,

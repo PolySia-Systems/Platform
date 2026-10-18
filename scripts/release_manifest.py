@@ -40,6 +40,7 @@ def manifest(
         "backup_job_sha256": hashlib.sha256(
             Path("deploy/platform_backup.py").read_bytes()
         ).hexdigest(),
+        "admin_sha256": hashlib.sha256(Path("deploy/platform_admin.py").read_bytes()).hexdigest(),
         "os_packages_sha256": inventory_digest,
         "python": ">=3.14,<3.15",
         "financial_schema": 9,

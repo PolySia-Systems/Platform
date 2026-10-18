@@ -13,6 +13,8 @@ def test_verified_artifact_rejects_changed_archive_or_moving_ref(tmp_path: Path)
     image = tmp_path / "polysia-image.tar.gz"
     image.write_bytes(b"hosted artifact")
     identity = manifest(image, image_id="sha256:" + "b" * 64, commit="a" * 40)
+    for name in ("platform_bootstrap.py", "platform_backup.py", "platform_admin.py"):
+        (tmp_path / name).write_bytes((Path("deploy") / name).read_bytes())
     (tmp_path / "manifest.json").write_text(json.dumps(identity))
     assert verify_artifact(tmp_path, commit="a" * 40)["image_id"] == "sha256:" + "b" * 64
     with pytest.raises(ValueError, match="exact source"):

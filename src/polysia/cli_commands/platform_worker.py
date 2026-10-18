@@ -59,6 +59,26 @@ def worker_tick(config: Path) -> dict[str, Any]:
         code_sha = Path("/opt/polysia/BUILD_COMMIT").read_text().strip()
         if code_sha != value["release_commit"]:
             raise AcquisitionBlockedError("installed_release_mismatch")
+        if value.get("installation_state") == "UNCONFIGURED":
+            if value.get("acquisition_enabled") is not False or value.get("admission"):
+                raise AcquisitionBlockedError("unconfigured_installation_cannot_acquire")
+            commands = ConsoleCommandStore(Path(value["commands"]))
+            commands.initialize()
+            commands.block_superseded_resumes()
+            for revision, action in commands.pending(actions=("stop", "resume", "drain")):
+                commands.finish(
+                    revision, status="APPLIED" if action == "stop" else "BLOCKED",
+                    result={"reason": "no_acquisition_authority"},
+                )
+            setup_result = {
+                "status": "UNCONFIGURED", "release_commit": code_sha,
+                "last_attempt": datetime.now(UTC).isoformat(), "real_orders": False,
+                "acquisition_enabled": False, "reason": "no_acquisition_authority",
+                "next_action": "Read retained evidence or use the separate fixture demo. "
+                               "Observation requires separately approved authority and admission.",
+            }
+            atomic_json(Path(value["status"]), setup_result)
+            return setup_result
         policy = load_policy(Path(value["manifest"]))
         authority = AcquisitionAuthority(Path(value["authority"]), policy)
         authority.initialize()
@@ -395,13 +415,19 @@ def _publish_retained(value: dict[str, Any]) -> None:
                         "next_action": "inspect " + role + " job",
                     }
             except OSError, ValueError:
-                receipt = {"status": "UNKNOWN", "next_action": "inspect " + role + " job"}
+                receipt = (
+                    {"status": "UNPROTECTED", "next_action": "Choose and verify backup protection "
+                     "through the protected administrative entry."}
+                    if value.get("backup_mode") == "none"
+                    else {"status": "UNKNOWN", "next_action": "inspect " + role + " job"}
+                )
             result["backup_health"][role] = receipt
             if receipt.get("status") in {
                 "FAILED",
                 "UNKNOWN",
                 "STALE",
                 "RECOVERY_OBJECTIVES_NOT_MET",
+                "UNPROTECTED",
             }:
                 result.setdefault("alerts", []).append(role + " health: " + receipt["status"])
         atomic_json(Path(value["publication"]), result)
