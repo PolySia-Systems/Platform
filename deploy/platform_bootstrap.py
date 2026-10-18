@@ -212,8 +212,11 @@ def service_text(
         + ("\nExecStop=/usr/bin/docker stop -t 25 polysia-platform-web" if role == "web" else "")
         + "\nTimeoutStartSec=180\nTimeoutStopSec=35\nKillMode=control-group\n"
         + (
-            "RuntimeDirectory=polysia-platform\nRuntimeDirectoryMode=0750\n"
-            "ExecStartPre=/usr/bin/chown 10102:10102 /run/polysia-platform\n"
+            # RuntimeDirectory is owned by this root Docker supervisor. systemd
+            # reapplies that ownership after ExecStartPre, so it cannot own the
+            # application socket directory. Create the explicit protected path
+            # at every start (including after reboot) with the backend identity.
+            "ExecStartPre=/usr/bin/install -d -o 10102 -g 10102 -m 0750 /run/polysia-platform\n"
             if role == "web" and gateway
             else ""
         )

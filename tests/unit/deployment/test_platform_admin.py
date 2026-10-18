@@ -79,6 +79,9 @@ def test_gateway_backend_has_no_tcp_or_financial_mount_and_stop_survives_queue_f
     assert "CPUQuota=25%" in gateway and "MemoryMax=192M" in gateway
     assert "InaccessiblePaths=/var/lib/polysia-platform/worker" in gateway
     assert "CAP_NET_BIND_SERVICE" not in gateway
+    web = core.service_text("sha256:" + "a" * 64, role="web", hostname="fixture", gateway=True)
+    assert "install -d -o 10102 -g 10102 -m 0750 /run/polysia-platform" in web
+    assert "RuntimeDirectory=" not in web
 
 
 def test_legacy_backup_registration_preserves_destination_and_requires_fresh_proof(
