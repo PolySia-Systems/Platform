@@ -306,6 +306,9 @@ def test_console_ages_recovers_refreshes_and_observes_async_receipts(console_fix
           Object.defineProperty(document, 'hidden', {configurable:true,get:()=>true});
           document.dispatchEvent(new Event('visibilitychange'));
         }""")
+        # Hiding cancels future refreshes; an already started read may finish.
+        # Measure new hidden-tab reads only after that serialized load settles.
+        page.wait_for_function("inFlight === null")
         reads = state["reads"]
         page.clock.fast_forward(60000)
         assert state["reads"] == reads
