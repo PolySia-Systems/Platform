@@ -48,6 +48,7 @@ def main() -> None:
         ("platform_bootstrap.py", "bootstrap_sha256"),
     ):
         assert hashlib.sha256((artifact / name).read_bytes()).hexdigest() == manifest[field]
+    admin.core = core
     value = {
         "schema": admin.SCHEMA,
         "commit": args.commit,

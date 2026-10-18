@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-if __name__ != "__main__":
+if __name__.startswith("deploy."):
     from deploy import platform_bootstrap as core
 
 CADDY_VERSION = "2.11.7"
