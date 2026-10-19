@@ -6,21 +6,36 @@ Historical WI campaigns, roots and authority remain separate and stopped.
 
 ## Release and isolated roots
 
-The new root-only administrative entry is `platform_admin.py`, distributed beside
-the manifest-verified bootstrap in the same exact release. Its installation and
-gateway acceptance are tracked in [PR #198](https://github.com/PolySia-Systems/Platform/pull/198)
-until the new release/commissioning receipt is recorded. The existing commissioned
-Cloudflare route remains the supported production route during this work.
+The root-only administrative entry is `platform_admin.py`, distributed beside
+the manifest-verified bootstrap in the same exact release. The immutable
+[v0.3.0 release](https://github.com/PolySia-Systems/Platform/releases/tag/v0.3.0)
+passed exact-main installation, gateway and recovery acceptance. The
+[19 October receipt](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-product-completion-delivery)
+records staging and the primary activation refusal. The existing commissioned
+v0.2.1 Cloudflare route remains active with its matching cold recovery executable.
 
 On a supported Ubuntu LTS amd64 server, administrative SSH, Docker/systemd,
 at least 1 GiB available RAM and 8 GiB free staging/rollback space are prerequisites.
 Fresh private setup creates its own reader/operator credentials and configuration;
-it creates no acquisition manifest or admission. Download the administrative entry
-from the selected trusted release origin, then run it with exact tag/source identity:
+it creates no acquisition manifest or admission. For a fresh server, download the
+published entry into a new private directory and verify its recorded SHA-256
+before running it. Ubuntu's Python and coreutils suffice for this bootstrap:
 
 ```bash
-sudo python3 platform_admin.py install --tag EXACT_RELEASE_TAG --commit EXACT_40_HEX_COMMIT
+set -eu
+mkdir -m 700 polysia-v0.3.0
+cd polysia-v0.3.0
+python3 -c "from urllib.request import urlretrieve; urlretrieve('https://github.com/PolySia-Systems/Platform/releases/download/v0.3.0/platform_admin.py', 'platform_admin.py')"
+printf '%s  platform_admin.py\n' '4f2668ace166d6f8cb2bed4ac7f01bcb7086ef046a14215dded2e318fec35301' | sha256sum --check
+sudo python3 platform_admin.py install --tag v0.3.0 --commit b43ce0a0c5196c91873e749580fce5eb290f4847
 ```
+
+The entry downloads and verifies its matching bootstrap and remaining release
+assets from the same trusted origin. The checksum is not an author signature;
+`gh release verify v0.3.0` additionally verifies GitHub's release attestation when
+GitHub CLI is available. On interruption, rerun the last administrative command
+from the retained directory rather than overwriting it. These fresh-install
+commands do not authorize activation over incompatible retained state.
 
 The default guided choice is private SSH access. For noninteractive use add
 `--noninteractive --profile private`. The same validation generates configuration,
@@ -66,8 +81,9 @@ the wheel and immutable image, tests the image,
 retains their source/archive/config identities, performs the supply-chain checks,
 and exercises the installed wheel in a synthetic HTTPS desktop/mobile browser.
 The release workflow promotes the retained assets from a successful full main CI
-run; it does not rebuild them. The engineering candidate declares `v0.3.0`;
-the existing commissioned release is `v0.2.1` until a new promotion receipt;
+run; it does not rebuild them. The verified engineering release is `v0.3.0`;
+the 19 October receipt records it as staged with activation BLOCKED, while
+the existing commissioned executable remains `v0.2.1`;
 `v0.2.0` remains the compatible historical release. Only a dated promotion
 receipt establishes which artifact is installed.
 A full manual main CI run is supported when automatic classification omits a gate.

@@ -5,6 +5,10 @@ independent recovery commissioned. PRODUCT_ACCEPTED is not claimed. This is the 
 execution record; the delivery PR owns ordinary resume. Runtime rows below are
 dated observations, not live status.
 
+Latest delivery: see the [19 October product-completion receipt](#19-october-2026-product-completion-delivery).
+Version v0.3.0 is released/staged; primary activation is blocked while v0.2.1
+remains active. Earlier receipts below retain their original scope.
+
 ## Final delivery verdicts
 
 Released [v0.2.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.2.0)
@@ -776,3 +780,123 @@ and `PRODUCT_ACCEPTED` are not achieved. New bounded observation needs separatel
 authorized current numeric authority and matching admission. Previously exposed
 credential closure and actual owner comprehension remain separate owner actions.
 No acquisition renewal, WI restart, Live action or new paid service occurred.
+
+## 19 October 2026 product-completion delivery
+
+This dated receipt supersedes the engineering-candidate wording for `v0.3.0`. [PR
+#198](https://github.com/PolySia-Systems/Platform/pull/198) delivered the implementation;
+[v0.3.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.3.0) is the immutable
+retained artifact from `b43ce0a0c5196c91873e749580fce5eb290f4847`. [exact-main CI
+39198768437](https://github.com/PolySia-Systems/Platform/actions/runs/39198768437) passed
+every required job before [publication
+39199751948](https://github.com/PolySia-Systems/Platform/actions/runs/39199751948)
+promoted its existing image/wheel/SBOM and manifest. Nothing was rebuilt on the laptop or
+servers. Later Markdown receipts do not change executable identity.
+
+| Acceptance | Verdict | Evidence and limits |
+|---|---|---|
+| A1 lifecycle | PASS | Real source/market/worker fixture transport uses remaining close-only reserve after ordinary request/byte exhaustion, preserves financial/session identity and restarts; incomplete evidence cannot advance closure. No provider calls. |
+| A2 installation | PASS automated scope | Clean supervised Ubuntu 24.04.5 amd64 installation of the retained release, interrupted staging/rerun, generated config/identities and truthful UNCONFIGURED/demo state. Current 26.04.1 hosts verified downloads/staging only; no fresh 26.04 installation claim. |
+| A3 secure access | PASS isolated scope | Actual privately trusted HTTPS and installed reader revocation; reader/operator, Host/Origin/CSRF, header spoof, socket and failed-auth/resource boundaries. Controlled Pebble ACME issued, renewed, failed renewal and recovered with explicit test trust. Public-CA/domain commissioning remains EXTERNAL. |
+| A4 Console | PASS automated scope | Installed desktop/mobile/keyboard journeys, preserved inputs, STOP receipt and separate demo. p95 0.034403 seconds over 100 successful reads, 569648-byte/512-wallet fixture, zero provider requests. Human comprehension is not inferred. |
+| A5 faults/STOP | PASS tested scope | Timeout/rate-limit/incomplete source, publication/auth/queue/storage/restart/interruption fixtures; independent OS restart fence and durable STOP checked separately from receipt persistence. Missing authority, queue or financial session store cannot create fresh identity/allowance/capital. |
+| A6 recovery | PASS isolated scope | Real age/strict-host-key SFTP none/A/failed-B/successful-B/disconnect/reconnect; nonempty replacement with primary unavailable, separate recovery key, original charged/uncertain authority and report/export/position identities, actual HTTPS archive download and admin STOP. RPO 31.425 seconds, RTO 55.154 seconds, within the 24-hour/one-hour objectives. This is a data/application drill, not public failover. |
+| A7 maintenance/developer | PASS automated scope | Python 3.14.8, locked development updates and image digest; Python 3.15 blocked on locked pydantic-core wheel. SDK 0.13 remains deferred pending approval/API contract compatibility. Offline developer health and deterministic paper fixture passed; unfamiliar-developer trial remains EXTERNAL. |
+| A8 review/docs/cleanup | PASS with stated cleanup limit | Security/accounting/configuration review, independent narrow gateway review and canonical runbook/ADR updates; no unresolved blocking product finding. Task host probes and integrated task branches were removed; unrelated local branches and deferred SDK #169 remain. Automatic approval review denied recursive deletion of the two task-owned Windows temporary directories with the stated reason `blocked by policy`; `%TEMP%/polysia-product198-maintenance` and `%TEMP%/polysia-product198-dev-smoke` remain outside the repository. |
+| A9 promotion | STAGED; primary activation BLOCKED | Exact release assets verified on Helsinki and Nuremberg without loading the image or changing active config/units/data. Two pending observations require the retained executable; the activation gate correctly refuses the new source. Current matching cold recovery remains enabled. |
+
+### Artifact and validation identities
+
+The manifest records source `b43ce0a0c5196c91873e749580fce5eb290f4847`, image
+`sha256:00b16ee282ecd4039152433c55311050a12008675c03fe73fe085397b006bed0`, archive
+`5637fe64a855d687190e5382e0d17450c2998db04fa914ae6d97f0df4031e0b6`, financial schema 9 and
+installation configuration `platform-installation/v1`. GitHub future-release immutability
+was enabled for this repository before publication; the published release reports
+`isImmutable: true`. Existing older releases were not retrospectively locked. `gh release
+verify v0.3.0 --format json` also verified GitHub's cryptographically signed release
+attestation. Manifest checksums bind downloaded bytes to the trusted release origin; they
+are not an author signature.
+
+Exact-main CI: Linux 1507 passed / five skipped; Windows 1503 passed / nine skipped. The
+three component browser tests and installed desktop/mobile/keyboard journeys passed.
+Required checks included:
+
+- `python scripts/validate_standards.py --mode full` (zero blocking),
+  `python -m compileall -q src tests`, `python -m ruff check .`,
+  `python -m mypy src` (269 source modules), `python -m pytest -q`,
+  `python -m pip check`, `python scripts/dependency_locks.py check`,
+  `python -m polysia.security.secret_scan`, and `python -m build`.
+- Python-runtime audit with `python -m pip_audit --strict --vulnerability-service osv`
+  found no known vulnerabilities; the Python CycloneDX inventory and recorded age/libc6 OS versions were
+  retained with the exact image. Image, installed wheel and age round-trip
+  passed. Browser, installed private TLS, controlled ACME and nonempty SFTP
+  replacement acceptance all passed.
+- Documentation receipt: diff/path/link/size/content checks, Standards and secret
+  scan. Full runtime CI was not repeated for Markdown-only delivery evidence.
+  Opt-in network tests and Windows-inapplicable ownership checks remain explicit
+  skips, not evidence of external-account validation. The Conda materialization
+  attempt failed in a task cache; official CPython Windows CI is the actual
+  compatibility evidence, not an owner Conda environment claim.
+
+No Live, signing, external account mutation, provider acquisition, new admission, campaign
+renewal, budget refill, Wallet-Intelligence restart, production credential rotation,
+DNS/Cloudflare/ingress change or shared-host upgrade occurred.
+
+### Primary activation refusal and preserved state
+
+Helsinki remains on `d14094d57d76575e2b3bcd78f27f431c5a7ee8bc` (`v0.2.1`). The new entry's
+read-only `activation_preflight` reports `ACTIVATION_REFUSED: open inventory or pending
+observations require retained executable`. There are two PENDING observations in its sole
+RUNNING native-v1 experiment, zero nonzero positions, schema 9, acquisition false and
+empty admission. STOP remains true, with 11 requests / 2371503 bytes charged / zero
+uncertain. The analytical digest remains
+`afd041eaaf58eaada4c68f6734cce0a7e56ea86a0ac4f31f34d3875ec3e7d6ee`.
+
+Before/after read-only transactional hashes matched exactly across staging and recovery:
+all authority/reservation rows
+`66c2cc42807fe8c6a3bccedb2f8b9e1432f85018a1d052887c55b8e03398d5b1`, financial SQLite
+Backup API snapshot `c165a576aa9ae1b51548be2be705f1ddcc212869d990eb0053acdcfa588d7efb`,
+worker configuration `57048b87cfc0b5e80e01fb2152c31ddd716a841eedf5ac4232009b18629cd155`.
+The financial proof was computed in memory without creating a plaintext disk copy. On each
+host, the protected verified assets are under
+`/opt/polysia-platform/downloads/b43ce0a0c5196c91873e749580fce5eb290f4847/`, with the
+exact verified entry under
+`/opt/polysia-platform/stage-entry/b43ce0a0c5196c91873e749580fce5eb290f4847/`. Staging ran
+in transient units bounded to 640 MiB / 25% CPU / 128 tasks / 600 seconds; observed peaks
+were 138 MiB on Helsinki and 160.3 MiB on Nuremberg. Secondary preflight passed for its
+empty application roots, but activation was not requested. Both staging receipts say
+VERIFIED_DOWNLOAD_ONLY, image_loaded=false and starts_acquisition=false. No optional
+gateway, public listener or new identity was commissioned on either production host.
+
+Next permitted owner action is separately authorized reconciliation/disposition of the two
+pending observations using compatible retained code, or a reviewed compatible migration.
+Do not delete pending evidence, retag financial identity, reset capital/authority or start
+new acquisition to make activation pass. Rerun exact-release preflight after that action
+before any activation. Until then, retain the active executable and its matching cold
+image/manifest/jobs.
+
+### Current-release cold recovery and persistent jobs
+
+At 04:07:43 UTC Helsinki completed `platform-20261019T040725Z.tar.age` (80004360 bytes),
+SHA-256 `d5e4407a8368dad97ffddf909232d7e6e70c6269af870c212af6b8624d3a2bf4`. At 04:08:31
+UTC Nuremberg verified it with the independently held key and trusted `d14094d` manifest:
+VERIFIED_ISOLATED_RESTORE, RPO 55.338 seconds, RTO 39.547 seconds, network none, runtime
+STOPPED, acquisition/real_orders false and the same analytical digest. This production
+generation contains no selected-period exports; the separate nonempty fixture supplies
+that recovery evidence.
+
+After staging, primary worker/publisher/backup/recovery-status timers, web and existing
+tunnel remained active; the origin remained loopback-only on 127.0.0.1:8765 and anonymous
+origin/public API reads returned 403. Nuremberg retained the d14094d image/manifest and
+daily 00:45 UTC persistent restore timer; its worker/web/connector remained inactive and
+plaintext restore roots were empty. The recovery key remains outside the upload chroot and
+the source; no second writer, active connector or automatic failover exists. The task
+heartbeat is paused after finite delivery; OS-owned bounded jobs remain.
+
+ENGINEERING_COMPLETE applies to the verified engineering scope. New-source
+DEPLOYED_WITH_ACQUISITION_DISABLED is not achieved: it is staged with an explicit
+activation blocker. OBSERVATION_SUFFICIENT and PRODUCT_ACCEPTED remain OPEN. Actual
+nontechnical/unfamiliar-developer trials, authorized public-domain commissioning,
+previously exposed credential closure and new economic observation are separate owner
+work. Zero activity and automated tests are not profitability or human-acceptance
+evidence.
