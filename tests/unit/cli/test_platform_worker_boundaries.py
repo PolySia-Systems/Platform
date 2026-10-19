@@ -131,6 +131,34 @@ def test_protected_stop_does_not_recreate_missing_authority(installed_worker):
     )
 
 
+@pytest.mark.parametrize("fault", ["missing", "empty"])
+def test_lost_command_store_blocks_worker_and_cannot_restart_receipt_identity(
+    installed_worker,
+    fault,
+):
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    config, value, _, authority, commands = installed_worker
+    commands.submit(
+        subject="owner",
+        action="stop",
+        expected_revision=0,
+        idempotency_key="pending-stop-before-queue-loss",
+    )
+    path = Path(value["commands"])
+    path.rename(path.with_name("retained-commands.sqlite3"))
+    if fault == "empty":
+        path.write_bytes(b"")
+    before = authority.status()
+    with pytest.raises(AcquisitionBlockedError, match="retained_command_store"):
+        worker.worker_tick(config)
+    assert authority.status() == before
+    with pytest.raises(AcquisitionBlockedError, match="retained_command_store"):
+        worker.platform_stop(config)
+    assert authority.status() == {**before, "stopped": True}
+    assert not path.exists() if fault == "missing" else path.stat().st_size == 0
+
+
 def test_protected_stop_persists_before_command_store_failure(installed_worker, monkeypatch):
     import sqlite3
 
@@ -141,7 +169,9 @@ def test_protected_stop_persists_before_command_store_failure(installed_worker, 
         raise sqlite3.OperationalError("fixture command store is read-only")
 
     monkeypatch.setattr(ConsoleCommandStore, "initialize", unavailable)
-    with pytest.raises(sqlite3.OperationalError, match="read-only"):
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    with pytest.raises(AcquisitionBlockedError, match="retained_command_store_invalid"):
         worker.platform_stop(config)
     assert authority.status() == {**charged, "stopped": True}
 

@@ -530,13 +530,13 @@ def activate(value: dict, *, image: str) -> None:
         atomic(core.SERVICE_ROOT / ("polysia-platform-" + role + ".service"), text, mode=0o644)
     if value["profile"] == "cloudflare":
         core.run("systemctl", "daemon-reload")
-        core.run("systemctl", "restart", "polysia-platform-web.service")
         core.run(
             "systemctl",
             "start",
             "polysia-platform-worker.service",
             "polysia-platform-publisher.service",
         )
+        core.run("systemctl", "restart", "polysia-platform-web.service")
         core.run(
             "systemctl",
             "enable",
@@ -554,12 +554,12 @@ def activate(value: dict, *, image: str) -> None:
         mode=0o644,
     )
     core.run("systemctl", "daemon-reload")
+    core.run("systemctl", "start", "polysia-platform-worker.service")
+    core.run("systemctl", "start", "polysia-platform-publisher.service")
     # Atomic config replacement changes the host inode. Recreate the container
     # bind mount before enabling the gateway so revocations take effect.
     core.run("systemctl", "restart", "polysia-platform-web.service")
     core.run("systemctl", "restart", "polysia-platform-gateway.service")
-    core.run("systemctl", "start", "polysia-platform-worker.service")
-    core.run("systemctl", "start", "polysia-platform-publisher.service")
     core.run(
         "systemctl",
         "enable",
@@ -1060,6 +1060,19 @@ def protected_stop() -> dict:
         # Older retained executables initialize authority before STOP. Never
         # delegate damaged/missing state to that initializer or replenish it.
         result["reason"] = "retained_authority_invalid_do_not_reinitialize"
+        return result
+    commands_path = core.STATE_ROOT / "control" / Path(worker["commands"]).name
+    try:
+        if commands_path.is_symlink() or not commands_path.is_file():
+            raise ValueError("retained command store is missing")
+        with closing(sqlite3.connect(commands_path.as_uri() + "?mode=ro", uri=True)) as connection:
+            connection.execute(
+                "SELECT revision,action,status,parameters,result FROM commands LIMIT 1"
+            )
+    except (ValueError, sqlite3.DatabaseError):
+        result["reason"] = "retained_command_store_invalid_do_not_reinitialize"
+        if rows[0][1] == 1:
+            result["durable_authority_stop"] = "CONFIRMED"
         return result
     release = core.INSTALL_ROOT / "releases" / worker["release_commit"]
     image = json.loads((release / "installation-receipt.json").read_text())["image_id"]

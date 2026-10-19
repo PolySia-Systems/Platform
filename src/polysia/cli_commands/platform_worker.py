@@ -52,6 +52,20 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.close(directory)
 
 
+def _retained_commands(path: Path) -> ConsoleCommandStore:
+    if path.is_symlink() or not path.is_file():
+        raise AcquisitionBlockedError("retained_command_store_missing_do_not_reinitialize")
+    commands = ConsoleCommandStore(path)
+    try:
+        commands.status()
+        commands.initialize()
+    except sqlite3.DatabaseError, ValueError, TypeError:
+        raise AcquisitionBlockedError(
+            "retained_command_store_invalid_do_not_reinitialize"
+        ) from None
+    return commands
+
+
 def worker_tick(config: Path) -> dict[str, Any]:
     value = json.loads(config.read_text(encoding="utf-8"))
     database = Path(value["database"])
@@ -64,8 +78,11 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 raise AcquisitionBlockedError("unconfigured_installation_cannot_acquire")
             if database.exists() or Path(value["authority"]).exists():
                 raise AcquisitionBlockedError("unconfigured_state_conflicts_with_retained_evidence")
-            commands = ConsoleCommandStore(Path(value["commands"]))
-            commands.initialize()
+            if Path(value["status"]).exists():
+                commands = _retained_commands(Path(value["commands"]))
+            else:
+                commands = ConsoleCommandStore(Path(value["commands"]))
+                commands.initialize()  # Explicit first unconfigured installation only.
             commands.block_superseded_resumes()
             for revision, action in commands.pending(actions=("stop", "resume", "drain", "export")):
                 commands.finish(
@@ -106,8 +123,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
         recovery_fenced = value.get("recovery_requires_authority_reconciliation") is True
         if recovery_fenced:
             authority.stop()
-        commands = ConsoleCommandStore(Path(value["commands"]))
-        commands.initialize()
+        commands = _retained_commands(Path(value["commands"]))
         commands.block_superseded_resumes()
         prior = {}
         if Path(value["status"]).exists():
@@ -501,8 +517,7 @@ def _publish_retained(value: dict[str, Any]) -> None:
             }:
                 result.setdefault("alerts", []).append(role + " health: " + receipt["status"])
         atomic_json(Path(value["publication"]), result)
-        commands = ConsoleCommandStore(Path(value["commands"]))
-        commands.initialize()
+        commands = _retained_commands(Path(value["commands"]))
         for revision, action in commands.pending(actions=("export",)):
             if action == "export":
                 try:
@@ -564,8 +579,7 @@ def platform_stop(
     authority = AcquisitionAuthority(authority_path, policy)
     authority.status()  # Validate retained identity; STOP must never initialize fresh allowance.
     authority.stop()  # STOP does not need fresh provider access or admission.
-    commands = ConsoleCommandStore(Path(value["commands"]))
-    commands.initialize()
+    commands = _retained_commands(Path(value["commands"]))
     try:
         receipt = commands.submit(
             subject="protected-administrative-route",

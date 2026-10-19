@@ -15,6 +15,7 @@ from polysia.cli_commands import platform_worker
 from polysia.cli_support import native_lifecycle
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
 from polysia.storage.acquisition_authority import AcquisitionAuthority
+from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
 from tests.integration.test_continuous_shadow_portfolio import _Clock
 from tests.integration.test_native_platform_lifecycle import ADDRESS, frozen_discovery
@@ -278,6 +279,7 @@ async def test_real_worker_close_progress_survives_restart(real_drain, monkeypat
             }
         )
     )
+    ConsoleCommandStore(root / "commands.sqlite3").initialize()
     first = await asyncio.to_thread(platform_worker.worker_tick, config)
     assert first["status"] == "OBSERVING"
     assert store.open_position_count(original.experiment_id) == 0

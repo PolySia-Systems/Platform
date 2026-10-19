@@ -14,6 +14,7 @@ from polysia.cli_support import native_lifecycle, native_research
 from polysia.domain.copytrading import LeaderTradeAction
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
+from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
 from tests.integration.test_continuous_shadow_portfolio import (
     _Clock,
@@ -291,6 +292,7 @@ async def test_real_worker_restarts_make_close_only_progress_at_four_hours(
         "commands": str(root / "commands.sqlite3"), "status": str(root / "status.json"),
         "cohort": str(root / "cohort.json"), "acquisition_enabled": True, "admission": admission,
     }))
+    ConsoleCommandStore(root / "commands.sqlite3").initialize()
     first = await asyncio.to_thread(worker.worker_tick, config)
     assert first["status"] == "OBSERVING"
     assert first["experiment_id"] == original.experiment_id
@@ -414,6 +416,7 @@ def test_real_worker_composition_obeys_cadence_across_restarts(
         "commands": str(root / "commands.sqlite3"), "status": str(root / "status.json"),
         "cohort": str(cohort), "acquisition_enabled": True, "admission": admission,
     }))
+    ConsoleCommandStore(root / "commands.sqlite3").initialize()
     first = worker.worker_tick(config)
     assert first["status"] == "OBSERVING"
     assert worker.worker_tick(config)["status"] == "WAITING_CADENCE"

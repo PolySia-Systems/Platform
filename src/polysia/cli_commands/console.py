@@ -28,7 +28,8 @@ def serve_console(
         raise typer.Exit(1) from None
     secret = Path(value["csrf_secret_file"]).read_bytes()
     store = ConsoleCommandStore(Path(value["commands"]))
-    store.initialize()
+    # The supervised first-install worker creates the queue. A browser process
+    # must never replace a lost queue or restart its durable receipt identities.
     application = ConsoleApplication(Path(value["publication"]), origin=value["origin"],
                                      verify=verifier, commands=store, csrf_secret=secret,
                                      identity_header=identity_header)
