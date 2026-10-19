@@ -291,7 +291,7 @@ def verify_generation(
         timeout=60,
     )
     # Restore startup stays network-isolated and uses rewritten isolated paths.
-    worker = json.loads(
+    command_receipt = json.loads(
         run(
             verify
             + [
@@ -304,6 +304,14 @@ def verify_generation(
             timeout=60,
         )
     )
+    # The CLI intentionally prints a compact status/reason. The durable worker
+    # record owns the restored authority counters and financial identity.
+    status_path = stage / "bundle/restored-status.json"
+    if status_path.is_symlink() or not 0 < status_path.stat().st_size <= 65_536:
+        raise ValueError("restored worker status is missing or outside its bound")
+    worker = json.loads(status_path.read_text())
+    if worker["status"] != command_receipt["status"]:
+        raise ValueError("restored worker status differs from its command receipt")
     allowed = (
         {"UNCONFIGURED"} if receipt.get("installation_state") == "UNCONFIGURED" else {"STOPPED"}
     )
