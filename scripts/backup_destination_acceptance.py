@@ -260,8 +260,8 @@ def main() -> None:
         ).strip()
         (server / "recipient").write_text(public)
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(server / "keys/host-key"))
-        for name in ("recovery-key", "host-key"):
-            (server / "keys" / name).chmod(0o600)
+        for key_name in ("recovery-key", "host-key"):
+            (server / "keys" / key_name).chmod(0o600)
         (server / "authorized-key").write_bytes((root / "upload-key.pub").read_bytes())
         (server / "authorized-key").chmod(0o644)
         (server / "known-hosts").write_text(
