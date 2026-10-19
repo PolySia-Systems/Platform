@@ -30,6 +30,10 @@ are administrative actions; uninstall retains data, keys and generations.
 Protected STOP writes an OS restart fence before stopping the dedicated worker.
 If authority persistence is uncertain, it reports that uncertainty and leaves
 restart fenced. Never delete a fence merely to get a service running.
+After first setup, a missing or damaged command queue is not automatically
+recreated by the browser, publisher or configured worker. Its receipt identities
+must be recovered. Independent SSH STOP still fences supervision and reports
+whether durable authority STOP and a command receipt were separately confirmed.
 
 Private access uses `https://localhost:8443` through an authenticated SSH forward:
 

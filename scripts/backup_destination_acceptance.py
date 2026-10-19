@@ -289,6 +289,7 @@ def main() -> None:
             + "\nChrootDirectory "
             + str(vault)
             + "\nForceCommand internal-sftp\n"
+            "Subsystem sftp internal-sftp\n"
             "AllowTcpForwarding no\nX11Forwarding no\nPermitTTY no\n"
         )
         Path("/run/sshd").mkdir(exist_ok=True)
