@@ -16,14 +16,18 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
-The `0.3.0` engineering candidate adds guided single-server maintenance, optional
+The verified `v0.3.0` engineering release adds guided single-server maintenance, optional
 private/own-domain HTTPS, explicit unconfigured/demo operation and destination
 replacement/recovery. [PR #198](https://github.com/PolySia-Systems/Platform/pull/198)
-owns its remaining exact-artifact acceptance and delivery checklist. It is not
-ENGINEERING_COMPLETE or a deployment claim until those receipts pass. Existing
-Cloudflare protection, STOP, consumed authority and disabled acquisition remain
-hard boundaries. Public commissioning, unfamiliar-user/developer trials and
-new nonempty economic observations remain separately authorized external work.
+is merged; full exact-main CI and immutable retained-artifact publication passed.
+ENGINEERING_COMPLETE applies within the automated verification scope. The
+[19 October receipt](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-product-completion-delivery)
+records verified staging on both hosts and primary activation BLOCKED by two
+pending observations requiring the retained v0.2.1 executable. New-source
+deployment, public commissioning, unfamiliar-user/developer trials and sufficient
+economic observation are not achieved. Existing Cloudflare protection, STOP,
+consumed authority and disabled acquisition remain hard boundaries; current
+operational truth still requires a host query.
 
 ## Truth ownership
 

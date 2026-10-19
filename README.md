@@ -109,8 +109,10 @@ or secrets. The explicit Windows Conda bootstrap remains available through
 See the [developer entry and change map](docs/03-requirements/developer-context-packet.md#developer-entry).
 
 For a destination server, use the [guided administrative installation](docs/10-operations/independent-platform-shadow.md#release-and-isolated-roots)
-instead of a development environment. The engineering candidate is `0.3.0`;
-release/deployment status is recorded separately in PR #198 and the dated receipt.
+instead of a development environment. [v0.3.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.3.0)
+is the verified engineering release; its assets are staged on both hosts. Primary
+activation is refused while two observations require the retained v0.2.1 executable.
+See the [dated delivery receipt](docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-product-completion-delivery).
 
 Copy `.env.example` to an ignored `.env` only when local overrides are needed.
 Never commit or display the resulting values.
