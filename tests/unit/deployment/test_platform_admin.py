@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -231,3 +232,28 @@ def test_stage_records_refused_activation_without_changing_active_roots(
     assert receipt["status"] == "VERIFIED_DOWNLOAD_ONLY"
     assert json.loads((artifact / "staging-receipt.json").read_text()) == receipt
     assert not config.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux protected administrative utility")
+def test_stop_never_delegates_damaged_authority_to_a_legacy_initializer(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    monkeypatch.setattr(core, "STATE_ROOT", tmp_path)
+    (tmp_path / "worker").mkdir()
+    authority = tmp_path / "worker/authority.sqlite3"
+    authority.write_bytes(b"")
+    (tmp_path / "worker.json").write_text(json.dumps({"authority": "/state/authority.sqlite3"}))
+    monkeypatch.setattr(
+        admin.subprocess,
+        "run",
+        lambda command, **kw: subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
+    )
+
+    def legacy_must_not_load(commit):
+        raise AssertionError("damaged authority cannot reach legacy initialization")
+
+    monkeypatch.setattr(admin, "load_backup", legacy_must_not_load)
+    assert admin.protected_stop()["reason"] == "retained_authority_invalid_do_not_reinitialize"
+    assert authority.stat().st_size == 0
+    assert (tmp_path / "restart-fenced").exists()
+    with sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True) as connection:
+        assert connection.execute("SELECT name FROM sqlite_master").fetchall() == []

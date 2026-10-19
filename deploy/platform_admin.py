@@ -1042,6 +1042,25 @@ def protected_stop() -> dict:
                 next_action="No acquisition is authorized; the OS restart fence remains.",
             )
         return result
+    try:
+        if authority.is_symlink():
+            raise ValueError("retained authority cannot be a symlink")
+        with closing(sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True)) as connection:
+            rows = connection.execute("SELECT policy_digest,stopped FROM authority").fetchall()
+            connection.execute(
+                "SELECT COUNT(*),SUM(COALESCE(actual_bytes,reserved_bytes)) FROM reservations",
+            ).fetchone()
+        if (
+            len(rows) != 1
+            or re.fullmatch(r"[a-f0-9]{64}", rows[0][0]) is None
+            or rows[0][1] not in {0, 1}
+        ):
+            raise ValueError("retained authority identity is invalid")
+    except (sqlite3.DatabaseError, ValueError, TypeError):
+        # Older retained executables initialize authority before STOP. Never
+        # delegate damaged/missing state to that initializer or replenish it.
+        result["reason"] = "retained_authority_invalid_do_not_reinitialize"
+        return result
     release = core.INSTALL_ROOT / "releases" / worker["release_commit"]
     image = json.loads((release / "installation-receipt.json").read_text())["image_id"]
     module = load_backup(worker["release_commit"])
