@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 PEBBLE = "v2.10.1"
-PEBBLE_SOURCE = "97b2dfade8306ab00f13904b70b0b48753cccdbd"
+PEBBLE_SOURCE = "b1e1ca4f3c30abb64111adaca4544bc5374cc306"
 ARCHIVES = {
     "pebble": "4f2fcb5bca8c85c9cf73ad140fccfc0d2be40bd81ab99879c79b7b8a0b4f70ed",
     "pebble-challtestsrv": "e93a5aa25ecdf3af2f9fbb2de32b0173e64a2eae81002a4ccfe35fa6f4f60b92",

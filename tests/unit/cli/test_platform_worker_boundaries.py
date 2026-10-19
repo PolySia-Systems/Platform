@@ -146,6 +146,32 @@ def test_protected_stop_persists_before_command_store_failure(installed_worker, 
     assert authority.status() == {**charged, "stopped": True}
 
 
+def test_unconfigured_report_request_finishes_explicitly_without_financial_or_authority_state(
+    installed_worker,
+):
+    config, value, _, _, commands = installed_worker
+    value.update(
+        installation_state="UNCONFIGURED",
+        admission={},
+        database=str(config.parent / "fresh-financial.sqlite3"),
+        authority=str(config.parent / "fresh-authority.sqlite3"),
+    )
+    config.write_text(json.dumps(value))
+    commands.submit(
+        subject="fixture-owner",
+        action="export",
+        expected_revision=0,
+        idempotency_key="fresh-install-report-request",
+    )
+    assert worker.worker_tick(config)["status"] == "UNCONFIGURED"
+    assert commands.pending() == []
+    receipt = commands.status()["receipts"][0]
+    assert receipt["status"] == "BLOCKED"
+    assert receipt["result"]["reason"] == "no_retained_financial_report"
+    assert not Path(value["database"]).exists()
+    assert not Path(value["authority"]).exists()
+
+
 def test_due_checkpoint_survives_restart_and_crash_without_delaying_stop(
     installed_worker,
     monkeypatch: pytest.MonkeyPatch,

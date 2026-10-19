@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import ssl
 import subprocess
@@ -181,7 +182,24 @@ def main() -> None:
         "/usr/sbin/nologin",
         "polysia-platform-upload",
     )
-    run("usermod", "--password", "*", "polysia-platform-upload")
+    # OpenSSH with UsePAM=no rejects locked accounts even for public keys.
+    # Assign an undisclosed random hash through stdin, retaining key-only auth.
+    password_hash = subprocess.run(
+        ["openssl", "passwd", "-6", "-stdin"],
+        input=secrets.token_urlsafe(32),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    ).stdout.strip()
+    subprocess.run(
+        ["chpasswd", "--encrypted"],
+        input="polysia-platform-upload:" + password_hash + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
     import pwd
 
     upload = pwd.getpwnam("polysia-platform-upload")
@@ -441,6 +459,16 @@ def main() -> None:
             )
             + "\n"
         )
+    except subprocess.CalledProcessError as error:
+        # These are generated disposable identities. Do not print stdin or keys.
+        print((error.stderr or "")[-6000:], file=sys.stderr)
+        for unit in units:
+            subprocess.run(
+                ["journalctl", "--no-pager", "-n", "15", "-u", unit],
+                check=False,
+                timeout=10,
+            )
+        raise
     finally:
         for unit in units:
             subprocess.run(

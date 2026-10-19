@@ -67,11 +67,15 @@ def worker_tick(config: Path) -> dict[str, Any]:
             commands = ConsoleCommandStore(Path(value["commands"]))
             commands.initialize()
             commands.block_superseded_resumes()
-            for revision, action in commands.pending(actions=("stop", "resume", "drain")):
+            for revision, action in commands.pending(actions=("stop", "resume", "drain", "export")):
                 commands.finish(
                     revision,
                     status="APPLIED" if action == "stop" else "BLOCKED",
-                    result={"reason": "no_acquisition_authority"},
+                    result={
+                        "reason": "no_retained_financial_report"
+                        if action == "export"
+                        else "no_acquisition_authority"
+                    },
                 )
             setup_result = {
                 "status": "UNCONFIGURED",
