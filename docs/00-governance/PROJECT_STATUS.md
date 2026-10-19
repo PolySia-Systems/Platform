@@ -16,16 +16,20 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
-The `v0.4.0` SDK-migration candidate is tracked in
-[PR #200](https://github.com/PolySia-Systems/Platform/pull/200). It retains Python
-3.14.8 and advances the consumed SDK boundary to0.13.0 with Pydantic2.14.1/core2.50.1.
-The owner restored both hosts; a 19 October bounded preflight confirmed no old
-Platform roots/units. This supersedes the historical two-pending-observation
-activation blocker without weakening ordinary upgrade gates or reconstructing
-old experimental accounting. Fresh protected activation, independent recovery
-and exact-source release acceptance remain pending the PR's dated receipts.
-Human/public-domain acceptance and economic observation remain external.
+The immutable `v0.4.0` release at source
+`4f3b611adae17defbcc6e24b4f9f917b466d5ad8` passed full exact-main CI 39274691513.
+It retains Python 3.14.8 and advances the consumed SDK boundary to 0.13.0 with
+Pydantic 2.14.1/core 2.50.1. [PR #200](https://github.com/PolySia-Systems/Platform/pull/200)
+records the complete impact map and dependency decisions.
 
+The owner's clean-server decision supersedes the historical pending-observation
+activation blocker. Fresh private HTTPS activation on Helsinki and independent
+cold recovery on Nuremberg have a dated [clean-install receipt](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-sdk-013-and-clean-install-closeout).
+Acquisition/admission/manifest remain absent, browser STOP was applied and an
+independent OS restart fence leaves the worker inactive. Gateway/publication and
+bounded backup/recovery jobs operate separately. The fresh installation has no
+financial session or economic result; automated engineering/browser acceptance
+is distinct from human/public-domain acceptance and new economic observation.
 ## Truth ownership
 
 | Fact | Authoritative owner |

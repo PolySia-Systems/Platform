@@ -109,8 +109,8 @@ or secrets. The explicit Windows Conda bootstrap remains available through
 See the [developer entry and change map](docs/03-requirements/developer-context-packet.md#developer-entry).
 
 For a destination server, use the [guided administrative installation](docs/10-operations/independent-platform-shadow.md#release-and-isolated-roots)
-instead of a development environment. The `v0.4.0` SDK-migration candidate and
-fresh disabled installation are tracked in [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
+instead of a development environment. The immutable `v0.4.0` release and
+fresh disabled installation are recorded in [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
 The owner's server reset supersedes the historical activation blocker; exact
 release and installation evidence belongs in the
 [dated operational record](docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md).

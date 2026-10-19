@@ -5,8 +5,8 @@
 - **Scope:** Security-relevant data and command crossings without any real identifiers or account data.
 - **Architecture status:** MIXED
 - **Audience:** Security reviewers, owner, operators, architects, and execution developers.
-- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
-- **Reviewed:** 2026-10-16
+- **Source commit:** `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`
+- **Reviewed:** 2026-10-19
 
 ## Mermaid diagram
 
@@ -18,7 +18,7 @@ flowchart LR
   CI["CI / build service\nno live credentials\n[EXTERNAL]"]:::external
   Public["Public venue APIs\nuntrusted input\n[EXTERNAL]"]:::external
   AuthVenue["Authenticated venue boundary\naccount and order APIs\n[EXTERNAL]"]:::external
-  Access["Cloudflare Access / Tunnel\n[EXTERNAL; commissioning blocked]"]:::external
+  Access["Private SSH-forwarded HTTPS gateway\nlocal CA and authenticated roles [CURRENT]"]:::external
   Web3["Web3 signer / chain boundary\n[FUTURE]"]:::future
 
   subgraph LOCAL["Trusted local runtime boundary [CURRENT]"]
@@ -26,7 +26,7 @@ flowchart LR
     Control["SHADOW-only Control Kernel\nno Live or credential authority"]:::application
     Core["Domain, strategy, risk, execution, reconciliation"]:::current
     Adapter["Polymarket adapter\nSDK confinement"]:::adapter
-    Web["Private Console: RS256 issuer/audience/role\nloopback; CSRF and replay checks"]:::application
+    Web["Private Console: trusted gateway identity / role\nUnix socket; CSRF and replay checks"]:::application
     Publisher["Read-only snapshot publisher\nno provider network"]:::application
     Queue[("Dedicated command queue\nno direct financial writes")]:::storage
     Scan["Redaction and tracked-file secret scan"]:::risk
@@ -42,7 +42,8 @@ flowchart LR
   end
 
   Operator -->|commands / approvals; assumptions are preview-only| CLI
-  Access -->|signed identity; no public origin route| Web
+  Operator -->|verified SSH; scoped CA trust| Access
+  Access -->|authenticated identity; no public origin route| Web
   Publisher -->|private published JSON| Web
   DB -->|SQLite Backup API snapshot| Publisher
   Web ==>|validated request receipt| Queue

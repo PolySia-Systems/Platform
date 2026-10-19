@@ -8,7 +8,7 @@
 ## Context
 
 Before this decision, PolySia's verified baseline used Python 3.13.14 and
-`polymarket-client==0.1.0b11`. The promoted and locked workstation baseline is
+`polymarket-client==0.1.0b11`. The promoted and locked workstation baseline at that decision was
 Python 3.14.7. The official Polymarket unified SDK left beta and released
 `polymarket-client==0.2.0`. Official stable releases 0.3.0 through 0.7.1 were
 subsequently reviewed; 0.7.1 was the previous freeze. The scoped migration
@@ -72,10 +72,10 @@ this tested set is integrated. That earlier SDK deferral is superseded by the sc
 
 ## 2026-10-19 scoped SDK migration decision
 
-The owner authorizes a complete consumed-surface migration to SDK0.13.0 and a
-fresh disabled installation after restoring both hosts. SDK0.13.0, Pydantic2.14.1
-and core2.50.1 form one frozen candidate; pydantic-settings2.15.0 and compatible
-WebSockets15.0.1 remain. Only those three runtime pins change. Python stays3.14.8;
+The owner authorizes a complete consumed-surface migration to SDK 0.13.0 and a
+fresh disabled installation after restoring both hosts. SDK 0.13.0, Pydantic 2.14.1
+and core 2.50.1 form the verified v0.4.0 stack; pydantic-settings 2.15.0 and compatible
+WebSockets 15.0.1 remain. Only those three runtime pins change. Python stays 3.14.8;
 the earlier 3.15 assessment above is historical and was not repeated.
 
 Canonical SDK asset fields remain confined to adapters. A venue-neutral observed

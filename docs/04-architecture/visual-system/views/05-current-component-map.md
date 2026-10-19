@@ -5,8 +5,8 @@
 - **Scope:** Top-level `src/polysia` packages; individual classes are shown in focused diagrams instead.
 - **Architecture status:** CURRENT
 - **Audience:** Developers, maintainers, reviewers, and onboarding engineers.
-- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
-- **Reviewed:** 2026-10-16
+- **Source commit:** `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`
+- **Reviewed:** 2026-10-19
 
 ## Mermaid diagram
 

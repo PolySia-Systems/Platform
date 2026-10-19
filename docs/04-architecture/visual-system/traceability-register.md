@@ -41,3 +41,10 @@ Independent Platform deployment, durable authority and encrypted recovery are
 traced by `deploy/platform_bootstrap.py`, `deploy/platform_backup.py`,
 `tests/unit/storage/test_acquisition_authority.py` and the dated
 `docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md` execution record.
+
+Scoped review 2026-10-19 against `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`:
+views 13/15 trace private gateway identity, protected Unix socket, isolated browser
+trust, durable OS restart fencing and independent SFTP/age recovery to
+`deploy/platform_admin.py`, `src/polysia/deployment/gateway.py`, exact-main
+CI 39274691513 and the appended clean-install receipt in the execution record.
+Fresh UNCONFIGURED state is not a campaign, authority grant or financial result.
