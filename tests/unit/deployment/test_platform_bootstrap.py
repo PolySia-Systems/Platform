@@ -2,11 +2,34 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from deploy.platform_bootstrap import container_command, service_text, verify_artifact
 from scripts.release_manifest import manifest
+
+
+def test_backup_disk_pressure_refuses_before_snapshot_without_using_host_disk(
+    tmp_path,
+    monkeypatch,
+):
+    from deploy import platform_backup as backup
+
+    monkeypatch.setattr(backup, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(backup.os, "chown", lambda *args: None, raising=False)
+    monkeypatch.setattr(
+        backup.shutil,
+        "disk_usage",
+        lambda path: SimpleNamespace(free=8_589_934_592 + backup.MAX_GENERATION),
+    )
+
+    def never_run(*args, **kwargs):
+        raise AssertionError("disk-pressure refusal must precede snapshot, crypto or transport")
+
+    monkeypatch.setattr(backup, "run", never_run)
+    with pytest.raises(OSError, match="free-disk reserve"):
+        backup._backup_generation({"mode": "local", "output": str(tmp_path / "backup-out")})
 
 
 def test_verified_artifact_rejects_changed_archive_or_moving_ref(tmp_path: Path) -> None:

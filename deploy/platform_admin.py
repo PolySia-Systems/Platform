@@ -271,6 +271,8 @@ def preflight(value: dict) -> None:
 
 def install_gateway() -> Path:
     root = core.INSTALL_ROOT / "gateway" / CADDY_VERSION
+    if root.resolve() != root:
+        raise ValueError("gateway installation must not traverse symlinks")
     root.mkdir(parents=True, exist_ok=True, mode=0o755)
     archive = root / "caddy.tar.gz"
     if not archive.exists():
@@ -874,6 +876,25 @@ def configure_backup(args: argparse.Namespace) -> dict:
         raise ValueError("choose none, local or sftp")
     candidate = {"mode": mode}
     if mode != "none":
+        if not args.noninteractive:
+            print("Keep the recovery private key outside this installation and its archive.")
+            if args.recipient_file is None:
+                args.recipient_file = Path(
+                    input("Public age recipient file (absolute path): ").strip()
+                )
+            if mode == "local" and args.recovery_key is None:
+                args.recovery_key = Path(
+                    input("Separately held recovery key for verification: ").strip()
+                )
+            if mode == "sftp":
+                print("SFTP needs restricted upload and protected independent restore receipts.")
+                args.secondary_host = (
+                    args.secondary_host or input("Independent SFTP hostname: ").strip()
+                )
+                if args.known_hosts_file is None:
+                    args.known_hosts_file = Path(input("Verified SSH host keys file: ").strip())
+                if args.upload_key_file is None:
+                    args.upload_key_file = Path(input("Root-only SFTP upload key file: ").strip())
         if args.recipient_file is None:
             raise ValueError("a separately held recovery key's public --recipient-file is required")
         for path in (args.recipient_file, args.known_hosts_file, args.upload_key_file):
@@ -963,6 +984,19 @@ def promote_retained_backup(value: dict, *, image: str) -> None:
 
 def protected_stop() -> dict:
     """Fence OS restart, then confirm authority independently of the command store."""
+
+    def attempt(command: list[str], *, timeout: int):
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return subprocess.CompletedProcess(command, 124, stdout="", stderr="unconfirmed")
+
     atomic(
         core.CONFIG_ROOT / "restart-fenced",
         {
@@ -970,16 +1004,18 @@ def protected_stop() -> dict:
             "checked_at": datetime.now(UTC).isoformat(),
         },
     )
-    core.run("systemctl", "stop", "polysia-platform-worker.timer")
-    core.run("systemctl", "stop", "polysia-platform-worker.service")
-    subprocess.run(
+    # Missing/broken units during interrupted setup cannot prevent the separate
+    # container stop attempt. The restart fence was durable before either call.
+    for unit in ("worker.timer", "worker.service"):
+        attempt(["systemctl", "stop", "polysia-platform-" + unit], timeout=40)
+    stopped_container = attempt(
         ["docker", "stop", "-t", "5", "polysia-platform-worker"],
-        capture_output=True,
-        check=False,
         timeout=15,
     )
     result = {
-        "status": "OS_WORKER_FENCED",
+        "status": "OS_WORKER_FENCED"
+        if stopped_container.returncode == 0
+        else "OS_RESTART_FENCED_RUNTIME_UNCONFIRMED",
         "data_retained": True,
         "durable_authority_stop": "NOT_CONFIRMED",
         "command_receipt": "UNKNOWN",
@@ -1010,7 +1046,7 @@ def protected_stop() -> dict:
         f"{core.STATE_ROOT}/worker:/state:rw",
         f"{core.STATE_ROOT}/control:/control:rw",
     )
-    applied = subprocess.run(
+    applied = attempt(
         command
         + [
             "--name",
@@ -1021,10 +1057,7 @@ def protected_stop() -> dict:
             "--config",
             "/config/worker.json",
         ],
-        capture_output=True,
-        text=True,
         timeout=60,
-        check=False,
     )
     if applied.returncode == 0:
         try:
@@ -1036,7 +1069,9 @@ def protected_stop() -> dict:
         with closing(sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True)) as connection:
             if connection.execute("SELECT stopped FROM authority").fetchone() == (1,):
                 result.update(
-                    status="STOPPED",
+                    status="STOPPED"
+                    if stopped_container.returncode == 0
+                    else "AUTHORITY_STOPPED_RUNTIME_UNCONFIRMED",
                     durable_authority_stop="CONFIRMED",
                     next_action="Inspect retained evidence; restart remains fenced.",
                 )

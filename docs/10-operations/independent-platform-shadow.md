@@ -330,7 +330,10 @@ bounded daily host job; Docker performs coordinated SQLite Backup API snapshots
 under the worker lock with network disabled, then age encrypts to the public
 recipient. The upload uses a partial name and atomic rename. Retain two completed
 ciphertext generations, each at most 512 MiB; stage and restore within the remaining
-allocation and preserve at least 8 GiB on the host. Plaintext includes release,
+allocation and preserve at least 8 GiB on the host. Backup/restore preflight
+additionally reserves 1 GiB for bounded plaintext/ciphertext staging; failure
+occurs before snapshot/decryption. Destination configuration history is bounded
+to 64 distinct retained checkpoints and fails explicitly when full. Plaintext includes release,
 configuration, original policy, counters/STOP, financial data, cohort and provider
 provenance. It never includes the recovery or upload private key.
 

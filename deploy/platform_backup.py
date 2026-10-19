@@ -105,10 +105,13 @@ def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
         sftp_command(value)  # Validate before snapshot/encryption work.
     output = checked_root(value["output"], str(STATE_ROOT / "backup-out"))
     output.mkdir(mode=0o700, exist_ok=True)
-    if sum(p.stat().st_size for p in output.iterdir() if NAME.fullmatch(p.name)) > 2_147_483_648:
+    if (
+        sum(p.stat().st_size for p in output.iterdir() if NAME.fullmatch(p.name)) + MAX_GENERATION
+        > 2_147_483_648
+    ):
         raise OSError("retained backup allocation is full; preserve generations before cleanup")
     os.chown(output, 10101, 10102)
-    if shutil.disk_usage(output).free < 8_589_934_592:
+    if shutil.disk_usage(output).free < 8_589_934_592 + 2 * MAX_GENERATION:
         raise OSError("host free-disk reserve unavailable")
     release = Path(value["release"])
     manifest = json.loads((release / "manifest.json").read_text())
@@ -239,6 +242,8 @@ def verify_generation(
         or any(stage.iterdir())
     ):
         raise ValueError("unused protected restore staging and bounded ciphertext required")
+    if shutil.disk_usage(stage).free < 8_589_934_592 + 2 * MAX_GENERATION:
+        raise OSError("restore staging cannot preserve the host free-disk reserve")
     args = isolated(
         image, f"{stage}:/restore:rw", str(recovery_key) + ":/run/recovery-key:ro", user="0:0"
     )
@@ -439,6 +444,8 @@ def change_destination(
         raw = current.read_bytes()
         saved = history / (hashlib.sha256(raw).hexdigest() + ".json")
         if not saved.exists():
+            if len(list(history.glob("*.json"))) >= 64:
+                raise OSError("retained destination history is full; inspect protected checkpoints")
             _atomic_json(saved, json.loads(raw))
     if mode == "none":
         _atomic_json(current, {"schema": "platform-backup-destination/v1", "mode": "none"})

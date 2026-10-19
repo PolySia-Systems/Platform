@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -99,7 +101,7 @@ def test_legacy_backup_registration_preserves_destination_and_requires_fresh_pro
     assert not (tmp_path / "backup-job.json").exists()
 
 
-@pytest.mark.skipif(__import__("sys").platform == "win32", reason="Linux host ownership contract")
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux host ownership contract")
 def test_rollback_restores_content_permissions_and_fences_without_touching_financial_data(
     tmp_path,
     monkeypatch,
@@ -129,3 +131,32 @@ def test_rollback_restores_content_permissions_and_fences_without_touching_finan
     assert (config / "web.json").stat().st_mode & 0o777 == 0o640
     assert financial.read_bytes() == b"retained-financial-evidence"
     assert (config / "restart-fenced").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux protected root utility")
+def test_independent_container_stop_runs_even_when_supervision_times_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    monkeypatch.setattr(core, "STATE_ROOT", tmp_path)
+    (tmp_path / "worker.json").write_text(
+        json.dumps(
+            {
+                "authority": "/state/authority.sqlite3",
+                "installation_state": "UNCONFIGURED",
+                "acquisition_enabled": False,
+            }
+        )
+    )
+    calls = []
+
+    def run(command, **kwargs):
+        assert (tmp_path / "restart-fenced").exists()
+        calls.append(command)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command, 40)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(admin.subprocess, "run", run)
+    result = admin.protected_stop()
+    assert calls[-1] == ["docker", "stop", "-t", "5", "polysia-platform-worker"]
+    assert result["durable_authority_stop"] == "NO_AUTHORITY_CONFIGURED"
+    assert result["status"] == "OS_WORKER_FENCED"
