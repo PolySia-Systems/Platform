@@ -421,35 +421,14 @@ def main() -> None:
         retained = json.loads((replacement / "config/worker.json").read_text())
         assert retained["acquisition_enabled"] is False
         assert retained["recovery_requires_authority_reconciliation"] is True
-        run(
-            "docker",
-            "run",
-            "--rm",
-            "--network",
-            "none",
-            "--read-only",
-            "--user",
-            "10101:10102",
-            "--memory",
-            "512m",
-            "--cpus",
-            ".5",
-            "--volume",
-            str(replacement / "config/worker.json") + ":/config/worker.json:ro",
-            "--volume",
-            str(replacement / "config/manifest.json") + ":/config/manifest.json:ro",
-            "--volume",
-            str(replacement / "state/worker") + ":/state:rw",
-            "--volume",
-            str(replacement / "state/control") + ":/control:rw",
-            "--volume",
-            str(replacement / "state/publication") + ":/publication:rw",
+        publisher = bootstrap.container_command(
             args.image_id,
-            "ops",
-            "platform-publish",
-            "--config",
-            "/config/worker.json",
+            role="publisher",
+            hostname="isolated-replacement",
+            configured=True,
         )
+        publisher[publisher.index("--name") + 1] = "polysia-acceptance-replacement-publisher"
+        run(*publisher)  # Includes the product's bounded temporary snapshot filesystem.
         verify_browser(
             args.image_id, stage / "bundle", archived, root, restored_state=replacement / "state"
         )
@@ -482,6 +461,7 @@ def main() -> None:
         )
     except subprocess.CalledProcessError as error:
         # These are generated disposable identities. Do not print stdin or keys.
+        print((error.stdout or "")[-6000:], file=sys.stderr)
         print((error.stderr or "")[-6000:], file=sys.stderr)
         for unit in units:
             subprocess.run(
