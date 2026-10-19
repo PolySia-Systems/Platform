@@ -101,6 +101,20 @@ def test_legacy_backup_registration_preserves_destination_and_requires_fresh_pro
     assert not (tmp_path / "backup-job.json").exists()
 
 
+def test_existing_cloudflare_hostname_change_is_refused_without_a_false_setup_receipt(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    original = '{"origin":"https://retained.example.com"}'
+    (tmp_path / "web.json").write_text(original)
+    value = {**configuration(), "profile": "cloudflare", "hostname": "new.example.com"}
+    with pytest.raises(ValueError, match="existing Cloudflare origin is preserved"):
+        admin.configure(value, image="sha256:" + "a" * 64, allow_change=True)
+    assert (tmp_path / "web.json").read_text() == original
+    assert not (tmp_path / "installation.json").exists()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux host ownership contract")
 def test_rollback_restores_content_permissions_and_fences_without_touching_financial_data(
     tmp_path,

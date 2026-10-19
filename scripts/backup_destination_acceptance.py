@@ -18,6 +18,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -565,15 +566,26 @@ def verify_browser(
         + base64.b64encode(("owner:" + credentials["owner"]).encode()).decode()
     }
     try:
-        with urlopen(
-            Request(
-                "https://localhost:8443/reports/" + archived["analytical_digest"] + ".json",
-                headers=headers,
-            ),
-            context=context,
-            timeout=15,
-        ) as response:
-            assert json.load(response) == archived
+        ready = time.monotonic() + 60
+        while True:
+            try:
+                with urlopen(
+                    Request(
+                        "https://localhost:8443/reports/" + archived["analytical_digest"] + ".json",
+                        headers=headers,
+                    ),
+                    context=context,
+                    timeout=5,
+                ) as response:
+                    assert json.load(response) == archived
+                break
+            except HTTPError as error:
+                if error.code not in {502, 503} or time.monotonic() >= ready:
+                    raise
+            except URLError:
+                if time.monotonic() >= ready:
+                    raise
+            time.sleep(0.2)
         with urlopen(
             Request("https://localhost:8443", headers=headers), context=context, timeout=15
         ) as response:

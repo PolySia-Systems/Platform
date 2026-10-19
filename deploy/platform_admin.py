@@ -385,6 +385,12 @@ def configure(
                 "next_action": "Provide your Access issuer, audience and owner identity "
                 "through the guided administrative entry.",
             }
+        existing_web = json.loads((core.CONFIG_ROOT / "web.json").read_text())
+        if existing_web["origin"] != "https://" + value["hostname"]:
+            raise ValueError(
+                "existing Cloudflare origin is preserved; commission an authorized route "
+                "before changing its hostname",
+            )
         atomic(current, value)
         return {
             "status": "EXISTING_CLOUDFLARE_PRESERVED"
