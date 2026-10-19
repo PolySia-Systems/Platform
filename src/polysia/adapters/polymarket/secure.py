@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Any, Literal, Protocol, cast
 
@@ -30,6 +31,7 @@ from polysia.application.ports.cancellation import (
 )
 from polysia.config.structured_logging import get_logger
 from polysia.domain.market import VenueCapabilityProfile
+from polysia.domain.portfolio.models import AccountPosition
 
 OrderSide = Literal["BUY", "SELL"]
 MarketOrderType = Literal["FAK", "FOK"]
@@ -453,14 +455,28 @@ class PolymarketSecureAdapter:
         self,
         *,
         market: tuple[str, ...] | None = None,
-        size_threshold: float | None = None,
-    ) -> list[Any]:
-        """Return all account positions without exposing wallet identifiers."""
-        client = self._require_client()
+        size_threshold: Decimal | float | None = None,
+    ) -> list[AccountPosition]:
+        """Return retained current inventory; apply the share minimum with Decimal.
 
-        async def read() -> list[Any]:
-            paginator = client.list_positions(market=market, size_threshold=size_threshold)
-            return [position async for position in paginator.iter_items()]
+        The SDK's token filter only disables server dust filtering. A positive
+        Platform minimum is evaluated locally after the complete cursor walk,
+        never interpreted as cash value or the position's historical total size.
+        """
+        client = self._require_client()
+        minimum = Decimal("0") if size_threshold is None else Decimal(str(size_threshold))
+        if not minimum.is_finite() or minimum < 0:
+            raise ValueError("position size threshold must be finite and nonnegative")
+
+        async def read() -> list[AccountPosition]:
+            paginator = client.list_positions(
+                condition_id=market,
+                include_archived=True,
+                filter_type="TOKENS",
+                filter_amount=0,
+            )
+            positions = [_account_position(position) async for position in paginator.iter_items()]
+            return [position for position in positions if position.size >= minimum]
 
         try:
             return await self._run_read("list_positions", read)
@@ -470,6 +486,8 @@ class PolymarketSecureAdapter:
                 "Could not fetch Polymarket positions.",
                 error,
             ) from error
+        except (TypeError, ValueError) as error:
+            raise PolymarketSecureAdapterError("Polymarket position evidence was malformed.") from error
 
     async def list_account_trades(
         self,
@@ -913,3 +931,36 @@ def _required_decimal(value: object, name: str) -> Decimal:
     if not result.is_finite():
         raise ValueError(f"{name} must be a finite decimal value")
     return result
+
+
+def _account_position(value: object) -> AccountPosition:
+    return AccountPosition(
+        token_id=_required_text(value, "asset_id"),
+        condition_id=_required_text(value, "condition_id"),
+        size=_required_decimal(value, "current_size"),
+        avg_price=_optional_position_decimal(value, "avg_price"),
+        current_value=_optional_position_decimal(value, "current_value"),
+        cur_price=_optional_position_decimal(value, "current_price"),
+        outcome=_optional_text(_field(value, "outcome")),
+        redeemable=_optional_position_flag(value, "redeemable"),
+        mergeable=_optional_position_flag(value, "mergeable"),
+        end_date=_position_end_date(value),
+    )
+
+
+def _optional_position_decimal(value: object, name: str) -> Decimal | None:
+    return None if _field(value, name) is None else _required_decimal(value, name)
+
+
+def _optional_position_flag(value: object, name: str) -> bool | None:
+    flag = _field(value, name)
+    if flag is not None and not isinstance(flag, bool):
+        raise ValueError("position flag must be boolean or unknown")
+    return flag
+
+
+def _position_end_date(value: object) -> date | None:
+    end = _field(value, "end_date")
+    if end is not None and not isinstance(end, date):
+        raise ValueError("position end date must be a calendar date or unknown")
+    return end
