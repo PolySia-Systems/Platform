@@ -1360,13 +1360,22 @@ def main() -> None:
         del roles[name]
     roles.update(dict.fromkeys(args.reader, "reader"))
     roles.update(dict.fromkeys(args.operator, "operator"))
+    public_opt_in = args.public_opt_in or prior.get("public_opt_in", False)
+    if profile == "own-domain" and not public_opt_in and not args.noninteractive:
+        answer = input(
+            "Allow authenticated public HTTPS and ACME/redirects on ports 80/443 "
+            "for this hostname? Type yes [no]: "
+        ).strip().lower()
+        if answer != "yes":
+            parser.error("public access not authorized; choose the private SSH profile")
+        public_opt_in = True
     value = validate(
         {
             "schema": SCHEMA,
             "commit": args.commit or prior.get("commit"),
             "profile": profile,
             "hostname": hostname,
-            "public_opt_in": args.public_opt_in or prior.get("public_opt_in", False),
+            "public_opt_in": public_opt_in,
             "roles": roles,
             "backup": prior.get("backup", retained_backup()),
         }
