@@ -24,6 +24,7 @@ def test_gateway_config_has_one_protected_socket_and_no_admin_or_identity_fallba
             passwords={"owner": HASH},
         )
         assert "admin off" in result and "skip_install_trust" in result
+        assert "strict_sni_host on" in result
         assert "reverse_proxy unix//run/app/web.sock" in result
         assert "request_header -X-Polysia-User" in result
         assert "header_up X-Polysia-User {http.auth.user.id}" in result

@@ -80,7 +80,8 @@ def gateway_config(
     return (
         "{\n    admin off\n    skip_install_trust\n"
         + ("    auto_https disable_redirects\n" if profile == "private" else "")
-        + "    servers {\n        protocols h1 h2\n        max_header_size 16KB\n"
+        + "    servers {\n        protocols h1 h2\n        strict_sni_host on\n"
+        "        max_header_size 16KB\n"
         "        timeouts {\n            read_header 5s\n            read_body 5s\n"
         "            write 15s\n            idle 15s\n        }\n    }\n}\n"
         + origin

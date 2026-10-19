@@ -219,13 +219,16 @@ def main() -> None:
         },
     }
     payload = json.dumps(fixture).encode()
+    run("systemctl", "stop", "polysia-platform-publisher.timer")
     try:
         publication.write_bytes(payload)
         timings = []
         for _ in range(100):
             started = time.perf_counter()
-            assert request("/api/report")[0] == 200
+            code, _, measured = request("/api/report")
             timings.append(time.perf_counter() - started)
+            assert code == 200
+            assert len(json.loads(measured)["diagnostic"]["discovery"]["candidates"]) == 512
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             load = [pool.submit(request, password="invalid-load-fixture") for _ in range(32)]
             assert request("/api/report")[0] == 200
@@ -234,6 +237,7 @@ def main() -> None:
         assert p95 < 2, p95
     finally:
         publication.write_bytes(original)
+        run("systemctl", "start", "polysia-platform-publisher.timer")
     # A revoked credential is rejected on every subsequent request, including cached browsers.
     run(
         sys.executable,

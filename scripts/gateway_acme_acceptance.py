@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import hashlib
 import http.client
 import json
 import os
+import secrets
 import socket
 import ssl
 import subprocess
@@ -131,9 +133,10 @@ def main() -> None:
                 "--service-type=exec",
                 "--property=User=10102",
                 "--property=Group=10102",
-                "--property=MemoryMax=256M",
-                "--property=CPUQuota=50%",
+                "--property=MemoryMax=" + ("192M" if name == "acme-gateway" else "256M"),
+                "--property=CPUQuota=" + ("25%" if name == "acme-gateway" else "50%"),
                 "--property=TasksMax=64",
+                "--property=LimitNOFILE=256",
                 "--property=NoNewPrivileges=true",
                 "--property=ProtectSystem=strict",
                 "--property=ProtectHome=true",
@@ -186,6 +189,9 @@ def main() -> None:
         (root / "issued-root.pem").write_bytes(issued_root)
         context = ssl.create_default_context(cafile=str(root / "issued-root.pem"))
         passwords = json.loads(Path("/etc/polysia-platform/gateway-credentials.json").read_text())
+        # The private-profile test already revoked its reader. This separate
+        # gateway gets an independent disposable reader for its own role checks.
+        passwords["reader"] = secrets.token_urlsafe(32)
         hashes = {
             name: subprocess.run(
                 [str(caddy), "hash-password", "--bcrypt-cost", "10"],
@@ -299,11 +305,16 @@ def main() -> None:
             environment=("XDG_DATA_HOME=" + str(ca_state),),
         )
 
-        def request(*, user="owner", path="/", headers=None, method="GET", body=None):
+        def request(
+            *, user="owner", path="/", headers=None, method="GET", body=None, password=None
+        ):
             supplied = {"Host": HOST, "Connection": "close", **(headers or {})}
             if user is not None:
                 supplied["Authorization"] = (
-                    "Basic " + base64.b64encode((user + ":" + passwords[user]).encode()).decode()
+                    "Basic "
+                    + base64.b64encode(
+                        (user + ":" + (password or passwords[user])).encode()
+                    ).decode()
                 )
             raw = json.dumps(body).encode() if body is not None else b""
             supplied["Content-Length"] = str(len(raw))
@@ -356,6 +367,10 @@ def main() -> None:
         )
         assert request(headers={"Origin": "https://foreign.invalid"})[0] == 403
         assert request(headers={"Host": "foreign.invalid"})[0] in {403, 404, 421}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            load = [pool.submit(request, password="incorrect-fixture") for _ in range(32)]
+            assert request()[0] == 200
+            assert all(future.result()[0] == 401 for future in load)
         renewed = wait_certificate(initial["serialNumber"])
         # Controlled fixture DNS failure; Caddy cannot reach its HTTP/TLS challenge.
         change_dns = Request(
