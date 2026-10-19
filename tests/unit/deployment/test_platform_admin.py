@@ -213,6 +213,7 @@ def test_stage_records_refused_activation_without_changing_active_roots(
     receipt = json.loads(capsys.readouterr().out)
     assert receipt["activation"]["status"] == "REFUSED"
     assert receipt["image_loaded"] is False
+    assert receipt["starts_acquisition"] is False
     assert receipt["status"] == "VERIFIED_DOWNLOAD_ONLY"
     assert json.loads((artifact / "staging-receipt.json").read_text()) == receipt
     assert not config.exists()

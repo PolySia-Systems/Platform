@@ -1374,7 +1374,7 @@ def main() -> None:
             "activation": activation,
             "active_configuration_and_data": "UNCHANGED",
             "image_loaded": False,
-            "acquisition_enabled": False,
+            "starts_acquisition": False,
         }
         atomic(directory / "staging-receipt.json", receipt)
         print(json.dumps(receipt, sort_keys=True))
