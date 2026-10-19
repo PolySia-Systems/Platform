@@ -68,8 +68,8 @@ def test_mapper_normalizes_round_trip_market_rules_and_order_book() -> None:
         tags=(),
     )
     raw_book = SimpleNamespace(
-        token_id="up",
-        market="condition",
+        asset_id="up",
+        condition_id="condition",
         timestamp="1783771200000",
         bids=(SimpleNamespace(price="0.58", size="5"),),
         asks=(SimpleNamespace(price="0.60", size="4"),),

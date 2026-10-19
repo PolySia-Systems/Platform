@@ -9,25 +9,22 @@
 | Repository | `https://github.com/PolySia-Systems/Platform.git` |
 | Engineering runtime baseline | CPython `3.14.8`; deployed patch requires a dated host receipt |
 | Supported CI runtime | Python `3.14.8` (`>=3.14,<3.15`) |
-| Polymarket SDK | `polymarket-client==0.7.1` |
+| Polymarket SDK | `polymarket-client==0.13.0` |
 | Conformance status | `STANDARDS_V0_5_2_SELECTED_PROFILES_ENFORCED` |
 
 This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
-The verified `v0.3.0` engineering release adds guided single-server maintenance, optional
-private/own-domain HTTPS, explicit unconfigured/demo operation and destination
-replacement/recovery. [PR #198](https://github.com/PolySia-Systems/Platform/pull/198)
-is merged; full exact-main CI and immutable retained-artifact publication passed.
-ENGINEERING_COMPLETE applies within the automated verification scope. The
-[19 October receipt](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-product-completion-delivery)
-records verified staging on both hosts and primary activation BLOCKED by two
-pending observations requiring the retained v0.2.1 executable. New-source
-deployment, public commissioning, unfamiliar-user/developer trials and sufficient
-economic observation are not achieved. Existing Cloudflare protection, STOP,
-consumed authority and disabled acquisition remain hard boundaries; current
-operational truth still requires a host query.
+The `v0.4.0` SDK-migration candidate is tracked in
+[PR #200](https://github.com/PolySia-Systems/Platform/pull/200). It retains Python
+3.14.8 and advances the consumed SDK boundary to0.13.0 with Pydantic2.14.1/core2.50.1.
+The owner restored both hosts; a 19 October bounded preflight confirmed no old
+Platform roots/units. This supersedes the historical two-pending-observation
+activation blocker without weakening ordinary upgrade gates or reconstructing
+old experimental accounting. Fresh protected activation, independent recovery
+and exact-source release acceptance remain pending the PR's dated receipts.
+Human/public-domain acceptance and economic observation remain external.
 
 ## Truth ownership
 
@@ -69,7 +66,7 @@ CURRENT capabilities:
   exact immutable request approved by Risk; generic `live limit-order` is
   preview-only.
 - A SHADOW-only Control Kernel slice for `stale-price@0.1.0`.
-- Wallet Intelligence Stages 1–4B as DATA_ONLY research/Shadow systems. They
+- Wallet Intelligence Stages 1â€“4B as DATA_ONLY research/Shadow systems. They
   are not profitability evidence and do not authorize trading.
 - Stage 4B Continuous Shadow is a bounded experimental portfolio and ledger
   on its own store. It is not the TARGET OMS, allocator, or execution router.
@@ -103,7 +100,7 @@ CURRENT capabilities:
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
 - Versioned Research and Shadow configuration now supports a software envelope
-  of 1–40 wallets with explicit operational capacity admission, shared active
+  of 1â€“40 wallets with explicit operational capacity admission, shared active
   selection, readiness diagnostics, and JSON contracts for a future UI. The
   envelope is not a measured Helsinki capacity. Existing frozen v1/v2 Research
   and v1 Shadow periods retain their original semantics.
@@ -195,7 +192,7 @@ Next milestones: investigate the selected-wallet activity and market evidence
 needed for a fresh standard Canary, continue explicit Shadow health checks,
 and address recurring backup/alert delivery and branch protection separately.
 The four-hour failure archive and deterministic empty-sample analyses are
-preserved off-host. The Stage 1–3 daily timer was re-enabled after Main closed;
+preserved off-host. The Stage 1â€“3 daily timer was re-enabled after Main closed;
 Stage 4B continued through its first period rollover. Any new experiment
 requires its own authorized scope; do not access Nuremberg.
 
@@ -236,7 +233,7 @@ Do not duplicate these records here.
 |---|---|
 | LIVE-004 completed round trip | [live-004 handoff](../18-ai-handoffs/polysia-live-004-final-handoff.md) |
 | Tiny Live Copy 004 cancellation | [004 diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md) |
-| Helsinki Stages 1–4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
+| Helsinki Stages 1â€“4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
 | Stage 4B data lifecycle T0 and 24h | [data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md) |
 | Frozen Target Exposure v1 baseline | [Target Exposure v1](../18-ai-handoffs/shadow-target-exposure-v1-baseline.md) |
 | Python 3.14 / SDK upgrade | [UPGRADE-006](../18-ai-handoffs/polysia-upgrade-006-handoff.md) |

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -56,7 +57,7 @@ def order_snapshots_from_external(orders: list[object]) -> tuple[OrderSnapshot, 
 
 
 def position_snapshots_from_external(
-    positions: list[object],
+    positions: Sequence[object],
 ) -> tuple[PositionSnapshot, ...]:
     snapshots: list[PositionSnapshot] = []
     for index, position in enumerate(positions):

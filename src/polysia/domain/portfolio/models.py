@@ -32,4 +32,3 @@ class AccountPosition:
     redeemable: bool | None
     mergeable: bool | None
     end_date: date | None
-

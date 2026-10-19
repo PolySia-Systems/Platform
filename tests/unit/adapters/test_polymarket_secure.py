@@ -25,7 +25,15 @@ class FakePaginator:
         self._items = items
 
     async def first_page(self) -> SimpleNamespace:
-        return SimpleNamespace(items=self._items)
+        return SimpleNamespace(
+            items=self._items, limit_reached=False, has_more=False, next_cursor=None
+        )
+
+    def __aiter__(self):
+        return self._pages()
+
+    async def _pages(self):
+        yield await self.first_page()
 
     async def _iter_items(self) -> Any:
         for item in self._items:
@@ -63,7 +71,10 @@ class FakeSecureClient:
     def list_positions(self, **kwargs: Any) -> FakePaginator:
         self.position_kwargs = kwargs
         return FakePaginator(
-            (SimpleNamespace(token_id="token-1"), SimpleNamespace(token_id="token-2"))
+            tuple(
+                SimpleNamespace(asset_id=token, current_size=Decimal("0"), condition_id="condition")
+                for token in ("token-1", "token-2")
+            )
         )
 
     def list_account_trades(self, **kwargs: Any) -> FakePaginator:
@@ -253,17 +264,22 @@ async def test_authenticated_methods_call_connected_client(
     assert limit_response == {"status": "accepted"}
     assert market_response == {"status": "accepted"}
     assert client.open_order_kwargs == {
-        "token_id": "token-1",
+        "asset_id": "token-1",
         "id": None,
         "market": "market-1",
     }
     assert client.get_order_kwargs == {"order_id": "order-1"}
-    assert client.position_kwargs == {"market": None, "size_threshold": 0}
-    assert client.trade_kwargs == {"token_id": "token-1", "market": "market-1"}
+    assert client.position_kwargs == {
+        "condition_id": None,
+        "include_archived": True,
+        "filter_type": "TOKENS",
+        "filter_amount": 0,
+    }
+    assert client.trade_kwargs == {"asset_id": "token-1", "market": "market-1"}
     assert client.cancel_order_kwargs == {"order_id": "order-1"}
-    assert client.cancel_market_kwargs == {"market": None, "token_id": "token-1"}
+    assert client.cancel_market_kwargs == {"market": None, "asset_id": "token-1"}
     assert client.limit_order_kwargs == {
-        "token_id": "token-1",
+        "asset_id": "token-1",
         "side": "BUY",
         "price": Decimal("0.50"),
         "size": Decimal("5"),
@@ -272,7 +288,7 @@ async def test_authenticated_methods_call_connected_client(
         "builder_code": None,
     }
     assert client.market_order_kwargs == {
-        "token_id": "token-1",
+        "asset_id": "token-1",
         "side": "SELL",
         "amount": None,
         "shares": Decimal("3"),
@@ -328,7 +344,7 @@ async def test_prepared_limit_order_is_signed_without_submission_then_posted_onc
     )
 
     assert client.prepared_limit_order_kwargs == {
-        "token_id": "token-1",
+        "asset_id": "token-1",
         "side": "BUY",
         "price": Decimal("0.50"),
         "size": Decimal("5"),
@@ -424,7 +440,7 @@ async def test_cancellation_evidence_maps_sdk_models_and_all_open_order_pages(
 ) -> None:
     order = SimpleNamespace(
         id="order-1",
-        token_id="token-1",
+        asset_id="token-1",
         side="BUY",
         status="LIVE",
         original_size=Decimal("5"),
@@ -433,7 +449,7 @@ async def test_cancellation_evidence_maps_sdk_models_and_all_open_order_pages(
     )
     second_order = SimpleNamespace(
         id="order-2",
-        token_id="token-2",
+        asset_id="token-2",
         side="SELL",
         status="LIVE",
         original_size=Decimal("3"),
@@ -443,7 +459,15 @@ async def test_cancellation_evidence_maps_sdk_models_and_all_open_order_pages(
 
     class MultiPagePaginator(FakePaginator):
         async def first_page(self) -> SimpleNamespace:
-            return SimpleNamespace(items=(order,))
+            return SimpleNamespace(
+                items=(order,), limit_reached=False, has_more=True, next_cursor="second"
+            )
+
+        async def _pages(self):
+            yield await self.first_page()
+            yield SimpleNamespace(
+                items=(second_order,), limit_reached=False, has_more=False, next_cursor=None
+            )
 
     class EvidenceClient(FakeSecureClient):
         def list_open_orders(self, **kwargs: Any) -> FakePaginator:
@@ -460,6 +484,7 @@ async def test_cancellation_evidence_maps_sdk_models_and_all_open_order_pages(
                 (
                     SimpleNamespace(
                         id="trade-1",
+                        asset_id="token-1",
                         status="CONFIRMED",
                         taker_order_id="order-1",
                         size=Decimal("1"),
@@ -471,7 +496,13 @@ async def test_cancellation_evidence_maps_sdk_models_and_all_open_order_pages(
 
         def list_positions(self, **kwargs: Any) -> FakePaginator:
             self.position_kwargs = kwargs
-            return FakePaginator((SimpleNamespace(token_id="token-1", size=Decimal("1")),))
+            return FakePaginator(
+                (
+                    SimpleNamespace(
+                        asset_id="token-1", current_size=Decimal("1"), condition_id="condition"
+                    ),
+                )
+            )
 
     client = EvidenceClient()
 

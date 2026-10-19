@@ -153,7 +153,7 @@ async def test_market_stream_publishes_normalized_events() -> None:
         event = await asyncio.wait_for(anext(subscription), timeout=0.1)
 
     assert event.token_id == "token-1"
-    assert client.subscribe_calls[0].token_ids == ("token-1",)
+    assert client.subscribe_calls[0].asset_ids == ("token-1",)
 
 
 @pytest.mark.asyncio

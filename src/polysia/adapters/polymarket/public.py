@@ -183,7 +183,7 @@ class PolymarketPublicAdapter:
 
         async def read() -> MarketOrderBookSnapshot:
             async with self._client_factory() as client:
-                book = await client.get_order_book(token_id=token_id)
+                book = await client.get_order_book(asset_id=token_id)
                 return self._mapper.to_order_book(book)
 
         try:
@@ -205,7 +205,7 @@ class PolymarketPublicAdapter:
 
         async def read() -> dict[str, MarketOrderBookSnapshot]:
             async with self._client_factory() as client:
-                raw = await client.get_order_books(token_ids=token_ids)
+                raw = await client.get_order_books(asset_ids=token_ids)
                 books = [self._mapper.to_order_book(item) for item in raw]
                 mapped = {book.token_id: book for book in books}
                 if len(mapped) != len(books) or not set(mapped) <= set(token_ids):

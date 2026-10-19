@@ -41,15 +41,23 @@ async def test_batch_books_preserve_identity_freshness_and_missing_evidence(
     class Client:
         calls = 0
 
-        async def get_order_books(self, *, token_ids: tuple[str, ...]) -> tuple[Any, ...]:
+        async def get_order_books(self, *, asset_ids: tuple[str, ...]) -> tuple[Any, ...]:
             self.calls += 1
-            assert token_ids == ("a", "b")
-            return tuple(SimpleNamespace(
-                token_id=token, market="condition", timestamp="1783771200000",
-                bids=(SimpleNamespace(price="0.48", size="5"),),
-                asks=(SimpleNamespace(price="0.50", size="4"),),
-                min_order_size="1", tick_size="0.01", neg_risk=False, hash="hash",
-            ) for token in returned)
+            assert asset_ids == ("a", "b")
+            return tuple(
+                SimpleNamespace(
+                    asset_id=token,
+                    condition_id="condition",
+                    timestamp="1783771200000",
+                    bids=(SimpleNamespace(price="0.48", size="5"),),
+                    asks=(SimpleNamespace(price="0.50", size="4"),),
+                    min_order_size="1",
+                    tick_size="0.01",
+                    neg_risk=False,
+                    hash="hash",
+                )
+                for token in returned
+            )
 
     client = Client()
     adapter = PolymarketPublicAdapter(client_factory=lambda: FakeClientContext(client))
@@ -95,8 +103,8 @@ class FakeClient:
         self.search_kwargs = kwargs
         return FakePaginator(self.search_results)
 
-    async def get_order_book(self, *, token_id: str) -> Any:
-        self.order_book_token_id = token_id
+    async def get_order_book(self, *, asset_id: str) -> Any:
+        self.order_book_token_id = asset_id
         return self.order_book
 
 
@@ -254,8 +262,8 @@ async def test_search_markets_flattens_event_markets_and_deduplicates() -> None:
 async def test_get_order_book_returns_canonical_rules_and_depth() -> None:
     client = FakeClient(
         order_book=SimpleNamespace(
-            token_id="token",
-            market="condition",
+            asset_id="token",
+            condition_id="condition",
             timestamp="1783771200000",
             bids=(SimpleNamespace(price="0.48", size="5"),),
             asks=(SimpleNamespace(price="0.50", size="4"),),
