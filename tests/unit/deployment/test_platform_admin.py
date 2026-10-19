@@ -173,6 +173,7 @@ def test_stage_records_refused_activation_without_changing_active_roots(
     config = tmp_path / "active-config"
     monkeypatch.setattr(core, "CONFIG_ROOT", config)
     monkeypatch.setattr(admin, "load_core", lambda args: core)
+    monkeypatch.setattr(admin.os, "geteuid", lambda: 0)
     monkeypatch.setattr(admin, "preflight", lambda value: None)
     monkeypatch.setattr(
         core,
