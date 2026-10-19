@@ -2,6 +2,29 @@
 
 Date: 2026-10-16. Scope: protected Platform Console only.
 
+## Optional local HTTPS gateway
+
+The administrative entry pins stock Caddy **2.11.7** Linux amd64, Apache-2.0,
+to its official release archive and SHA-512
+`a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7`.
+The checksum came from the [official release](https://github.com/caddyserver/caddy/releases/tag/v2.11.7);
+it is a checksum, not a signature. Extraction retains LICENSE and rejects changed
+immutable bytes. The release maintainer owns security/pin review; operators use
+the tested update path and retain the old gateway for rollback. The systemd unit
+caps CPU, memory, tasks, descriptors and logs independently of worker/STOP.
+Private and own-domain profiles share this dependency; the production Cloudflare
+connector is unchanged. See [ADR-0022](../04-architecture/adrs/ADR-0022-guided-single-installation.md).
+
+The private issuer's public CA certificate is transferred over authenticated SSH
+and trusted only by a dedicated browser/client context. The administrative entry
+never installs a CA globally. It generates high-entropy Basic credentials, stores
+only bcrypt hashes in Caddy's configuration and keeps the credential handoff file
+root-only. Browser credential caching does not delay server-side revocation after
+the account is removed and the dedicated gateway restarted. Gateway trust relies
+on socket ownership, not on signed forwarded headers. Failed Cloudflare validation
+never selects local authentication. Isolated protocol tests and publicly trusted
+domain commissioning require distinct receipts.
+
 Use PyJWT with its cryptography extra for RS256 Access token validation, and
 Waitress for bounded WSGI serving on Linux and Windows. Versions are constrained
 in `pyproject.toml` and pinned in both canonical dependency locks. PyJWT is MIT;

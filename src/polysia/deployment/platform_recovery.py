@@ -64,6 +64,13 @@ def create_encrypted_backup(
     if shutil.which("age") is None:
         raise OSError("age encryption runtime unavailable")
     value = json.loads(config.read_text())
+    unconfigured = value.get("installation_state") == "UNCONFIGURED"
+    if unconfigured and (value.get("acquisition_enabled") is not False or value.get("admission")):
+        raise ValueError("unconfigured recovery cannot carry acquisition authority")
+    if unconfigured and (Path(value["authority"]).exists() or Path(value["database"]).exists()):
+        raise ValueError(
+            "unconfigured recovery cannot obscure retained authority or financial evidence"
+        )
     release = json.loads(release_manifest.read_text())
     if (
         release["commit"] != value["release_commit"]
@@ -90,7 +97,7 @@ def create_encrypted_backup(
             ("financial", database),
         ):
             if not source.is_file():
-                if role == "financial":
+                if role == "financial" or role == "authority" and unconfigured:
                     continue
                 raise ValueError("required recovery database missing")
             snapshot = backup_sqlite_database(
@@ -127,10 +134,25 @@ def create_encrypted_backup(
         )
         extras = {
             "worker-config.json": config,
-            "policy.json": Path(value["manifest"]),
             "release.json": release_manifest,
             "polysia-image.tar.gz": image_archive,
         }
+        identity_path = database.with_suffix(database.suffix + ".session.json")
+        if identity_path.exists():
+            if identity_path.is_symlink() or identity_path.stat().st_size > 4096:
+                raise ValueError("financial session identity file invalid")
+            identity = json.loads(identity_path.read_text())
+            if (
+                report is None
+                or identity.get("schema") != "native-financial-session/v1"
+                or identity.get("experiment_id") != report["analytical"]["experiment_id"]
+                or identity.get("code_sha") != value["release_commit"]
+            ):
+                raise ValueError("financial session identity differs from snapshot")
+            extras["financial-session.json"] = identity_path
+        policy_path = Path(value["manifest"])
+        if policy_path.is_file() or not unconfigured:
+            extras["policy.json"] = policy_path
         cohort = Path(value["cohort"])
         if cohort.is_file():
             extras["cohort.json"] = cohort
@@ -157,8 +179,12 @@ def create_encrypted_backup(
             for source in sorted(report_archive.glob("*.json")):
                 size = source.stat().st_size
                 archive_bytes += size
-                if (source.is_symlink() or not re.fullmatch(r"[a-f0-9]{64}\.json", source.name)
-                        or size > MAX_REPORT_BYTES or archive_bytes > MAX_REPORT_ARCHIVE_BYTES):
+                if (
+                    source.is_symlink()
+                    or not re.fullmatch(r"[a-f0-9]{64}\.json", source.name)
+                    or size > MAX_REPORT_BYTES
+                    or archive_bytes > MAX_REPORT_ARCHIVE_BYTES
+                ):
                     raise ValueError("report recovery inventory exceeds bounds")
                 retained_report = json.loads(source.read_text(encoding="utf-8"))
                 verify_analytical_digest(retained_report)
@@ -182,6 +208,7 @@ def create_encrypted_backup(
             ),
             "analytical_digest": None if report is None else report["analytical_digest"],
             "restore_acquisition": "DISABLED_UNTIL_AUTHORITY_RECONCILIATION",
+            "installation_state": "UNCONFIGURED" if unconfigured else "CONFIGURED",
         }
         (bundle / "platform-recovery.json").write_text(json.dumps(metadata, sort_keys=True))
         encrypted = output.with_suffix(output.suffix + ".partial")
@@ -262,7 +289,11 @@ def extract_and_verify_recovery(
         if Path(name).name != name or sha256_file(destination / name) != digest:
             raise ValueError("recovery file digest mismatch")
     bundle = load_bundle_manifest(destination)
-    if not {"authority", "commands"} <= {record.role for record in bundle.databases}:
+    unconfigured = metadata.get("installation_state") == "UNCONFIGURED"
+    required_roles = {"commands"} if unconfigured else {"authority", "commands"}
+    if unconfigured and {record.role for record in bundle.databases} != {"commands"}:
+        raise ValueError("unconfigured recovery contains unexpected financial or authority state")
+    if not required_roles <= {record.role for record in bundle.databases}:
         raise ValueError("authority or command recovery state missing")
     release = json.loads((destination / "release.json").read_text())
     trusted = json.loads(trusted_release_manifest.read_text())
@@ -290,6 +321,12 @@ def extract_and_verify_recovery(
             if report["analytical_digest"] != metadata["analytical_digest"]:
                 raise ValueError("restored analytical replay differs")
     safe_config = json.loads((destination / "worker-config.json").read_text())
+    if unconfigured and (
+        safe_config.get("installation_state") != "UNCONFIGURED"
+        or safe_config.get("acquisition_enabled") is not False
+        or safe_config.get("admission")
+    ):
+        raise ValueError("unconfigured recovery identity mismatch")
     report_archive = destination / "reports"
     report_archive.mkdir(mode=0o700)
     archive_bytes = 0
@@ -298,8 +335,11 @@ def extract_and_verify_recovery(
             raise ValueError("invalid recovered report name")
         source = destination / name
         archive_bytes += source.stat().st_size
-        if (name not in metadata["files"] or source.stat().st_size > MAX_REPORT_BYTES
-                or archive_bytes > MAX_REPORT_ARCHIVE_BYTES):
+        if (
+            name not in metadata["files"]
+            or source.stat().st_size > MAX_REPORT_BYTES
+            or archive_bytes > MAX_REPORT_ARCHIVE_BYTES
+        ):
             raise ValueError("recovered report exceeds inventory bounds")
         retained_report = json.loads(source.read_text(encoding="utf-8"))
         verify_analytical_digest(retained_report)
@@ -319,10 +359,28 @@ def extract_and_verify_recovery(
     )
     if not any(record.role == "financial" for record in bundle.databases):
         safe_config["database"] = str(destination / "financial.sqlite3")
+    if not any(record.role == "authority" for record in bundle.databases):
+        safe_config["authority"] = str(destination / "authority.sqlite3")
+    identity_source = destination / "financial-session.json"
+    if identity_source.exists():
+        identity = json.loads(identity_source.read_text())
+        if (
+            identity.get("schema") != "native-financial-session/v1"
+            or identity.get("experiment_id") != metadata["report_experiment_id"]
+            or identity.get("code_sha") != metadata["release_commit"]
+        ):
+            raise ValueError("restored financial session identity differs")
+        financial_path = Path(safe_config["database"])
+        shutil.copy2(
+            identity_source, financial_path.with_suffix(financial_path.suffix + ".session.json")
+        )
     safe_config["acquisition_enabled"] = False
     safe_config["recovery_requires_authority_reconciliation"] = True
     runtime_commands = backup_sqlite_database(
-        Path(safe_config["commands"]), destination, keep=1, prefix="restored-commands-",
+        Path(safe_config["commands"]),
+        destination,
+        keep=1,
+        prefix="restored-commands-",
         minimum_free_bytes=16_777_216,
     )
     safe_config["commands"] = str(runtime_commands.backup_path)
@@ -338,4 +396,5 @@ def extract_and_verify_recovery(
         "real_orders": False,
         "restored_reports": len(metadata.get("reports", [])),
         "unavailable_report_receipts": reconciled,
+        "installation_state": "UNCONFIGURED" if unconfigured else "CONFIGURED",
     }

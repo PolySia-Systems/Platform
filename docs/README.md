@@ -31,6 +31,11 @@ For a disposable, scoped resume briefing use
 project truth. A bounded, owner-authorized Helsinki `DATA_ONLY` run is recorded
 in [the dated acceptance evidence](18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md).
 Query the host for current state only within an authorized operational task.
+New developers should follow the [deterministic fixture entry](03-requirements/developer-context-packet.md#developer-entry).
+Server administrators use [guided installation and maintenance](10-operations/independent-platform-shadow.md#release-and-isolated-roots).
+Private SSH HTTPS, optional own-domain HTTPS and the existing Cloudflare route
+share the same Console. Their engineering checks, public commissioning and
+human acceptance are distinct evidence.
 The earlier frozen Stage 4B backup remains documented in
 [Target Exposure v1 baseline](18-ai-handoffs/shadow-target-exposure-v1-baseline.md).
 

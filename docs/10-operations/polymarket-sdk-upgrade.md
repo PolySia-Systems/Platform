@@ -7,7 +7,7 @@
 - Verified version: `0.7.1`
 - Status: official stable 0.x unified SDK
 - Reviewed release: `0.7.1` (2026-08-28)
-- Primary runtime: CPython `3.14.7`
+- Engineering runtime baseline: CPython `3.14.8` (query the host for deployment truth)
 
 The 2026-09-03 review covered official stable releases 0.7.0 and 0.7.1 after
 the previously verified 0.6.0 pin. 0.7.0 adds scoped session keys, typed
@@ -17,6 +17,18 @@ PolySia does not consume the new perps, combo RFQ, session-key, or rate-limit
 callback surfaces. Consumed public/secure methods, signer/funder creation
 inputs, bounded-order parameters, and adapter confinement remain compatible.
 Tiny Live approved-runtime constants now require exactly `0.7.1`.
+
+The 2026-10-19 review of [PR #169](https://github.com/PolySia-Systems/Platform/pull/169)
+retains 0.7.1. Upstream 0.13.0 changes trading-approval reads to indexed state
+without RPC fallback and adds portfolio/settlement/stream and experimental
+perps surfaces. Platform's bounded native Data API v2 and canonical market
+adapters do not need those new surfaces. Secure-client consumers still depend
+on the pinned approval, signer/funder and exact-runtime contract. A bulk 0.x
+upgrade cannot be justified by changing approval constants to make tests pass.
+Revisit on a consumed compatibility/security need or a separately scoped SDK
+migration with deterministic consumed-surface tests, indexed-state lag semantics,
+and the existing explicitly authorized controlled validation. No external account
+validation or SDK-based provider request is authorized by this maintenance task.
 
 ## Verified order and cancellation contract
 

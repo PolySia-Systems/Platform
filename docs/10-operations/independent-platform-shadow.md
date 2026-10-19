@@ -6,15 +6,147 @@ Historical WI campaigns, roots and authority remain separate and stopped.
 
 ## Release and isolated roots
 
-Python 3.14 is required. CI builds the wheel and immutable image, tests the image,
+The new root-only administrative entry is `platform_admin.py`, distributed beside
+the manifest-verified bootstrap in the same exact release. Its installation and
+gateway acceptance are tracked in [PR #198](https://github.com/PolySia-Systems/Platform/pull/198)
+until the new release/commissioning receipt is recorded. The existing commissioned
+Cloudflare route remains the supported production route during this work.
+
+On a supported Ubuntu LTS amd64 server, administrative SSH, Docker/systemd,
+at least 1 GiB available RAM and 8 GiB free staging/rollback space are prerequisites.
+Fresh private setup creates its own reader/operator credentials and configuration;
+it creates no acquisition manifest or admission. Download the administrative entry
+from the selected trusted release origin, then run it with exact tag/source identity:
+
+```bash
+sudo python3 platform_admin.py install --tag EXACT_RELEASE_TAG --commit EXACT_40_HEX_COMMIT
+```
+
+The default guided choice is private SSH access. For noninteractive use add
+`--noninteractive --profile private`. The same validation generates configuration,
+stages/verifies immutable assets, installs supervision and checks actual HTTPS.
+Reruns retain credentials and data. `status`, `preflight`, `stop` and `uninstall`
+are administrative actions; uninstall retains data, keys and generations.
+Protected STOP writes an OS restart fence before stopping the dedicated worker.
+If authority persistence is uncertain, it reports that uncertainty and leaves
+restart fenced. Never delete a fence merely to get a service running.
+After first setup, a missing or damaged command queue is not automatically
+recreated by the browser, publisher or configured worker. Its receipt identities
+must be recovered. Independent SSH STOP still fences supervision and reports
+whether durable authority STOP and a command receipt were separately confirmed.
+
+Private access uses `https://localhost:8443` through an authenticated SSH forward:
+
+```bash
+ssh -N -L 8443:127.0.0.1:8443 YOUR_ADMINISTRATIVE_SSH_DESTINATION
+```
+
+Transfer only `/var/lib/polysia-platform/gateway/caddy/pki/authorities/local/root.crt`
+over the same host-key-verified SSH connection. Verify its SHA-256 on both ends.
+Import that public certificate into a dedicated browser trust context, or use an
+explicit client CA file. Never disable certificate checks or silently trust the
+CA system-wide. The root-only `/etc/polysia-platform/gateway-credentials.json`
+contains the generated browser credential handoff. Keep it private; no owner
+Cloudflare or provider credentials are needed for this profile. Browser reads
+without a manifest show UNCONFIGURED and unknown economics. Choosing no backup
+shows UNPROTECTED rather than a recovery claim.
+
+Own-domain setup uses `--profile own-domain --hostname YOUR_HOSTNAME --public-opt-in`
+and the same authentication/socket path. Only this explicit choice permits
+ports 80/443 for ACME/redirects and authenticated HTTPS application content.
+The existing installation is not converted automatically. Actual public-domain
+commissioning still requires an authorized hostname and ingress; a test CA is
+not publicly trusted evidence. Never apply these flags to change current
+production DNS, Cloudflare policy or ingress in this execution.
+
+Application Python 3.14.8 is pinned; the root host entry uses Ubuntu's existing
+Python 3.12+ without replacing it. Ubuntu 24.04/26.04 amd64 are admitted profiles;
+only OS versions named in actual acceptance receipts are verified. CI builds
+the wheel and immutable image, tests the image,
 retains their source/archive/config identities, performs the supply-chain checks,
 and exercises the installed wheel in a synthetic HTTPS desktop/mobile browser.
 The release workflow promotes the retained assets from a successful full main CI
-run; it does not rebuild them. The engineering patch declares `v0.2.1`;
+run; it does not rebuild them. The engineering candidate declares `v0.3.0`;
+the existing commissioned release is `v0.2.1` until a new promotion receipt;
 `v0.2.0` remains the compatible historical release. Only a dated promotion
 receipt establishes which artifact is installed.
 A full manual main CI run is supported when automatic classification omits a gate.
 Never promote a PR merge-test identity as the final main release.
+
+### Maintenance and identity configuration
+
+Use the verified release's administrative entry for `configure` (access profile),
+`update` (exact new tag/commit), `rollback` (retained compatible configuration),
+`backup`, `restore`, `status`, `preflight`, `stop` and `uninstall`. Configuration
+and units are checkpointed before replacement, with content digests and original
+ownership/modes. Interrupted activation writes `ACTIVATION_INCOMPLETE` and fences
+the worker; inspect that receipt and dedicated unit logs before retrying the
+same exact release. A retained fence is not cleared by an install/update. Rollback
+restores compatible configuration and leaves a stopped, inspectable worker; it
+does not downgrade a database or erase newer observations. Open inventory,
+pending observations and active persistent sessions refuse code activation.
+`preflight` reports that refusal with a nonzero exit. `stage` downloads and
+verifies the exact archive/scripts and image metadata without loading a Docker
+image or changing active configuration, units or data. Its durable staging
+receipt records activation eligibility separately; it is not a deployment claim.
+
+A new Cloudflare installation supplies `--access-issuer`, `--access-audience`
+and `--access-owner` (or answers the guided prompts). Those configure only the
+signature-validating loopback backend. The owner separately creates an owner-only
+Access application, DNS/ingress and a Tunnel to `127.0.0.1:8765` in their account.
+Missing inputs produce `ACCESS_CONFIGURATION_REQUIRED`; no public backend is
+created. Existing production web identity and Tunnel inputs are preserved.
+Neither successful setup nor an external-identity configuration receipt proves
+that a new route/login was commissioned.
+
+The private gateway CA is not globally installed. Retain its public fingerprint
+with SSH host verification and use a dedicated browser trust context. Basic
+credentials can remain in the browser cache. Use `configure --remove-user USER`
+to revoke, or `configure --reader USER` / `configure --operator USER` to add or
+change a local role. At least one operator must remain. Validated access
+configuration recreates the backend and gateway, so subsequent
+requests are denied. Protect the root-only credential handoff. No password-reset
+endpoint or root-capable browser settings are exposed. The certificate health
+timer checks actual local TLS with explicit trust, publishes expiry/failure and
+next action, and grants no acquisition authority. Own-domain certificates use
+the system public trust store; controlled-ACME test receipts use separate test
+trust and are not public commissioning evidence.
+
+### Backup changes and replacement-server restore
+
+`backup --backup-mode none` disables the dedicated schedule and reports
+UNPROTECTED, retaining all generations. For an encrypted local checkpoint use
+`--backup-mode local --recipient-file ABSOLUTE_PUBLIC_RECIPIENT_FILE
+--recovery-key ABSOLUTE_SEPARATELY_HELD_KEY`. For independent SFTP add
+`--backup-mode sftp --secondary-host HOST --secondary-port 22
+--known-hosts-file ABSOLUTE_PINNED_HOST_KEYS --upload-key-file ABSOLUTE_ROOT_ONLY_KEY`.
+Recipient and destination files are inputs obtained over an authenticated channel,
+not configuration files to edit. SFTP prerequisites are an independent bounded
+destination with restricted upload access and a separately held root recovery key.
+The primary never receives that private key for routine backup. A candidate stays
+uncommitted until its exact ciphertext has a real decrypt/replay proof; SFTP proof
+is fetched from the destination's protected restore receipt. Failed B leaves A
+active; successful B permits retention on B without deleting A's retained files.
+Local encrypted checkpoints do not establish independent-host protection.
+
+Existing `backup.json`/upload credentials/generations are recognized on first
+guided maintenance and preserved, with the backup executable promoted to the
+verified release. The prior proof is labeled retained/reverification required;
+fresh backup/restore receipts establish protection for that release.
+
+On a clean replacement, use the same release's `restore` entry with normal
+private/profile options plus `--archive ABSOLUTE_GENERATION --recovery-key
+ABSOLUTE_SEPARATELY_HELD_KEY`. It verifies/decrypts/replays before importing any
+financial data, retains report/export identities and consumed authority, and
+fences worker restart. Existing command, financial or report state is refused
+before replacement writes. An interrupted import retains staging and a fence;
+inspect the receipt and finish or recover into another clean root rather than
+overwriting partial evidence. Lost-primary recovery needs the independently
+retained release manifest/image, SSH access, key and identity-recovery procedure;
+a key solely inside its own encrypted backup is unusable. Do not restore web
+credentials from an unverified primary. Use generated replacement credentials
+and a separately verified public CA, or separately commission the owner's route.
+Fence the old primary and reconcile newest authority before any future resume.
 
 Download release assets directly on each host. Verify `manifest.json`, the image
 archive SHA-256 and the bootstrap script SHA-256 against that release before running:
@@ -74,6 +206,13 @@ Successful receipts are cached in `cohort-revalidation.json` beside authority
 (or protected `cohort_refresh` configuration), binding code/original cohort.
 Retries are finite and charged; incomplete or insufficient evidence cannot advance
 financial watermarks or replace a cohort. No admission carries across releases.
+
+An already DRAINING session does not revalidate entry eligibility or spend its
+closure reserve on cohort rediscovery. It retains the admitted identities and
+uses the existing complete-source/current-market close-only path. Stale cohort
+eligibility cannot admit new exposure. STOP, admission/policy expiry, absolute
+request/byte and window ceilings still apply; missing or ambiguous closure
+evidence retains inventory and uncertainty. Restart never replenishes authority.
 
 The financial session has no daily time reset. Event/storage ceilings and explicit
 drain/finalize remain enforced with open inventory and pending observations.
@@ -199,7 +338,10 @@ bounded daily host job; Docker performs coordinated SQLite Backup API snapshots
 under the worker lock with network disabled, then age encrypts to the public
 recipient. The upload uses a partial name and atomic rename. Retain two completed
 ciphertext generations, each at most 512 MiB; stage and restore within the remaining
-allocation and preserve at least 8 GiB on the host. Plaintext includes release,
+allocation and preserve at least 8 GiB on the host. Backup/restore preflight
+additionally reserves 1 GiB for bounded plaintext/ciphertext staging; failure
+occurs before snapshot/decryption. Destination configuration history is bounded
+to 64 distinct retained checkpoints and fails explicitly when full. Plaintext includes release,
 configuration, original policy, counters/STOP, financial data, cohort and provider
 provenance. It never includes the recovery or upload private key.
 

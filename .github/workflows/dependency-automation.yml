@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
       - id: evaluate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,7 +78,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
           cache: pip
           cache-dependency-path: locks/requirements-dev-py314.txt
       - run: |
@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
       - uses: actions/download-artifact@v8
         with:
           name: polysia-lock-sync
@@ -231,7 +231,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
           cache: pip
           cache-dependency-path: locks/requirements-dev-py314.txt
       - run: |
@@ -288,7 +288,7 @@ jobs:
           path: ${{ runner.temp }}/scheduled-locks
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.14.8"
       - if: steps.capability.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}

@@ -43,7 +43,7 @@ def test_runtime_lock_excludes_development_tools_and_local_project() -> None:
     assert "polymarket-client" in runtime
     assert development["polymarket-client"] == runtime["polymarket-client"]
     assert not shared_pin_conflicts(runtime, development)
-    assert development["pip-tools"] == "7.6.1"
+    assert development["pip-tools"] == "7.6.2"
 
 
 def test_committed_locks_are_deterministic() -> None:

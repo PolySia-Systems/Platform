@@ -34,13 +34,20 @@ def installed_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(Path, "read_text", read)
     manifest = tmp_path / "policy.json"
-    manifest.write_text(json.dumps(replace(policy(), host=socket.gethostname(),
-                                          cadence_seconds=300).to_dict()))
-    value = {"database": str(tmp_path / "financial.sqlite3"), "release_commit": "a" * 40,
-             "manifest": str(manifest), "authority": str(tmp_path / "authority.sqlite3"),
-             "commands": str(tmp_path / "commands.sqlite3"),
-             "status": str(tmp_path / "status.json"), "cohort": str(tmp_path / "cohort.json"),
-             "acquisition_enabled": False, "admission": {"mode": "CONTINUOUS"}}
+    manifest.write_text(
+        json.dumps(replace(policy(), host=socket.gethostname(), cadence_seconds=300).to_dict())
+    )
+    value = {
+        "database": str(tmp_path / "financial.sqlite3"),
+        "release_commit": "a" * 40,
+        "manifest": str(manifest),
+        "authority": str(tmp_path / "authority.sqlite3"),
+        "commands": str(tmp_path / "commands.sqlite3"),
+        "status": str(tmp_path / "status.json"),
+        "cohort": str(tmp_path / "cohort.json"),
+        "acquisition_enabled": False,
+        "admission": {"mode": "CONTINUOUS"},
+    }
     config = tmp_path / "worker.json"
     config.write_text(json.dumps(value))
     authority = AcquisitionAuthority(Path(value["authority"]), worker.load_policy(manifest))
@@ -53,12 +60,24 @@ def installed_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_stop_bypasses_long_deferred_queue_and_fences_old_resume(installed_worker):
     config, value, clock, authority, commands = installed_worker
     for revision in range(65):
-        commands.submit(subject="owner", action="drain", expected_revision=revision,
-                        idempotency_key=f"queued-drain-{revision:016d}")
-    commands.submit(subject="owner", action="resume", expected_revision=65,
-                    idempotency_key="stale-resume-before-stop")
-    commands.submit(subject="owner", action="stop", expected_revision=66,
-                    idempotency_key="urgent-stop-after-backlog")
+        commands.submit(
+            subject="owner",
+            action="drain",
+            expected_revision=revision,
+            idempotency_key=f"queued-drain-{revision:016d}",
+        )
+    commands.submit(
+        subject="owner",
+        action="resume",
+        expected_revision=65,
+        idempotency_key="stale-resume-before-stop",
+    )
+    commands.submit(
+        subject="owner",
+        action="stop",
+        expected_revision=66,
+        idempotency_key="urgent-stop-after-backlog",
+    )
     first = worker.worker_tick(config)
     assert first["status"] == "STOPPED"
     assert authority.status()["stopped"] is True
@@ -70,8 +89,122 @@ def test_stop_bypasses_long_deferred_queue_and_fences_old_resume(installed_worke
     assert not Path(value["database"]).exists()
 
 
+@pytest.mark.parametrize("fault", ["missing", "empty", "missing_authority_row"])
+def test_worker_never_reinitializes_lost_or_incomplete_authority(installed_worker, fault):
+    import sqlite3
+
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    config, value, _, _, _ = installed_worker
+    root = config.parent
+    path = Path(value["authority"])
+    if fault == "missing":
+        path.rename(root / "retained-authority.sqlite3")
+    elif fault == "empty":
+        path.write_bytes(b"")
+    else:
+        with sqlite3.connect(path) as connection:
+            connection.execute("DELETE FROM authority")
+    with pytest.raises(AcquisitionBlockedError, match="do_not_reinitialize"):
+        worker.worker_tick(config)
+    if fault == "missing":
+        assert not path.exists()
+    elif fault == "empty":
+        assert path.stat().st_size == 0
+    else:
+        with sqlite3.connect(path) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM authority").fetchone() == (0,)
+
+
+def test_protected_stop_does_not_recreate_missing_authority(installed_worker):
+    config, value, _, authority, _ = installed_worker
+    retained = authority.status()
+    path = Path(value["authority"])
+    saved = path.with_name("retained-authority.sqlite3")
+    path.rename(saved)
+    with pytest.raises(ValueError, match="retained authority is missing"):
+        worker.platform_stop(config)
+    assert not path.exists()
+    assert (
+        AcquisitionAuthority(saved, worker.load_policy(Path(value["manifest"]))).status()
+        == retained
+    )
+
+
+@pytest.mark.parametrize("fault", ["missing", "empty"])
+def test_lost_command_store_blocks_worker_and_cannot_restart_receipt_identity(
+    installed_worker,
+    fault,
+):
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    config, value, _, authority, commands = installed_worker
+    commands.submit(
+        subject="owner",
+        action="stop",
+        expected_revision=0,
+        idempotency_key="pending-stop-before-queue-loss",
+    )
+    path = Path(value["commands"])
+    path.rename(path.with_name("retained-commands.sqlite3"))
+    if fault == "empty":
+        path.write_bytes(b"")
+    before = authority.status()
+    with pytest.raises(AcquisitionBlockedError, match="retained_command_store"):
+        worker.worker_tick(config)
+    assert authority.status() == before
+    with pytest.raises(AcquisitionBlockedError, match="retained_command_store"):
+        worker.platform_stop(config)
+    assert authority.status() == {**before, "stopped": True}
+    assert not path.exists() if fault == "missing" else path.stat().st_size == 0
+
+
+def test_protected_stop_persists_before_command_store_failure(installed_worker, monkeypatch):
+    import sqlite3
+
+    config, _, _, authority, _ = installed_worker
+    charged = authority.status()
+
+    def unavailable(store):
+        raise sqlite3.OperationalError("fixture command store is read-only")
+
+    monkeypatch.setattr(ConsoleCommandStore, "initialize", unavailable)
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    with pytest.raises(AcquisitionBlockedError, match="retained_command_store_invalid"):
+        worker.platform_stop(config)
+    assert authority.status() == {**charged, "stopped": True}
+
+
+def test_unconfigured_report_request_finishes_explicitly_without_financial_or_authority_state(
+    installed_worker,
+):
+    config, value, _, _, commands = installed_worker
+    value.update(
+        installation_state="UNCONFIGURED",
+        admission={},
+        database=str(config.parent / "fresh-financial.sqlite3"),
+        authority=str(config.parent / "fresh-authority.sqlite3"),
+    )
+    config.write_text(json.dumps(value))
+    commands.submit(
+        subject="fixture-owner",
+        action="export",
+        expected_revision=0,
+        idempotency_key="fresh-install-report-request",
+    )
+    assert worker.worker_tick(config)["status"] == "UNCONFIGURED"
+    assert commands.pending() == []
+    receipt = commands.status()["receipts"][0]
+    assert receipt["status"] == "BLOCKED"
+    assert receipt["result"]["reason"] == "no_retained_financial_report"
+    assert not Path(value["database"]).exists()
+    assert not Path(value["authority"]).exists()
+
+
 def test_due_checkpoint_survives_restart_and_crash_without_delaying_stop(
-    installed_worker, monkeypatch: pytest.MonkeyPatch,
+    installed_worker,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     config, value, clock, authority, commands = installed_worker
     value["acquisition_enabled"] = True
@@ -89,8 +222,12 @@ def test_due_checkpoint_survives_restart_and_crash_without_delaying_stop(
     assert result["last_poll_started_at"] == NOW.isoformat()
     clock.value = NOW + timedelta(seconds=299)
     assert worker.worker_tick(config)["status"] == "WAITING_CADENCE"
-    commands.submit(subject="owner", action="stop", expected_revision=0,
-                    idempotency_key="stop-during-cadence-wait")
+    commands.submit(
+        subject="owner",
+        action="stop",
+        expected_revision=0,
+        idempotency_key="stop-during-cadence-wait",
+    )
     assert worker.worker_tick(config)["status"] == "STOPPED"
     assert authority.status()["requests_charged"] == 0
 
@@ -99,10 +236,14 @@ def test_clock_regression_blocks_before_source_access(installed_worker):
     config, value, clock, authority, commands = installed_worker
     value["acquisition_enabled"] = True
     config.write_text(json.dumps(value))
-    Path(value["status"]).write_text(json.dumps({
-        "last_poll_started_at": (NOW + timedelta(seconds=10)).isoformat(),
-        "next_due_at": (NOW + timedelta(seconds=310)).isoformat(),
-    }))
+    Path(value["status"]).write_text(
+        json.dumps(
+            {
+                "last_poll_started_at": (NOW + timedelta(seconds=10)).isoformat(),
+                "next_due_at": (NOW + timedelta(seconds=310)).isoformat(),
+            }
+        )
+    )
     result = worker.worker_tick(config)
     assert result["reason"] == "worker_clock_regressed"
     assert authority.status()["stopped"] is True
@@ -110,7 +251,8 @@ def test_clock_regression_blocks_before_source_access(installed_worker):
 
 
 def test_retry_count_survives_cadence_wait_and_stops_after_three_attempts(
-    installed_worker, monkeypatch: pytest.MonkeyPatch,
+    installed_worker,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     from polysia.storage.acquisition_authority import AcquisitionBlockedError
 

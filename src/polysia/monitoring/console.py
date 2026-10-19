@@ -71,6 +71,7 @@ class ConsoleApplication:
         verify: Callable[[str], tuple[str, str]],
         commands: ConsoleCommandStore,
         csrf_secret: bytes,
+        identity_header: str = "HTTP_CF_ACCESS_JWT_ASSERTION",
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -89,6 +90,10 @@ class ConsoleApplication:
             raise ValueError("HTTPS origin and protected CSRF secret are required")
         self._publication, self._origin, self._verify = publication, origin, verify
         self._commands, self._csrf_secret = commands, csrf_secret
+        if identity_header not in {"HTTP_CF_ACCESS_JWT_ASSERTION", "HTTP_X_POLYSIA_USER"}:
+            raise ValueError("unsupported identity boundary")
+        self._identity_header = identity_header
+        self._host = parsed.netloc
         self._cache_key: tuple[int, int] | None = None
         self._cache: dict[str, Any] = {}
 
@@ -115,11 +120,15 @@ class ConsoleApplication:
             return [body]
 
         try:
-            subject, role = self._verify(str(environ.get("HTTP_CF_ACCESS_JWT_ASSERTION", "")))
+            subject, role = self._verify(str(environ.get(self._identity_header, "")))
         except jwt.PyJWKClientConnectionError:
             return respond("503 Service Unavailable", {"reason": "identity_service_unavailable"})
         except ValueError, jwt.PyJWTError, OSError:
             return respond("403 Forbidden", {"reason": "identity_required"})
+        if environ.get("HTTP_HOST") != self._host:
+            return respond("403 Forbidden", {"reason": "host_invalid"})
+        if environ.get("HTTP_ORIGIN") not in {None, "", self._origin}:
+            return respond("403 Forbidden", {"reason": "origin_invalid"})
         method, path = environ.get("REQUEST_METHOD"), environ.get("PATH_INFO")
         if method not in {"GET", "POST"}:
             return respond("405 Method Not Allowed", {"reason": "unsupported_method"})
@@ -180,7 +189,10 @@ class ConsoleApplication:
             asset = Path(__file__).with_name("console_assets") / path.removeprefix("/")
             media = "text/css" if path.endswith("css") else "text/javascript"
             return respond("200 OK", asset.read_text(encoding="utf-8"), media=media)
-        if path == "/":
+        if path == "/api/demo":
+            demo = Path(__file__).with_name("console_assets") / "demo.json"
+            return respond("200 OK", json.loads(demo.read_text(encoding="utf-8")))
+        if path in {"/", "/demo"}:
             csrf = self._csrf(subject)
             headers.append(
                 (
@@ -196,7 +208,8 @@ class ConsoleApplication:
                     encoding="utf-8",
                 )
                 .replace("{{csrf}}", html.escape(csrf, quote=True))
-                .replace("{{role}}", role)
+                .replace("{{role}}", "reader" if path == "/demo" else role)
+                .replace("{{dataset_mode}}", "demo" if path == "/demo" else "retained")
             )
             return respond("200 OK", document, media="text/html; charset=utf-8")
         if isinstance(path, str) and re.fullmatch(r"/reports/[a-f0-9]{64}\.json", path):
