@@ -160,3 +160,58 @@ def test_independent_container_stop_runs_even_when_supervision_times_out(tmp_pat
     assert calls[-1] == ["docker", "stop", "-t", "5", "polysia-platform-worker"]
     assert result["durable_authority_stop"] == "NO_AUTHORITY_CONFIGURED"
     assert result["status"] == "OS_WORKER_FENCED"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux administrative entry")
+def test_stage_records_refused_activation_without_changing_active_roots(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    config = tmp_path / "active-config"
+    monkeypatch.setattr(core, "CONFIG_ROOT", config)
+    monkeypatch.setattr(admin, "load_core", lambda args: core)
+    monkeypatch.setattr(admin, "preflight", lambda value: None)
+    monkeypatch.setattr(
+        core,
+        "verify_artifact",
+        lambda directory, commit: {
+            "commit": commit,
+            "archive_sha256": "c" * 64,
+            "image_id": "sha256:" + "d" * 64,
+        },
+    )
+    monkeypatch.setattr(core, "archive_image_ids", lambda *args: ())
+
+    def refuse(commit):
+        raise ValueError("open inventory or pending observations require retained executable")
+
+    def never_activate(*args, **kwargs):
+        raise AssertionError("staging may not invoke Docker, services or configuration activation")
+
+    monkeypatch.setattr(core, "activation_preflight", refuse)
+    monkeypatch.setattr(core, "run", never_activate)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "platform_admin.py",
+            "stage",
+            "--noninteractive",
+            "--profile",
+            "private",
+            "--commit",
+            "b" * 40,
+            "--artifact-directory",
+            str(artifact),
+        ],
+    )
+    admin.main()
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["activation"]["status"] == "REFUSED"
+    assert receipt["image_loaded"] is False
+    assert receipt["status"] == "VERIFIED_DOWNLOAD_ONLY"
+    assert json.loads((artifact / "staging-receipt.json").read_text()) == receipt
+    assert not config.exists()

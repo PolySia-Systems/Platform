@@ -81,6 +81,10 @@ same exact release. A retained fence is not cleared by an install/update. Rollba
 restores compatible configuration and leaves a stopped, inspectable worker; it
 does not downgrade a database or erase newer observations. Open inventory,
 pending observations and active persistent sessions refuse code activation.
+`preflight` reports that refusal with a nonzero exit. `stage` downloads and
+verifies the exact archive/scripts and image metadata without loading a Docker
+image or changing active configuration, units or data. Its durable staging
+receipt records activation eligibility separately; it is not a deployment claim.
 
 A new Cloudflare installation supplies `--access-issuer`, `--access-audience`
 and `--access-owner` (or answers the guided prompts). Those configure only the

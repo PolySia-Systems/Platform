@@ -1204,6 +1204,7 @@ def main() -> None:
             "install",
             "configure",
             "update",
+            "stage",
             "rollback",
             "restore",
             "preflight",
@@ -1334,6 +1335,21 @@ def main() -> None:
     )
     preflight(value)
     if args.action == "preflight":
+        try:
+            core.activation_preflight(value["commit"])
+        except ValueError as error:
+            print(
+                json.dumps(
+                    {
+                        "status": "ACTIVATION_REFUSED",
+                        "reason": str(error),
+                        "active_data": "UNCHANGED",
+                        "next_action": "Stage the exact release; retain the active executable "
+                        "and reconcile.",
+                    }
+                )
+            )
+            raise SystemExit(1) from None
         print(json.dumps({"status": "PREFLIGHT_PASSED", "configuration": value}))
         return
     local = Path(__file__).resolve().parent
@@ -1342,6 +1358,27 @@ def main() -> None:
         if (local / "polysia-image.tar.gz").is_file()
         else fetch_release(args.tag, value["commit"])
     )
+    if args.action == "stage":
+        manifest = core.verify_artifact(directory, commit=value["commit"])
+        core.archive_image_ids(directory, manifest)
+        try:
+            core.activation_preflight(value["commit"])
+            activation = {"status": "PREFLIGHT_PASSED"}
+        except ValueError as error:
+            activation = {"status": "REFUSED", "reason": str(error)}
+        receipt = {
+            "status": "VERIFIED_DOWNLOAD_ONLY",
+            "commit": value["commit"],
+            "archive_sha256": manifest["archive_sha256"],
+            "image_id": manifest["image_id"],
+            "activation": activation,
+            "active_configuration_and_data": "UNCHANGED",
+            "image_loaded": False,
+            "acquisition_enabled": False,
+        }
+        atomic(directory / "staging-receipt.json", receipt)
+        print(json.dumps(receipt, sort_keys=True))
+        return
     core.activation_preflight(value["commit"])
     checkpoint_file = core.CONFIG_ROOT / "rollback-checkpoint.json"
     checkpoint = (

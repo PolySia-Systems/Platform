@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import secrets
+import socket
 import shutil
 import ssl
 import subprocess
@@ -206,6 +207,7 @@ def main() -> None:
     (root / "upload-key").touch(mode=0o600)
     (root / "upload-key").unlink()
     run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / "upload-key"))
+    (root / "upload-key").chmod(0o600)
     units = []
     destinations = {}
     release = args.artifact_directory.resolve()
@@ -258,6 +260,8 @@ def main() -> None:
         ).strip()
         (server / "recipient").write_text(public)
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(server / "keys/host-key"))
+        for name in ("recovery-key", "host-key"):
+            (server / "keys" / name).chmod(0o600)
         (server / "authorized-key").write_bytes((root / "upload-key.pub").read_bytes())
         (server / "authorized-key").chmod(0o644)
         (server / "known-hosts").write_text(
@@ -296,6 +300,15 @@ def main() -> None:
             str(sshd_config),
         )
         units.append(unit)
+        ready = time.monotonic() + 10
+        while True:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    break
+            except OSError:
+                if time.monotonic() >= ready:
+                    raise ValueError("disposable SFTP listener did not start") from None
+                time.sleep(0.1)
         trusted = server / "trusted"
         trusted.mkdir(mode=0o700)
         shutil.copy2(release / "manifest.json", trusted / "manifest.json")
