@@ -32,8 +32,7 @@ class PolymarketMarketMapper:
             accepting_orders=getattr(state, "accepting_orders", None),
             end_date=getattr(state, "end_date", None),
             liquidity=(
-                getattr(metrics, "liquidity_num", None)
-                or getattr(metrics, "liquidity", None)
+                getattr(metrics, "liquidity_num", None) or getattr(metrics, "liquidity", None)
             ),
             volume=getattr(metrics, "volume_num", None) or getattr(metrics, "volume", None),
             best_bid=getattr(prices, "best_bid", None),
@@ -76,8 +75,8 @@ class PolymarketMarketMapper:
 
     def to_order_book(self, book: Any) -> MarketOrderBookSnapshot:
         return MarketOrderBookSnapshot(
-            token_id=str(book.token_id),
-            market_id=self.optional_str(getattr(book, "market", None)),
+            token_id=str(book.asset_id),
+            market_id=self.optional_str(getattr(book, "condition_id", None)),
             timestamp=self.to_datetime(getattr(book, "timestamp", None)),
             bids=self.to_levels(getattr(book, "bids", ())),
             asks=self.to_levels(getattr(book, "asks", ())),

@@ -29,7 +29,7 @@ from scripts.dependency_policy import (
 def test_sdk_approval_pins_match_pyproject() -> None:
     declared = declared_sdk_version()
     approved = approved_sdk_versions()
-    assert declared == "0.7.1"
+    assert declared == "0.13.0"
     assert assert_sdk_pins_synchronized() == declared
     assert set(approved.values()) == {declared}
 

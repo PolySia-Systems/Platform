@@ -108,7 +108,7 @@ def test_sdk_declaration_cannot_trigger_unreviewed_lock_generation(monkeypatch):
     original = (ROOT / "pyproject.toml").read_text()
     monkeypatch.setattr(dependency_locks, "_git_text", lambda _repo, ref, _path:
                         original if ref == "a" * 40 else original.replace(
-                            "polymarket-client==0.7.1", "polymarket-client==0.13.0"))
+                            "polymarket-client==0.13.0", "polymarket-client==0.14.0"))
     decision = dependency_locks.evaluate_lock_sync(
         repository="PolySia-Systems/Platform", number=169, actor="dependabot[bot]",
         base_branch="main", head_branch="dependabot/pip/test", base_sha="a" * 40,

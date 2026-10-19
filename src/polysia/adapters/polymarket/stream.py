@@ -79,7 +79,7 @@ def normalize_market_event(
             MarketDataEvent(
                 source="polymarket",
                 event_type=event_type,
-                token_id=str(change.token_id),
+                token_id=str(change.asset_id),
                 received_at=received,
                 exchange_ts=exchange_ts,
                 payload={
@@ -185,7 +185,7 @@ class MarketStream:
         async with self._client_factory() as client:
             stream = await client.subscribe(
                 MarketSpec(
-                    token_ids=self._config.token_ids,
+                    asset_ids=self._config.token_ids,
                     custom_feature_enabled=self._config.custom_feature_enabled,
                 )
             )
@@ -265,12 +265,12 @@ def _optional_str(value: object) -> str | None:
 
 
 def _extract_token_id(payload: Any) -> str:
-    for attribute in ("token_id", "winning_token_id"):
+    for attribute in ("asset_id", "winning_asset_id"):
         token_id = _optional_str(getattr(payload, attribute, None))
         if token_id is not None:
             return token_id
 
-    for attribute in ("token_ids", "clob_token_ids"):
+    for attribute in ("asset_ids", "clob_token_ids"):
         token_ids = getattr(payload, attribute, None)
         if token_ids:
             return str(token_ids[0])

@@ -16,6 +16,7 @@ def manifest(
     image_id: str,
     commit: str,
     os_packages: Path | None = None,
+    runtime_packages: Path | None = None,
 ) -> dict[str, object]:
     if re.fullmatch(r"[a-f0-9]{40}", commit) is None:
         raise ValueError("release requires exact source commit")
@@ -26,6 +27,26 @@ def manifest(
     with Path("deploy/platform_bootstrap.py").open("rb") as stream:
         bootstrap_digest = hashlib.file_digest(stream, "sha256").hexdigest()
     inventory_digest = None
+    dependencies = None
+    if runtime_packages is not None:
+        observed = json.loads(runtime_packages.read_text(encoding="utf-8"))
+        pins = dict(
+            line.strip().split("==", 1)
+            for line in Path("locks/requirements-runtime-py314.txt").read_text().splitlines()
+            if "==" in line and not line.startswith("#")
+        )
+        names = (
+            "polymarket-client",
+            "pydantic",
+            "pydantic-core",
+            "pydantic-settings",
+            "websockets",
+        )
+        dependencies = {name: pins[name] for name in names}
+        if observed != {"python": "3.14.8", "packages": dependencies}:
+            raise ValueError(
+                "built image Python/dependencies differ from the reviewed runtime locks"
+            )
     if os_packages is not None:
         if "age\t1.2.1-1+b5" not in os_packages.read_text(encoding="utf-8"):
             raise ValueError("encryption runtime differs from its reviewed pin")
@@ -45,6 +66,7 @@ def manifest(
         "os_packages_sha256": inventory_digest,
         "python": ">=3.14,<3.15",
         "python_patch": "3.14.8",
+        "runtime_packages": dependencies,
         "version": tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"],
         "configuration_schema": "platform-installation/v1",
         "financial_schema": 9,
@@ -61,12 +83,14 @@ def main() -> None:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--os-packages-file", required=True, type=Path)
+    parser.add_argument("--runtime-packages-file", required=True, type=Path)
     args = parser.parse_args()
     result = manifest(
         args.image,
         image_id=args.image_id_file.read_text().strip(),
         commit=args.commit,
         os_packages=args.os_packages_file,
+        runtime_packages=args.runtime_packages_file,
     )
     args.output.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 

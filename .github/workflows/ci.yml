@@ -244,7 +244,8 @@ jobs:
           docker save polysia:ci | gzip > release-image/polysia-image.tar.gz
           docker image inspect polysia:ci --format '{{.Id}}' > release-image/image-id.txt
           docker run --rm --network none --entrypoint dpkg-query polysia:ci -W age libc6 > release-image/os-packages.txt
-          python scripts/release_manifest.py --image release-image/polysia-image.tar.gz --image-id-file release-image/image-id.txt --commit "$GITHUB_SHA" --output release-image/manifest.json --os-packages-file release-image/os-packages.txt
+          docker run --rm --network none --entrypoint python polysia:ci -c 'import importlib.metadata as m,json,platform; print(json.dumps({"python":platform.python_version(),"packages":{n:m.version(n) for n in ("polymarket-client","pydantic","pydantic-core","pydantic-settings","websockets")}},sort_keys=True))' > release-image/runtime-packages.json
+          python scripts/release_manifest.py --image release-image/polysia-image.tar.gz --image-id-file release-image/image-id.txt --commit "$GITHUB_SHA" --output release-image/manifest.json --os-packages-file release-image/os-packages.txt --runtime-packages-file release-image/runtime-packages.json
       - uses: actions/upload-artifact@v7
         with:
           name: polysia-release-image

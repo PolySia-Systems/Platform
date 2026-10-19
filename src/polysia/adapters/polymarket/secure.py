@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Any, Literal, Protocol, cast
 
@@ -30,6 +31,7 @@ from polysia.application.ports.cancellation import (
 )
 from polysia.config.structured_logging import get_logger
 from polysia.domain.market import VenueCapabilityProfile
+from polysia.domain.portfolio.models import AccountPosition
 
 OrderSide = Literal["BUY", "SELL"]
 MarketOrderType = Literal["FAK", "FOK"]
@@ -235,8 +237,8 @@ class PolymarketSecureAdapter:
         client = self._require_client()
 
         async def read() -> list[Any]:
-            paginator = client.list_open_orders(token_id=token_id, id=order_id, market=market)
-            return [order async for order in paginator.iter_items()]
+            paginator = client.list_open_orders(asset_id=token_id, id=order_id, market=market)
+            return await _complete_account_items(paginator)
 
         try:
             return await self._run_read("get_open_orders", read)
@@ -336,6 +338,8 @@ class PolymarketSecureAdapter:
                 trade_id = _required_text(trade, "id")
                 status = _required_text(trade, "status").upper()
                 if _optional_text(_field(trade, "taker_order_id")) == order_id:
+                    if _required_text(trade, "asset_id") != token_id:
+                        raise ValueError("trade asset differs from the requested outcome token")
                     evidence.append(
                         OrderTradeEvidence(
                             evidence_id=f"{trade_id}:taker",
@@ -349,6 +353,8 @@ class PolymarketSecureAdapter:
                 for index, maker in enumerate(_object_sequence(_field(trade, "maker_orders"))):
                     if _optional_text(_field(maker, "order_id")) != order_id:
                         continue
+                    if _required_text(maker, "asset_id") != token_id:
+                        raise ValueError("maker asset differs from the requested outcome token")
                     evidence.append(
                         OrderTradeEvidence(
                             evidence_id=f"{trade_id}:maker:{index}",
@@ -411,7 +417,7 @@ class PolymarketSecureAdapter:
         client = self._require_client()
 
         async def read() -> Any:
-            return await client.get_order_book(token_id=token_id)
+            return await client.get_order_book(asset_id=token_id)
 
         try:
             return await self._run_read("get_order_book", read)
@@ -435,7 +441,7 @@ class PolymarketSecureAdapter:
         async def read() -> Any:
             return await client.get_balance_allowance(
                 asset_type=asset_type,
-                token_id=token_id,
+                asset_id=token_id,
             )
 
         try:
@@ -453,14 +459,30 @@ class PolymarketSecureAdapter:
         self,
         *,
         market: tuple[str, ...] | None = None,
-        size_threshold: float | None = None,
-    ) -> list[Any]:
-        """Return all account positions without exposing wallet identifiers."""
-        client = self._require_client()
+        size_threshold: Decimal | float | None = None,
+    ) -> list[AccountPosition]:
+        """Return retained current inventory; apply the share minimum with Decimal.
 
-        async def read() -> list[Any]:
-            paginator = client.list_positions(market=market, size_threshold=size_threshold)
-            return [position async for position in paginator.iter_items()]
+        The SDK's token filter only disables server dust filtering. A positive
+        Platform minimum is evaluated locally after the complete cursor walk,
+        never interpreted as cash value or the position's historical total size.
+        """
+        client = self._require_client()
+        minimum = Decimal("0") if size_threshold is None else Decimal(str(size_threshold))
+        if not minimum.is_finite() or minimum < 0:
+            raise ValueError("position size threshold must be finite and nonnegative")
+
+        async def read() -> list[AccountPosition]:
+            paginator = client.list_positions(
+                condition_id=market,
+                include_archived=True,
+                filter_type="TOKENS",
+                filter_amount=0,
+            )
+            positions = [
+                _account_position(position) for position in await _complete_account_items(paginator)
+            ]
+            return [position for position in positions if position.size >= minimum]
 
         try:
             return await self._run_read("list_positions", read)
@@ -469,6 +491,10 @@ class PolymarketSecureAdapter:
                 "list_positions",
                 "Could not fetch Polymarket positions.",
                 error,
+            ) from error
+        except (TypeError, ValueError) as error:
+            raise PolymarketSecureAdapterError(
+                "Polymarket position evidence was malformed."
             ) from error
 
     async def list_account_trades(
@@ -481,8 +507,8 @@ class PolymarketSecureAdapter:
         client = self._require_client()
 
         async def read() -> list[Any]:
-            paginator = client.list_account_trades(token_id=token_id, market=market)
-            return [trade async for trade in paginator.iter_items()]
+            paginator = client.list_account_trades(asset_id=token_id, market=market)
+            return await _complete_account_items(paginator)
 
         try:
             return await self._run_read("list_account_trades", read)
@@ -544,7 +570,7 @@ class PolymarketSecureAdapter:
         """Cancel authenticated orders for one market or token."""
         client = self._require_client()
         try:
-            return await client.cancel_market_orders(market=market, token_id=token_id)
+            return await client.cancel_market_orders(market=market, asset_id=token_id)
         except PolymarketError as error:
             raise self._adapter_error(
                 "cancel_market_orders",
@@ -588,7 +614,7 @@ class PolymarketSecureAdapter:
         client = self._require_client()
         try:
             return await client.place_limit_order(
-                token_id=token_id,
+                asset_id=token_id,
                 side=side,
                 price=price,
                 size=size,
@@ -629,7 +655,7 @@ class PolymarketSecureAdapter:
         client = self._require_client()
         try:
             return await client.create_limit_order(
-                token_id=token_id,
+                asset_id=token_id,
                 side=side,
                 price=price,
                 size=size,
@@ -692,7 +718,7 @@ class PolymarketSecureAdapter:
         client = self._require_client()
         try:
             return await client.place_market_order(
-                token_id=token_id,
+                asset_id=token_id,
                 side=side,
                 amount=amount,
                 shares=shares,
@@ -781,9 +807,7 @@ def _validate_market_order_inputs(
         if shares is not None:
             raise PolymarketSecureAdapterError("BUY market order forbids shares.")
         if amount is None and max_spend is None:
-            raise PolymarketSecureAdapterError(
-                "BUY market order requires amount or max_spend."
-            )
+            raise PolymarketSecureAdapterError("BUY market order requires amount or max_spend.")
         if min_price is not None:
             raise PolymarketSecureAdapterError("BUY market order forbids min_price.")
         if max_price is None:
@@ -791,9 +815,7 @@ def _validate_market_order_inputs(
         return
     if side == "SELL":
         if amount is not None or max_spend is not None:
-            raise PolymarketSecureAdapterError(
-                "SELL market order forbids amount and max_spend."
-            )
+            raise PolymarketSecureAdapterError("SELL market order forbids amount and max_spend.")
         if shares is None:
             raise PolymarketSecureAdapterError("SELL market order requires shares.")
         if max_price is not None:
@@ -846,7 +868,7 @@ def _order_evidence(value: object) -> OpenOrderEvidence:
     associated = _object_sequence(_field(value, "associate_trades"))
     return OpenOrderEvidence(
         order_id=_required_text(value, "id"),
-        token_id=_required_text(value, "token_id", alias="asset_id"),
+        token_id=_required_text(value, "asset_id"),
         side=cast(OrderSide, side),
         status=_required_text(value, "status").upper(),
         original_size=_required_decimal(value, "original_size"),
@@ -885,10 +907,8 @@ def _object_sequence(value: object) -> tuple[object, ...]:
     return tuple(value)
 
 
-def _required_text(value: object, name: str, *, alias: str | None = None) -> str:
+def _required_text(value: object, name: str) -> str:
     raw = _field(value, name)
-    if raw is None and alias is not None:
-        raw = _field(value, alias)
     text = _optional_text(raw)
     if text is None:
         raise ValueError(f"{name} is required")
@@ -913,3 +933,59 @@ def _required_decimal(value: object, name: str) -> Decimal:
     if not result.is_finite():
         raise ValueError(f"{name} must be a finite decimal value")
     return result
+
+
+def _account_position(value: object) -> AccountPosition:
+    size = _required_decimal(value, "current_size")
+    if size < 0:
+        raise ValueError("current outcome-token inventory cannot be negative")
+    return AccountPosition(
+        token_id=_required_text(value, "asset_id"),
+        condition_id=_required_text(value, "condition_id"),
+        size=size,
+        avg_price=_optional_position_decimal(value, "avg_price"),
+        current_value=_optional_position_decimal(value, "current_value"),
+        cur_price=_optional_position_decimal(value, "current_price"),
+        outcome=_optional_text(_field(value, "outcome")),
+        redeemable=_optional_position_flag(value, "redeemable"),
+        mergeable=_optional_position_flag(value, "mergeable"),
+        end_date=_position_end_date(value),
+    )
+
+
+async def _complete_account_items(paginator: Any) -> list[Any]:
+    """Never turn an SDK depth limit or repeated cursor into a complete account."""
+    items = []
+    seen = set()
+    async for page in paginator:
+        if page.limit_reached:
+            raise PolymarketSecureAdapterError(
+                "Account pagination reached an incomplete depth limit."
+            )
+        items.extend(page.items)
+        if not page.has_more:
+            return items
+        if not page.next_cursor or page.next_cursor in seen:
+            raise PolymarketSecureAdapterError("Account pagination repeated or omitted its cursor.")
+        seen.add(page.next_cursor)
+        if len(seen) >= 1000:
+            raise PolymarketSecureAdapterError("Account pagination exceeded 1000 pages.")
+    raise PolymarketSecureAdapterError("Account pagination ended without a complete terminal page.")
+
+
+def _optional_position_decimal(value: object, name: str) -> Decimal | None:
+    return None if _field(value, name) is None else _required_decimal(value, name)
+
+
+def _optional_position_flag(value: object, name: str) -> bool | None:
+    flag = _field(value, name)
+    if flag is not None and not isinstance(flag, bool):
+        raise ValueError("position flag must be boolean or unknown")
+    return flag
+
+
+def _position_end_date(value: object) -> date | None:
+    end = _field(value, "end_date")
+    if end is not None and not isinstance(end, date):
+        raise ValueError("position end date must be a calendar date or unknown")
+    return end

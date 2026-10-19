@@ -109,10 +109,12 @@ or secrets. The explicit Windows Conda bootstrap remains available through
 See the [developer entry and change map](docs/03-requirements/developer-context-packet.md#developer-entry).
 
 For a destination server, use the [guided administrative installation](docs/10-operations/independent-platform-shadow.md#release-and-isolated-roots)
-instead of a development environment. [v0.3.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.3.0)
-is the verified engineering release; its assets are staged on both hosts. Primary
-activation is refused while two observations require the retained v0.2.1 executable.
-See the [dated delivery receipt](docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-product-completion-delivery).
+instead of a development environment. The `v0.4.0` SDK-migration candidate and
+fresh disabled installation are tracked in [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
+The owner's server reset supersedes the historical activation blocker; exact
+release and installation evidence belongs in the
+[dated operational record](docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md).
+
 
 Copy `.env.example` to an ignored `.env` only when local overrides are needed.
 Never commit or display the resulting values.
@@ -195,21 +197,21 @@ locks/              Reproducible dependency inputs
 
 ## Authoritative documentation
 
-- [Documentation entrance](docs/README.md) — canonical 30-second map.
-- [Project status](docs/00-governance/PROJECT_STATUS.md) — durable
+- [Documentation entrance](docs/README.md) â€” canonical 30-second map.
+- [Project status](docs/00-governance/PROJECT_STATUS.md) â€” durable
   capabilities, limits, and dated runtime snapshots. Not live host truth.
-- [Master Operating Charter](docs/00-governance/master-operating-charter.md) —
+- [Master Operating Charter](docs/00-governance/master-operating-charter.md) â€”
   approved governance and long-term architecture direction.
-- [Architecture](docs/04-architecture/README.md) — CURRENT/TARGET/FUTURE views
+- [Architecture](docs/04-architecture/README.md) â€” CURRENT/TARGET/FUTURE views
   and traceability.
-- [Operations](docs/10-operations/server-deployment.md) — controlled deployment
+- [Operations](docs/10-operations/server-deployment.md) â€” controlled deployment
   and recovery procedures.
-- [Current evidence index](docs/18-ai-handoffs/README.md) — major operational
+- [Current evidence index](docs/18-ai-handoffs/README.md) â€” major operational
   evidence. Ordinary work resumes from the Issue or PR.
-- [Roadmap](docs/22-roadmap/roadmap.md) — prioritized product and maintenance
+- [Roadmap](docs/22-roadmap/roadmap.md) â€” prioritized product and maintenance
   work.
 - [Standards adoption](standards/adoption.toml) and
-  [conformance](standards/conformance.toml) — selected immutable
+  [conformance](standards/conformance.toml) â€” selected immutable
   `PolySia-Systems/Standards@v0.5.2` profiles.
 
 Historical documents remain evidence of earlier decisions and runs. They are

@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "polysia"
-version = "0.3.0"
+version = "0.4.0"
 description = "Professional prediction-market platform with a Polymarket adapter."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "polymarket-client==0.7.1",
-    "pydantic>=2.13.5,<3",
+    "polymarket-client==0.13.0",
+    "pydantic==2.14.1",
     "pydantic-settings>=2.15.0,<3",
     "python-dotenv>=1.2.3,<2",
     "structlog>=26.1.0,<27",

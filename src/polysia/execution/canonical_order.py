@@ -78,7 +78,7 @@ def canonicalize_market_order(
 ) -> CanonicalMarketOrderRequest:
     """Translate raw intent plus constraints into a side-aware canonical request.
 
-    Transformations must happen here, before Risk approval. Polymarket 0.7.1:
+    Transformations must happen here, before Risk approval. The approved Polymarket SDK:
     BUY uses amount/max_spend spend exposure and max_price protection; SELL uses
     shares quantity exposure and min_price protection.
     """

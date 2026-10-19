@@ -23,7 +23,7 @@ FIXTURE = Path(__file__).with_name("fixtures") / "polymarket_order_cancellation_
 
 
 def test_pinned_polymarket_sdk_version() -> None:
-    assert version("polymarket-client") == "0.7.1"
+    assert version("polymarket-client") == "0.13.0"
 
 
 def test_public_sdk_methods_used_by_adapter_exist() -> None:
@@ -31,7 +31,6 @@ def test_public_sdk_methods_used_by_adapter_exist() -> None:
         "get_market",
         "get_order_books",
         "list_activity",
-        "list_closed_positions",
         "list_markets",
         "list_positions",
         "list_trades",
@@ -40,7 +39,7 @@ def test_public_sdk_methods_used_by_adapter_exist() -> None:
     }
 
     assert required <= set(dir(AsyncPublicClient))
-    assert "token_ids" in inspect.signature(AsyncPublicClient.get_order_books).parameters
+    assert "asset_ids" in inspect.signature(AsyncPublicClient.get_order_books).parameters
 
 
 def test_secure_sdk_methods_used_by_adapter_exist() -> None:
@@ -79,7 +78,7 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
         "min_order_size",
         "tick_size",
         "timestamp",
-        "token_id",
+        "asset_id",
     } <= set(OrderBook.model_fields)
     assert {"allowances", "balance"} <= set(BalanceAllowance.model_fields)
     assert {"making_amount", "ok", "order_id", "status", "taking_amount"} <= set(
@@ -99,7 +98,7 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
         "order_id",
         "price",
         "side",
-        "token_id",
+        "asset_id",
     } <= set(MakerOrder.model_fields)
     assert {
         "id",
@@ -108,11 +107,9 @@ def test_round_trip_sdk_models_preserve_required_contract_fields() -> None:
         "side",
         "size_matched",
         "status",
-        "token_id",
+        "asset_id",
     } <= set(OpenOrder.model_fields)
-    assert {"exponent", "rate", "rebate_rate", "taker_only"} <= set(
-        FeeSchedule.model_fields
-    )
+    assert {"exponent", "rate", "rebate_rate", "taker_only"} <= set(FeeSchedule.model_fields)
     assert {
         "fee_schedule",
         "fees_enabled",
@@ -161,9 +158,7 @@ def test_cancel_orders_response_fixture_preserves_mixed_results() -> None:
 def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
     market_parameters = inspect.signature(AsyncSecureClient.place_market_order).parameters
     limit_parameters = inspect.signature(AsyncSecureClient.place_limit_order).parameters
-    create_limit_parameters = inspect.signature(
-        AsyncSecureClient.create_limit_order
-    ).parameters
+    create_limit_parameters = inspect.signature(AsyncSecureClient.create_limit_order).parameters
     post_parameters = inspect.signature(AsyncSecureClient.post_order).parameters
 
     assert {
@@ -174,17 +169,13 @@ def test_round_trip_order_methods_preserve_bounded_parameters() -> None:
         "order_type",
         "shares",
         "side",
-        "token_id",
+        "asset_id",
     } <= set(market_parameters)
     doc = AsyncSecureClient.place_market_order.__doc__ or ""
     assert "BUY orders use ``amount`` as the spend amount" in doc
     assert "SELL orders use ``shares`` as the" in doc
-    assert {"post_only", "price", "side", "size", "token_id"} <= set(
-        limit_parameters
-    )
-    assert {"post_only", "price", "side", "size", "token_id"} <= set(
-        create_limit_parameters
-    )
+    assert {"post_only", "price", "side", "size", "token_id"} <= set(limit_parameters)
+    assert {"post_only", "price", "side", "size", "token_id"} <= set(create_limit_parameters)
     assert "signed_order" in post_parameters
 
 
@@ -197,7 +188,7 @@ def test_pinned_sdk_gtd_minimum_buffer_contract(
 
     with pytest.raises(UserInputError, match="at least 180 seconds"):
         limit.validate_limit_order_params(
-            token_id="1",
+            asset_id="1",
             price=Decimal("0.50"),
             size=Decimal("5"),
             side="BUY",
@@ -206,7 +197,7 @@ def test_pinned_sdk_gtd_minimum_buffer_contract(
         )
 
     params = limit.validate_limit_order_params(
-        token_id="1",
+        asset_id="1",
         price=Decimal("0.50"),
         size=Decimal("5"),
         side="BUY",

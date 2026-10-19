@@ -104,7 +104,7 @@ from polysia.strategies.btc_15m_favorite_take_profit import (
 
 PREVIOUS_RUN_ID = "tiny-live-copy-20260729T054315Z"
 STRATEGY_ID = "polymarket-copytrading"
-APPROVED_SDK_VERSION = "0.7.1"
+APPROVED_SDK_VERSION = "0.13.0"
 AUTHORIZATION_ID_PREFIX = "POLYSIA-TINY-LIVE-COPY-"
 DRY_RUN_AUTHORIZATION_PREFIX = "DRY-RUN:"
 BASE_UNITS = Decimal("1000000")

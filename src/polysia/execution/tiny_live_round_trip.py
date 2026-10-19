@@ -97,7 +97,7 @@ GitReader = Callable[[Path, tuple[str, ...]], str]
 AUTHORIZATION_ID = "POLYSIA-LIVE-004"
 MAXIMUM_ENTRY_NOTIONAL = Decimal("10.00")
 BASE_UNITS = Decimal("1000000")
-APPROVED_SDK_VERSION = "0.7.1"
+APPROVED_SDK_VERSION = "0.13.0"
 
 
 def utc_now() -> datetime:

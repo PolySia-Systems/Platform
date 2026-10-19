@@ -7,12 +7,14 @@ Historical WI campaigns, roots and authority remain separate and stopped.
 ## Release and isolated roots
 
 The root-only administrative entry is `platform_admin.py`, distributed beside
-the manifest-verified bootstrap in the same exact release. The immutable
-[v0.3.0 release](https://github.com/PolySia-Systems/Platform/releases/tag/v0.3.0)
-passed exact-main installation, gateway and recovery acceptance. The
-[19 October receipt](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-product-completion-delivery)
-records staging and the primary activation refusal. The existing commissioned
-v0.2.1 Cloudflare route remains active with its matching cold recovery executable.
+the manifest-verified bootstrap in the same exact release. The SDK0.13.0 successor
+is tracked in [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
+The owner reset both hosts; the earlier v0.3.0 staging/v0.2.1 runtime receipt is
+historical. Fresh protected private commissioning and a matching independent
+recovery destination use the same shipped lifecycle. The previous two-observation
+blocker is superseded by clean installation; ordinary retained-state gates remain.
+The v0.3.0 download example below identifies the previous immutable release;
+final successor identity/checksum is recorded with its release receipt.
 
 On a supported Ubuntu LTS amd64 server, administrative SSH, Docker/systemd,
 at least 1 GiB available RAM and 8 GiB free staging/rollback space are prerequisites.
@@ -82,8 +84,8 @@ retains their source/archive/config identities, performs the supply-chain checks
 and exercises the installed wheel in a synthetic HTTPS desktop/mobile browser.
 The release workflow promotes the retained assets from a successful full main CI
 run; it does not rebuild them. The verified engineering release is `v0.3.0`;
-the 19 October receipt records it as staged with activation BLOCKED, while
-the existing commissioned executable remains `v0.2.1`;
+the earlier 19 October receipt records historical staging with activation BLOCKED.
+The subsequent owner reset supersedes that installation state;
 `v0.2.0` remains the compatible historical release. Only a dated promotion
 receipt establishes which artifact is installed.
 A full manual main CI run is supported when automatic classification omits a gate.
