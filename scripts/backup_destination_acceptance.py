@@ -158,7 +158,13 @@ def main() -> None:
     from deploy import platform_backup as backup
     from deploy import platform_bootstrap as bootstrap
 
-    root = Path("/opt/polysia-backup-acceptance-" + str(os.getpid()))
+    # GitHub's /opt is writable by its tool-installation identity. Keep SSH's
+    # strict ancestor checks and place this chroot under a protected parent.
+    root = Path("/srv/polysia-backup-acceptance-" + str(os.getpid()))
+    for parent in root.parents:
+        stat = parent.stat()
+        if stat.st_uid != 0 or stat.st_mode & 0o022:
+            raise ValueError("disposable SFTP chroot requires root-owned nonwritable ancestors")
     root.mkdir(mode=0o755)
     primary = root / "primary"
     primary.mkdir(mode=0o755)
