@@ -7,7 +7,7 @@ import pytest
 from scripts.release_manifest import manifest
 
 
-@pytest.mark.parametrize("mismatch", [None, "sdk", "python"])
+@pytest.mark.parametrize("mismatch", [None, "sdk", "python", "settings"])
 def test_release_binds_observed_image_versions_to_the_reviewed_stack(tmp_path, mismatch):
     observed = {
         "python": "3.14.8",
@@ -15,7 +15,7 @@ def test_release_binds_observed_image_versions_to_the_reviewed_stack(tmp_path, m
             "polymarket-client": "0.13.0",
             "pydantic": "2.14.1",
             "pydantic-core": "2.50.1",
-            "pydantic-settings": "2.15.0",
+            "pydantic-settings": "2.16.1",
             "websockets": "15.0.1",
         },
     }
@@ -23,6 +23,8 @@ def test_release_binds_observed_image_versions_to_the_reviewed_stack(tmp_path, m
         observed["packages"]["polymarket-client"] = "0.7.1"
     if mismatch == "python":
         observed["python"] = "3.14.7"
+    if mismatch == "settings":
+        observed["packages"]["pydantic-settings"] = "2.15.0"
     versions = tmp_path / "runtime.json"
     versions.write_text(json.dumps(observed))
     image = tmp_path / "image.tar.gz"
