@@ -50,7 +50,8 @@ would require header/resolver migration and separately authorized App access;
 no demonstrated gate justifies that cost. No alternate pilot or new token.
 
 Dependabot version proposals use disjoint development patch/minor, runtime,
-build-toolchain, venue-SDK and authentication/crypto groups. Development majors
+build-toolchain (including pip/bootstrap), venue-SDK and authentication/crypto
+groups. Development majors
 and security updates remain individual proposals. These are proposal boundaries,
 not permission to merge: the complete resolved delta still determines risk.
 Grouping follows GitHub's [group rules](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#groups);

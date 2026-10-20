@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
     ("hatchling", "development", "patch", "build-toolchain"),
     ("setuptools", "development", "major", "build-toolchain"),
     ("wheel", "production", "patch", "build-toolchain"),
+    ("pip", "development", "patch", "build-toolchain"),
     ("pip-tools", "development", "patch", "build-toolchain"),
     ("polymarket-client", "production", "patch", "venue-sdk"),
     ("PyJWT", "production", "patch", "authentication-crypto"),
