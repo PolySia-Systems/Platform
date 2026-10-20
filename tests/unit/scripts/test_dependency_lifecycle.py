@@ -555,3 +555,20 @@ def test_build_tooling_cannot_enter_low_risk_dev_slice():
         sdk_pin_changed=False,
     )
     assert decision.action == "human_review"
+
+
+def test_targeted_dev_refresh_cannot_introduce_dev_package_into_runtime(proposal, monkeypatch):
+    root, _, _ = proposal
+    with (root / DEV_LOCK).open("a") as stream:
+        stream.write("pip-tools==7.6.2\n")
+    calls = []
+
+    def resolve(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "")
+
+    monkeypatch.setattr(locks, "_run", resolve)
+    locks.generate_pip_locks(root, upgrade=False, upgrade_packages=("hypothesis",))
+    assert "--upgrade-package" not in calls[0]
+    assert calls[1][calls[1].index("--upgrade-package") + 1] == "hypothesis"
+    assert "hypothesis" not in parse_lock_pins((root / RUNTIME_LOCK).read_text())

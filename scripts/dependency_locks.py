@@ -224,6 +224,16 @@ def generate_pip_locks(
         shutil.copyfile(root / LEGACY_RUNTIME_LOCK, runtime_path)
     if not dev_path.exists() and (root / LEGACY_DEV_LOCK).exists():
         shutil.copyfile(root / LEGACY_DEV_LOCK, dev_path)
+    # pip-compile treats --upgrade-package as an additional constraint and can
+    # introduce that package even when absent from the source requirements.
+    # Never pass development-only targets to the runtime invocation.
+    runtime_names = (set(parse_lock_pins(_read_text(runtime_path)))
+                     if runtime_path.exists() else set())
+    declarations = tomllib.loads(_read_text(root / PYPROJECT))["project"].get("dependencies", [])
+    runtime_names.update(re.split(r"[<>=!~\[; @]", text, maxsplit=1)[0].lower().replace("_", "-")
+                         for text in declarations)
+    runtime_targets = tuple(name for name in upgrade_packages
+                            if name.lower().replace("_", "-") in runtime_names)
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
@@ -233,7 +243,7 @@ def generate_pip_locks(
             output=Path(RUNTIME_LOCK),
             upgrade=upgrade,
             constraint=None,
-            upgrade_packages=upgrade_packages,
+            upgrade_packages=runtime_targets,
         ),
         cwd=root,
         env=env,
