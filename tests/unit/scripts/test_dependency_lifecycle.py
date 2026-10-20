@@ -721,3 +721,31 @@ def test_github_graphql_bot_signature_is_bound_to_author(monkeypatch, author, ve
         ),
     )
     assert publication.trusted_bot_commit(HEAD) is expected
+
+
+def test_publication_failure_cannot_be_crowded_out_by_ci_callbacks(monkeypatch):
+    publications = [dict(id=n, run_attempt=1, conclusion="success") for n in range(15)] + [
+        dict(id=99, run_attempt=1, conclusion="failure", html_url="https://example/failed")
+    ]
+
+    def api(path):
+        if "dependency-automation.yml/runs" in path:
+            return {"workflow_runs": []}
+        if "dependency-publish.yml/runs" in path:
+            return {"workflow_runs": publications}
+        if "actions/runs/99/" in path:
+            return {"jobs": [dict(name="publish", conclusion="failure")]}
+        if "/jobs" in path:
+            return {
+                "jobs": [
+                    dict(name="publish", conclusion="skipped"),
+                    dict(name="merge", conclusion="success"),
+                ]
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(lifecycle, "maintenance_health", lambda *a: {"outcome": "healthy"})
+    result = lifecycle.health()
+    assert result["publication"] == "failed"
+    assert result["outcome"] == "action_required"

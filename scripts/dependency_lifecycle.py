@@ -334,9 +334,11 @@ def health() -> dict:
         for r in meaningful[:12]
     }
     result = maintenance_health(runs, jobs, datetime.now(UTC))
-    publications = api("actions/workflows/dependency-publish.yml/runs?per_page=20")["workflow_runs"]
+    publications = api("actions/workflows/dependency-publish.yml/runs?per_page=100")[
+        "workflow_runs"
+    ]
     relevant = []
-    for run in publications[:10]:
+    for run in publications:
         jobs = api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs")["jobs"]
         if any(
             job["name"] == "publish"
@@ -356,6 +358,9 @@ def health() -> dict:
         result["outcome"] = "action_required"
         result["publication"] = "failed"
         result["publication_run"] = relevant[0]["html_url"]
+    elif not relevant and len(publications) >= 100:
+        result["outcome"] = "action_required"
+        result["publication"] = "UNKNOWN: meaningful history exceeds bounded coverage"
     return result
 
 
