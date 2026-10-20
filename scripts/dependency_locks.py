@@ -12,8 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +27,6 @@ from scripts.dependency_policy import (  # noqa: E402
     EXPECTED_REPOSITORY,
     PYPROJECT,
     RUNTIME_LOCK,
-    SCHEDULED_BRANCH_PREFIX,
     DependencyChange,
     RiskDecision,
     changed_lock_packages,
@@ -146,6 +144,7 @@ def _pip_compile_command(
     output: Path,
     upgrade: bool,
     constraint: Path | None,
+    upgrade_packages: Sequence[str] = (),
 ) -> list[str]:
     command = [
         sys.executable,
@@ -173,6 +172,10 @@ def _pip_compile_command(
         command.extend(["--extra", extra])
     if upgrade:
         command.append("--upgrade")
+    for name in upgrade_packages:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ValueError("targeted refresh requires a plain package name")
+        command.extend(["--upgrade-package", name])
     if constraint is not None:
         command.extend(["--constraint", constraint.as_posix()])
     return command
@@ -211,6 +214,7 @@ def generate_pip_locks(
     *,
     upgrade: bool,
     destination: Path | None = None,
+    upgrade_packages: Sequence[str] = (),
 ) -> tuple[Path, Path]:
     dest = destination or root
     runtime_path = dest / RUNTIME_LOCK
@@ -220,6 +224,16 @@ def generate_pip_locks(
         shutil.copyfile(root / LEGACY_RUNTIME_LOCK, runtime_path)
     if not dev_path.exists() and (root / LEGACY_DEV_LOCK).exists():
         shutil.copyfile(root / LEGACY_DEV_LOCK, dev_path)
+    # pip-compile treats --upgrade-package as an additional constraint and can
+    # introduce that package even when absent from the source requirements.
+    # Never pass development-only targets to the runtime invocation.
+    runtime_names = (set(parse_lock_pins(_read_text(runtime_path)))
+                     if runtime_path.exists() else set())
+    declarations = tomllib.loads(_read_text(root / PYPROJECT))["project"].get("dependencies", [])
+    runtime_names.update(re.split(r"[<>=!~\[; @]", text, maxsplit=1)[0].lower().replace("_", "-")
+                         for text in declarations)
+    runtime_targets = tuple(name for name in upgrade_packages
+                            if name.lower().replace("_", "-") in runtime_names)
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
@@ -229,6 +243,7 @@ def generate_pip_locks(
             output=Path(RUNTIME_LOCK),
             upgrade=upgrade,
             constraint=None,
+            upgrade_packages=runtime_targets,
         ),
         cwd=root,
         env=env,
@@ -240,6 +255,7 @@ def generate_pip_locks(
             output=Path(DEV_LOCK),
             upgrade=upgrade,
             constraint=Path(RUNTIME_LOCK),
+            upgrade_packages=upgrade_packages,
         ),
         cwd=root,
         env=env,
@@ -297,10 +313,11 @@ def check_pip_locks(root: Path | None = None) -> None:
                 )
 
 
-def refresh_pip_locks(*, upgrade: bool, root: Path | None = None) -> None:
+def refresh_pip_locks(*, upgrade: bool, root: Path | None = None,
+                      upgrade_packages: Sequence[str] = ()) -> None:
     base = root or repository_root()
     assert_sdk_pins_synchronized(base)
-    generate_pip_locks(base, upgrade=upgrade)
+    generate_pip_locks(base, upgrade=upgrade, upgrade_packages=upgrade_packages)
 
 
 def refresh_conda_lock(root: Path | None = None) -> None:
@@ -500,34 +517,6 @@ def evaluate_lock_sync(
     }
 
 
-def prepare_lock_sync_artifact(
-    *,
-    root: Path,
-    repository: str,
-    head_sha: str,
-    destination: Path,
-) -> None:
-    overlay = destination / "work"
-    shutil.copytree(
-        root,
-        overlay,
-        ignore=shutil.ignore_patterns(
-            ".git",
-            ".venv",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".ruff_cache",
-        ),
-    )
-    _write_text(overlay / PYPROJECT, _git_text(repository, head_sha, PYPROJECT))
-    generate_pip_locks(overlay, upgrade=False)
-    artifact = destination / "locks"
-    artifact.mkdir(parents=True, exist_ok=True)
-    for relative in (RUNTIME_LOCK, DEV_LOCK):
-        shutil.copyfile(overlay / relative, destination / Path(relative).name)
-    shutil.copyfile(overlay / PYPROJECT, destination / "pyproject.toml")
-
-
 def _artifact_file(directory: Path, relative: str) -> Path:
     nested = directory / relative
     flat = directory / Path(relative).name
@@ -554,270 +543,36 @@ def validate_lock_artifact(directory: Path) -> None:
             raise RuntimeError("unexpected build backend in lock-sync artifact")
 
 
-@dataclass(frozen=True)
-class ScheduledRefreshBranch:
-    name: str
-    sha: str
-    runtime_text: str
-    dev_text: str
-    pull_request_numbers: tuple[str, ...] = ()
-
-
-def plan_scheduled_lock_publication(
-    *,
-    day: str,
-    runtime_text: str,
-    dev_text: str,
-    branches: Sequence[ScheduledRefreshBranch],
-) -> dict[str, str | bool]:
-    """Choose one idempotent publication action for a validated lock refresh."""
-    if len(day) != 8 or not day.isdigit():
-        raise ValueError("scheduled refresh day must be YYYYMMDD")
-    preferred = f"{SCHEDULED_BRANCH_PREFIX}{day}"
-    named = [branch for branch in branches if branch.name == preferred]
-    if len(named) > 1:
-        raise ValueError(f"duplicate scheduled branch state for {preferred}")
-    preferred_branch = named[0] if named else None
-    preferred_matches = preferred_branch is not None and _same_lock_text(
-        preferred_branch,
-        runtime_text,
-        dev_text,
-    )
-    if preferred_branch is not None and not preferred_matches:
-        return _publication_plan(
-            action="stop",
-            branch=preferred,
-            sha=preferred_branch.sha,
-            pull_request="",
-            delete_on_failed_open=False,
-            reason="existing scheduled branch does not match the validated locks",
-        )
-    identical = [
-        branch
-        for branch in branches
-        if branch.name.startswith(SCHEDULED_BRANCH_PREFIX)
-        and _same_lock_text(branch, runtime_text, dev_text)
-    ]
-    open_requests = [
-        branch
-        for branch in branches
-        if branch.name.startswith(SCHEDULED_BRANCH_PREFIX) and branch.pull_request_numbers
-    ]
-    if open_requests:
-        identical_open = [branch for branch in open_requests if branch in identical]
-        chosen = identical_open[0] if identical_open else open_requests[0]
-        return _publication_plan(
-            action="reuse",
-            branch=chosen.name,
-            sha=chosen.sha,
-            pull_request=chosen.pull_request_numbers[0],
-            delete_on_failed_open=False,
-            reason="an open scheduled refresh pull request already exists",
-        )
-    if identical:
-        chosen = preferred_branch if preferred_branch in identical else identical[0]
-        return _publication_plan(
-            action="open_pull_request",
-            branch=chosen.name,
-            sha=chosen.sha,
-            pull_request="",
-            delete_on_failed_open=False,
-            reason="validated locks already exist on a branch with no pull request",
-        )
-    return _publication_plan(
-        action="create_branch",
-        branch=preferred,
-        sha="",
-        pull_request="",
-        delete_on_failed_open=True,
-        reason="create the daily scheduled lock branch",
-    )
-
-
-def scheduled_branch_delete_allowed(
-    *,
-    branch: str,
-    head_sha: str,
-    expected_sha: str,
-    pull_request_count: int,
-    delete_requested: bool,
-) -> bool:
-    """Return whether a failed publication may delete this exact orphan branch."""
-    return bool(
-        delete_requested
-        and pull_request_count == 0
-        and bool(expected_sha)
-        and head_sha == expected_sha
-        and branch.startswith(SCHEDULED_BRANCH_PREFIX)
-    )
-
-
-def _same_lock_text(branch: ScheduledRefreshBranch, runtime_text: str, dev_text: str) -> bool:
-    return branch.runtime_text == runtime_text and branch.dev_text == dev_text
-
-
-def _publication_plan(
-    *,
-    action: str,
-    branch: str,
-    sha: str,
-    pull_request: str,
-    delete_on_failed_open: bool,
-    reason: str,
-) -> dict[str, str | bool]:
-    return {
-        "action": action,
-        "branch": branch,
-        "sha": sha,
-        "pull_request": pull_request,
-        "delete_on_failed_open": delete_on_failed_open,
-        "reason": reason,
-    }
-
-
-def collect_scheduled_refresh_branches() -> list[dict[str, object]]:
-    """Read fetched scheduled-refresh branches and their open pull requests."""
-    listing = subprocess.check_output(
-        (
-            "git",
-            "for-each-ref",
-            "--format=%(refname:short) %(objectname)",
-            "refs/remotes/origin/codex/scheduled-lock-refresh-*",
-        ),
-        text=True,
-        encoding="utf-8",
-    )
-    rows: list[dict[str, object]] = []
-    for line in listing.splitlines():
-        if not line.strip():
-            continue
-        ref, sha = line.split()
-        name = ref.removeprefix("origin/")
-        runtime = subprocess.check_output(
-            ("git", "show", f"{sha}:locks/requirements-runtime-py314.txt"),
-            text=True,
-            encoding="utf-8",
-        )
-        development = subprocess.check_output(
-            ("git", "show", f"{sha}:locks/requirements-dev-py314.txt"),
-            text=True,
-            encoding="utf-8",
-        )
-        listed = subprocess.check_output(
-            (
-                "gh",
-                "pr",
-                "list",
-                "--head",
-                name,
-                "--state",
-                "open",
-                "--json",
-                "number",
-            ),
-            text=True,
-            encoding="utf-8",
-        )
-        pull_requests = json.loads(listed)
-        rows.append(
-            {
-                "name": name,
-                "sha": sha,
-                "runtime_text": runtime,
-                "dev_text": development,
-                "pull_request_numbers": [str(item["number"]) for item in pull_requests],
-            }
-        )
-    return rows
-
-
-def _scheduled_branches(payload: object) -> tuple[ScheduledRefreshBranch, ...]:
-    if not isinstance(payload, list):
-        raise ValueError("scheduled branch candidates must be a list")
-    branches: list[ScheduledRefreshBranch] = []
-    for item in payload:
-        if not isinstance(item, Mapping):
-            raise ValueError("scheduled branch candidate must be an object")
-        numbers = item.get("pull_request_numbers") or ()
-        if not isinstance(numbers, list | tuple):
-            raise ValueError("pull request numbers must be a list")
-        branches.append(
-            ScheduledRefreshBranch(
-                name=str(item["name"]),
-                sha=str(item["sha"]),
-                runtime_text=str(item["runtime_text"]),
-                dev_text=str(item["dev_text"]),
-                pull_request_numbers=tuple(str(number) for number in numbers),
-            )
-        )
-    return tuple(branches)
-
-
 def commit_files_to_branch(
-    *,
-    repository: str,
-    branch: str,
-    files: dict[str, str],
-    message: str,
+    *, repository: str, branch: str, files: dict[str, str], message: str,
+    expected_head: str,
 ) -> str:
-    ref = _gh_json((f"repos/{repository}/git/ref/heads/{branch}",))
-    if not isinstance(ref, dict):
-        raise RuntimeError(f"unable to resolve branch {branch}")
-    sha = str(ref["object"]["sha"])
-    commit = _gh_json((f"repos/{repository}/git/commits/{sha}",))
-    if not isinstance(commit, dict):
-        raise RuntimeError("unable to read head commit")
-    tree_sha = str(commit["tree"]["sha"])
-    entries = []
-    for path, content in files.items():
-        created_blob = subprocess.run(
-            ("gh", "api", "--method", "POST", f"repos/{repository}/git/blobs", "--input", "-"),
-            check=True,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            input=json.dumps({"content": content, "encoding": "utf-8"}),
-        )
-        blob = json.loads(created_blob.stdout)
-        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
-    tree_payload = json.dumps({"base_tree": tree_sha, "tree": entries})
-    tree = subprocess.run(
-        ("gh", "api", "--method", "POST", f"repos/{repository}/git/trees", "--input", "-"),
-        check=True,
-        text=True,
-        encoding="utf-8",
-        capture_output=True,
-        input=tree_payload,
+    """GitHub enforces expectedHeadOid atomically, including concurrent writes."""
+    if repository != EXPECTED_REPOSITORY or branch == EXPECTED_BASE_BRANCH:
+        raise ValueError("unexpected publication target")
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
+        raise ValueError("publication requires the assessed immutable head")
+    if set(files) != {RUNTIME_LOCK, DEV_LOCK}:
+        raise ValueError("publication requires the exact lock pair")
+    query = """mutation($input: CreateCommitOnBranchInput!) {
+      createCommitOnBranch(input: $input) { commit { oid } }
+    }"""
+    payload = {"query": query, "variables": {"input": {
+        "branch": {"repositoryNameWithOwner": repository, "branchName": branch},
+        "expectedHeadOid": expected_head, "message": {"headline": message},
+        "fileChanges": {"additions": [
+            {"path": path, "contents": base64.b64encode(content.encode()).decode()}
+            for path, content in sorted(files.items())
+        ]},
+    }}}
+    result = subprocess.run(
+        ("gh", "api", "graphql", "--input", "-"), input=json.dumps(payload),
+        check=True, text=True, encoding="utf-8", capture_output=True,
     )
-    new_tree = json.loads(tree.stdout)
-    commit_payload = json.dumps(
-        {"message": message, "tree": new_tree["sha"], "parents": [sha]}
-    )
-    created = subprocess.run(
-        ("gh", "api", "--method", "POST", f"repos/{repository}/git/commits", "--input", "-"),
-        check=True,
-        text=True,
-        encoding="utf-8",
-        capture_output=True,
-        input=commit_payload,
-    )
-    new_commit = json.loads(created.stdout)["sha"]
-    subprocess.run(
-        (
-            "gh",
-            "api",
-            "--method",
-            "PATCH",
-            f"repos/{repository}/git/refs/heads/{branch}",
-            "-f",
-            f"sha={new_commit}",
-        ),
-        check=True,
-        text=True,
-        encoding="utf-8",
-        capture_output=True,
-    )
-    return str(new_commit)
+    value = json.loads(result.stdout)
+    if value.get("errors"):
+        raise RuntimeError("atomic dependency commit denied or head changed")
+    return str(value["data"]["createCommitOnBranch"]["commit"]["oid"])
 
 
 def build_change_from_lock_diff(
@@ -967,17 +722,9 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     refresh = sub.add_parser("refresh", help="regenerate lock outputs")
     refresh.add_argument("--scope", choices=("pip", "conda"), required=True)
     refresh.add_argument("--upgrade", action="store_true")
+    refresh.add_argument("--package", action="append", default=[])
     evaluate = sub.add_parser("lock-sync-evaluate")
     evaluate.add_argument("--pr", type=int, required=True)
-    prepare = sub.add_parser("lock-sync-prepare")
-    prepare.add_argument("--head-sha", required=True)
-    prepare.add_argument("--destination", required=True)
-    validate = sub.add_parser("lock-sync-validate")
-    validate.add_argument("--artifact", required=True)
-    commit = sub.add_parser("lock-sync-commit")
-    commit.add_argument("--branch", required=True)
-    commit.add_argument("--artifact", required=True)
-    commit.add_argument("--message", required=True)
     classify = sub.add_parser("classify")
     classify.add_argument("--actor", required=True)
     classify.add_argument("--head-branch", required=True)
@@ -1001,18 +748,6 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     from_locks.add_argument("--artifact", required=True)
     from_locks.add_argument("--base-root", default=".")
     from_locks.add_argument("--security-update", action="store_true")
-    collect = sub.add_parser("collect-scheduled-branches")
-    collect.add_argument("--output", required=True)
-    publish = sub.add_parser("plan-scheduled-publish")
-    publish.add_argument("--day", required=True)
-    publish.add_argument("--artifact", required=True)
-    publish.add_argument("--candidates", required=True)
-    delete = sub.add_parser("scheduled-branch-delete-allowed")
-    delete.add_argument("--branch", required=True)
-    delete.add_argument("--head", required=True)
-    delete.add_argument("--expected", required=True)
-    delete.add_argument("--pull-request-count", required=True, type=int)
-    delete.add_argument("--delete-requested", action="store_true")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1029,7 +764,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if arguments.scope == "conda":
                 refresh_conda_lock(root)
             else:
-                refresh_pip_locks(upgrade=arguments.upgrade, root=root)
+                if arguments.upgrade and arguments.package:
+                    raise ValueError("choose full refresh or targeted packages")
+                refresh_pip_locks(upgrade=arguments.upgrade, root=root,
+                                  upgrade_packages=arguments.package)
             print(f"refreshed {arguments.scope} locks")
             return 0
         if arguments.command == "lock-sync-evaluate":
@@ -1051,35 +789,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "payload": json.dumps(evaluation, sort_keys=True, default=list),
                 }
             )
-            return 0
-        if arguments.command == "lock-sync-prepare":
-            destination = Path(arguments.destination)
-            destination.mkdir(parents=True, exist_ok=True)
-            prepare_lock_sync_artifact(
-                root=root,
-                repository=os.environ.get("GITHUB_REPOSITORY", EXPECTED_REPOSITORY),
-                head_sha=arguments.head_sha,
-                destination=destination,
-            )
-            return 0
-        if arguments.command == "lock-sync-validate":
-            validate_lock_artifact(Path(arguments.artifact))
-            print("lock artifact accepted")
-            return 0
-        if arguments.command == "lock-sync-commit":
-            artifact = Path(arguments.artifact)
-            validate_lock_artifact(artifact)
-            sha = commit_files_to_branch(
-                repository=os.environ.get("GITHUB_REPOSITORY", EXPECTED_REPOSITORY),
-                branch=arguments.branch,
-                files={
-                    RUNTIME_LOCK: _read_text(_artifact_file(artifact, RUNTIME_LOCK)),
-                    DEV_LOCK: _read_text(_artifact_file(artifact, DEV_LOCK)),
-                },
-                message=arguments.message,
-            )
-            print(sha)
-            _github_output({"head_sha": sha})
             return 0
         if arguments.command == "classify":
             names = tuple(
@@ -1131,34 +840,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 security_update=arguments.security_update,
             )
             return _emit_decision(decision)
-        if arguments.command == "collect-scheduled-branches":
-            Path(arguments.output).write_text(
-                json.dumps(collect_scheduled_refresh_branches()),
-                encoding="utf-8",
-            )
-            return 0
-        if arguments.command == "plan-scheduled-publish":
-            artifact = Path(arguments.artifact)
-            validate_lock_artifact(artifact)
-            candidates = json.loads(Path(arguments.candidates).read_text(encoding="utf-8"))
-            plan = plan_scheduled_lock_publication(
-                day=arguments.day,
-                runtime_text=_read_text(_artifact_file(artifact, RUNTIME_LOCK)),
-                dev_text=_read_text(_artifact_file(artifact, DEV_LOCK)),
-                branches=_scheduled_branches(candidates),
-            )
-            print(json.dumps(plan, indent=2, sort_keys=True))
-            return 0
-        if arguments.command == "scheduled-branch-delete-allowed":
-            allowed = scheduled_branch_delete_allowed(
-                branch=arguments.branch,
-                head_sha=arguments.head,
-                expected_sha=arguments.expected,
-                pull_request_count=arguments.pull_request_count,
-                delete_requested=arguments.delete_requested,
-            )
-            print("true" if allowed else "false")
-            return 0 if allowed else 2
     except subprocess.CalledProcessError as exc:
         sys.stderr.write(exc.stderr or exc.stdout or str(exc))
         return 1

@@ -390,6 +390,28 @@ jobs:
             ${{ runner.temp }}/backup-destination-receipt.json
           if-no-files-found: warn
 
+  dependency-health:
+    # Independent of the scan producer. Keep this visible without turning
+    # an unrelated engineering PR into a publication-permission workaround.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.8"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/dependency_lifecycle.py health --notify
+
   ci-gate:
     name: CI Gate
     needs:

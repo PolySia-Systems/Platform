@@ -67,6 +67,9 @@ CONTAINER_PATTERNS = (
     "src/polysia/cli_support/native_*.py",
 )
 DEPENDENCY_PATTERNS = (
+    "scripts/dependency*.py",
+    "src/polysia/developer/dependency_preflight.py",
+    "tests/unit/scripts/test_dependency*.py",
     "pyproject.toml",
     "environment.yml",
     "locks/**",

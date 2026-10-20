@@ -102,6 +102,9 @@ python -m pip install -r locks/requirements-dev-py314.txt
 python -m pip install --no-deps -e .
 ```
 
+Dependency maintenance, scan/preflight commands, publication permissions and
+review boundaries are documented in [supply-chain controls](docs/05-security/supply-chain.md).
+
 On Linux activate with `source .venv/bin/activate`. Initial dependency bootstrap
 downloads packages; the fixture commands below then run without provider access
 or secrets. The explicit Windows Conda bootstrap remains available through

@@ -27,6 +27,7 @@ from polysia.developer.catalog import (
     gates_for,
     posix,
 )
+from polysia.developer.dependency_preflight import dependency_preflight
 from polysia.developer.git_state import (
     DeveloperContextError,
     GitRunner,
@@ -113,6 +114,8 @@ def build_context_packet(
         root=root,
         task_reference=opaque_task,
     )
+    preflight = dependency_preflight(root, classified_paths, observed)
+    invalidation["dependency_preflight"] = preflight
     cache_key = _digest(invalidation)
     cache_allowed = cache is not None and not repository.dirty
     if cache_allowed and cache is not None:
@@ -129,6 +132,7 @@ def build_context_packet(
         observed=observed,
         env=env,
     )
+    packet["dependency_preflight"] = preflight
     if cache_allowed and cache is not None:
         cache.store(cache_key, packet)
     return packet
@@ -139,10 +143,12 @@ def render_text(packet: Mapping[str, object]) -> str:
     task = _mapping(packet.get("task"))
     validation = _mapping(packet.get("validation"))
     evidence = _mapping(packet.get("evidence"))
+    preflight = _mapping(packet.get("dependency_preflight"))
     lines = [
         f"# Developer Context Packet {packet.get('packet_version')}",
         "",
         "Disposable generated view. Not project truth. Issue/PR owns resume.",
+        f"Dependency preflight: {preflight.get('status')} / {preflight.get('scan')}",
         f"Documentation entrance: {DOCUMENTATION_ENTRANCE}",
         "",
         "## Repository",
