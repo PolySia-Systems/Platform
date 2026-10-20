@@ -36,6 +36,11 @@ ENVIRONMENT = "environment.yml"
 
 SENSITIVE_RUNTIME_PACKAGES = frozenset(
     {
+        "build",
+        "hatchling",
+        "setuptools",
+        "wheel",
+        "pip-tools",
         "polymarket-client",
         "pydantic",
         "pydantic-core",
@@ -246,16 +251,9 @@ def classify_dependency_change(change: DependencyChange) -> RiskDecision:
         if name.lower().replace("_", "-") in SENSITIVE_RUNTIME_PACKAGES
     )
     if change.package_ecosystem == "github_actions":
-        if change.update_type == "version-update:semver-patch":
-            return RiskDecision(
-                "auto_merge",
-                "GitHub Actions patch with complete required checks",
-                _labels("risk:auto-merge", "deps:github-actions"),
-                affected,
-            )
         return RiskDecision(
             "human_review",
-            "GitHub Actions minor/major or ambiguous Actions update",
+            "GitHub Actions source/permission review required; metadata is insufficient",
             _labels("risk:human-review", "deps:github-actions"),
             affected,
         )

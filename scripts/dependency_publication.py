@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -293,16 +294,98 @@ def merge_after_ci(run_id: str) -> dict:
 FILES_FOR_MERGE = (PYPROJECT, RUNTIME_LOCK, DEV_LOCK)
 
 
+def report_scan(path: Path, run_id: str) -> dict:
+    run = api(f"actions/runs/{run_id}")
+    base = main_head()
+    if (
+        run.get("path") != WORKFLOW
+        or run.get("head_sha") != base
+        or run.get("head_branch") != "main"
+        or run.get("event") not in {"schedule", "workflow_dispatch"}
+        or run.get("head_repository", {}).get("full_name") != EXPECTED_REPOSITORY
+    ):
+        raise ValueError("scan report does not originate from current main")
+    if path.is_symlink() or path.stat().st_size > 2_000_000:
+        raise ValueError("invalid scan report")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != 1 or payload.get("source_hashes") != {
+        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in FILES_FOR_MERGE
+    }:
+        raise ValueError("scan report source mismatch")
+    rows = []
+    for item in payload["packages"]:
+        name, current = item["package"], item["resolved"]
+        latest = item.get("latest_published_stable", "UNKNOWN")
+        if not re.fullmatch(r"[a-z0-9-]+", name) or not all(
+            re.fullmatch(r"[a-zA-Z0-9.+!-]+", value) for value in (current, latest)
+        ):
+            raise ValueError("invalid package report identity")
+        if current != latest or item.get("advisory_ids") or item.get("current_yanked"):
+            state = "HELD_PARENT_BOUND" if item.get("candidate_blocked_by") else "REVIEW_REQUIRED"
+            if item.get("advisory_ids") or item.get("current_yanked"):
+                state = "ADVISORY_OR_YANKED_ACTION"
+            rows.append((name, current, latest, state))
+    state_hash = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
+    marker = "<!-- polysia-dependency-backlog-v1 -->"
+    issues = api("issues?state=all&per_page=100")
+    matches = [
+        issue
+        for issue in issues
+        if marker in (issue.get("body") or "") and "pull_request" not in issue
+    ]
+    if len(matches) > 1:
+        raise ValueError("ambiguous dependency backlog")
+    issue = matches[0] if matches else None
+    if not rows and not issue:
+        return dict(outcome="unchanged")
+    if issue and state_hash in (issue.get("body") or ""):
+        return dict(outcome="unchanged", issue=issue["html_url"])
+    body = (
+        f"{marker}\n<!-- state:{state_hash} -->\n"
+        f"Owner: Platform dependency maintainer. Source: {run['html_url']}\n\n"
+        "For every row: review on the next weekly scan, advisory or parent/compatibility release; "
+        "retain until a coherent resolver delta and final-head CI are accepted. "
+        "Runtime/build/crypto/Actions require review. Installed/tested versions are UNKNOWN "
+        "until separately evidenced; metadata does not replace the strict OSV gate.\n\n"
+        "| Package (official metadata) | Resolved | Latest stable | Disposition |\n"
+        "|---|---|---|---|\n"
+        + "\n".join(
+            f"| [{name}](https://pypi.org/pypi/{name}/json) | {old} | {new} | {state} |"
+            for name, old, new, state in rows
+        )
+    )
+    target = f"repos/{EXPECTED_REPOSITORY}/issues" + (f"/{issue['number']}" if issue else "")
+    result = command(
+        "api",
+        "--method",
+        "PATCH" if issue else "POST",
+        target,
+        "--input",
+        "-",
+        body={
+            "title": "Dependency review backlog",
+            "body": body,
+            "state": "open" if rows else "closed",
+        },
+    )
+    return dict(outcome="backlog_updated", issue=result["html_url"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path)
     parser.add_argument("--run", required=True)
     parser.add_argument("--merge-after-ci", action="store_true")
+    parser.add_argument("--report-scan", action="store_true")
     args = parser.parse_args()
     if not re.fullmatch(r"[1-9][0-9]*", args.run):
         parser.error("invalid source run")
     try:
-        if args.merge_after_ci:
+        if args.report_scan:
+            if args.artifact is None:
+                parser.error("scan report requires --artifact")
+            result = report_scan(args.artifact, args.run)
+        elif args.merge_after_ci:
             result = merge_after_ci(args.run)
         else:
             if args.artifact is None:

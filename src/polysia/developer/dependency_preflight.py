@@ -41,6 +41,9 @@ def dependency_preflight(root: Path, scope: tuple[str, ...], now: datetime) -> d
                 "src/polysia/execution/",
                 "src/polysia/risk/",
                 "src/polysia/config/",
+                "src/polysia/deployment/",
+                "src/polysia/application/",
+                "docs/04-architecture/",
                 "src/polysia/domain/",
                 "standards/",
             )
@@ -74,10 +77,13 @@ def dependency_preflight(root: Path, scope: tuple[str, ...], now: datetime) -> d
         result["last_complete_scan"] = observed.isoformat()
         if deep and complete:
             result["next_action"] = "Reuse metadata inventory; validate candidate with CI/OSV gates"
-        if deep and any(item.get("current_yanked") for item in report.get("packages", [])):
+        if deep and any(
+            item.get("current_yanked") or item.get("advisory_ids")
+            for item in report.get("packages", [])
+        ):
             result["status"] = "BLOCKED"
             result["next_action"] = (
-                "Disposition yanked resolved package before dependency publication"
+                "Disposition yanked/advisory finding before dependency publication"
             )
     except KeyError, TypeError, ValueError, OSError:
         result["scan"] = "INVALID"

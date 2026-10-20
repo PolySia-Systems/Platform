@@ -150,7 +150,7 @@ def test_runtime_and_sdk_changes_require_human_review() -> None:
     assert runtime.action == sdk.action == zero_minor.action == "human_review"
 
 
-def test_actions_patch_automerge_and_minor_requires_review() -> None:
+def test_actions_metadata_alone_cannot_authorize_merge() -> None:
     patch = classify_dependency_change(
         DependencyChange(
             actor="dependabot[bot]",
@@ -179,7 +179,7 @@ def test_actions_patch_automerge_and_minor_requires_review() -> None:
             locks_valid=True,
         )
     )
-    assert patch.action == "auto_merge"
+    assert patch.action == "human_review"
     assert minor.action == "human_review"
 
 

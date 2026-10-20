@@ -324,7 +324,23 @@ def health() -> dict:
     }
     result = maintenance_health(runs, jobs, datetime.now(UTC))
     publications = api("actions/workflows/dependency-publish.yml/runs?per_page=20")["workflow_runs"]
-    relevant = [r for r in publications if r.get("conclusion") in {"success", "failure"}]
+    relevant = []
+    for run in publications[:10]:
+        jobs = api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs")["jobs"]
+        if any(
+            job["name"] == "publish"
+            and (
+                job.get("conclusion") == "failure"
+                or any(
+                    step["name"] == "Publish validated dependency proposal"
+                    and step.get("conclusion") == "success"
+                    for step in job.get("steps", [])
+                )
+            )
+            for job in jobs
+        ):
+            relevant.append(run)
+            break
     if relevant and relevant[0]["conclusion"] == "failure":
         result["outcome"] = "action_required"
         result["publication"] = "failed"

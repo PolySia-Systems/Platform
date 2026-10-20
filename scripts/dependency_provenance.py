@@ -97,6 +97,9 @@ def validate(directory: Path, root: Path, expected: dict[str, str]) -> None:
 def validate_manifest(directory: Path, root: Path) -> None:
     original = tomllib.loads((root / PYPROJECT).read_text(encoding="utf-8"))
     candidate = tomllib.loads(artifact_path(directory, PYPROJECT).read_text(encoding="utf-8"))
+    for name in (RUNTIME_LOCK, DEV_LOCK):
+        if ";" in artifact_path(directory, name).read_text(encoding="utf-8"):
+            raise ValueError("conditional lock pins require portable closure review")
     runtime = parse_lock_pins(artifact_path(directory, RUNTIME_LOCK).read_text(encoding="utf-8"))
     dev = parse_lock_pins(artifact_path(directory, DEV_LOCK).read_text(encoding="utf-8"))
     if not runtime or not dev or shared_pin_conflicts(runtime, dev):

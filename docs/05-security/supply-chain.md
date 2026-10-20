@@ -32,8 +32,11 @@ make dependency-locks-check
 make dependency-locks
 ```
 
-`check` never selects newer versions. `refresh --scope pip --upgrade` is the
-only command that intentionally upgrades pip packages. Conda refresh is only
+`check` never selects newer versions. `refresh --scope pip --upgrade` selects
+new versions across the closure; `refresh --scope pip --package NAME` selects
+only named packages within the canonical resolver (repeat for a coherent slice).
+Both paths resolve runtime first and constrain development to runtime.
+Conda refresh is only
 for Python/bootstrap/environment-owner changes.
 
 ## CURRENT dependency lifecycle

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -424,3 +425,133 @@ def test_generation_resolver_failure_never_writes_partial_artifact(proposal, mon
         lifecycle.generate(destination, None)
     assert not list(destination.iterdir())
     assert before == {name: (root / name).read_bytes() for name in FILES}
+
+
+def test_ci_completion_rechecks_run_identity_and_holds_runtime(proposal, monkeypatch):
+    root, artifact, _ = proposal
+    for path in (root, artifact):
+        manifest = path / PYPROJECT
+        manifest.write_text(manifest.read_text().replace('"rich==15.0.0"', '"rich>=15.0.0"'))
+    for name in (RUNTIME_LOCK, DEV_LOCK):
+        target = artifact / name
+        target.write_text(target.read_text().replace("rich==15.0.0", "rich==15.0.1"))
+    run = dict(
+        path=".github/workflows/ci.yml",
+        conclusion="success",
+        head_repository={"full_name": EXPECTED_REPOSITORY},
+        event="workflow_dispatch",
+        head_branch="dependabot/pip/rich",
+        head_sha=HEAD,
+        check_suite_id=55,
+    )
+    pr = dict(
+        number=9,
+        user={"login": "dependabot[bot]"},
+        base={"ref": "main", "sha": BASE},
+        head={"sha": HEAD, "repo": {"full_name": EXPECTED_REPOSITORY}},
+    )
+    checks = [
+        dict(
+            name="CI Gate",
+            conclusion="success",
+            app={"slug": "github-actions"},
+            check_suite={"id": 55},
+        )
+    ]
+
+    def api(path):
+        if path.startswith("actions/runs/"):
+            return run
+        if path.startswith("pulls?"):
+            return [pr]
+        if path == "pulls/9":
+            return pr
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": BASE}}
+        if path.startswith("compare/"):
+            return {"behind_by": 0}
+        if path.startswith("commits/"):
+            return {"check_runs": checks}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "ROOT", root)
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(
+        publication.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, BASE)
+    )
+    monkeypatch.setattr(locks, "_pr_changed_files", lambda *_: (RUNTIME_LOCK, DEV_LOCK))
+    monkeypatch.setattr(locks, "_git_text", lambda repo, ref, name: (artifact / name).read_text())
+    monkeypatch.setattr(publication, "command", lambda *a, **kw: pytest.fail("unexpected merge"))
+    assert publication.merge_after_ci("1234")["outcome"] == "human_review"
+    checks[0]["check_suite"]["id"] = 54
+    with pytest.raises(ValueError, match="exact run and head"):
+        publication.merge_after_ci("1234")
+    pr["head"]["sha"] = BASE
+    with pytest.raises(ValueError, match="base/head changed"):
+        publication.merge_after_ci("1234")
+
+
+def test_health_notification_is_quiet_on_unchanged_state_and_recovers(monkeypatch):
+    issue = dict(number=9, state="open", body="", html_url="https://example/issue/9")
+    writes = []
+    monkeypatch.setattr(publication, "api", lambda _: [issue] if issue["body"] else [])
+
+    def command(*args, body=None):
+        writes.append(body)
+        issue.update(body)
+        return issue
+
+    monkeypatch.setattr(publication, "command", command)
+    failure = dict(outcome="action_required", last_complete_scan=None, stale=True)
+    lifecycle.notify_health(failure)
+    assert len(writes) == 1
+    lifecycle.notify_health(failure)
+    assert len(writes) == 1
+    lifecycle.notify_health(dict(outcome="healthy"))
+    assert len(writes) == 2 and issue["state"] == "closed"
+
+
+def test_conditional_lock_cannot_be_resealed_as_portable(proposal):
+    root, artifact, identity = proposal
+    (artifact / RUNTIME_LOCK).write_text('rich==15.0.0 ; python_version < "3"\n')
+    seal(artifact, root, identity)
+    with pytest.raises(ValueError, match="portable closure"):
+        validate(artifact, root, identity)
+
+
+def test_targeted_refresh_uses_canonical_resolver_and_plain_names():
+    command = locks._pip_compile_command(
+        extra="dev",
+        output=Path(DEV_LOCK),
+        upgrade=False,
+        constraint=Path(RUNTIME_LOCK),
+        upgrade_packages=("iniconfig", "identify"),
+    )
+    assert command[command.index("--constraint") + 1] == RUNTIME_LOCK
+    assert "--upgrade" not in command
+    assert command.count("--upgrade-package") == 2
+    with pytest.raises(ValueError, match="plain package"):
+        locks._pip_compile_command(
+            extra=None,
+            output=Path(RUNTIME_LOCK),
+            upgrade=False,
+            constraint=None,
+            upgrade_packages=("--index-url=spoof",),
+        )
+
+
+def test_build_tooling_cannot_enter_low_risk_dev_slice():
+    _, decision = locks.build_change_from_lock_diff(
+        actor="dependabot[bot]",
+        repository=EXPECTED_REPOSITORY,
+        base_branch="main",
+        head_branch="dependabot/pip/build",
+        changed_files=(DEV_LOCK,),
+        base_runtime="rich==15.0.0\n",
+        head_runtime="rich==15.0.0\n",
+        base_dev="rich==15.0.0\nsetuptools==84.0.0\n",
+        head_dev="rich==15.0.0\nsetuptools==84.2.0\n",
+        production_declaration_changed=False,
+        sdk_pin_changed=False,
+    )
+    assert decision.action == "human_review"

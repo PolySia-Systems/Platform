@@ -144,6 +144,7 @@ def _pip_compile_command(
     output: Path,
     upgrade: bool,
     constraint: Path | None,
+    upgrade_packages: Sequence[str] = (),
 ) -> list[str]:
     command = [
         sys.executable,
@@ -171,6 +172,10 @@ def _pip_compile_command(
         command.extend(["--extra", extra])
     if upgrade:
         command.append("--upgrade")
+    for name in upgrade_packages:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ValueError("targeted refresh requires a plain package name")
+        command.extend(["--upgrade-package", name])
     if constraint is not None:
         command.extend(["--constraint", constraint.as_posix()])
     return command
@@ -209,6 +214,7 @@ def generate_pip_locks(
     *,
     upgrade: bool,
     destination: Path | None = None,
+    upgrade_packages: Sequence[str] = (),
 ) -> tuple[Path, Path]:
     dest = destination or root
     runtime_path = dest / RUNTIME_LOCK
@@ -227,6 +233,7 @@ def generate_pip_locks(
             output=Path(RUNTIME_LOCK),
             upgrade=upgrade,
             constraint=None,
+            upgrade_packages=upgrade_packages,
         ),
         cwd=root,
         env=env,
@@ -238,6 +245,7 @@ def generate_pip_locks(
             output=Path(DEV_LOCK),
             upgrade=upgrade,
             constraint=Path(RUNTIME_LOCK),
+            upgrade_packages=upgrade_packages,
         ),
         cwd=root,
         env=env,
@@ -295,10 +303,11 @@ def check_pip_locks(root: Path | None = None) -> None:
                 )
 
 
-def refresh_pip_locks(*, upgrade: bool, root: Path | None = None) -> None:
+def refresh_pip_locks(*, upgrade: bool, root: Path | None = None,
+                      upgrade_packages: Sequence[str] = ()) -> None:
     base = root or repository_root()
     assert_sdk_pins_synchronized(base)
-    generate_pip_locks(base, upgrade=upgrade)
+    generate_pip_locks(base, upgrade=upgrade, upgrade_packages=upgrade_packages)
 
 
 def refresh_conda_lock(root: Path | None = None) -> None:
@@ -703,6 +712,7 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     refresh = sub.add_parser("refresh", help="regenerate lock outputs")
     refresh.add_argument("--scope", choices=("pip", "conda"), required=True)
     refresh.add_argument("--upgrade", action="store_true")
+    refresh.add_argument("--package", action="append", default=[])
     evaluate = sub.add_parser("lock-sync-evaluate")
     evaluate.add_argument("--pr", type=int, required=True)
     classify = sub.add_parser("classify")
@@ -744,7 +754,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if arguments.scope == "conda":
                 refresh_conda_lock(root)
             else:
-                refresh_pip_locks(upgrade=arguments.upgrade, root=root)
+                if arguments.upgrade and arguments.package:
+                    raise ValueError("choose full refresh or targeted packages")
+                refresh_pip_locks(upgrade=arguments.upgrade, root=root,
+                                  upgrade_packages=arguments.package)
             print(f"refreshed {arguments.scope} locks")
             return 0
         if arguments.command == "lock-sync-evaluate":
