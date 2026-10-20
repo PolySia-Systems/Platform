@@ -49,6 +49,13 @@ requires a generated command header, whereas Platform deliberately uses
 would require header/resolver migration and separately authorized App access;
 no demonstrated gate justifies that cost. No alternate pilot or new token.
 
+Dependabot version proposals use disjoint development patch/minor, runtime,
+build-toolchain, venue-SDK and authentication/crypto groups. Development majors
+and security updates remain individual proposals. These are proposal boundaries,
+not permission to merge: the complete resolved delta still determines risk.
+Grouping follows GitHub's [group rules](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#groups);
+explicit exclusions prevent sensitive packages entering general groups.
+
 `dependency-automation.yml` runs weekly and on manual dispatch. Its `generate`
 job resolves both locks in isolation without write authority. Its `scan` job
 reads official PyPI metadata for every resolved runtime/dev/build package,

@@ -11,23 +11,79 @@ updates:
       - "locks/requirements-dev-py314.txt"
       - "locks/requirements-runtime-py314.txt"
     groups:
+      build-toolchain:
+        applies-to: version-updates
+        patterns:
+          - "build"
+          - "hatchling"
+          - "setuptools"
+          - "wheel"
+          - "pip-tools"
+      venue-sdk:
+        applies-to: version-updates
+        patterns:
+          - "polymarket-client"
+      authentication-crypto:
+        applies-to: version-updates
+        patterns:
+          - "PyJWT"
+          - "pyjwt"
+          - "cryptography"
+          - "pycryptodome"
+          - "eth-*"
+          - "ckzg"
+          - "hexbytes"
+          - "rlp"
+          - "bitarray"
+          - "cytoolz"
       development-patch-minor:
         applies-to: version-updates
         dependency-type: development
+        exclude-patterns:
+          - "build"
+          - "hatchling"
+          - "setuptools"
+          - "wheel"
+          - "pip-tools"
+          - "polymarket-client"
+          - "PyJWT"
+          - "pyjwt"
+          - "cryptography"
+          - "pycryptodome"
+          - "eth-*"
+          - "ckzg"
+          - "hexbytes"
+          - "rlp"
+          - "bitarray"
+          - "cytoolz"
         update-types:
           - "patch"
           - "minor"
       runtime-production:
         applies-to: version-updates
         dependency-type: production
+        exclude-patterns:
+          - "build"
+          - "hatchling"
+          - "setuptools"
+          - "wheel"
+          - "pip-tools"
+          - "polymarket-client"
+          - "PyJWT"
+          - "pyjwt"
+          - "cryptography"
+          - "pycryptodome"
+          - "eth-*"
+          - "ckzg"
+          - "hexbytes"
+          - "rlp"
+          - "bitarray"
+          - "cytoolz"
         update-types:
           - "patch"
           - "minor"
           - "major"
-      security-updates:
-        applies-to: security-updates
-        patterns:
-          - "*"
+    # Security updates stay individual: an advisory must not combine risk slices.
 
   - package-ecosystem: github-actions
     directory: /
