@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,40 @@ import yaml
 from scripts import dependency_locks
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize(("name", "kind", "level", "expected"), [
+    ("hypothesis", "development", "patch", "development-patch-minor"),
+    ("pytest", "development", "major", None),
+    ("build", "development", "minor", "build-toolchain"),
+    ("hatchling", "development", "patch", "build-toolchain"),
+    ("setuptools", "development", "major", "build-toolchain"),
+    ("wheel", "production", "patch", "build-toolchain"),
+    ("pip-tools", "development", "patch", "build-toolchain"),
+    ("polymarket-client", "production", "patch", "venue-sdk"),
+    ("PyJWT", "production", "patch", "authentication-crypto"),
+    ("pyjwt", "production", "minor", "authentication-crypto"),
+    ("eth-utils", "production", "major", "authentication-crypto"),
+    ("cryptography", "development", "patch", "authentication-crypto"),
+    ("pycryptodome", "production", "patch", "authentication-crypto"),
+    ("pydantic-settings", "production", "minor", "runtime-production"),
+])
+def test_dependabot_risk_slices_do_not_overlap(name, kind, level, expected):
+    config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
+    pip = next(item for item in config["updates"] if item["package-ecosystem"] == "pip")
+    matches = [key for key, group in pip["groups"].items()
+               if group.get("applies-to", "version-updates") == "version-updates"
+               and group.get("dependency-type", kind) == kind
+               and level in group.get("update-types", ("patch", "minor", "major"))
+               and any(fnmatchcase(name, p) for p in group.get("patterns", ("*",)))
+               and not any(fnmatchcase(name, p) for p in group.get("exclude-patterns", ()))]
+    assert matches == ([] if expected is None else [expected])
+    # Security proposals stay individual, and the canonical resolver owns locks.
+    assert not any(group.get("applies-to") == "security-updates"
+                   for group in pip["groups"].values())
+    assert set(pip["exclude-paths"]) == {
+        "locks/requirements-runtime-py314.txt", "locks/requirements-dev-py314.txt",
+    }
 
 
 def test_git_contents_request_is_explicit_get_and_attributes_read_failures(monkeypatch):
