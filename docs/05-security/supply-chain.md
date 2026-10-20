@@ -15,7 +15,7 @@ echoing matched values, and rejects tracked `.env`, key, and PEM files. Runtime
 
 `pyproject.toml` is the only manually maintained pip declaration. Generated
 outputs are `locks/requirements-runtime-py314.txt` and
-`locks/requirements-dev-py314.txt`. They are produced by pip-tools 7.6.1 from
+`locks/requirements-dev-py314.txt`. They are produced by pip-tools 7.6.2 from
 `pyproject.toml` (development extras only on the development lock) with a
 stable header and no pip-compile annotations, so Linux and Windows Python 3.14
 can verify the same committed pins. `colorama` is declared directly so Linux
@@ -32,47 +32,111 @@ make dependency-locks-check
 make dependency-locks
 ```
 
-`check` never selects newer versions. `refresh --scope pip --upgrade` is the
-only command that intentionally upgrades pip packages. Conda refresh is only
+`check` never selects newer versions. `refresh --scope pip --upgrade` selects
+new versions across the closure; `refresh --scope pip --package NAME` selects
+only named packages within the canonical resolver (repeat for a coherent slice).
+Both paths resolve runtime first and constrain development to runtime.
+Conda refresh is only
 for Python/bootstrap/environment-owner changes.
 
-## CURRENT automation
+## CURRENT dependency lifecycle
 
-Dependabot discovers all direct pip and GitHub Actions updates. It does not
-hide runtime, SDK, or major updates. Native lock regeneration from custom
-pip-compile outputs is not assumed; if a Dependabot pip PR omits generated
-locks, trusted base-branch code generates them and a separate write job
-commits only those lock files to the Dependabot branch, then dispatches CI.
-Unattended merge is limited to verified low-risk development or Actions patch
-updates after `CI Gate`. Runtime, SDK, Python/Conda, major, `0.x` minor,
-trading/financial, and sensitive security changes stay open for owner review.
+Decision (2026-10-20): retain Dependabot for pip declarations and Actions,
+and `scripts/dependency_locks.py` for the resolved graph. One owner per input.
+Renovate's [pip-compile manager](https://docs.renovatebot.com/modules/manager/pip-compile/)
+requires a generated command header, whereas Platform deliberately uses
+`--no-header` and canonical runtime-first/dev-constrained resolution. Switching
+would require header/resolver migration and separately authorized App access;
+no demonstrated gate justifies that cost. No alternate pilot or new token.
 
-Weekly refresh uses the same pip-compile command and retains changed proposals
-as artifacts for 14 days. Scheduled/default manual runs create no branches or
-PRs: organization policy denies Actions creating/approving PRs. Optional manual
-`publish=true` first checks existing capability and falls back to the retained
-artifact without creating a branch when unavailable. That input grants no new
-permission and changes no organization setting. The workflow has an unfiltered
-`push` trigger with a cheap
-success job; omitting that trigger leaves GitHub's push evaluation with zero
-jobs, which prevents `workflow_dispatch` registration. Manual refresh is
-`gh workflow run "Dependency automation" --ref main`.
+`dependency-automation.yml` runs weekly and on manual dispatch. Its `generate`
+job resolves both locks in isolation without write authority. Its `scan` job
+reads official PyPI metadata for every resolved runtime/dev/build package,
+including current yanked status, latest stable release, Python requirements,
+published wheel presence and active parent bounds for Linux/Windows Python
+3.14 and requested extras. Published, compatible, tested and installed versions
+are separate facts. A published wheel does not prove a matching ABI/platform.
+Metadata coverage does not establish advisory coverage or safe installation.
+The strict OSV gate and final-head CI remain mandatory for candidate changes.
+Actions remain owned by Dependabot; Docker, Conda/bootstrap and declared host
+pins are inventoried for the Platform dependency maintainer. Inventory is not
+an observation of deployed software. No host is queried or mutated.
 
-The supported maintainer path uses existing authenticated access, never a new
-broad token. Start from clean current main on a focused branch, run
-`python scripts/dependency_locks.py refresh --scope pip --upgrade`, inspect the
-declaration/lock diff, run `python scripts/dependency_locks.py check`, and open
-a draft PR. Do not copy old proposals over current dependencies; compare the
-artifact's `pyproject.toml` and source revision before any use, or regenerate.
-Keep runtime/SDK/build-system changes for explicit compatibility review. Changing
-SDK approval constants is not compatibility evidence. SDK declaration changes
-are classified for human review before any automatic lock generation; build-system
-changes retain their rejection/review path even inside a development group.
+```bash
+python scripts/dependency_lifecycle.py scan --output artifacts/dependency-scan.json
+gh workflow run dependency-automation.yml --ref main
+```
 
-GitHub content reads explicitly use GET with the immutable ref. The optional
-publication failure path passes lowercase shell booleans and invokes the same
-head/PR-aware cleanup predicate tested through the actual workflow shell. Changed
-heads or any existing PR prevent orphan deletion. No failed gate is merged.
+Both scan and proposal are retained as GitHub run artifacts (30 and 14 days).
+Failures/partial scans exit nonzero; `noop` only registers events and never
+counts as freshness. Task/backlog disposition lives in
+[Issue #202](https://github.com/PolySia-Systems/Platform/issues/202).
+Each material hold records source time, owner, reason, next action and trigger.
+
+### Trusted publication and merge
+
+`dependency-publish.yml` runs trusted current-main code after the read-only
+producer. It never installs candidates or executes PR/artifact code. The
+publisher independently checks the originating workflow/event, repository,
+actor, live PR identity, expected base/head and run/attempt, exact allowed
+paths and SHA-256 hashes of the manifest/lock pair. It compares the manifest
+with the assessed immutable GitHub content, rejects nondependency manifest
+changes, and validates complete shared pins, declarations and build constraints.
+GitHub atomically enforces `expectedHeadOid` when committing the lock pair.
+Missing, partial, stale, ambiguous or tampered evidence fails closed.
+
+The publisher explicitly dispatches full CI after its final commit because
+[ordinary GITHUB_TOKEN writes do not trigger normal workflows](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+It suppresses an already running/successful dispatch for the same head. A
+separate completion handler reclassifies the live diff after successful CI,
+verifies `CI Gate` belongs to that exact run/head, requires the current base,
+then requests an exact-head merge under repository rules. It never leaves an
+auto-merge approval queued across subsequent changes. Runtime, SDK, build,
+crypto, prerelease/epoch/local/post versions, `0.x` minor, new/removed packages
+and ambiguous updates require review. Actions proposals require source review;
+metadata-only Actions auto-approval has been removed.
+
+A scheduled proposal identity binds the base and candidate content. Reruns
+reuse the single active, verified bot proposal; stale/ambiguous branches stop
+for review. Completed proposals do not block a new candidate or get resurrected.
+Existing branch diffs and signed bot identity are assessed before dispatch;
+the final merge head must also be a verified bot commit.
+Interrupted or denied publication preserves its branch for assessed recovery;
+the automation never deletes a possibly changed branch. A maintainer may
+remove an integrated or verified orphan branch after exact-head/PR inspection.
+No candidate is copied from a historical run over newer declarations.
+Restart a failed/partial producer through a fresh manual dispatch, regenerating
+its entire proposal. A partial job rerun must not reuse another attempt's
+artifact; attempt mismatch fails closed. Publication itself can safely retry
+the same fully assessed producer artifact.
+
+The repository rules require a PR and strict `CI Gate`, with zero mandatory
+approving reviews as observed on 2026-10-20. Repository auto-merge capability
+and `can_approve_pull_request_reviews` are not publication proof. Each actor's
+branch-write, PR-create, CI-dispatch and merge route must be exercised. A
+permission/provider failure is nonzero and retains sanitized stage/context.
+When Actions PR creation is denied, authenticated maintainer generation is a
+**degraded fallback**, not unattended completion. Never expand a token or
+change policy to make the proof pass.
+
+### Independent maintenance health and developer preflight
+
+The existing CI workflow independently checks meaningful dependency jobs on
+its weekly schedule and manual main dispatch. It requires both `scan` and
+`generate` success, preserves the previous complete observation across failure,
+checks publication failures, and exposes missed scans after the local default
+of seven days plus 48 hours grace. It opens/reopens one actionable GitHub issue,
+updates only changed state, closes it on recovery, and stays quiet while healthy
+or unchanged. GitHub issue creation is the notification surface; subscriber,
+email delivery and independence from GitHub availability remain unverified.
+Advisories require prompt owner triage independently of weekly version scans.
+
+Developer context adds offline `GO / CONSTRAINED_GO / BLOCKED` dependency
+preflight using relevant source/config/policy/manifest/lock hashes, cached scan
+identity and age. Dirty changes and age invalidate reuse. Routine prose scopes
+perform no online audit. A current metadata scan can be reused; candidate CI
+and advisory gates still apply. No secrets/runtime database enter the packet.
+The cached file is disposable `artifacts/dependency-scan.json`, never authority.
 
 ## 2026-07-11 verification evidence
 
