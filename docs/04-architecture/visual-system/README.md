@@ -6,9 +6,9 @@ Mermaid for canonical diagrams-as-code.
 
 ## Authority and state
 
-- Baseline Git commit: `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
+- Baseline Git commit: `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`
 - Original full-corpus generation baseline: `449f1c308fc74bd2a541e0e905f281fd19e5cd9b`
-- Review date: 2026-10-16
+- Review date: 2026-10-19
 - Architecture model: modular monolith with ports and adapters
 - First venue adapter: Polymarket
 
@@ -40,3 +40,9 @@ The 2026-10-16 review covers the independent Platform delta. Unchanged source
 views retain their prior semantics; generalized execution control remains TARGET.
 Bounded research Console software is CURRENT, with deployment/usefulness receipts
 kept separate in ADR-0021 and the dated execution record.
+
+The 2026-10-19 scoped review updates deployment (13) and trust boundaries (15)
+for the fresh private HTTPS installation and independent cold recovery. Other
+views retain their earlier reviewed semantics. The dated operational record owns
+activation, disabled acquisition, STOP and recovery evidence; runtime queries own
+current host truth. Cloudflare remains an optional externally commissioned path.

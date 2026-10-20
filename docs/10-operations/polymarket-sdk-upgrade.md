@@ -14,7 +14,7 @@ The reviewed [official tag](https://github.com/Polymarket/py-sdk/releases/tag/po
 is `f1e2ab2c86d04573c304ca7afe8f1e36fcbd6237`. The PyPI wheel SHA-256 is
 `923e691a4bcb1f816852420db0db4abca3d1dda3d08c5384669ae0fac94f5c13`.
 The former 0.7.1 deferral is superseded by this scoped migration, not by a
-pin-only approval. PR #169 is superseded after verified integration.
+pin-only approval. PR #169 was closed after verified integration in #200.
 
 ## Consumed semantics and boundaries
 
@@ -60,10 +60,10 @@ not integrated.
 
 ## Dependency decision
 
-Pydantic 2.14.1/core2.50.1 have cp314 Linux/Windows wheels. Financial/config,
+Pydantic 2.14.1/core 2.50.1 have cp314 Linux/Windows wheels. Financial/config,
 SDK model, serialization and settings regressions determine acceptance; exact
-versions are locked together. pydantic-settings2.15.0 remains compatible without
-a justified update. WebSockets15.0.1 is retained because SDK0.13 requires
+versions are locked together. pydantic-settings 2.15.0 remains compatible without
+a justified update. WebSockets 15.0.1 is retained because SDK 0.13 requires
 `>=13,<16`; 17.2 is outside that contract. This is a resolved compatible hold.
 Only SDK, Pydantic and core changed in the generated runtime/development locks.
 No Python upgrade or repeat 3.15 assessment is part of this migration.
@@ -93,7 +93,7 @@ is not behavior evidence.
 ## Rollback and stop conditions
 
 Retain the old immutable v0.3.0 artifact as historical software rollback evidence;
-its stack used SDK0.7.1 and Pydantic2.13.5/core2.46.5. Revert an SDK migration only
+its stack used SDK 0.7.1 and Pydantic 2.13.5/core 2.46.5. Revert an SDK migration only
 as a coherent pin/constants/locks/adapter/contracts/documentation set, recreate
 the environment and rerun relevant gates. Never mix new adapter code with the
 old installed package or downgrade financial data/spent authority.
@@ -108,3 +108,8 @@ Stop the affected action for a genuine missing contract, wrong asset or wallet,
 ambiguous external state, failed redaction, dependency conflict or weakened Live
 gate. Preserve evidence and fix the responsible boundary; never substitute empty
 results, drop filters silently or use trial-and-error keyword fallbacks.
+
+Release `v0.4.0` is the immutable successor: exact source
+`4f3b611adae17defbcc6e24b4f9f917b466d5ad8`, full CI `39274691513`.
+Actual clean installation and independent recovery are recorded separately in
+the [dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md).

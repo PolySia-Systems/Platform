@@ -46,8 +46,9 @@ The earlier frozen Stage 4B backup remains documented in
 - [Roadmap](22-roadmap/roadmap.md)
 
 SDK compatibility and rollback: [current boundary and upgrade procedure](10-operations/polymarket-sdk-upgrade.md).
-The SDK0.13.0 candidate and clean disabled commissioning are tracked in PR #200;
-previous runtime receipts are historical after the owner's server reset.
+Immutable v0.4.0 ships SDK 0.13.0 with clean disabled private commissioning and
+independent cold recovery; [PR #200](https://github.com/PolySia-Systems/Platform/pull/200) records the migration.
+Previous runtime receipts are historical after the owner's server reset.
 
 ## Architecture and decisions
 

@@ -5,8 +5,8 @@
 - **Scope:** Foundation/MVP/limited-live capabilities, target orchestration and platform boundaries, and future multi-market/Web3/institutional categories.
 - **Architecture status:** MIXED
 - **Audience:** Owner, roadmap reviewers, architects, developers, and risk reviewers.
-- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
-- **Reviewed:** 2026-10-16
+- **Source commit:** `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`
+- **Reviewed:** 2026-10-19
 
 ## Mermaid diagram
 

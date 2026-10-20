@@ -5,58 +5,55 @@
 - **Scope:** Hosted artifacts, Helsinki, private Console and Nuremberg cold recovery.
 - **Architecture status:** MIXED
 - **Audience:** Operators, developers and security reviewers.
-- **Source commit:** `2cfb2752bf6fa3f8cb118acda53794db15a86ec0`
-- **Reviewed:** 2026-10-16
+- **Source commit:** `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`
+- **Reviewed:** 2026-10-19
 
 ## Mermaid diagram
 
 Canonical source: [`13-current-deployment-view.mmd`](../sources/13-current-deployment-view.mmd)
 
 ```mermaid
-flowchart TB
-  CI["GitHub hosted CI and retained release assets\nexact source / archive / schema identities [CURRENT]"]:::current
-  API["Public Polymarket / PolyCop endpoints [EXTERNAL]"]:::external
-  Access["Cloudflare Access + Tunnel\nverified owner only; setup BLOCKED [TARGET]"]:::target
-  subgraph PRIMARY["Helsinki: implemented ownership; activation requires a dated receipt"]
-    Worker["Worker UID 10101\nDATA_ONLY; bounded GET; no signer [CURRENT]"]:::current
-    Authority[("Private durable counters and STOP [CURRENT]")]:::risk
-    Financial[("Separate financial / telemetry SQLite [CURRENT]")]:::current
-    Publisher["Publisher UID 10101\nnetwork none; financial snapshot only [CURRENT]"]:::current
-    Published[("Private canonical JSON and immutable exports [CURRENT]")]:::current
-    Queue[("Command queue; dedicated shared group [CURRENT]")]:::risk
-    Web["Console UID 10102\nloopback; publication RO; no financial mount [CURRENT]"]:::current
-    Backup["Coordinated snapshots and public-recipient encryption\nnetwork isolated; no decryption key [CURRENT software]"]:::current
+flowchart LR
+  CI["GitHub retained v0.4.0 assets<br/>source, image and runtime identities [CURRENT]"]:::current
+  Owner["Operator [EXTERNAL actor]<br/>verified SSH and scoped CA trust"]:::external
+  subgraph PRIMARY["Helsinki: fresh disabled installation [CURRENT]"]
+    Gateway["HTTPS localhost:8443<br/>reader / operator authentication"]:::current
+    Web["Console UID 10102<br/>Unix socket; publication RO<br/>no financial mount or Docker socket"]:::current
+    Publisher["Publisher UID 10101<br/>network none; retained reports"]:::current
+    Published[("Canonical private publication<br/>UNKNOWN economics; no campaign")]:::current
+    Queue[("Durable control receipts<br/>dedicated shared group")]:::risk
+    Worker["Worker [CURRENT software]<br/>UNCONFIGURED; OS restart fenced<br/>no manifest, admission or provider key"]:::risk
+    Backup["Bounded snapshots and age encryption<br/>public recipient only"]:::current
   end
-  subgraph SECONDARY["Nuremberg: dedicated 4 GiB bounded allocation [CURRENT]"]
-    Incoming[("Chrooted SFTP ciphertext; two generations [CURRENT software]")]:::current
-    Key["Protected root-only recovery key\noutside upload account [CURRENT]"]:::risk
-    Drill["Isolated decrypt / verify / startup / exact replay\nnetwork none; acquisition disabled [CURRENT software]"]:::current
+  subgraph SECONDARY["Nuremberg: independent cold recovery [CURRENT]"]
+    Cold["Same verified immutable assets<br/>no active worker or Console"]:::current
+    Incoming[("Restricted SFTP chroot<br/>at most two ciphertext generations")]:::current
+    Key["Root-only recovery key<br/>outside upload chroot and primary"]:::risk
+    Drill["Daily isolated restore verification<br/>network none; acquisition disabled"]:::current
   end
-  CI -->|verified immutable artifact| Worker
-  CI -->|independently retained release identity| Drill
-  Authority -->|caps, expiry, STOP| Worker
-  Worker --> API
-  Worker ==>|one financial writer| Financial
-  Financial -->|SQLite Backup API| Publisher
+  Owner -->|SSH forward| Gateway
+  Gateway -->|authenticated identity| Web
+  CI -->|exact tested artifact| Worker
+  CI -->|independently retained| Cold
   Publisher --> Published
   Published -->|RO mount| Web
-  Web ==>|validated receipt| Queue
-  Queue -->|worker validates authority| Worker
-  Access -.->|required before publication| Web
-  Authority --> Backup
-  Financial --> Backup
-  Backup -->|bounded encrypted upload| Incoming
+  Web ==>|validated command| Queue
+  Queue -.->|applied before OS fencing| Worker
+  Published --> Backup
+  Queue --> Backup
+  Backup -->|pinned SSH upload| Incoming
   Incoming --> Drill
-  Key -->|secondary only| Drill
+  Key --> Drill
+  Cold --> Drill
   classDef current fill:#FFFFFF,stroke:#0F172A,stroke-width:2px,color:#0F172A;
-  classDef target fill:#F1F5F9,stroke:#2563EB,stroke-width:2px,stroke-dasharray:6 4,color:#0F172A;
   classDef external fill:#F1F5F9,stroke:#64748B,stroke-width:1.5px,color:#475569;
   classDef risk fill:#FFF7ED,stroke:#D97706,stroke-width:2px,color:#0F172A;
 ```
 
 ## Reading and evidence
 
-CURRENT software is verified in the package and tests; it is not a claim that
+The fresh v0.4.0 private installation has a separate dated receipt. Software is
+verified in the package and tests; this diagram does not claim that
 all host services or public access are commissioned. The [dated execution record](../../../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
 owns operational receipts; a runtime query owns live state. The [runbook](../../../10-operations/independent-platform-shadow.md)
 owns release, STOP, recovery and rollback actions. Existing WI roots, credentials,

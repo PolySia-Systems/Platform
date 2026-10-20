@@ -900,3 +900,182 @@ nontechnical/unfamiliar-developer trials, authorized public-domain commissioning
 previously exposed credential closure and new economic observation are separate owner
 work. Zero activity and automated tests are not profitability or human-acceptance
 evidence.
+
+## 19 October 2026 SDK 0.13 and clean-install closeout
+
+This dated receipt supersedes the earlier **activation blocker**, because the owner
+restored both hosts and authorized fresh disposable-state initialization. It does
+not rewrite the earlier observations, migrate their accounting or weaken the
+retained-state upgrade gate. Bounded preflight found the dedicated Platform roots,
+units and ports absent on both hosts. No old Platform state needed retirement.
+Other repositories/services, host Python, OS/Docker and ingress were preserved.
+
+### Engineering and immutable artifact
+
+[Migration #200](https://github.com/PolySia-Systems/Platform/pull/200) merged as
+`4f3b611adae17defbcc6e24b4f9f917b466d5ad8`. [Exact-main CI 39274691513](https://github.com/PolySia-Systems/Platform/actions/runs/39274691513)
+passed all required gates: Linux **1531 passed / 5 skipped**, Windows **1527 passed /
+9 skipped**, Standards (zero blocking), compileall, Ruff, Mypy (269 modules), full
+pytest, pip integrity, generated locks, secret scan, build/wheel smoke, vulnerability
+and SBOM, image, browser and supervised installation/recovery acceptance. Opt-in
+network/account tests and Windows-inapplicable checks remain explicit skips.
+Local focused regressions included 288 passing tests and a final 21 actual-SDK
+transport/model contracts. Deliberate second-pass review of SDK identity, inventory,
+accounting, approval/auth, configuration and release boundaries found no blocking
+findings. No Live, real signing or provider/account validation was performed.
+
+[Release v0.4.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.4.0)
+was promoted from retained exact-main assets by workflow `39276778666`; it reports
+`isImmutable: true`. `gh release verify v0.4.0 --format json` verified GitHub's
+signed release attestation (2026-10-19T15:18:35Z) and source. Checksums bind bytes;
+they are not an author signature. Exact identities:
+
+- Source: `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`.
+- CI/manifest image ID: `sha256:ac8c18e3e4c57be0b31232b34c9e0d9276faf9d2deac3456b082530836eacede`.
+- Docker 29 installed ID on both hosts: `sha256:3b4319a15c29db44b7c8c0ecd385fe46f15b7268e9a6aca0811002c649ea9aa5`.
+  The shipped bootstrap verifies config/OCI identities from the same archive;
+  these are two archive-bound addresses, not separate server builds.
+- Archive SHA-256: `e42711204033dae54b66b1d77238cb35a089a6027b627f0b1a0f576f00f3b5a2`.
+- Administrative entry SHA-256: `4f2668ace166d6f8cb2bed4ac7f01bcb7086ef046a14215dded2e318fec35301`.
+- Financial schema 9; installation schema `platform-installation/v1`.
+
+Image/runtime manifest and installed Python report CPython **3.14.8**, SDK
+**0.13.0**, Pydantic **2.14.1**, core **2.50.1**, pydantic-settings **2.15.0** and
+WebSockets **15.0.1**. Only SDK/Pydantic/core changed in the generated locks.
+Settings remains compatible; WebSockets stays inside the SDK's `>=13,<16`
+contract. Python support remains `>=3.14,<3.15`; no 3.15 reassessment occurred.
+The PR impact map closes supported reads/streams, gated execution/reconciliation,
+configuration/locks, automation and actual model/HTTP semantics. The removed
+`list_closed_positions` assertion had no caller; historical wire fixtures and
+coherent v0.3.0 rollback evidence remain necessary. Residual `size_threshold`
+arguments belong to the stable Platform interface and are translated locally;
+SDK calls use canonical 0.13.0 fields. No dual-SDK shim or active 0.7.1 dependency
+remains. PR #169 was superseded/closed; dependency automation remains enabled.
+
+### Actual clean Helsinki activation and STOP
+
+Both hosts are Ubuntu 26.04.1 amd64 with existing Docker 29.9.1/systemd. Helsinki
+ran the hash-verified shipped `platform_admin.py install --tag v0.4.0 --commit
+4f3b611adae17defbcc6e24b4f9f917b466d5ad8 --profile private --noninteractive` lifecycle.
+It returned **SETUP_COMPLETE**, not download-only staging. Verified assets and
+receipts are under `/opt/polysia-platform/releases/4f3b611adae17defbcc6e24b4f9f917b466d5ad8/`.
+Installation ran within 1 GiB/50% CPU/256 tasks/900 seconds; observed primary peak
+was 369 MiB and runtime 109.545 seconds. Nuremberg retained/loaded the same assets
+without activating a worker or Console (178.1 MiB peak / 33.383 seconds).
+
+The Console listens only on **127.0.0.1:8443**, with a private Caddy CA and
+reader/operator authentication. The backend is a protected Unix socket; no
+8765/public application listener or Cloudflare/DNS change was made. Access:
+
+```bash
+ssh -N -L 8443:127.0.0.1:8443 Hetzner-Finland-Helsinki-01
+```
+
+Open `https://localhost:8443`. Retrieve the public CA over the same verified SSH
+route from `/var/lib/polysia-platform/gateway/caddy/pki/authorities/local/root.crt`.
+Its **PEM-file SHA-256** is
+`dfdfe01e631d81988b7ecfd9fd23990bcb7e59a7abc3e4a7eddf938fcbb545f6`.
+Use explicit client/dedicated browser trust. Do not bypass TLS or add silent global
+trust. Browser credentials are retrieved privately from root-only
+`/etc/polysia-platform/gateway-credentials.json`; no values belong in this record.
+No provider credentials, policy manifest, admission, budget or financial session
+was created. DATA_ONLY and LIVE=false remain installed defaults.
+
+Actual Firefox desktop (1280x900), mobile (390x844) and keyboard STOP journeys
+passed against this installed HTTPS endpoint, with an isolated NSS trust store,
+certificate validation enabled and no page errors. Status says **UNCONFIGURED** /
+**NO MEASURABLE RESULT**. A report request correctly returns a durable BLOCKED
+receipt (`no_retained_financial_report` / unsupported retained range), rather than
+invented financial output. Final browser STOP revision **8** is **APPLIED**;
+all eight bounded administrative probe receipts are terminal. Separate actual
+HTTPS checks passed: owner/reader report 200, anonymous 401, reader mutation 403,
+wrong Origin 403, missing CSRF 403, wrong Host 421, direct backend without identity
+403, and unprivileged Unix-socket access denied. Desktop/mobile renders were
+visually inspected; these are automated checks, not human product acceptance.
+
+An internal CSRF nonce appeared in a disposable Playwright failure log. The
+internal CSRF secret was renewed and web/gateway restarted before the final
+successful access checks, invalidating that nonce. No Basic password, SSH private
+key, recovery private key or provider secret was disclosed. Temporary browser
+trust and credentials stayed in its disposable container.
+
+Independent shipped SSH `stop` durably wrote `/etc/polysia-platform/restart-fenced`
+and stopped worker timer/service. Its conservative receipt says
+`OS_RESTART_FENCED_RUNTIME_UNCONFIRMED`, `NO_AUTHORITY_CONFIGURED`, command receipt
+UNKNOWN because no long-lived worker container or authority exists in fresh state.
+An independent systemd/container query confirms worker inactive and **zero active
+worker containers**; the browser's separate revision-8 receipt is APPLIED. This
+is not a fabricated stopped-authority row. The fence condition prevents worker
+restart after reboot; publisher/web/gateway continue separately. A fenced worker's
+receipt will age and be shown as stale; that does not authorize a restart or
+acquisition. Gateway health at 15:42 UTC was **CERTIFICATE_CURRENT** / private CA.
+
+### Independent backup, final restore and durable jobs
+
+A fresh `polysia-platform-upload` account is restricted to internal SFTP in
+`/srv/polysia-platform-backups`, with root-owned chroot/status, upload-owned incoming,
+primary-source restriction and a separately pinned trusted host key. Password,
+interactive/TTY, TCP/agent/stream forwarding are disabled only for this account.
+Existing trusted root SSH was verified after the scoped reload. The root-only age
+key is `/etc/polysia-platform-recovery/recovery-key`, outside the upload chroot;
+it never went to the primary or its own archive. The primary has only the public
+age recipient and a distinct root-only upload key. Public fingerprints:
+
+- Age-recipient file SHA-256: `84ac2fa585528e2c04224823cf4a29427146b2b3577056de44624dc6a68ac62c`.
+- Upload Ed25519: `SHA256:seOSMThE4ne1OQwUuvioiLFRpTvDYkaEwN2dwykuLWM`.
+
+The shipped backup lifecycle first returned AWAITING_INDEPENDENT_RESTORE, then
+committed **DESTINATION_VERIFIED / INDEPENDENT_SFTP** only after matching real
+secondary proof. After final STOP/nonce remediation, a fresh generation
+`platform-20261019T153926Z.tar.age` (76419480 bytes) was uploaded at 15:39:44 UTC,
+SHA-256 `537d85a9a8c644a867d7a6c3b2d693948e0f1284f41fde8a859be6467817b037`.
+Nuremberg verified it at **15:40:53 UTC**: VERIFIED_ISOLATED_RESTORE, same release /
+schema/config identity, runtime UNCONFIGURED, acquisition/real_orders false,
+network none, **RPO 75.925 seconds / RTO 39.217 seconds**, within 24 hours / one
+hour. Two ciphertext generations remain; plaintext drill directories are empty.
+Primary status fetch/publication contains this matching final proof. No secondary
+worker/Console or automatic failover is active. No primary outage/reboot was used.
+
+This empty fresh-host drill restored zero financial reports and no analytical
+digest; it does not prove financial recovery. The **separate exact-main CI**
+nonempty replacement fixture restored positions, selected-period exports, one
+report and spent/uncertain authority with primary unavailable: RPO **36.066s** /
+RTO **63.441s**, real age and strict-host-key SFTP, trusted HTTPS download/STOP PASS,
+provider_requests=0. Its analytical digest is
+`9d80841e1e7ea8b94f49648ee93721c1d45cf413e03cb9092dcf73fc7f1f99e2`.
+Unsafe inventory activation remained refused. CI also passed actual installed
+private TLS/browser and controlled ACME issuance/renewal/failure recovery;
+fixture cached-API p95 was 0.025705 seconds across 100 reads/512 wallets.
+
+Enabled persistent timers: primary publisher each minute, certificate/installation
+health each minute, backup **00:15 UTC daily**, recovery-status fetch every **15
+minutes**; secondary isolated restore **00:45 UTC daily**. Jobs use the exact
+release helpers. Backup/restore are bounded to 640 MiB/50% CPU/256 tasks/600 seconds;
+status fetch 256 MiB/25%/64 tasks/60 seconds; health 64 MiB/10%/16 tasks/15 seconds.
+The dedicated one-shot jobs last returned success. Model polling ends; durable
+OS jobs own maintenance. No study/monitor or campaign was started.
+
+### Documentation, cleanup and acceptance boundary
+
+Current entry points, SDK upgrade/rollback, ADR-0011, durable status and deployment/
+trust diagrams are synchronized. Mermaid sources, views and SVGs were regenerated
+and visually inspected; other diagram semantics were retained with synchronized
+review metadata required by the architecture checker. Documentation-only closeout
+runs diff/path/link/size/content, architecture, Standards and secret checks; it does
+not repeat the unchanged full runtime suite. The closeout PR owns final Git inventory.
+Four local historical branch tips matched their merged PRs exactly and their squash
+merge commits were verified as ancestors before deletion. No unique user work or
+worktree was discarded. The two named old TEMP directories were already absent. Verified task staging
+was removed from both hosts after canonical release retention; the disposable
+browser container/image was removed. Automatic approval review rejected the
+local recursive cleanup command for ``%TEMP%/polysia-sdk-mermaid`` and
+``%TEMP%/polysia-sdk-closeout`` as **blocked by policy**, before it executed.
+That affected deletion was stopped without an alternative-tool workaround.
+Local disposable tools/helpers may remain; current receipts, release assets,
+environments, configuration, keys and ciphertext are deliberately retained.
+
+**ENGINEERING_COMPLETE** and **DEPLOYED_WITH_ACQUISITION_DISABLED** apply to this
+bounded release/install/recovery scope. Human acceptance, public-domain commissioning,
+old exposed-credential revocation confirmation and new economic observation remain
+separate. No Live, wallet/signing/venue mutation, provider acquisition, admission,
+WI restart, new infrastructure, host upgrade or ingress change occurred.

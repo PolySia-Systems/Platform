@@ -7,14 +7,12 @@ Historical WI campaigns, roots and authority remain separate and stopped.
 ## Release and isolated roots
 
 The root-only administrative entry is `platform_admin.py`, distributed beside
-the manifest-verified bootstrap in the same exact release. The SDK0.13.0 successor
-is tracked in [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
-The owner reset both hosts; the earlier v0.3.0 staging/v0.2.1 runtime receipt is
-historical. Fresh protected private commissioning and a matching independent
-recovery destination use the same shipped lifecycle. The previous two-observation
-blocker is superseded by clean installation; ordinary retained-state gates remain.
-The v0.3.0 download example below identifies the previous immutable release;
-final successor identity/checksum is recorded with its release receipt.
+the manifest-verified bootstrap in the same exact immutable release. Current
+release [v0.4.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.4.0)
+contains the SDK 0.13.0 migration from [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
+The owner's clean-server decision supersedes the old v0.3.0 staging blocker.
+Historical receipts remain unchanged; ordinary retained-state upgrade gates remain.
+The dated clean-install receipt records actual private activation and cold recovery.
 
 On a supported Ubuntu LTS amd64 server, administrative SSH, Docker/systemd,
 at least 1 GiB available RAM and 8 GiB free staging/rollback space are prerequisites.
@@ -25,16 +23,16 @@ before running it. Ubuntu's Python and coreutils suffice for this bootstrap:
 
 ```bash
 set -eu
-mkdir -m 700 polysia-v0.3.0
-cd polysia-v0.3.0
-python3 -c "from urllib.request import urlretrieve; urlretrieve('https://github.com/PolySia-Systems/Platform/releases/download/v0.3.0/platform_admin.py', 'platform_admin.py')"
+mkdir -m 700 polysia-v0.4.0
+cd polysia-v0.4.0
+python3 -c "from urllib.request import urlretrieve; urlretrieve('https://github.com/PolySia-Systems/Platform/releases/download/v0.4.0/platform_admin.py', 'platform_admin.py')"
 printf '%s  platform_admin.py\n' '4f2668ace166d6f8cb2bed4ac7f01bcb7086ef046a14215dded2e318fec35301' | sha256sum --check
-sudo python3 platform_admin.py install --tag v0.3.0 --commit b43ce0a0c5196c91873e749580fce5eb290f4847
+sudo python3 platform_admin.py install --tag v0.4.0 --commit 4f3b611adae17defbcc6e24b4f9f917b466d5ad8
 ```
 
 The entry downloads and verifies its matching bootstrap and remaining release
 assets from the same trusted origin. The checksum is not an author signature;
-`gh release verify v0.3.0` additionally verifies GitHub's release attestation when
+`gh release verify v0.4.0` additionally verifies GitHub's release attestation when
 GitHub CLI is available. On interruption, rerun the last administrative command
 from the retained directory rather than overwriting it. These fresh-install
 commands do not authorize activation over incompatible retained state.
@@ -83,11 +81,11 @@ the wheel and immutable image, tests the image,
 retains their source/archive/config identities, performs the supply-chain checks,
 and exercises the installed wheel in a synthetic HTTPS desktop/mobile browser.
 The release workflow promotes the retained assets from a successful full main CI
-run; it does not rebuild them. The verified engineering release is `v0.3.0`;
-the earlier 19 October receipt records historical staging with activation BLOCKED.
-The subsequent owner reset supersedes that installation state;
-`v0.2.0` remains the compatible historical release. Only a dated promotion
-receipt establishes which artifact is installed.
+run; it does not rebuild them. Exact-main CI 39274691513 and release workflow
+39276778666 bind v0.4.0 to source `4f3b611adae17defbcc6e24b4f9f917b466d5ad8`.
+The earlier v0.3.0/v0.2.1 staging/runtime evidence remains historical after the
+owner's reset. A dated installation receipt establishes actual host state.
+
 A full manual main CI run is supported when automatic classification omits a gate.
 Never promote a PR merge-test identity as the final main release.
 
