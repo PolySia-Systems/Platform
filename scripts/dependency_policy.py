@@ -10,6 +10,11 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+try:
+    from packaging.version import InvalidVersion, Version
+except ModuleNotFoundError:  # Trusted publisher has only Python and its bundled pip.
+    from pip._vendor.packaging.version import InvalidVersion, Version
+
 RiskAction = Literal["auto_merge", "human_review", "reject"]
 
 EXPECTED_REPOSITORY = "PolySia-Systems/Platform"
@@ -31,6 +36,11 @@ ENVIRONMENT = "environment.yml"
 
 SENSITIVE_RUNTIME_PACKAGES = frozenset(
     {
+        "build",
+        "hatchling",
+        "setuptools",
+        "wheel",
+        "pip-tools",
         "polymarket-client",
         "pydantic",
         "pydantic-core",
@@ -73,7 +83,6 @@ UNSAFE_REQUIREMENT = re.compile(
 PIN_LINE = re.compile(
     r"^([A-Za-z0-9_.-]+)==([^\\\s;]+)(?:\s*;\s*[^#]+)?\s*(?:\\)?$"
 )
-VERSION_SPLIT = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 
 
 @dataclass(frozen=True)
@@ -117,12 +126,8 @@ def _labels(*values: str) -> tuple[str, ...]:
 
 def parse_lock_pins(text: str) -> dict[str, str]:
     pins: dict[str, str] = {}
-    continuation = False
     for raw in text.splitlines():
         line = raw.strip()
-        if continuation:
-            continuation = line.endswith("\\")
-            continue
         if not line or line.startswith("#"):
             continue
         if line.startswith("-"):
@@ -132,12 +137,19 @@ def parse_lock_pins(text: str) -> dict[str, str]:
         match = PIN_LINE.match(line)
         if match is None:
             raise ValueError(f"malformed lock pin: {line}")
-        name = match.group(1).lower().replace("_", "-")
+        if line.endswith("\\"):
+            raise ValueError("continued lock directives require explicit policy review")
+        name = re.sub(r"[-_.]+", "-", match.group(1).lower())
         version = match.group(2).strip()
         if name in {"polysia", "pm-trader", "pm_trader"}:
             raise ValueError("generated locks must exclude the editable project")
+        try:
+            Version(version)
+        except InvalidVersion:
+            raise ValueError("invalid PEP 440 lock version") from None
+        if name in pins:
+            raise ValueError(f"duplicate or ambiguous lock pin: {name}")
         pins[name] = version
-        continuation = line.endswith("\\")
     return pins
 
 
@@ -154,13 +166,15 @@ def shared_pin_conflicts(
 
 
 def parse_pep440_tuple(version: str) -> tuple[int, int, int] | None:
-    match = VERSION_SPLIT.match(version.lstrip("vV"))
-    if match is None:
+    try:
+        parsed = Version(version)
+    except InvalidVersion:
         return None
-    major = int(match.group(1))
-    minor = int(match.group(2) or 0)
-    patch = int(match.group(3) or 0)
-    return major, minor, patch
+    if parsed.epoch or parsed.local or parsed.is_prerelease or parsed.is_postrelease:
+        return None
+    if len(parsed.release) > 3:
+        return None
+    return parsed.major, parsed.minor, parsed.micro
 
 
 def is_low_risk_version_bump(previous: str, current: str) -> bool:
@@ -170,7 +184,7 @@ def is_low_risk_version_bump(previous: str, current: str) -> bool:
         return False
     prev_major, prev_minor, prev_patch = parsed_previous
     cur_major, cur_minor, cur_patch = parsed_current
-    if (cur_major, cur_minor, cur_patch) < (prev_major, prev_minor, prev_patch):
+    if Version(current) < Version(previous):
         return False
     if cur_major != prev_major:
         return False
@@ -180,7 +194,7 @@ def is_low_risk_version_bump(previous: str, current: str) -> bool:
 def is_trusted_dependency_actor(actor: str, head_branch: str) -> bool:
     return (
         actor == DEPENDABOT_LOGIN and head_branch.startswith(DEPENDABOT_BRANCH_PREFIXES)
-    ) or head_branch.startswith(SCHEDULED_BRANCH_PREFIX)
+    ) or (actor == "github-actions[bot]" and head_branch.startswith(SCHEDULED_BRANCH_PREFIX))
 
 
 def classify_dependency_change(change: DependencyChange) -> RiskDecision:
@@ -237,16 +251,9 @@ def classify_dependency_change(change: DependencyChange) -> RiskDecision:
         if name.lower().replace("_", "-") in SENSITIVE_RUNTIME_PACKAGES
     )
     if change.package_ecosystem == "github_actions":
-        if change.update_type == "version-update:semver-patch":
-            return RiskDecision(
-                "auto_merge",
-                "GitHub Actions patch with complete required checks",
-                _labels("risk:auto-merge", "deps:github-actions"),
-                affected,
-            )
         return RiskDecision(
             "human_review",
-            "GitHub Actions minor/major or ambiguous Actions update",
+            "GitHub Actions source/permission review required; metadata is insufficient",
             _labels("risk:human-review", "deps:github-actions"),
             affected,
         )
@@ -279,19 +286,15 @@ def classify_dependency_change(change: DependencyChange) -> RiskDecision:
             affected or sensitive,
         )
 
-    metadata_patch_or_stable_minor = change.update_type in {
-        "version-update:semver-patch",
-        "version-update:semver-minor",
-    } and not change.zero_version_minor
     development_only = (
         not change.runtime_lock_changed and not change.production_declaration_changed
     )
-    if change.development_only_low_risk or (
+    if (
         development_only
         and change.locks_complete
         and change.locks_valid
         and (change.development_lock_changed or change.pyproject_changed)
-        and metadata_patch_or_stable_minor
+        and change.development_only_low_risk
     ):
         return RiskDecision(
             "auto_merge",

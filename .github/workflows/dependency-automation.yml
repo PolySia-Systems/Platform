@@ -1,59 +1,46 @@
 name: Dependency automation
 
 on:
-  # Unfiltered push is required. GitHub still evaluates this file on every
-  # push; if `push` is omitted or path-filtered, that evaluation concludes
-  # failure with zero jobs and `workflow_dispatch` is not registered.
   push:
   pull_request:
   schedule:
     - cron: "47 5 * * 1"
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Attempt Actions publication only after capability preflight"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
   group: dependency-automation-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
-  # Succeeds on ordinary push and human PRs so GitHub keeps this workflow
-  # registered. Skipped for Dependabot PRs, schedule, and manual refresh.
   noop:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]') }}
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    permissions:
-      contents: read
     steps:
-      - run: echo "No dependency-automation work for ${{ github.event_name }}."
+      - run: echo "Registration only; this is not a dependency scan."
 
-  evaluate:
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+  generate:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: read
       pull-requests: read
-    outputs:
-      status: ${{ steps.evaluate.outputs.status }}
-      reason: ${{ steps.evaluate.outputs.reason }}
-      payload: ${{ steps.evaluate.outputs.payload }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14.8"
-      - id: evaluate
+          cache: pip
+          cache-dependency-path: locks/requirements-dev-py314.txt
+      - if: github.event_name == 'pull_request'
+        id: intent
         env:
           GH_TOKEN: ${{ github.token }}
           DEPENDENCY_PR_ACTOR: ${{ github.event.pull_request.user.login }}
@@ -61,170 +48,35 @@ jobs:
           DEPENDENCY_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
           DEPENDENCY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           DEPENDENCY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python scripts/dependency_locks.py lock-sync-evaluate --pr ${{ github.event.pull_request.number }}
-
-  generate:
-    needs: evaluate
-    if: needs.evaluate.outputs.status == 'generate'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14.8"
-          cache: pip
-          cache-dependency-path: locks/requirements-dev-py314.txt
-      - run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r locks/requirements-dev-py314.txt
-      - env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python scripts/dependency_locks.py lock-sync-evaluate --pr "$PR_NUMBER"
+      - if: github.event_name != 'pull_request' || steps.intent.outputs.status == 'generate' || (steps.intent.outputs.status == 'noop' && fromJSON(steps.intent.outputs.payload).ecosystem == 'pip' && fromJSON(steps.intent.outputs.payload).decision != 'human_review')
+        run: python -m pip install -r locks/requirements-dev-py314.txt
+      - if: github.event_name != 'pull_request' || steps.intent.outputs.status == 'generate' || (steps.intent.outputs.status == 'noop' && fromJSON(steps.intent.outputs.payload).ecosystem == 'pip' && fromJSON(steps.intent.outputs.payload).decision != 'human_review')
+        id: prepare
+        env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/dependency_locks.py lock-sync-prepare --head-sha ${{ github.event.pull_request.head.sha }} --destination "$RUNNER_TEMP/lock-sync"
+          DEPENDENCY_ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -n "$CANDIDATE_HEAD" ]; then
+            python scripts/dependency_lifecycle.py generate --output "$RUNNER_TEMP/proposal" --head "$CANDIDATE_HEAD"
+          else
+            python scripts/dependency_lifecycle.py generate --output "$RUNNER_TEMP/proposal"
+          fi
+          echo "prepared=true" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
+        if: steps.prepare.outputs.prepared == 'true'
         with:
-          name: polysia-lock-sync
-          path: |
-            ${{ runner.temp }}/lock-sync/requirements-runtime-py314.txt
-            ${{ runner.temp }}/lock-sync/requirements-dev-py314.txt
-            ${{ runner.temp }}/lock-sync/pyproject.toml
-          retention-days: 1
+          name: polysia-dependency-proposal
+          path: ${{ runner.temp }}/proposal/
+          retention-days: 14
+          if-no-files-found: error
 
-  publish:
-    needs: [evaluate, generate]
-    if: needs.evaluate.outputs.status == 'generate'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14.8"
-      - uses: actions/download-artifact@v8
-        with:
-          name: polysia-lock-sync
-          path: ${{ runner.temp }}/lock-sync
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/dependency_locks.py lock-sync-validate --artifact "$RUNNER_TEMP/lock-sync"
-          python scripts/dependency_locks.py classify-from-locks \
-            --actor "${{ github.event.pull_request.user.login }}" \
-            --head-branch "${{ github.event.pull_request.head.ref }}" \
-            --artifact "$RUNNER_TEMP/lock-sync" \
-            --base-root . > "$RUNNER_TEMP/decision.json"
-          ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['action'])")
-          REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['reason'])")
-          python scripts/dependency_locks.py lock-sync-commit \
-            --branch "${{ github.event.pull_request.head.ref }}" \
-            --artifact "$RUNNER_TEMP/lock-sync" \
-            --message "chore(deps): sync generated pip locks"
-          gh label create "risk:human-review" --force --description "Owner review required" >/dev/null
-          gh label create "risk:auto-merge" --force --description "Eligible for unattended merge" >/dev/null
-          gh label create "deps:development" --force >/dev/null
-          gh label create "deps:runtime" --force >/dev/null
-          gh workflow run ci.yml --ref "${{ github.event.pull_request.head.ref }}"
-          if [ "$ACTION" = "auto_merge" ]; then
-            gh pr edit ${{ github.event.pull_request.number }} --add-label "risk:auto-merge,deps:development"
-            gh pr merge ${{ github.event.pull_request.number }} --auto --merge
-          elif [ "$ACTION" = "reject" ]; then
-            gh pr edit ${{ github.event.pull_request.number }} --add-label "risk:reject"
-            gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency update rejected\n\n- **Reason:** %s\n- Automation will not merge this pull request.\n' "$REASON")"
-            exit 1
-          else
-            gh pr edit ${{ github.event.pull_request.number }} --add-label "risk:human-review"
-            gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency review required\n\n- **Reason:** %s\n- **Owner action:** Review compatibility/security impact and merge only after CI Gate is green.\n- Automation will not merge this pull request unattended.\n' "$REASON")"
-          fi
-
-  reject:
-    needs: evaluate
-    if: needs.evaluate.outputs.status == 'reject'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency update rejected\n\n- **Reason:** %s\n- Automation will not merge this pull request.\n' '${{ needs.evaluate.outputs.reason }}')"
-          exit 1
-
-  label-existing:
-    needs: evaluate
-    if: needs.evaluate.outputs.status == 'noop'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-      - uses: dependabot/fetch-metadata@v3
-        id: metadata
-        with:
-          github-token: ${{ github.token }}
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          EVAL_PAYLOAD: ${{ needs.evaluate.outputs.payload }}
-          META_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
-          META_UPDATE: ${{ steps.metadata.outputs.update-type }}
-          META_NAMES: ${{ steps.metadata.outputs.dependency-names }}
-        run: |
-          gh label create "risk:human-review" --force >/dev/null
-          gh label create "risk:auto-merge" --force >/dev/null
-          gh label create "deps:github-actions" --force >/dev/null
-          gh label create "deps:development" --force >/dev/null
-          gh label create "deps:runtime" --force >/dev/null
-          ECOSYSTEM=$(python -c "import json,os; print(json.loads(os.environ.get('EVAL_PAYLOAD') or '{}').get('ecosystem') or os.environ.get('META_ECOSYSTEM',''))")
-          ACTION=$(python -c "import json,os; p=json.loads(os.environ.get('EVAL_PAYLOAD') or '{}'); print(p.get('decision') or '')")
-          REASON=$(python -c "import json,os; p=json.loads(os.environ.get('EVAL_PAYLOAD') or '{}'); print(p.get('message') or p.get('reason') or 'ambiguous dependency classification')")
-          if [ "$ECOSYSTEM" = "github_actions" ] || [ "$META_ECOSYSTEM" = "github_actions" ]; then
-            if [ "$META_UPDATE" = "version-update:semver-patch" ]; then
-              ACTION="auto_merge"
-              REASON="GitHub Actions patch with complete required checks"
-            else
-              ACTION="human_review"
-              REASON="GitHub Actions minor/major or ambiguous Actions update"
-            fi
-            LABEL="risk:auto-merge,deps:github-actions"
-            REVIEW_LABEL="risk:human-review,deps:github-actions"
-          else
-            LABEL="risk:auto-merge,deps:development"
-            REVIEW_LABEL="risk:human-review"
-          fi
-          if [ "$ACTION" = "auto_merge" ]; then
-            gh pr edit ${{ github.event.pull_request.number }} --add-label "$LABEL"
-            gh pr merge ${{ github.event.pull_request.number }} --auto --merge
-          else
-            gh pr edit ${{ github.event.pull_request.number }} --add-label "$REVIEW_LABEL"
-            gh pr comment ${{ github.event.pull_request.number }} --body "$(printf '## Dependency review required\n\n- **Reason:** %s\n- **Ecosystem:** %s\n- **Update type:** %s\n- **Dependencies:** %s\n- **Owner action:** Review compatibility/security impact and merge only after CI Gate is green. Automation will not merge this pull request unattended.\n' "$REASON" "$ECOSYSTEM" "$META_UPDATE" "$META_NAMES")"
-          fi
-
-  scheduled-generate:
+  scan:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    outputs:
-      changed: ${{ steps.diff.outputs.changed }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -232,143 +84,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14.8"
-          cache: pip
-          cache-dependency-path: locks/requirements-dev-py314.txt
-      - run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r locks/requirements-dev-py314.txt
-      - run: python scripts/dependency_locks.py refresh --scope pip --upgrade
-      - id: diff
-        run: |
-          if git diff --quiet -- locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.diff.outputs.changed == 'true'
-        uses: actions/upload-artifact@v7
+      - run: python scripts/dependency_lifecycle.py scan --output artifacts/dependency-scan.json
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: polysia-scheduled-locks
-          path: |
-            locks/requirements-dev-py314.txt
-            locks/requirements-runtime-py314.txt
-            pyproject.toml
-          retention-days: 14
-      - name: Maintainer publication path
-        run: |
-          echo "Validated proposals are retained as artifacts; no scheduled branch is created."
-          echo "Maintainer: regenerate from current main with scripts/dependency_locks.py, review and open a draft PR."
-
-  scheduled-publish:
-    needs: scheduled-generate
-    if: needs.scheduled-generate.outputs.changed == 'true' && github.event_name == 'workflow_dispatch' && inputs.publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: write
-    steps:
-      - uses: actions/checkout@v7
-      - id: capability
-        name: Check existing Actions publication permission
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh api --method GET "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" > "$RUNNER_TEMP/capability.json"; then
-            python -c "import json,os,pathlib; value=json.loads(pathlib.Path(os.environ['RUNNER_TEMP'],'capability.json').read_text()); print('allowed='+str(value.get('can_approve_pull_request_reviews') is True).lower())" >> "$GITHUB_OUTPUT"
-          else
-            echo "allowed=false" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.capability.outputs.allowed != 'true'
-        run: echo "Automated publication unavailable; retained artifacts and authenticated maintainer generation remain available. No branch was created."
-      - uses: actions/download-artifact@v8
-        with:
-          name: polysia-scheduled-locks
-          path: ${{ runner.temp }}/scheduled-locks
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14.8"
-      - if: steps.capability.outputs.allowed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/dependency_locks.py lock-sync-validate --artifact "$RUNNER_TEMP/scheduled-locks"
-          DAY="$(date -u +%Y%m%d)"
-          BRANCH="codex/scheduled-lock-refresh-${DAY}"
-          python scripts/dependency_locks.py classify-from-locks \
-            --actor "github-actions[bot]" \
-            --head-branch "$BRANCH" \
-            --artifact "$RUNNER_TEMP/scheduled-locks" \
-            --base-root . > "$RUNNER_TEMP/decision.json"
-          ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['action'])")
-          REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/decision.json').read_text())['reason'])")
-          git fetch origin "+refs/heads/codex/scheduled-lock-refresh-*:refs/remotes/origin/codex/scheduled-lock-refresh-*"
-          python scripts/dependency_locks.py collect-scheduled-branches --output "$RUNNER_TEMP/scheduled-candidates.json"
-          python scripts/dependency_locks.py plan-scheduled-publish \
-            --day "$DAY" \
-            --artifact "$RUNNER_TEMP/scheduled-locks" \
-            --candidates "$RUNNER_TEMP/scheduled-candidates.json" > "$RUNNER_TEMP/plan.json"
-          PLAN_ACTION=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['action'])")
-          PLAN_BRANCH=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['branch'])")
-          PLAN_SHA=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['sha'])")
-          PLAN_PR=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['pull_request'])")
-          DELETE_ON_FAIL=$(python -c "import json,pathlib; print(str(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['delete_on_failed_open']).lower())")
-          PLAN_REASON=$(python -c "import json,pathlib; print(json.loads(pathlib.Path(r'$RUNNER_TEMP/plan.json').read_text())['reason'])")
-          echo "scheduled publication plan: $PLAN_ACTION $PLAN_BRANCH $PLAN_REASON"
-          if [ "$PLAN_ACTION" = "stop" ]; then
-            echo "$PLAN_REASON" >&2
-            exit 1
-          fi
-          PR_BODY=$(printf '%s\n' \
-            "## Summary" \
-            "" \
-            "- Weekly canonical pip-compile refresh from pyproject.toml." \
-            "- No declaration-source change. Runtime lock changes require owner review." \
-            "" \
-            "## Test plan" \
-            "- [ ] CI Gate green")
-          if [ "$PLAN_ACTION" = "create_branch" ]; then
-            cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-dev-py314.txt" locks/requirements-dev-py314.txt
-            cp "$RUNNER_TEMP/scheduled-locks/locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt 2>/dev/null || cp "$RUNNER_TEMP/scheduled-locks/requirements-runtime-py314.txt" locks/requirements-runtime-py314.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git checkout -b "$PLAN_BRANCH"
-            git add locks/requirements-dev-py314.txt locks/requirements-runtime-py314.txt
-            git commit -m "chore(deps): refresh transitive pip locks"
-            CREATED_SHA="$(git rev-parse HEAD)"
-            git push origin "HEAD:refs/heads/$PLAN_BRANCH"
-            if ! PR_URL=$(gh pr create --head "$PLAN_BRANCH" --base main --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY"); then
-              PR_COUNT=$(gh pr list --head "$PLAN_BRANCH" --state all --json number --jq 'length')
-              REMOTE_SHA="$(git ls-remote origin "refs/heads/$PLAN_BRANCH" | cut -f1)"
-              if [ "$DELETE_ON_FAIL" = "true" ] && python scripts/dependency_locks.py scheduled-branch-delete-allowed --branch "$PLAN_BRANCH" --head "$REMOTE_SHA" --expected "$CREATED_SHA" --pull-request-count "$PR_COUNT" --delete-requested; then
-                git push origin --delete "$PLAN_BRANCH"
-                echo "removed orphan $PLAN_BRANCH at $CREATED_SHA after pull request creation failed" >&2
-              else
-                echo "left $PLAN_BRANCH in place because it has a pull request or its head is not the generated commit" >&2
-              fi
-              exit 1
-            fi
-            gh workflow run ci.yml --ref "$PLAN_BRANCH"
-          elif [ "$PLAN_ACTION" = "open_pull_request" ]; then
-            if ! PR_URL=$(gh pr create --head "$PLAN_BRANCH" --base main --title "chore(deps): refresh transitive pip locks" --body "$PR_BODY"); then
-              echo "pull request creation failed for existing $PLAN_BRANCH at $PLAN_SHA; branch was not deleted" >&2
-              exit 1
-            fi
-            gh workflow run ci.yml --ref "$PLAN_BRANCH"
-          else
-            PR_URL=$(gh pr view "$PLAN_PR" --json url --jq .url)
-            echo "reusing scheduled pull request $PR_URL without creating another branch"
-            exit 0
-          fi
-          if [ "$ACTION" = "auto_merge" ]; then
-            gh pr edit "$PR_URL" --add-label "risk:auto-merge,deps:development"
-            gh pr merge "$PR_URL" --auto --merge
-          elif [ "$ACTION" = "reject" ]; then
-            gh pr edit "$PR_URL" --add-label "risk:reject"
-            gh pr comment "$PR_URL" --body "$(printf '## Dependency update rejected\n\n- **Reason:** %s\n' "$REASON")"
-            exit 1
-          else
-            gh pr edit "$PR_URL" --add-label "risk:human-review,deps:runtime"
-            gh pr comment "$PR_URL" --body "$(printf '## Dependency review required\n\n- **Reason:** %s\n- **Owner action:** Review runtime/transitive impact and merge only after CI Gate is green.\n' "$REASON")"
-          fi
+          name: polysia-dependency-scan
+          path: artifacts/dependency-scan.json
+          retention-days: 30
+          if-no-files-found: error

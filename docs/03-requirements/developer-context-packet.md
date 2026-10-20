@@ -69,6 +69,14 @@ when HEAD, sanitized task reference, instruction digest, scope, and environment
 fingerprints match. Dirty worktrees bypass the cache because a path-only status
 fingerprint cannot prove that scoped file contents are unchanged.
 
+Dependency preflight MUST remain offline, scoped and explicit about missing or stale
+metadata. It reports GO, CONSTRAINED_GO or BLOCKED and includes relevant manifest,
+lock, policy and tooling content hashes plus scan identity and age in cache
+invalidation. Runtime/SDK/build/interface changes require deeper validation;
+routine prose must not start an online audit. Registry coverage never replaces
+final candidate CI or the advisory gate. No installed-host claim follows from
+source pins or cached metadata.
+
 Dependency-classified changes include both configured supply-chain gates:
 `python -m pip_audit --strict --vulnerability-service osv` and
 `cyclonedx-py environment --output-format JSON --output-file artifacts/sbom.json`.

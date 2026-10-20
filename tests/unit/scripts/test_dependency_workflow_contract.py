@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -45,62 +42,31 @@ def workflow():
     return yaml.safe_load((ROOT / ".github/workflows/dependency-automation.yml").read_text())
 
 
-def test_scheduled_workflow_retains_proposals_without_attempting_denied_publication():
+def test_generation_has_no_write_authority_and_publisher_uses_main():
     value = workflow()
-    events = value.get("on", value.get(True))  # YAML 1.1's spelling of on.
-    assert events["workflow_dispatch"]["inputs"]["publish"]["default"] is False
-    publication = value["jobs"]["scheduled-publish"]
-    assert "workflow_dispatch" in publication["if"] and "inputs.publish" in publication["if"]
-    mutate = next(step for step in publication["steps"]
-                  if "delete_on_failed_open" in step.get("run", ""))
-    assert mutate["if"] == "steps.capability.outputs.allowed == 'true'"
+    assert value["permissions"] == {"contents": "read"}
+    for job in value["jobs"].values():
+        assert all(permission == "read" for permission in job.get("permissions", {}).values())
+    publisher = yaml.safe_load((ROOT / ".github/workflows/dependency-publish.yml").read_text())
+    job = publisher["jobs"]["publish"]
+    checkout = next(s for s in job["steps"] if "checkout@" in s.get("uses", ""))
+    assert checkout["with"]["ref"] == "main"
+    assert checkout["with"]["persist-credentials"] is False
+    assert not any("pip install" in s.get("run", "") for s in job["steps"])
+    text = (ROOT / ".github/workflows/dependency-publish.yml").read_text()
+    assert "workflow_run:" in text
+    assert "run-id: ${{ github.event.workflow_run.id }}" in text
+    assert "can_approve_pull_request_reviews" not in text
 
 
-@pytest.mark.parametrize("delete_requested,changed_head,pr_count,should_delete", [
-    (True, False, 0, True), (False, False, 0, False),
-    (True, True, 0, False), (True, False, 1, False),
-])
-def test_workflow_failure_shell_calls_real_cleanup_helper(
-    tmp_path: Path, delete_requested, changed_head, pr_count, should_delete,
-):
-    """Run the actual YAML boolean handoff and failure path with local tool fakes."""
-    bash = shutil.which("bash")
-    if os.name == "nt":
-        git = shutil.which("git")
-        candidate = Path(git).resolve().parents[1] / "bin/bash.exe" if git else None
-        if candidate and candidate.is_file():
-            bash = str(candidate)
-    assert bash, "workflow contract requires the same Bash shell available on CI runners"
-    step = next(item for item in workflow()["jobs"]["scheduled-publish"]["steps"]
-                if "delete_on_failed_open" in item.get("run", ""))
-    script = step["run"]
-    boolean_line = next(line for line in script.splitlines() if line.startswith("DELETE_ON_FAIL="))
-    start = script.index("if ! PR_URL=$(gh pr create")
-    end = script.index("\n  gh workflow run", start)
-    failure = script[start:end]
-    (tmp_path / "plan.json").write_text(json.dumps({"delete_on_failed_open": delete_requested}))
-    deletes = tmp_path / "deletions.txt"
-    shell = '''set -euo pipefail
-python() { "$ACTUAL_PYTHON" "$@"; }
-gh() { if [ "$1 $2" = "pr create" ]; then return 1; fi; echo "$TEST_PR_COUNT"; }
-git() {
-  if [ "$1" = "ls-remote" ]; then printf '%s\\trefs/heads/example\\n' "$TEST_REMOTE_SHA";
-  elif [ "$1" = "push" ]; then printf '%s\\n' "$*" >> "$TEST_DELETIONS";
-  else return 90; fi
-}
-'''
-    environment = dict(os.environ, ACTUAL_PYTHON=Path(sys.executable).as_posix(),
-                       RUNNER_TEMP=tmp_path.as_posix(),
-                       PLAN_BRANCH="codex/scheduled-lock-refresh-20261018",
-                       CREATED_SHA="a" * 40, TEST_REMOTE_SHA=("b" if changed_head else "a") * 40,
-                       TEST_PR_COUNT=str(pr_count), TEST_DELETIONS=deletes.as_posix(),
-                       PR_BODY="local test body")
-    result = subprocess.run([bash, "-c", shell + boolean_line + "\n" + failure],
-                            cwd=ROOT, env=environment, text=True, capture_output=True, timeout=30)
-    assert result.returncode == 1, result.stderr
-    assert deletes.exists() is should_delete
-    if should_delete:
-        assert "--delete codex/scheduled-lock-refresh-20261018" in deletes.read_text()
+def test_ci_health_check_is_independent_and_cannot_mutate_from_pr():
+    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    health = ci["jobs"]["dependency-health"]
+    assert "github.event_name == 'schedule'" in health["if"]
+    assert "github.ref == 'refs/heads/main'" in health["if"]
+    assert "pull_request" not in health["if"]
+    assert health["permissions"]["contents"] == "read"
+    assert health["permissions"]["issues"] == "write"
 
 
 def test_sdk_declaration_cannot_trigger_unreviewed_lock_generation(monkeypatch):
