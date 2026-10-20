@@ -96,12 +96,19 @@ crypto, prerelease/epoch/local/post versions, `0.x` minor, new/removed packages
 and ambiguous updates require review. Actions proposals require source review;
 metadata-only Actions auto-approval has been removed.
 
-A fixed scheduled proposal identity prevents duplicate branches/PRs. Reruns
-reuse matching data; differing/previously disposed proposals stop for review.
+A scheduled proposal identity binds the base and candidate content. Reruns
+reuse the single active, verified bot proposal; stale/ambiguous branches stop
+for review. Completed proposals do not block a new candidate or get resurrected.
+Existing branch diffs and signed bot identity are assessed before dispatch;
+the final merge head must also be a verified bot commit.
 Interrupted or denied publication preserves its branch for assessed recovery;
 the automation never deletes a possibly changed branch. A maintainer may
 remove an integrated or verified orphan branch after exact-head/PR inspection.
 No candidate is copied from a historical run over newer declarations.
+Restart a failed/partial producer through a fresh manual dispatch, regenerating
+its entire proposal. A partial job rerun must not reuse another attempt's
+artifact; attempt mismatch fails closed. Publication itself can safely retry
+the same fully assessed producer artifact.
 
 The repository rules require a PR and strict `CI Gate`, with zero mandatory
 approving reviews as observed on 2026-10-20. Repository auto-merge capability

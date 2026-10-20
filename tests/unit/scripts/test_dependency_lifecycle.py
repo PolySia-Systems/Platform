@@ -186,6 +186,7 @@ def test_spoofed_or_changed_pr_identity_is_rejected_before_write(monkeypatch):
         conclusion="success",
         head_repository={"full_name": EXPECTED_REPOSITORY},
         event="pull_request",
+        actor={"login": "dependabot[bot]"},
         pull_requests=[{"number": 9}],
         head_sha=HEAD,
         id=1234,
@@ -261,6 +262,8 @@ def test_constraints_include_only_active_markers_and_requested_extras():
                 'hypothesis<6; extra == "dev"',
                 'child<2; python_version >= "3.14"',
                 'oldchild<1; python_version < "3.10"',
+                'linuxchild<2; os_name == "posix" and sys_platform == "linux"',
+                'winchild<2; os_name == "nt" and platform_machine == "AMD64"',
                 "crypto[backend]>=1",
             ],
         ),
@@ -269,6 +272,39 @@ def test_constraints_include_only_active_markers_and_requested_extras():
     edges = lifecycle.parent_edges(items, ["parent==1.0"])
     assert "hypothesis" not in edges and "oldchild" not in edges
     assert "child" in edges and "backend" in edges
+    assert "linuxchild" in edges and "winchild" in edges
+
+
+def test_independent_health_queries_meaningful_events_before_limiting_results(monkeypatch):
+    reads = []
+    run = dict(
+        id=1,
+        event="schedule",
+        created_at=NOW.isoformat(),
+        conclusion="success",
+        head_branch="main",
+        run_attempt=1,
+    )
+
+    def api(path):
+        reads.append(path)
+        if "dependency-automation.yml/runs" in path:
+            assert "event=" in path and "branch=main" in path
+            return {"workflow_runs": [run] if "event=schedule&" in path else []}
+        if "attempts/1/jobs" in path:
+            return {"jobs": [dict(name=n, conclusion="success") for n in ("generate", "scan")]}
+        if "dependency-publish.yml/runs" in path:
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(
+        lifecycle,
+        "maintenance_health",
+        lambda runs, jobs, now: dict(outcome="healthy") if runs == [run] and 1 in jobs else {},
+    )
+    assert lifecycle.health()["outcome"] == "healthy"
+    assert sum("dependency-automation.yml/runs" in path for path in reads) == 2
 
 
 def test_preflight_invalidates_on_dirty_inputs_and_age(proposal):
@@ -310,8 +346,7 @@ def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
         attempt="1",
     )
     seal(artifact, root, identity)
-    state = dict(branches=[], prs=[], writes=0, dispatches=0)
-    branch = "codex/scheduled-lock-refresh-pip"
+    state = dict(branches=[], prs=[], writes=0, dispatches=0, branch=None)
     run = dict(
         path=WORKFLOW,
         conclusion="success",
@@ -340,18 +375,33 @@ def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
             return {
                 "workflow_runs": []
                 if not state["dispatches"]
-                else [dict(head_sha=HEAD, head_branch=branch, status="queued")]
+                else [dict(head_sha=HEAD, head_branch=state["branch"], status="queued")]
             }
+        if path.startswith("compare/"):
+            return dict(behind_by=0, files=[{"filename": DEV_LOCK}])
+        if path == f"commits/{HEAD}":
+            return dict(
+                committer={"login": "github-actions[bot]"},
+                commit={"verification": {"verified": True}},
+            )
         raise AssertionError(path)
 
     def command(*args, body=None):
         if args[:2] == ("workflow", "run"):
             state["dispatches"] += 1
         elif args[3].endswith("/git/refs"):
-            state["branches"].append(dict(name=branch, commit={"sha": BASE}))
+            state["branch"] = body["ref"].removeprefix("refs/heads/")
+            state["branches"].append(dict(name=state["branch"], commit={"sha": BASE}))
         elif args[3].endswith("/pulls"):
             state["prs"].append(
-                dict(number=9, state="open", head={"sha": HEAD}, html_url="https://example/pr/9")
+                dict(
+                    number=9,
+                    state="open",
+                    user={"login": "github-actions[bot]"},
+                    base={"ref": "main"},
+                    head={"sha": HEAD, "repo": {"full_name": EXPECTED_REPOSITORY}},
+                    html_url="https://example/pr/9",
+                )
             )
             return state["prs"][0]
         else:
@@ -572,3 +622,130 @@ def test_targeted_dev_refresh_cannot_introduce_dev_package_into_runtime(proposal
     assert "--upgrade-package" not in calls[0]
     assert calls[1][calls[1].index("--upgrade-package") + 1] == "hypothesis"
     assert "hypothesis" not in parse_lock_pins((root / RUNTIME_LOCK).read_text())
+
+
+@pytest.mark.parametrize(
+    "behind,filename,actor,verified",
+    [
+        (1, DEV_LOCK, "github-actions[bot]", True),
+        (0, ".github/workflows/ci.yml", "github-actions[bot]", True),
+        (0, DEV_LOCK, "spoof", True),
+        (0, DEV_LOCK, "github-actions[bot]", False),
+    ],
+)
+def test_existing_scheduled_branch_is_assessed_before_any_dispatch(
+    monkeypatch,
+    behind,
+    filename,
+    actor,
+    verified,
+):
+    def api(path):
+        if path.startswith("branches?"):
+            return [dict(name="codex/scheduled-lock-refresh-spoof", commit={"sha": HEAD})]
+        if path.startswith("pulls?"):
+            return []
+        if path.startswith("compare/"):
+            return dict(behind_by=behind, files=[{"filename": filename}])
+        if path.startswith("commits/"):
+            return dict(committer={"login": actor}, commit={"verification": {"verified": verified}})
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(publication, "command", lambda *a, **kw: pytest.fail("unexpected write"))
+    with pytest.raises(ValueError, match="stale, untrusted or changes executable"):
+        publication.scheduled_target(BASE, {DEV_LOCK: "example==1.0\n"})
+
+
+def test_completed_scheduled_proposal_does_not_block_new_content_or_resurrect_itself(monkeypatch):
+    branches = []
+    old = dict(state="closed", html_url="https://example/disposed")
+
+    def api(path):
+        if path.startswith("branches?"):
+            return branches
+        if path.startswith("pulls?"):
+            return [old]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    first = publication.scheduled_target(BASE, {DEV_LOCK: "example==1.0\n"})
+    branches.append(dict(name=first["branch"], commit={"sha": HEAD}))
+    same = publication.scheduled_target(BASE, {DEV_LOCK: "example==1.0\n"})
+    assert same["disposed"] == old
+    newer = publication.scheduled_target(BASE, {DEV_LOCK: "example==1.1\n"})
+    assert newer["disposed"] is None and newer["branch"] != first["branch"]
+
+
+def test_human_pr_cannot_inherit_scheduled_actor_trust(monkeypatch):
+    def api(path):
+        if path.startswith("branches?"):
+            return [dict(name="codex/scheduled-lock-refresh-spoof", commit={"sha": BASE})]
+        if path.startswith("pulls?"):
+            return [dict(state="open", user={"login": "spoof"})]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    with pytest.raises(ValueError, match="identity changed"):
+        publication.scheduled_target(BASE, {DEV_LOCK: "example==1.0\n"})
+
+
+def test_human_event_actor_cannot_inherit_dependabot_pr_authority():
+    run = dict(
+        path=WORKFLOW,
+        conclusion="success",
+        head_repository={"full_name": EXPECTED_REPOSITORY},
+        event="pull_request",
+        actor={"login": "spoof"},
+    )
+    with pytest.raises(ValueError, match="event actor"):
+        publication.assessed_origin(run, BASE)
+
+
+@pytest.mark.parametrize(
+    "author,verified,expected",
+    [
+        ("github-actions[bot]", True, True),
+        ("spoof", True, False),
+        ("github-actions[bot]", False, False),
+    ],
+)
+def test_github_graphql_bot_signature_is_bound_to_author(monkeypatch, author, verified, expected):
+    monkeypatch.setattr(
+        publication,
+        "api",
+        lambda _: dict(
+            committer={"login": "web-flow"},
+            author={"login": author},
+            commit={"verification": {"verified": verified}},
+        ),
+    )
+    assert publication.trusted_bot_commit(HEAD) is expected
+
+
+def test_publication_failure_cannot_be_crowded_out_by_ci_callbacks(monkeypatch):
+    publications = [dict(id=n, run_attempt=1, conclusion="success") for n in range(15)] + [
+        dict(id=99, run_attempt=1, conclusion="failure", html_url="https://example/failed")
+    ]
+
+    def api(path):
+        if "dependency-automation.yml/runs" in path:
+            return {"workflow_runs": []}
+        if "dependency-publish.yml/runs" in path:
+            return {"workflow_runs": publications}
+        if "actions/runs/99/" in path:
+            return {"jobs": [dict(name="publish", conclusion="failure")]}
+        if "/jobs" in path:
+            return {
+                "jobs": [
+                    dict(name="publish", conclusion="skipped"),
+                    dict(name="merge", conclusion="success"),
+                ]
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(lifecycle, "maintenance_health", lambda *a: {"outcome": "healthy"})
+    result = lifecycle.health()
+    assert result["publication"] == "failed"
+    assert result["outcome"] == "action_required"

@@ -53,6 +53,62 @@ def main_head() -> str:
     return str(api("git/ref/heads/main")["object"]["sha"])
 
 
+def trusted_bot_commit(head: str) -> bool:
+    commit = api(f"commits/{head}")
+    bots = {"github-actions[bot]", "dependabot[bot]"}
+    committer = (commit.get("committer") or {}).get("login")
+    author = (commit.get("author") or {}).get("login")
+    # Our GraphQL writer uses GitHub's web-flow committer and the bot author.
+    # Full diff, immutable origin and hashes are independently required.
+    return (committer in bots or (committer == "web-flow" and author in bots)) and (
+        commit.get("commit", {}).get("verification", {}).get("verified") is True
+    )
+
+
+def scheduled_target(base: str, files: dict[str, str]) -> dict:
+    key = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()[:12]
+    proposed = f"codex/scheduled-lock-refresh-{base[:12]}-{key}"
+    branches = api("branches?per_page=100")
+    if len(branches) >= 100:
+        raise ValueError("branch inventory is incomplete; preserve proposals")
+    active, disposed = [], None
+    for branch in branches:
+        name = branch["name"]
+        if not name.startswith("codex/scheduled-lock-refresh-"):
+            continue
+        prs = api(f"pulls?state=all&head=PolySia-Systems:{name}")
+        opened = [pr for pr in prs if pr["state"] == "open"]
+        if len(opened) > 1:
+            raise ValueError("ambiguous scheduled proposal")
+        if opened or not prs:
+            active.append((branch, opened[0] if opened else None))
+        elif name == proposed:
+            disposed = prs[0]
+    if len(active) > 1:
+        raise ValueError("multiple active or unpublished scheduled proposals; preserve and review")
+    if not active:
+        return dict(branch=proposed, head=None, pr=None, disposed=disposed)
+    branch, pr = active[0]
+    head = branch["commit"]["sha"]
+    if pr and (
+        pr["user"]["login"] != "github-actions[bot]"
+        or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
+        or pr["base"]["ref"] != "main"
+        or pr["head"]["sha"] != head
+    ):
+        raise ValueError("scheduled proposal identity changed")
+    if head != base:
+        comparison = api(f"compare/{base}...{head}")
+        if (
+            comparison["behind_by"] != 0
+            or not comparison["files"]
+            or any(item["filename"] not in {RUNTIME_LOCK, DEV_LOCK} for item in comparison["files"])
+            or not trusted_bot_commit(head)
+        ):
+            raise ValueError("scheduled branch is stale, untrusted or changes executable paths")
+    return dict(branch=branch["name"], head=head, pr=pr, disposed=None)
+
+
 def assessed_origin(run: dict, current_base: str) -> tuple[dict[str, str], dict | None]:
     if (
         run.get("path") != WORKFLOW
@@ -62,6 +118,8 @@ def assessed_origin(run: dict, current_base: str) -> tuple[dict[str, str], dict 
         raise ValueError("untrusted or unsuccessful dependency producer")
     event = run.get("event")
     if event == "pull_request":
+        if run.get("actor", {}).get("login") != "dependabot[bot]":
+            raise ValueError("proposal event actor is not Dependabot")
         proposals = run.get("pull_requests", [])
         if len(proposals) != 1:
             raise ValueError("ambiguous originating pull request")
@@ -148,18 +206,11 @@ def publish(directory: Path, run_id: str) -> dict:
     else:
         if all((ROOT / name).read_text(encoding="utf-8") == text for name, text in files.items()):
             return {"outcome": "unchanged", "base": base}
-        # Stable branch identity makes interrupted reruns recoverable. Never
-        # delete a branch on failure or overwrite a mismatching proposal.
-        branches = api("branches?per_page=100")
-        existing = next((b for b in branches if b["name"] == branch), None)
-        if existing:
-            head = existing["commit"]["sha"]
-            if head != base and any(
-                locks._git_text(EXPECTED_REPOSITORY, head, name) != text
-                for name, text in files.items()
-            ):
-                raise ValueError("existing publication branch differs; preserve and review")
-        else:
+        target = scheduled_target(base, files)
+        if target["disposed"]:
+            return dict(outcome="previously_disposed", pull_request=target["disposed"]["html_url"])
+        branch, head, pr = target["branch"], target["head"], target["pr"]
+        if head is None:
             command(
                 "api",
                 "--method",
@@ -170,22 +221,19 @@ def publish(directory: Path, run_id: str) -> dict:
                 body={"ref": f"refs/heads/{branch}", "sha": base},
             )
             head = base
-        if head == base:
+        if head == base or any(
+            locks._git_text(EXPECTED_REPOSITORY, head, name) != text for name, text in files.items()
+        ):
             head = locks.commit_files_to_branch(
                 repository=EXPECTED_REPOSITORY,
                 branch=branch,
                 files=files,
                 message="chore(deps): refresh canonical dependency locks",
-                expected_head=base,
+                expected_head=head,
             )
-        proposals = api(f"pulls?state=all&head=PolySia-Systems:{branch}")
-        if any(p["state"] != "open" for p in proposals):
-            raise ValueError("proposal already disposed; preserve its record")
-        if len(proposals) > 1:
-            raise ValueError("ambiguous publication proposals")
         pr = (
-            proposals[0]
-            if proposals
+            pr
+            if pr
             else command(
                 "api",
                 "--method",
@@ -204,6 +252,8 @@ def publish(directory: Path, run_id: str) -> dict:
                 },
             )
         )
+    if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
+        raise ValueError("base or proposal changed before CI dispatch")
     # GITHUB_TOKEN commits do not cause ordinary CI push/PR triggers.
     ci_runs = api(f"actions/workflows/ci.yml/runs?head_sha={head}&event=workflow_dispatch")
     if not any(
@@ -287,6 +337,10 @@ def merge_after_ci(run_id: str) -> dict:
         return dict(outcome="human_review", reason=decision.reason, head=head)
     if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
         raise ValueError("base/head changed immediately before merge")
+    if not trusted_bot_commit(head):
+        return dict(
+            outcome="human_review", reason="final head is not a verified bot commit", head=head
+        )
     command("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", head)
     return dict(outcome="merged", head=head, pull_request=pr["html_url"], ci_run=run_id)
 
