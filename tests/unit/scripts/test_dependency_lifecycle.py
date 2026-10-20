@@ -261,6 +261,8 @@ def test_constraints_include_only_active_markers_and_requested_extras():
                 'hypothesis<6; extra == "dev"',
                 'child<2; python_version >= "3.14"',
                 'oldchild<1; python_version < "3.10"',
+                'linuxchild<2; os_name == "posix" and sys_platform == "linux"',
+                'winchild<2; os_name == "nt" and platform_machine == "AMD64"',
                 "crypto[backend]>=1",
             ],
         ),
@@ -269,6 +271,39 @@ def test_constraints_include_only_active_markers_and_requested_extras():
     edges = lifecycle.parent_edges(items, ["parent==1.0"])
     assert "hypothesis" not in edges and "oldchild" not in edges
     assert "child" in edges and "backend" in edges
+    assert "linuxchild" in edges and "winchild" in edges
+
+
+def test_independent_health_queries_meaningful_events_before_limiting_results(monkeypatch):
+    reads = []
+    run = dict(
+        id=1,
+        event="schedule",
+        created_at=NOW.isoformat(),
+        conclusion="success",
+        head_branch="main",
+        run_attempt=1,
+    )
+
+    def api(path):
+        reads.append(path)
+        if "dependency-automation.yml/runs" in path:
+            assert "event=" in path and "branch=main" in path
+            return {"workflow_runs": [run] if "event=schedule&" in path else []}
+        if "attempts/1/jobs" in path:
+            return {"jobs": [dict(name=n, conclusion="success") for n in ("generate", "scan")]}
+        if "dependency-publish.yml/runs" in path:
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(
+        lifecycle,
+        "maintenance_health",
+        lambda runs, jobs, now: dict(outcome="healthy") if runs == [run] and 1 in jobs else {},
+    )
+    assert lifecycle.health()["outcome"] == "healthy"
+    assert sum("dependency-automation.yml/runs" in path for path in reads) == 2
 
 
 def test_preflight_invalidates_on_dirty_inputs_and_age(proposal):

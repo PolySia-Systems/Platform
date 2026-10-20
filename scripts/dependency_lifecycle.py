@@ -140,6 +140,10 @@ def parent_edges(items: list[dict], declarations: list[str]) -> dict[str, list[s
                                 python_full_version="3.14.8",
                                 sys_platform=platform,
                                 platform_system=system,
+                                os_name="nt" if platform == "win32" else "posix",
+                                platform_machine="AMD64" if platform == "win32" else "x86_64",
+                                implementation_name="cpython",
+                                implementation_version="3.14.8",
                                 extra=extra,
                             )
                         )
@@ -312,7 +316,14 @@ def maintenance_health(
 def health() -> dict:
     from scripts.dependency_publication import api
 
-    runs = api("actions/workflows/dependency-automation.yml/runs?per_page=50")["workflow_runs"]
+    runs = [
+        run
+        for event in ("schedule", "workflow_dispatch")
+        for run in api(
+            "actions/workflows/dependency-automation.yml/runs"
+            f"?event={event}&branch=main&per_page=12"
+        )["workflow_runs"]
+    ]
     meaningful = [
         r
         for r in runs
