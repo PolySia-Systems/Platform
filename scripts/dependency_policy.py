@@ -40,6 +40,7 @@ SENSITIVE_RUNTIME_PACKAGES = frozenset(
         "hatchling",
         "setuptools",
         "wheel",
+        "pip",
         "pip-tools",
         "polymarket-client",
         "pydantic",

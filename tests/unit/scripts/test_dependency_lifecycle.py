@@ -590,7 +590,15 @@ def test_targeted_refresh_uses_canonical_resolver_and_plain_names():
         )
 
 
-def test_build_tooling_cannot_enter_low_risk_dev_slice():
+@pytest.mark.parametrize(("package", "old", "new"), [
+    ("build", "1.6.1", "1.6.2"),
+    ("hatchling", "1.32.4", "1.32.5"),
+    ("pip", "26.2.1", "26.2.2"),
+    ("pip-tools", "7.6.2", "7.6.3"),
+    ("setuptools", "84.0.0", "84.2.1"),
+    ("wheel", "0.48.0", "0.48.1"),
+])
+def test_build_tooling_cannot_enter_low_risk_dev_slice(package, old, new):
     _, decision = locks.build_change_from_lock_diff(
         actor="dependabot[bot]",
         repository=EXPECTED_REPOSITORY,
@@ -599,8 +607,8 @@ def test_build_tooling_cannot_enter_low_risk_dev_slice():
         changed_files=(DEV_LOCK,),
         base_runtime="rich==15.0.0\n",
         head_runtime="rich==15.0.0\n",
-        base_dev="rich==15.0.0\nsetuptools==84.0.0\n",
-        head_dev="rich==15.0.0\nsetuptools==84.2.0\n",
+        base_dev=f"rich==15.0.0\n{package}=={old}\n",
+        head_dev=f"rich==15.0.0\n{package}=={new}\n",
         production_declaration_changed=False,
         sdk_pin_changed=False,
     )

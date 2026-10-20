@@ -18,6 +18,7 @@ updates:
           - "hatchling"
           - "setuptools"
           - "wheel"
+          - "pip"
           - "pip-tools"
       venue-sdk:
         applies-to: version-updates
@@ -44,6 +45,7 @@ updates:
           - "hatchling"
           - "setuptools"
           - "wheel"
+          - "pip"
           - "pip-tools"
           - "polymarket-client"
           - "PyJWT"
@@ -67,6 +69,7 @@ updates:
           - "hatchling"
           - "setuptools"
           - "wheel"
+          - "pip"
           - "pip-tools"
           - "polymarket-client"
           - "PyJWT"
