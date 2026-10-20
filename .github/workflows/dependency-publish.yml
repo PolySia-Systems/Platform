@@ -1,0 +1,71 @@
+name: Dependency publication
+
+on:
+  workflow_run:
+    workflows: [Dependency automation, CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.workflow_run.name == 'Dependency automation' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.8"
+      - id: proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > "$RUNNER_TEMP/artifacts.json"
+          python -c "import json,os,pathlib; a=json.loads(pathlib.Path(os.environ['RUNNER_TEMP'],'artifacts.json').read_text())['artifacts']; print('present='+str(any(x['name']=='polysia-dependency-proposal' and not x['expired'] for x in a)).lower())" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        if: steps.proposal.outputs.present == 'true'
+        with:
+          name: polysia-dependency-proposal
+          path: ${{ runner.temp }}/proposal
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+        if: steps.proposal.outputs.present == 'true'
+        run: python scripts/dependency_publication.py --artifact "$RUNNER_TEMP/proposal" --run "$SOURCE_RUN"
+
+  merge:
+    if: github.event.workflow_run.name == 'CI' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.8"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+        run: python scripts/dependency_publication.py --merge-after-ci --run "$SOURCE_RUN"
