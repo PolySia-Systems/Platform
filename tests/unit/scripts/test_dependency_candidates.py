@@ -124,6 +124,17 @@ def test_excluded_newer_majors_do_not_consume_patch_catalog_bound():
     assert not catalog["truncated"]
 
 
+def test_held_runtime_catalog_bound_does_not_block_separate_dev_assessment():
+    catalog = candidates.release_catalog({f"1.0.{n}": [file()] for n in range(1, 150)}, "1.0.0")
+    assert catalog["truncated"]
+    item = dict(package="example", resolved="1.0.0", scope="runtime",
+                observed_at="2026-10-21T00:00:00Z", latest_published_stable="1.0.149",
+                supports_python314=True, release_catalog=catalog)
+    result = candidates.assess_candidates(item, [], [], lambda *_: pytest.fail("held"))
+    assert result["eligibility_coverage"] == "complete"
+    assert result["eligibility_outcome"] == "REVIEW_REQUIRED"
+
+
 @pytest.fixture
 def slice_root(tmp_path, monkeypatch):
     root, work = tmp_path / "root", tmp_path / "work"

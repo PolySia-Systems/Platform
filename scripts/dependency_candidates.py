@@ -147,9 +147,9 @@ def assess_candidates(
         release_assessments=assessed,
         eligibility_observed_at=item["observed_at"],
         eligibility_provisional=True,
-        eligibility_coverage="UNKNOWN" if failed or (
+        eligibility_coverage="UNKNOWN" if not held and (failed or (
             not eligible and (unknown or catalog.get("truncated"))
-        ) else "complete",
+        )) else "complete",
     )
     item["eligibility_outcome"] = (
         "UNKNOWN" if item["eligibility_coverage"] == "UNKNOWN"
