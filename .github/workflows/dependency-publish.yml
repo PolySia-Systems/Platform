@@ -93,7 +93,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14.8"
-      - env:
+      - name: Merge and clean validated proposal
+        id: integration
+        env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ github.event.workflow_run.id }}
         run: python scripts/dependency_publication.py --merge-after-ci --run "$SOURCE_RUN"
+      - name: Confirm dependency integration and cleanup
+        if: steps.integration.outputs.integration_complete == 'true'
+        run: echo "Dependency integration and guarded cleanup confirmed."

@@ -17,6 +17,7 @@ INPUTS = (
     "scripts/dependency_policy.py",
     "scripts/dependency_provenance.py",
     "scripts/dependency_lifecycle.py",
+    "scripts/dependency_candidates.py",
     "scripts/dependency_publication.py",
     ".github/dependabot.yml",
     ".github/workflows/dependency-automation.yml",

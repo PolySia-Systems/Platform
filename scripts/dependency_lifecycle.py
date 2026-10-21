@@ -24,16 +24,24 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from polysia.developer.dependency_preflight import input_hashes  # noqa: E402
 from scripts import dependency_locks as locks  # noqa: E402
-from scripts.dependency_policy import DEV_LOCK, RUNTIME_LOCK, parse_lock_pins  # noqa: E402
+from scripts.dependency_candidates import (  # noqa: E402
+    assess_candidates,
+    environments,
+    release_catalog,
+)
+from scripts.dependency_policy import (  # noqa: E402
+    DEV_LOCK,
+    RUNTIME_LOCK,
+    SENSITIVE_RUNTIME_PACKAGES,
+    parse_lock_pins,
+)
 from scripts.dependency_provenance import FILES, binding, digest, seal  # noqa: E402
 
 try:
-    from packaging.markers import default_environment
     from packaging.requirements import Requirement
     from packaging.specifiers import SpecifierSet
     from packaging.version import InvalidVersion, Version
 except ModuleNotFoundError:
-    from pip._vendor.packaging.markers import default_environment
     from pip._vendor.packaging.requirements import Requirement
     from pip._vendor.packaging.specifiers import SpecifierSet
     from pip._vendor.packaging.version import InvalidVersion, Version
@@ -84,6 +92,7 @@ def inspect_package(name: str, current: str, runtime: bool) -> dict:
             package=name,
             resolved=current,
             latest_published_stable=latest,
+            release_catalog=release_catalog(project["releases"], current),
             scope="runtime" if runtime else "development/build",
             source=source,
             observed_at=observed,
@@ -103,7 +112,7 @@ def inspect_package(name: str, current: str, runtime: bool) -> dict:
             next_action="Review coherent resolver delta and required CI before disposition",
             review_trigger="Next weekly scan, advisory, parent release or compatibility change",
         )
-    except RuntimeError, ValueError, KeyError:
+    except RuntimeError, ValueError, KeyError, TypeError:
         return dict(
             package=name,
             resolved=current,
@@ -130,25 +139,9 @@ def parent_edges(items: list[dict], declarations: list[str]) -> dict[str, list[s
         for item in items:
             for text in item.get("parent_requirements", []):
                 requirement = Requirement(text)
-                environments = []
-                for platform, system in (("linux", "Linux"), ("win32", "Windows")):
-                    for extra in {"", *extras.get(item["package"], set())}:
-                        environments.append(
-                            dict(
-                                default_environment(),
-                                python_version="3.14",
-                                python_full_version="3.14.8",
-                                sys_platform=platform,
-                                platform_system=system,
-                                os_name="nt" if platform == "win32" else "posix",
-                                platform_machine="AMD64" if platform == "win32" else "x86_64",
-                                implementation_name="cpython",
-                                implementation_version="3.14.8",
-                                extra=extra,
-                            )
-                        )
                 if requirement.marker and not any(
-                    requirement.marker.evaluate(env) for env in environments
+                    requirement.marker.evaluate(env)
+                    for env in environments(extras.get(item["package"], set()))
                 ):
                     continue
                 child = requirement.name.lower().replace("_", "-")
@@ -178,6 +171,12 @@ def scan(root: Path) -> dict:
         + manifest["build-system"]["requires"]
     )
     parents = parent_edges(items, declarations)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        items = list(pool.map(
+            lambda item: assess_candidates(item, declarations, parents.get(item["package"], []),
+                                           metadata) if item["coverage"] == "complete" else item,
+            items,
+        ))
     for item in items:
         item["parent_constraints"] = parents.get(item["package"], [])
         if item.get("latest_published_stable"):
@@ -191,7 +190,8 @@ def scan(root: Path) -> dict:
             if item["candidate_blocked_by"] or not item["supports_python314"]:
                 item["state"] = "held_constraint"
                 item["next_action"] = "Retain pin; reassess on parent/Python compatibility release"
-    complete = all(item["coverage"] == "complete" for item in items)
+    complete = all(item["coverage"] == "complete"
+                   and item.get("eligibility_coverage") == "complete" for item in items)
     actionable = any(item.get("advisory_ids") or item.get("current_yanked") for item in items)
     inventory = [
         {
@@ -241,7 +241,64 @@ def scan(root: Path) -> dict:
     )
 
 
-def generate(destination: Path, head: str | None) -> None:
+MAX_RESOLVER_ATTEMPTS = 3
+
+
+def scheduled_slice(work: Path, report: dict) -> dict:
+    """Resolve one genuine dev target at a time; never upgrade held pins globally."""
+    if report["outcome"] != "complete":
+        return dict(outcome="HELD", reason="incomplete or actionable metadata", attempts=[])
+    runtime = parse_lock_pins((ROOT / RUNTIME_LOCK).read_text(encoding="utf-8"))
+    dev = parse_lock_pins((ROOT / DEV_LOCK).read_text(encoding="utf-8"))
+    fixed = {name: version for name, version in dev.items()
+             if name in runtime or name in SENSITIVE_RUNTIME_PACKAGES}
+    candidates = [item for item in report["packages"]
+                  if item.get("eligibility_outcome") == "PROVISIONAL_CANDIDATE"]
+    # Try distinct packages before spending the bound on lower releases of one
+    # conflicting target. A held target must not automatically hold its peers.
+    targets = [(item["package"], item["candidate_versions"][index])
+               for index in range(max((len(item["candidate_versions"]) for item in candidates),
+                                      default=0))
+               for item in candidates if len(item["candidate_versions"]) > index]
+    attempts = []
+    for name, version in targets[:MAX_RESOLVER_ATTEMPTS]:
+        for file in FILES:
+            shutil.copyfile(ROOT / file, work / file)
+        constraints = work / "dependency-selection.constraints.txt"
+        constraints.write_text("".join(f"{n}=={v}\n" for n, v in sorted(
+            dict(fixed, **{name: version}).items()
+        )), encoding="utf-8")
+        attempt = dict(package=name, version=version)
+        try:
+            locks.generate_pip_locks(work, upgrade=False, upgrade_packages=(name,),
+                                     extra_constraints=(constraints,))
+            if parse_lock_pins((work / RUNTIME_LOCK).read_text()) != runtime:
+                raise ValueError("runtime drift")
+            if parse_lock_pins((work / DEV_LOCK).read_text()).get(name) != version:
+                raise ValueError("selected target was not resolved")
+            _, decision = locks.classify_from_artifact(
+                actor="github-actions[bot]", head_branch="codex/scheduled-lock-refresh-selection",
+                artifact=work, base_root=ROOT,
+            )
+            if decision.action != "auto_merge":
+                attempt.update(outcome="HELD", reason="complete delta requires review")
+            else:
+                attempt["outcome"] = "proposal"
+                attempts.append(attempt)
+                return dict(outcome="proposal", attempts=attempts,
+                            observed_at=report["last_complete_scan"], scope="development-only")
+        except RuntimeError, ValueError, subprocess.CalledProcessError:
+            # Resolver diagnostics may include private index URLs; retain stage,
+            # target and owner action, never arbitrary provider output.
+            attempt.update(outcome="HELD", reason="resolver or fixed-pin conflict")
+        attempts.append(attempt)
+    return dict(outcome="HELD" if targets else "NO_ELIGIBLE_UPDATE", attempts=attempts,
+                unattempted=max(0, len(targets) - len(attempts)), scope="development-only",
+                observed_at=report["last_complete_scan"],
+                next_action="Review held slice or wait for a genuine eligible release")
+
+
+def generate(destination: Path, head: str | None) -> dict:
     destination.mkdir(parents=True, exist_ok=False)
     base = subprocess.run(
         ("git", "rev-parse", "HEAD"), cwd=ROOT, check=True, text=True, capture_output=True
@@ -266,12 +323,19 @@ def generate(destination: Path, head: str | None) -> None:
         if head:
             manifest = locks._git_text(os.environ["GITHUB_REPOSITORY"], head, "pyproject.toml")
             (work / "pyproject.toml").write_text(manifest, encoding="utf-8")
-        locks.generate_pip_locks(work, upgrade=head is None)
+        if head:
+            locks.generate_pip_locks(work, upgrade=False)
+            result = dict(outcome="proposal", scope="assessed native proposal")
+        else:
+            result = scheduled_slice(work, scan(ROOT))
+            if result["outcome"] != "proposal":
+                return result
         for name in FILES:
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(work / name, target)
     seal(destination, ROOT, identity)
+    return result
 
 
 def maintenance_health(
@@ -341,11 +405,12 @@ def health() -> dict:
     for run in publications:
         jobs = api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs")["jobs"]
         if any(
-            job["name"] == "publish"
+            job["name"] in {"publish", "merge"}
             and (
                 job.get("conclusion") == "failure"
                 or any(
-                    step["name"] == "Publish validated dependency proposal"
+                    step["name"] in {"Publish validated dependency proposal",
+                                     "Confirm dependency integration and cleanup"}
                     and step.get("conclusion") == "success"
                     for step in job.get("steps", [])
                 )
@@ -415,14 +480,22 @@ def main() -> int:
     parser.add_argument("command", choices=("scan", "generate", "health"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--head")
+    parser.add_argument("--result", type=Path, help="generation outcome, outside the proposal")
     parser.add_argument("--notify", action="store_true")
     args = parser.parse_args()
     try:
         if args.command == "generate":
             if args.output is None:
                 parser.error("generate requires --output")
-            generate(args.output, args.head)
-            return 0
+            result = generate(args.output, args.head)
+            serialized = json.dumps(result, sort_keys=True, indent=2) + "\n"
+            if args.result:
+                args.result.write_text(serialized, encoding="utf-8")
+            print(serialized)
+            if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+                with Path(summary).open("a", encoding="utf-8") as stream:
+                    stream.write("## Dependency generation\n\n```json\n" + serialized + "```\n")
+            return 0 if result["outcome"] in {"proposal", "NO_ELIGIBLE_UPDATE"} else 1
         result = scan(ROOT) if args.command == "scan" else health()
         if args.notify:
             if args.command != "health":
