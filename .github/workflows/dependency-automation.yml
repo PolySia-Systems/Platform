@@ -60,11 +60,11 @@ jobs:
           CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ -n "$CANDIDATE_HEAD" ]; then
-            python scripts/dependency_lifecycle.py generate --output "$RUNNER_TEMP/proposal" --head "$CANDIDATE_HEAD"
+            python scripts/dependency_lifecycle.py generate --output "$RUNNER_TEMP/proposal" --head "$CANDIDATE_HEAD" --result "$RUNNER_TEMP/generation.json"
           else
-            python scripts/dependency_lifecycle.py generate --output "$RUNNER_TEMP/proposal"
+            python scripts/dependency_lifecycle.py generate --output "$RUNNER_TEMP/proposal" --result "$RUNNER_TEMP/generation.json"
           fi
-          echo "prepared=true" >> "$GITHUB_OUTPUT"
+          python -c "import json,os,pathlib; r=json.loads(pathlib.Path(os.environ['RUNNER_TEMP'],'generation.json').read_text()); print('prepared='+str(r['outcome']=='proposal').lower())" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         if: steps.prepare.outputs.prepared == 'true'
         with:

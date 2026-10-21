@@ -58,13 +58,26 @@ Grouping follows GitHub's [group rules](https://docs.github.com/en/code-security
 explicit exclusions prevent sensitive packages entering general groups.
 
 `dependency-automation.yml` runs weekly and on manual dispatch. Its `generate`
-job resolves both locks in isolation without write authority. Its `scan` job
+job resolves both locks in isolation without write authority. Scheduled generation
+selects a genuine development target within existing declarations and active parent
+bounds; it freezes every runtime and sensitive build/bootstrap pin. It tries at
+most three canonical resolver slices, trying distinct targets before lower
+fallback versions. Each complete resolved delta must independently qualify for
+automatic merge. Deferred runtime work therefore does not force an unrelated
+eligible development patch into the same proposal. Conflicts remain held;
+no candidate yields `NO_ELIGIBLE_UPDATE` without a proposal artifact. Its `scan` job
 reads official PyPI metadata for every resolved runtime/dev/build package,
 including current yanked status, latest stable release, Python requirements,
 published wheel presence and active parent bounds for Linux/Windows Python
 3.14 and requested extras. Published, compatible, tested and installed versions
 are separate facts. A published wheel does not prove a matching ABI/platform.
 Metadata coverage does not establish advisory coverage or safe installation.
+Latest published stable and highest eligible are distinct fields. Version-policy
+exclusions cannot hide an eligible patch below a newer major. Eligibility checks
+retain at most 100 qualifying releases and fetch at most three candidate metadata
+records per package; incomplete evidence is `UNKNOWN`, never proof of absence.
+Candidate eligibility includes incoming bounds, Python, yanks and reported
+advisories, and remains provisional until canonical resolution and final-head CI.
 The strict OSV gate and final-head CI remain mandatory for candidate changes.
 Actions remain owned by Dependabot; Docker, Conda/bootstrap and declared host
 pins are inventoried for the Platform dependency maintainer. Inventory is not
@@ -109,9 +122,13 @@ reuse the single active, verified bot proposal; stale/ambiguous branches stop
 for review. Completed proposals do not block a new candidate or get resurrected.
 Existing branch diffs and signed bot identity are assessed before dispatch;
 the final merge head must also be a verified bot commit.
-Interrupted or denied publication preserves its branch for assessed recovery;
-the automation never deletes a possibly changed branch. A maintainer may
-remove an integrated or verified orphan branch after exact-head/PR inspection.
+Interrupted or denied publication preserves its branch for assessed recovery.
+After a confirmed merge the handler verifies repository/PR/bot identity and Git
+ancestry, checks for an active reused proposal, then conditionally deletes only
+the integrated task bot ref using a server-enforced expected-ref lease. Changed
+or reused refs are preserved. A lost response is reconciled with actual PR/ref
+state. Merge and cleanup outcomes remain separate; interrupted cleanup retries
+without a second merge. No confirmed integration means no cleanup attempt.
 No candidate is copied from a historical run over newer declarations.
 Restart a failed/partial producer through a fresh manual dispatch, regenerating
 its entire proposal. A partial job rerun must not reuse another attempt's
@@ -132,12 +149,15 @@ change policy to make the proof pass.
 The existing CI workflow independently checks meaningful dependency jobs on
 its weekly schedule and manual main dispatch. It requires both `scan` and
 `generate` success, preserves the previous complete observation across failure,
-checks publication failures, and exposes missed scans after the local default
+checks publication and merge/cleanup failures, and exposes missed scans after the local default
 of seven days plus 48 hours grace. It opens/reopens one actionable GitHub issue,
 updates only changed state, closes it on recovery, and stays quiet while healthy
 or unchanged. GitHub issue creation is the notification surface; subscriber,
 email delivery and independence from GitHub availability remain unverified.
 Advisories require prompt owner triage independently of weekly version scans.
+Successful unrelated CI callbacks do not clear a publication failure; confirmed
+dependency integration and cleanup can record recovery. Deterministic callback
+tests are engineering evidence, not proof of an unattended production cycle.
 
 Developer context adds offline `GO / CONSTRAINED_GO / BLOCKED` dependency
 preflight using relevant source/config/policy/manifest/lock hashes, cached scan

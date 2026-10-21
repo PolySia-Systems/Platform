@@ -470,9 +470,10 @@ def test_generation_resolver_failure_never_writes_partial_artifact(proposal, mon
         raise RuntimeError("resolver conflict")
 
     monkeypatch.setattr(locks, "generate_pip_locks", failed)
+    monkeypatch.setattr(locks, "_git_text", lambda *_: (root / PYPROJECT).read_text())
     destination = tmp_path / "failed-proposal"
     with pytest.raises(RuntimeError, match="resolver conflict"):
-        lifecycle.generate(destination, None)
+        lifecycle.generate(destination, HEAD)
     assert not list(destination.iterdir())
     assert before == {name: (root / name).read_bytes() for name in FILES}
 
@@ -487,6 +488,8 @@ def test_ci_completion_rechecks_run_identity_and_holds_runtime(proposal, monkeyp
         target.write_text(target.read_text().replace("rich==15.0.0", "rich==15.0.1"))
     run = dict(
         path=".github/workflows/ci.yml",
+        id=1234,
+        status="completed",
         conclusion="success",
         head_repository={"full_name": EXPECTED_REPOSITORY},
         event="workflow_dispatch",
@@ -496,9 +499,11 @@ def test_ci_completion_rechecks_run_identity_and_holds_runtime(proposal, monkeyp
     )
     pr = dict(
         number=9,
+        state="open",
         user={"login": "dependabot[bot]"},
         base={"ref": "main", "sha": BASE},
-        head={"sha": HEAD, "repo": {"full_name": EXPECTED_REPOSITORY}},
+        head={"sha": HEAD, "ref": "dependabot/pip/rich",
+              "repo": {"full_name": EXPECTED_REPOSITORY}},
     )
     checks = [
         dict(
@@ -530,7 +535,8 @@ def test_ci_completion_rechecks_run_identity_and_holds_runtime(proposal, monkeyp
         publication.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, BASE)
     )
     monkeypatch.setattr(locks, "_pr_changed_files", lambda *_: (RUNTIME_LOCK, DEV_LOCK))
-    monkeypatch.setattr(locks, "_git_text", lambda repo, ref, name: (artifact / name).read_text())
+    monkeypatch.setattr(locks, "_git_text", lambda repo, ref, name:
+                        ((artifact if ref == HEAD else root) / name).read_text())
     monkeypatch.setattr(publication, "command", lambda *a, **kw: pytest.fail("unexpected merge"))
     assert publication.merge_after_ci("1234")["outcome"] == "human_review"
     checks[0]["check_suite"]["id"] = 54
@@ -731,7 +737,8 @@ def test_github_graphql_bot_signature_is_bound_to_author(monkeypatch, author, ve
     assert publication.trusted_bot_commit(HEAD) is expected
 
 
-def test_publication_failure_cannot_be_crowded_out_by_ci_callbacks(monkeypatch):
+@pytest.mark.parametrize("failed_job", ["publish", "merge"])
+def test_publication_failure_cannot_be_crowded_out_by_ci_callbacks(monkeypatch, failed_job):
     publications = [dict(id=n, run_attempt=1, conclusion="success") for n in range(15)] + [
         dict(id=99, run_attempt=1, conclusion="failure", html_url="https://example/failed")
     ]
@@ -742,7 +749,7 @@ def test_publication_failure_cannot_be_crowded_out_by_ci_callbacks(monkeypatch):
         if "dependency-publish.yml/runs" in path:
             return {"workflow_runs": publications}
         if "actions/runs/99/" in path:
-            return {"jobs": [dict(name="publish", conclusion="failure")]}
+            return {"jobs": [dict(name=failed_job, conclusion="failure")]}
         if "/jobs" in path:
             return {
                 "jobs": [
@@ -757,3 +764,57 @@ def test_publication_failure_cannot_be_crowded_out_by_ci_callbacks(monkeypatch):
     result = lifecycle.health()
     assert result["publication"] == "failed"
     assert result["outcome"] == "action_required"
+
+
+def test_confirmed_cleanup_recovery_supersedes_prior_failure(monkeypatch):
+    def api(path):
+        if "dependency-automation.yml/runs" in path:
+            return {"workflow_runs": []}
+        if "dependency-publish.yml/runs" in path:
+            return {"workflow_runs": [dict(id=2, run_attempt=1, conclusion="success"),
+                                      dict(id=1, run_attempt=1, conclusion="failure")]}
+        if "actions/runs/2/" in path:
+            return {"jobs": [dict(name="merge", conclusion="success", steps=[dict(
+                name="Confirm dependency integration and cleanup", conclusion="success",
+            )])]}
+        raise AssertionError("older failure must be superseded by confirmed recovery")
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(lifecycle, "maintenance_health", lambda *a: dict(outcome="healthy"))
+    assert lifecycle.health()["outcome"] == "healthy"
+
+
+def test_backlog_distinguishes_latest_major_from_eligible_patch(monkeypatch, tmp_path):
+    import hashlib
+
+    root = Path(__file__).resolve().parents[3]
+    report = tmp_path / "scan.json"
+    report.write_text(json.dumps(dict(schema=1, source_hashes={
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+        for name in publication.FILES_FOR_MERGE
+    }, packages=[dict(package="example", resolved="1.0.0", latest_published_stable="2.0.0",
+                      highest_eligible_version="1.0.1",
+                      eligibility_outcome="PROVISIONAL_CANDIDATE")])))
+
+    def api(path):
+        if path == "actions/runs/1234":
+            return dict(path=publication.WORKFLOW, head_sha=BASE, head_branch="main",
+                        event="schedule",
+                        head_repository={"full_name": publication.EXPECTED_REPOSITORY},
+                        html_url="https://example/run")
+        if path.startswith("issues?"):
+            return []
+        raise AssertionError(path)
+
+    bodies = []
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(publication, "main_head", lambda: BASE)
+
+    def command(*args, body):
+        bodies.append(body["body"])
+        return dict(html_url="https://example/backlog")
+
+    monkeypatch.setattr(publication, "command", command)
+    publication.report_scan(report, "1234")
+    assert "| 1.0.0 | 2.0.0 | 1.0.1 | PROVISIONAL_CANDIDATE |" in bodies[0]
+    assert "canonical resolution" in bodies[0]

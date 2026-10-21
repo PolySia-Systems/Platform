@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,7 @@ from scripts.dependency_policy import (  # noqa: E402
     EXPECTED_REPOSITORY,
     PYPROJECT,
     RUNTIME_LOCK,
+    is_trusted_dependency_actor,
 )
 from scripts.dependency_provenance import (  # noqa: E402
     WORKFLOW,
@@ -262,7 +264,8 @@ def publish(directory: Path, run_id: str) -> dict:
         and (r.get("status") in {"queued", "in_progress"} or r.get("conclusion") == "success")
         for r in ci_runs["workflow_runs"]
     ):
-        command("workflow", "run", "ci.yml", "--ref", branch, "-f", "validation_scope=full")
+        command("workflow", "run", "ci.yml", "--repo", EXPECTED_REPOSITORY,
+                "--ref", branch, "-f", "validation_scope=full")
     if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
         raise ValueError("base or proposal changed before merge decision")
     return dict(
@@ -274,6 +277,87 @@ def publish(directory: Path, run_id: str) -> dict:
     )
 
 
+def _missing_ref(error: subprocess.CalledProcessError) -> bool:
+    return "HTTP 404" in (error.stderr or "")
+
+
+def confirm_integration(pr: dict, head: str) -> None:
+    branch = pr["head"]["ref"]
+    if (
+        not pr.get("merged") or pr.get("state") != "closed"
+        or pr["head"]["sha"] != head or pr["base"]["ref"] != "main"
+        or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
+        or not is_trusted_dependency_actor(pr["user"]["login"], branch)
+        or not branch.startswith(("codex/scheduled-lock-refresh-", "dependabot/pip/"))
+        or not re.fullmatch(r"[0-9a-f]{40}", pr.get("merge_commit_sha") or "")
+    ):
+        raise ValueError("cleanup lacks confirmed integrated task-bot identity")
+    merge = pr["merge_commit_sha"]
+    for source, target in ((head, merge), (merge, main_head())):
+        comparison = api(f"compare/{source}...{target}")
+        if comparison.get("behind_by") != 0 or comparison.get("status") not in {
+            "ahead", "identical",
+        }:
+            raise ValueError("merged task head is not integrated into current main")
+
+
+def cleanup_merged_branch(pr: dict, head: str) -> dict:
+    """Delete only an integrated bot ref with a Git server expected-OID guard.
+
+    The lease is carried into the Git ref update protocol; a separate REST GET
+    followed by an unconditional REST DELETE would not protect branch reuse.
+    """
+    confirm_integration(pr, head)
+    branch = pr["head"]["ref"]
+    if api(f"pulls?state=open&head=PolySia-Systems:{branch}"):
+        return dict(cleanup="preserved_open_proposal", retryable=False)
+    ref = f"git/ref/heads/{branch}"
+    try:
+        current = api(ref)["object"]["sha"]
+    except subprocess.CalledProcessError as error:
+        if _missing_ref(error):
+            return dict(cleanup="already_absent")
+        raise
+    if current != head:
+        return dict(cleanup="preserved_changed_ref", retryable=False)
+    # Static helper uses the existing job token without persisting it. Never
+    # include the token in a URL, command argument or diagnostic output. A lost
+    # response is resolved by observing the actual ref immediately afterward.
+    with suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        subprocess.run(
+            ("git", "-c", "credential.helper=", "-c",
+             "credential.helper=!gh auth git-credential", "push", "--porcelain",
+             f"--force-with-lease=refs/heads/{branch}:{head}",
+             f"https://github.com/{EXPECTED_REPOSITORY}.git", f":refs/heads/{branch}"),
+            check=True, capture_output=True, text=True, timeout=60, cwd=ROOT,
+        )
+    try:
+        current = api(ref)["object"]["sha"]
+    except subprocess.CalledProcessError as error:
+        if _missing_ref(error):
+            return dict(cleanup="deleted")
+        raise
+    return dict(cleanup="preserved_changed_ref" if current != head else "pending",
+                retryable=current == head)
+
+
+def confirmed_merge_result(pr: dict, head: str, run_id: str, *, duplicate: bool) -> dict:
+    try:
+        confirm_integration(pr, head)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
+            RuntimeError, ValueError, KeyError):
+        return dict(outcome="merge_unknown", head=head, cleanup="not_attempted", retryable=True)
+    result = dict(outcome="already_merged" if duplicate else "merged", head=head,
+                  pull_request=pr["html_url"], ci_run=run_id, merged=True)
+    try:
+        result.update(cleanup_merged_branch(pr, head))
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
+            RuntimeError, ValueError, KeyError):
+        result.update(cleanup="pending", retryable=True,
+                      next_action="Verify integration and retry guarded cleanup; preserve ref")
+    return result
+
+
 def merge_after_ci(run_id: str) -> dict:
     run = api(f"actions/runs/{run_id}")
     if (
@@ -281,10 +365,18 @@ def merge_after_ci(run_id: str) -> dict:
         or run.get("conclusion") != "success"
         or run.get("head_repository", {}).get("full_name") != EXPECTED_REPOSITORY
         or run.get("event") not in {"pull_request", "workflow_dispatch"}
+        or run.get("status") != "completed"
+        or str(run.get("id")) != run_id
     ):
         raise ValueError("unexpected CI evidence")
     branch, head = run["head_branch"], run["head_sha"]
-    proposals = api(f"pulls?state=open&head=PolySia-Systems:{branch}")
+    proposals = api(f"pulls?state=all&head=PolySia-Systems:{branch}&per_page=100")
+    if len(proposals) >= 100:
+        raise ValueError("incomplete proposal history; preserve ref")
+    matches = [pr for pr in proposals if pr["head"]["sha"] == head]
+    if not matches and any(pr.get("state") == "open" for pr in proposals):
+        raise ValueError("base/head changed since CI")
+    proposals = matches
     if not proposals:
         return dict(outcome="no_eligible_proposal")
     if len(proposals) != 1:
@@ -293,20 +385,28 @@ def merge_after_ci(run_id: str) -> dict:
     actor = pr["user"]["login"]
     if actor not in {"dependabot[bot]", "github-actions[bot]"}:
         return dict(outcome="human_review", reason="maintainer proposal")
+    if (
+        pr["head"]["ref"] != branch or pr["base"]["ref"] != "main"
+        or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
+        or not is_trusted_dependency_actor(actor, branch)
+    ):
+        raise ValueError("CI proposal identity changed")
+    if pr["state"] == "closed" and not pr.get("merged"):
+        return dict(outcome="closed_unmerged", cleanup="not_attempted")
     base = main_head()
     local = subprocess.run(
         ("git", "rev-parse", "HEAD"), cwd=ROOT, check=True, text=True, capture_output=True
     ).stdout.strip()
     if local != base:
         raise ValueError("trusted merge checkout is stale")
-    if (
+    if not pr.get("merged") and (
         pr["base"]["ref"] != "main"
         or pr["base"]["sha"] != base
         or pr["head"]["sha"] != head
         or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
     ):
         raise ValueError("base/head changed since CI")
-    comparison = api(f"compare/{base}...{head}")
+    comparison = api(f"compare/{pr['base']['sha']}...{head}")
     if comparison["behind_by"] != 0:
         raise ValueError("CI source does not include current main")
     changed = locks._pr_changed_files(EXPECTED_REPOSITORY, pr["number"])
@@ -322,27 +422,39 @@ def merge_after_ci(run_id: str) -> dict:
     ):
         raise ValueError("no successful CI Gate from this exact run and head")
     with tempfile.TemporaryDirectory(prefix="polysia-dependency-merge-") as raw:
-        artifact = Path(raw)
-        for name in FILES_FOR_MERGE:
-            target = artifact / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(locks._git_text(EXPECTED_REPOSITORY, head, name), encoding="utf-8")
+        artifact, assessed_base = Path(raw) / "head", Path(raw) / "base"
+        for directory, sha in ((artifact, head), (assessed_base, pr["base"]["sha"])):
+            for name in FILES_FOR_MERGE:
+                target = directory / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(locks._git_text(EXPECTED_REPOSITORY, sha, name), encoding="utf-8")
         from scripts.dependency_provenance import validate_manifest
 
-        validate_manifest(artifact, ROOT)
+        validate_manifest(artifact, assessed_base)
         _, decision = locks.classify_from_artifact(
-            actor=actor, head_branch=branch, artifact=artifact, base_root=ROOT
+            actor=actor, head_branch=branch, artifact=artifact, base_root=assessed_base
         )
     if decision.action != "auto_merge":
         return dict(outcome="human_review", reason=decision.reason, head=head)
+    if not trusted_bot_commit(head):
+        return dict(outcome="human_review", reason="final head is not a verified bot commit",
+                    head=head)
+    if pr.get("merged"):
+        return confirmed_merge_result(pr, head, run_id, duplicate=True)
     if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
         raise ValueError("base/head changed immediately before merge")
-    if not trusted_bot_commit(head):
-        return dict(
-            outcome="human_review", reason="final head is not a verified bot commit", head=head
-        )
-    command("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", head)
-    return dict(outcome="merged", head=head, pull_request=pr["html_url"], ci_run=run_id)
+    # The confirmed GitHub state, not a successful/lost CLI response, decides.
+    with suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        command("pr", "merge", str(pr["number"]), "--repo", EXPECTED_REPOSITORY,
+                "--merge", "--match-head-commit", head)
+    try:
+        observed = api(f"pulls/{pr['number']}")
+    except subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, ValueError:
+        return dict(outcome="merge_unknown", cleanup="not_attempted", retryable=True, head=head)
+    if not observed.get("merged"):
+        return dict(outcome="merge_not_confirmed", cleanup="not_attempted", retryable=True,
+                    head=head)
+    return confirmed_merge_result(observed, head, run_id, duplicate=False)
 
 
 FILES_FOR_MERGE = (PYPROJECT, RUNTIME_LOCK, DEV_LOCK)
@@ -370,15 +482,22 @@ def report_scan(path: Path, run_id: str) -> dict:
     for item in payload["packages"]:
         name, current = item["package"], item["resolved"]
         latest = item.get("latest_published_stable", "UNKNOWN")
+        disposition = item.get("eligibility_outcome", "UNKNOWN")
+        eligible = item.get("highest_eligible_version") or (
+            "NONE" if disposition == "NO_ELIGIBLE_UPDATE" else "UNKNOWN"
+        )
+        if disposition not in {"UNKNOWN", "REVIEW_REQUIRED", "PROVISIONAL_CANDIDATE",
+                               "NO_ELIGIBLE_UPDATE"}:
+            raise ValueError("invalid eligibility disposition")
         if not re.fullmatch(r"[a-z0-9-]+", name) or not all(
-            re.fullmatch(r"[a-zA-Z0-9.+!-]+", value) for value in (current, latest)
+            re.fullmatch(r"[a-zA-Z0-9.+!-]+", value) for value in (current, latest, eligible)
         ):
             raise ValueError("invalid package report identity")
         if current != latest or item.get("advisory_ids") or item.get("current_yanked"):
             state = "HELD_PARENT_BOUND" if item.get("candidate_blocked_by") else "REVIEW_REQUIRED"
             if item.get("advisory_ids") or item.get("current_yanked"):
                 state = "ADVISORY_OR_YANKED_ACTION"
-            rows.append((name, current, latest, state))
+            rows.append((name, current, latest, eligible, disposition, state))
     state_hash = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
     marker = "<!-- polysia-dependency-backlog-v1 -->"
     issues = api("issues?state=all&per_page=100")
@@ -400,12 +519,18 @@ def report_scan(path: Path, run_id: str) -> dict:
         "For every row: review on the next weekly scan, advisory or parent/compatibility release; "
         "retain until a coherent resolver delta and final-head CI are accepted. "
         "Runtime/build/crypto/Actions require review. Installed/tested versions are UNKNOWN "
-        "until separately evidenced; metadata does not replace the strict OSV gate.\n\n"
-        "| Package (official metadata) | Resolved | Latest stable | Disposition |\n"
-        "|---|---|---|---|\n"
+        "until separately evidenced; metadata does not replace the strict OSV gate. "
+        "Highest eligible is provisional within existing declarations, active parent bounds, "
+        "Python and version policy; canonical resolution and full-delta CI own acceptance. "
+        "UNKNOWN includes held or bounded/incomplete assessment. "
+        "Observation time is retained in the source run's scan artifact.\n\n"
+        "| Package (official metadata) | Resolved | Latest stable | Highest eligible "
+        "(provisional) | Eligibility | Disposition |\n"
+        "|---|---|---|---|---|---|\n"
         + "\n".join(
-            f"| [{name}](https://pypi.org/pypi/{name}/json) | {old} | {new} | {state} |"
-            for name, old, new, state in rows
+            f"| [{name}](https://pypi.org/pypi/{name}/json) | {old} | {new} | {eligible} "
+            f"| {disposition} | {state} |"
+            for name, old, new, eligible, disposition, state in rows
         )
     )
     target = f"repos/{EXPECTED_REPOSITORY}/issues" + (f"/{issue['number']}" if issue else "")
@@ -462,11 +587,18 @@ def main() -> int:
             next_action="Regenerate from current main and proposal head",
         )
     print(json.dumps(result, sort_keys=True))
+    output = os.environ.get("GITHUB_OUTPUT")
+    if args.merge_after_ci and output:
+        complete = result.get("merged") and result.get("cleanup") in {"deleted", "already_absent"}
+        with Path(output).open("a", encoding="utf-8") as stream:
+            stream.write(f"integration_complete={str(bool(complete)).lower()}\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a", encoding="utf-8") as stream:
             stream.write("## Dependency publication\n\n```json\n" + json.dumps(result) + "\n```\n")
-    return 1 if result["outcome"] == "failed" else 0
+    return 1 if result["outcome"] in {"failed", "merge_unknown", "merge_not_confirmed"} or (
+        result.get("merged") and result.get("cleanup") not in {"deleted", "already_absent"}
+    ) else 0
 
 
 if __name__ == "__main__":

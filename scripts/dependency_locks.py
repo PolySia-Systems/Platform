@@ -145,6 +145,7 @@ def _pip_compile_command(
     upgrade: bool,
     constraint: Path | None,
     upgrade_packages: Sequence[str] = (),
+    extra_constraints: Sequence[Path] = (),
 ) -> list[str]:
     command = [
         sys.executable,
@@ -178,6 +179,8 @@ def _pip_compile_command(
         command.extend(["--upgrade-package", name])
     if constraint is not None:
         command.extend(["--constraint", constraint.as_posix()])
+    for extra_constraint in extra_constraints:
+        command.extend(["--constraint", extra_constraint.as_posix()])
     return command
 
 
@@ -215,6 +218,7 @@ def generate_pip_locks(
     upgrade: bool,
     destination: Path | None = None,
     upgrade_packages: Sequence[str] = (),
+    extra_constraints: Sequence[Path] = (),
 ) -> tuple[Path, Path]:
     dest = destination or root
     runtime_path = dest / RUNTIME_LOCK
@@ -244,6 +248,7 @@ def generate_pip_locks(
             upgrade=upgrade,
             constraint=None,
             upgrade_packages=runtime_targets,
+            extra_constraints=extra_constraints,
         ),
         cwd=root,
         env=env,
@@ -256,6 +261,7 @@ def generate_pip_locks(
             upgrade=upgrade,
             constraint=Path(RUNTIME_LOCK),
             upgrade_packages=upgrade_packages,
+            extra_constraints=extra_constraints,
         ),
         cwd=root,
         env=env,
