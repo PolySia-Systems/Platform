@@ -106,10 +106,16 @@ changes, and validates complete shared pins, declarations and build constraints.
 GitHub atomically enforces `expectedHeadOid` when committing the lock pair.
 Missing, partial, stale, ambiguous or tampered evidence fails closed.
 
-The publisher explicitly dispatches full CI after its final commit because
-[ordinary GITHUB_TOKEN writes do not trigger normal workflows](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
-It suppresses an already running/successful dispatch for the same head. A
-separate completion handler reclassifies the live diff after successful CI,
+The publisher explicitly dispatches full CI after its final commit.
+[GITHUB_TOKEN push events do not trigger CI; token-created PR events create
+approval-required runs](https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs).
+The explicit full dispatch provides engineering validation.
+[Checks from workflow_dispatch do not satisfy required PR checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated).
+The handler rejects that event as merge authority even when every job succeeds.
+Qualifying PR CI and unchanged repository rules remain required; a maintainer's
+approval of the token-created PR workflows is human-assisted evidence.
+The publisher suppresses an already running/successful dispatch for the same head. A
+separate completion handler reclassifies the live diff after successful PR CI,
 verifies `CI Gate` belongs to that exact run/head, requires the current base,
 then requests an exact-head merge under repository rules. It never leaves an
 auto-merge approval queued across subsequent changes. Runtime, SDK, build,
@@ -136,13 +142,41 @@ artifact; attempt mismatch fails closed. Publication itself can safely retry
 the same fully assessed producer artifact.
 
 The repository rules require a PR and strict `CI Gate`, with zero mandatory
-approving reviews as observed on 2026-10-20. Repository auto-merge capability
+approving reviews as observed on 2026-10-21. Repository auto-merge capability
 and `can_approve_pull_request_reviews` are not publication proof. Each actor's
 branch-write, PR-create, CI-dispatch and merge route must be exercised. A
 permission/provider failure is nonzero and retains sanitized stage/context.
 When Actions PR creation is denied, authenticated maintainer generation is a
 **degraded fallback**, not unattended completion. Never expand a token or
 change policy to make the proof pass.
+
+The owner-authorized publication route was enabled on 2026-10-21: the
+organization permits Actions PR creation/approval and Platform enables that
+capability. Default workflow permissions remain `read`; workflow jobs retain
+their existing explicit permission scopes. The other five existing
+organization repositories explicitly retain the disabled PR capability.
+Organization changes can affect inherited settings, so inspect the effective
+setting when adding a repository. Restore the organization and Platform
+capability to disabled to roll back this route; retain read defaults and branch
+rules. Actual production-cycle evidence and its limitations belong to
+[Issue #202](https://github.com/PolySia-Systems/Platform/issues/202).
+
+The real `virtualenv` patch in #215 established publication and successful full
+dispatch validation, but its PR workflows await maintainer approval and its
+required PR gate remains expected. Unattended merge and cleanup are therefore
+unverified. An additional publication credential route needs explicit scoped
+approval and implementation. The minimum App proposal is a private App installed
+only on Platform, with pull requests write and implicit metadata read. Its token
+would create/update PRs only; branch/commit writes, reads, merge and guarded
+cleanup would retain the existing scoped job tokens. The new PR author's exact
+registered bot identity must be reviewed alongside the existing verified commit
+identity and immutable provenance. Installation tokens must be short-lived and
+limited to trusted-main jobs, with a repository-only private-key secret and
+rotation/revocation ownership. Report and health jobs retain their existing
+tokens. The existing actor allowlist must not
+be broadened before that identity and route are reviewed; an unreviewed App or
+maintainer token is not a substitute. Uninstalling the App and revoking its key,
+token/secret and actor entry is the rollback for that separately approved route.
 
 ### Independent maintenance health and developer preflight
 
