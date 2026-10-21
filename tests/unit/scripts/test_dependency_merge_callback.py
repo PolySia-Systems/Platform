@@ -34,7 +34,7 @@ dev = ["example>=1,<2", "hatchling==1.32.4"]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
     run = dict(id=1234, path=".github/workflows/ci.yml", status="completed", conclusion="success",
-               head_repository={"full_name": EXPECTED_REPOSITORY}, event="workflow_dispatch",
+               head_repository={"full_name": EXPECTED_REPOSITORY}, event="pull_request",
                head_branch=BRANCH, head_sha=HEAD, check_suite_id=55)
     pr = dict(number=9, state="open", merged=False, merge_commit_sha=None,
               user={"login": "github-actions[bot]"}, base={"ref": "main", "sha": BASE},
@@ -128,6 +128,16 @@ def test_real_callback_merges_exact_head_confirms_integration_and_guarded_cleanu
     assert result["outcome"] == "merged" and result["merged"] is True
     assert result["head"] == HEAD and result["cleanup"] == "deleted"
     assert callback["merges"] == callback["deletes"] == 1
+
+
+def test_green_dispatch_cannot_replace_qualifying_required_pr_ci(callback, monkeypatch, capsys):
+    callback["run"]["event"] = "workflow_dispatch"
+    monkeypatch.setattr("sys.argv", ["publication", "--run", "1234", "--merge-after-ci"])
+    assert publication.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["outcome"] == "blocked_ci_event"
+    assert result["head"] == HEAD and result["cleanup"] == "not_attempted"
+    assert callback["merges"] == callback["deletes"] == 0
 
 
 @pytest.mark.parametrize(("field", "value"), [

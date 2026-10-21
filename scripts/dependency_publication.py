@@ -271,6 +271,7 @@ def publish(directory: Path, run_id: str) -> dict:
     return dict(
         outcome="published",
         policy=decision.action,
+        required_pr_checks="not established by workflow_dispatch engineering validation",
         head=head,
         pull_request=pr["html_url"],
         run=run_id,
@@ -439,6 +440,12 @@ def merge_after_ci(run_id: str) -> dict:
     if not trusted_bot_commit(head):
         return dict(outcome="human_review", reason="final head is not a verified bot commit",
                     head=head)
+    # A green workflow_dispatch check is engineering evidence, but GitHub does
+    # not evaluate it as a required PR check. Never treat it as merge authority.
+    if run["event"] != "pull_request":
+        return dict(outcome="blocked_ci_event", head=head, cleanup="not_attempted",
+                    reason="workflow_dispatch checks do not satisfy required PR checks",
+                    next_action="Use an approved route that produces qualifying PR CI")
     if pr.get("merged"):
         return confirmed_merge_result(pr, head, run_id, duplicate=True)
     if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
@@ -596,7 +603,9 @@ def main() -> int:
     if summary:
         with Path(summary).open("a", encoding="utf-8") as stream:
             stream.write("## Dependency publication\n\n```json\n" + json.dumps(result) + "\n```\n")
-    return 1 if result["outcome"] in {"failed", "merge_unknown", "merge_not_confirmed"} or (
+    return 1 if result["outcome"] in {
+        "failed", "merge_unknown", "merge_not_confirmed", "blocked_ci_event",
+    } or (
         result.get("merged") and result.get("cleanup") not in {"deleted", "already_absent"}
     ) else 0
 
