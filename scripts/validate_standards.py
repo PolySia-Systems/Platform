@@ -13,14 +13,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-EXPECTED_RELEASE = "v0.5.2"
-EXPECTED_COMMIT = "2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c"
+EXPECTED_RELEASE = "v1.0.0"
+EXPECTED_COMMIT = "ccc3f4f69dbb9bdb94fefa10fc6bc22bd5f9bead"
 EXPECTED_PROFILES = {"PRF-BASE", "PRF-PYS"}
 EXPECTED_REQUIREMENTS = {
     *(f"PRF-FRM-{number:03d}" for number in range(1, 17)),
     *(f"PRF-BASE-{number:03d}" for number in range(1, 10)),
     *(f"PRF-PYS-{number:03d}" for number in range(1, 8)),
-    *(f"ENG-PY-{number:03d}" for number in range(1, 22)),
+    *(f"ENG-PY-{number:03d}" for number in range(1, 26)),
     "CORE-REQ-020",
     "CORE-REQ-021",
     "CORE-REQ-022",
@@ -58,7 +58,7 @@ EXPECTED_REQUIREMENTS = {
     "CORE-VER-012",
 }
 EXPECTED_OUTCOME_COUNTS = {
-    "applicable": 89,
+    "applicable": 93,
     "not_applicable": 15,
     "source_authority": 10,
 }
@@ -150,6 +150,11 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
         "Standards release must be recorded as immutable",
     )
     require(
+        manifest.get("standards_release_id") == 422686619,
+        "CORE-LCY-001",
+        "Standards release identity must match immutable release 422686619",
+    )
+    require(
         set(manifest.get("profiles", [])) == EXPECTED_PROFILES,
         "PRF-FRM-006",
         "Selected profiles must be exactly PRF-BASE and PRF-PYS",
@@ -161,7 +166,7 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
     )
     require(
         manifest.get("conformance_claim")
-        == "conformant_with_v0.5.2_for_selected_profiles",
+        == "conformant_with_v1.0.0_for_selected_profiles",
         "PRF-FRM-014",
         "Adoption conformance claim is not final",
     )
@@ -210,7 +215,7 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
     require(
         observed == EXPECTED_REQUIREMENTS,
         "PRF-PYS-005",
-        "Resolved requirement IDs differ from the v0.5.2 PRF-BASE + PRF-PYS set: "
+        "Resolved requirement IDs differ from the v1.0.0 PRF-BASE + PRF-PYS set: "
         f"missing={sorted(EXPECTED_REQUIREMENTS - observed)}, "
         f"unexpected={sorted(observed - EXPECTED_REQUIREMENTS)}",
     )
@@ -222,6 +227,11 @@ def _manifest_findings(manifest: dict[str, object]) -> list[Finding]:
     facts = manifest.get("consumer_facts", {})
     require(isinstance(facts, dict), "PRF-PYS-004", "consumer_facts must be a table")
     if isinstance(facts, dict):
+        require(
+            facts.get("maintained_third_party_dependencies") is True,
+            "ENG-PY-022",
+            "Maintained runtime, development and build dependencies must be recorded",
+        )
         expected_true = {
             "controlled_repository",
             "installable_project",
@@ -341,7 +351,7 @@ def _conformance_findings(repository: Path) -> list[Finding]:
     require(
         observed == EXPECTED_REQUIREMENTS,
         "PRF-PYS-005",
-        "Conformance IDs differ from the resolved v0.5.2 requirement universe: "
+        "Conformance IDs differ from the resolved v1.0.0 requirement universe: "
         f"missing={sorted(EXPECTED_REQUIREMENTS - observed)}, "
         f"unexpected={sorted(observed - EXPECTED_REQUIREMENTS)}",
     )
@@ -354,11 +364,11 @@ def _conformance_findings(repository: Path) -> list[Finding]:
     require(isinstance(totals, dict), "PRF-FRM-014", "totals must be a table")
     if isinstance(totals, dict):
         expected_totals = {
-            "requirements": 114,
-            "applicable": 89,
+            "requirements": 118,
+            "applicable": 93,
             "not_applicable": 15,
             "source_authority": 10,
-            "pass": 89,
+            "pass": 93,
             "verified_source_authority": 10,
             "unresolved": 0,
         }

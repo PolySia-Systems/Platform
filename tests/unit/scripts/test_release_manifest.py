@@ -14,6 +14,8 @@ def test_manifest_binds_exact_archive_and_source(tmp_path: Path) -> None:
     result = manifest(image, image_id="sha256:" + "b" * 64, commit="a" * 40)
     assert result["archive_sha256"] == hashlib.sha256(b"tested archive").hexdigest()
     assert result["commit"] == "a" * 40
+    assert result["standards_release"] == "v1.0.0"
+    assert result["standards_commit"] == "ccc3f4f69dbb9bdb94fefa10fc6bc22bd5f9bead"
     assert result["defaults"] == {"TRADING_MODE": "DATA_ONLY", "LIVE_TRADING_ENABLED": False}
     with pytest.raises(ValueError, match="exact source"):
         manifest(image, image_id="sha256:" + "b" * 64, commit="main")

@@ -2,11 +2,11 @@ schema_version = 1
 record_id = "CNF-PLATFORM-001"
 status = "conformant"
 consumer = "PolySia-Systems/Platform"
-evaluated_at = "2026-10-16"
-evaluated_revision = "codex/platform-independent-shadow from ca9f37df91a5b9659726fa18312b381ccb081d83"
+evaluated_at = "2026-10-24"
+evaluated_revision = "codex/platform-standards-v1 from 76e08d31727340b6650259b3eb3d83b750ae316b"
 standards_repository = "PolySia-Systems/Standards"
-standards_release = "v0.5.2"
-standards_commit = "2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c"
+standards_release = "v1.0.0"
+standards_commit = "ccc3f4f69dbb9bdb94fefa10fc6bc22bd5f9bead"
 profiles = ["PRF-BASE", "PRF-PYS"]
 enforcement = "full"
 unresolved_findings = 0
@@ -14,11 +14,11 @@ approved_exceptions = []
 deferred_requirements = []
 
 [totals]
-requirements = 114
-applicable = 89
+requirements = 118
+applicable = 93
 not_applicable = 15
 source_authority = 10
-pass = 89
+pass = 93
 verified_source_authority = 10
 unresolved = 0
 
@@ -27,21 +27,21 @@ name = "profile-framework-consumer"
 classification = "applicable"
 verdict = "pass"
 ids = ["PRF-FRM-005", "PRF-FRM-006", "PRF-FRM-007", "PRF-FRM-010", "PRF-FRM-013", "PRF-FRM-014"]
-evidence = "standards/adoption.toml; docs/00-governance/standards-conformance-v0.5.2.md; scripts/validate_standards.py"
+evidence = "standards/adoption.toml; docs/00-governance/standards-conformance-v1.0.0.md; scripts/validate_standards.py"
 
 [[results]]
 name = "profile-framework-absent-events"
 classification = "not_applicable"
 verdict = "not_applicable"
 ids = ["PRF-FRM-008", "PRF-FRM-011", "PRF-FRM-015"]
-evidence = "No scoped refinement, unresolved profile conflict, or profile change exists."
+evidence = "No scoped refinement, unresolved profile conflict, or consumer-authored normative Profile change exists; external release impact is reviewed in the adoption review."
 
 [[results]]
 name = "profile-framework-source-authority"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["PRF-FRM-001", "PRF-FRM-002", "PRF-FRM-003", "PRF-FRM-004", "PRF-FRM-009", "PRF-FRM-012", "PRF-FRM-016"]
-evidence = "Immutable PolySia-Systems/Standards v0.5.2 profile artifacts."
+evidence = "Immutable PolySia-Systems/Standards v1.0.0 profile artifacts."
 
 [[results]]
 name = "base-profile-consumer"
@@ -55,7 +55,7 @@ name = "base-profile-owner-review"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["PRF-BASE-009"]
-evidence = "Immutable PolySia-Systems/Standards v0.5.2 PRF-BASE."
+evidence = "Immutable PolySia-Systems/Standards v1.0.0 PRF-BASE."
 
 [[results]]
 name = "python-profile-consumer"
@@ -69,7 +69,7 @@ name = "python-profile-owner-review"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["PRF-PYS-007"]
-evidence = "Immutable PolySia-Systems/Standards v0.5.2 PRF-PYS."
+evidence = "Immutable PolySia-Systems/Standards v1.0.0 PRF-PYS."
 
 [[results]]
 name = "core-interpretation-and-assessment"
@@ -111,7 +111,7 @@ name = "released-authority"
 classification = "applicable"
 verdict = "pass"
 ids = ["CORE-LCY-001", "CORE-VER-012"]
-evidence = "Exact immutable v0.5.2 release and commit pin in adoption and conformance records."
+evidence = "Exact immutable v1.0.0 release and commit pin in adoption and conformance records."
 
 [[results]]
 name = "python-core-naming"
@@ -139,4 +139,32 @@ name = "python-standard-owner-review"
 classification = "source_authority"
 verdict = "verified_source_authority"
 ids = ["ENG-PY-021"]
-evidence = "Immutable PolySia-Systems/Standards v0.5.2 Python Standard."
+evidence = "Immutable PolySia-Systems/Standards v1.0.0 Python Standard."
+
+[[results]]
+name = "python-maintenance-scope"
+classification = "applicable"
+verdict = "pass"
+ids = ["ENG-PY-022"]
+evidence = "pyproject.toml; locks/requirements-runtime-py314.txt; locks/requirements-dev-py314.txt; scripts/dependency_locks.py; docs/05-security/supply-chain.md"
+
+[[results]]
+name = "python-maintenance-assessment"
+classification = "applicable"
+verdict = "pass"
+ids = ["ENG-PY-023"]
+evidence = "scripts/dependency_lifecycle.py; scripts/dependency_candidates.py; scripts/dependency_policy.py; .github/workflows/dependency-automation.yml; .github/workflows/ci.yml; Issue #202 P1 receipt and PR #219"
+
+[[results]]
+name = "python-maintenance-dispositions"
+classification = "applicable"
+verdict = "pass"
+ids = ["ENG-PY-024"]
+evidence = "docs/05-security/supply-chain.md maintenance dispositions; Issue #202; deferred PR #205 and review-held PR #212; scan owner/next_action/review_trigger fields"
+
+[[results]]
+name = "python-maintenance-health"
+classification = "applicable"
+verdict = "pass"
+ids = ["ENG-PY-025"]
+evidence = "scripts/dependency_lifecycle.py health; src/polysia/developer/dependency_preflight.py; .github/workflows/ci.yml; docs/05-security/supply-chain.md; Issue #202 P1 run-linked receipt"

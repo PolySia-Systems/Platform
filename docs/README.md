@@ -75,7 +75,7 @@ Previous runtime receipts are historical after the owner's server reset.
 - [Master Operating Charter](00-governance/master-operating-charter.md)
 - [Document control](00-governance/document-control.md)
 - [Adopted Standards record](../standards/adoption.toml)
-- [Standards conformance review](00-governance/standards-conformance-v0.5.2.md)
+- [Standards conformance review](00-governance/standards-conformance-v1.0.0.md)
 
 ## Evidence
 
