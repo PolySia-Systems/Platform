@@ -3,12 +3,12 @@ record_id = "ADP-PLATFORM-001"
 status = "active_conformant"
 consumer = "PolySia-Systems/Platform"
 accountable_owner = "PolySia Platform Owner"
-adoption_date = "2026-10-16"
-review_trigger = "2027-01-16 or earlier on a Standards, profile, Python-support, public-interface, environment-vocabulary, or consumer-boundary change"
+adoption_date = "2026-10-24"
+review_trigger = "2027-01-24 or earlier on a Standards, profile, Python-support, public-interface, environment-vocabulary, or consumer-boundary change"
 standards_repository = "PolySia-Systems/Standards"
-standards_release = "v0.5.2"
-standards_commit = "2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c"
-standards_release_id = 414090521
+standards_release = "v1.0.0"
+standards_commit = "ccc3f4f69dbb9bdb94fefa10fc6bc22bd5f9bead"
+standards_release_id = 422686619
 standards_release_immutable = true
 profiles = ["PRF-BASE", "PRF-PYS"]
 component_roots = [".", "src/polysia", "tests", "scripts"]
@@ -20,7 +20,7 @@ excluded_boundaries = [
   "third-party and generated identifiers",
   "historical records under docs/13-ai-handoffs, docs/18-ai-handoffs, and docs/99-archive",
 ]
-conformance_claim = "conformant_with_v0.5.2_for_selected_profiles"
+conformance_claim = "conformant_with_v1.0.0_for_selected_profiles"
 
 [enforcement]
 mode = "full"
@@ -37,8 +37,10 @@ public_cli = true
 python_serialized_models = true
 external_effect_tests_by_default = false
 repeatable_verification_environment = true
+maintained_third_party_dependencies = true
 
 [consumer_fact_evidence]
+maintained_third_party_dependencies = "pyproject.toml runtime/development/build declarations; locks; docs/05-security/supply-chain.md"
 installable_project = "pyproject.toml; src/polysia"
 reusable_library_interface = "src/polysia/__init__.py and explicit package exports"
 public_cli = "pyproject.toml [project.scripts] and src/polysia/cli.py"
@@ -85,12 +87,12 @@ name = "profile-framework-consumer"
 outcome = "applicable"
 condition = "The consumer adopts released profiles and produces an assessment."
 ids = ["PRF-FRM-005", "PRF-FRM-006", "PRF-FRM-007", "PRF-FRM-010", "PRF-FRM-013", "PRF-FRM-014"]
-evidence = "standards/adoption.toml; docs/00-governance/standards-conformance-v0.5.2.md"
+evidence = "standards/adoption.toml; docs/00-governance/standards-conformance-v1.0.0.md"
 
 [[requirement_groups]]
 name = "profile-framework-absent-events"
 outcome = "not_applicable"
-condition = "No scoped refinement, unresolved profile conflict, or profile change exists."
+condition = "No scoped refinement, unresolved profile conflict, or consumer-authored normative Profile change exists; external release impact is reviewed in the adoption review."
 ids = ["PRF-FRM-008", "PRF-FRM-011", "PRF-FRM-015"]
 evidence = "Adoption review and profile-resolution record"
 
@@ -99,7 +101,7 @@ name = "profile-framework-source-authority"
 outcome = "source_authority"
 condition = "These requirements govern the profile artifacts and Profile Owner in the immutable Standards release, not the consumer implementation."
 ids = ["PRF-FRM-001", "PRF-FRM-002", "PRF-FRM-003", "PRF-FRM-004", "PRF-FRM-009", "PRF-FRM-012", "PRF-FRM-016"]
-evidence = "PolySia-Systems/Standards v0.5.2 profiles"
+evidence = "PolySia-Systems/Standards v1.0.0 profiles"
 
 [[requirement_groups]]
 name = "base-profile-consumer"
@@ -113,7 +115,7 @@ name = "base-profile-owner-review"
 outcome = "source_authority"
 condition = "The quarterly Profile review belongs to the external Profile Owner."
 ids = ["PRF-BASE-009"]
-evidence = "PolySia-Systems/Standards v0.5.2 PRF-BASE"
+evidence = "PolySia-Systems/Standards v1.0.0 PRF-BASE"
 
 [[requirement_groups]]
 name = "python-profile-consumer"
@@ -127,7 +129,7 @@ name = "python-profile-owner-review"
 outcome = "source_authority"
 condition = "The quarterly Profile review belongs to the external Profile Owner."
 ids = ["PRF-PYS-007"]
-evidence = "PolySia-Systems/Standards v0.5.2 PRF-PYS"
+evidence = "PolySia-Systems/Standards v1.0.0 PRF-PYS"
 
 [[requirement_groups]]
 name = "core-interpretation-and-assessment"
@@ -197,4 +199,32 @@ name = "python-standard-owner-review"
 outcome = "source_authority"
 condition = "The quarterly Python Standard review belongs to the external Engineering Domain Owner."
 ids = ["ENG-PY-021"]
-evidence = "PolySia-Systems/Standards v0.5.2 ENG-PY"
+evidence = "PolySia-Systems/Standards v1.0.0 ENG-PY"
+
+[[requirement_groups]]
+name = "python-maintenance-scope"
+outcome = "applicable"
+condition = "The maintained third-party closure includes runtime, development, test and build dependencies."
+ids = ["ENG-PY-022"]
+evidence = "pyproject.toml; locks/requirements-runtime-py314.txt; locks/requirements-dev-py314.txt; scripts/dependency_locks.py; docs/05-security/supply-chain.md"
+
+[[requirement_groups]]
+name = "python-maintenance-assessment"
+outcome = "applicable"
+condition = "The maintained closure requires recurring update/advisory assessment and complete candidate verification."
+ids = ["ENG-PY-023"]
+evidence = "scripts/dependency_lifecycle.py; scripts/dependency_candidates.py; scripts/dependency_policy.py; .github/workflows/dependency-automation.yml; .github/workflows/ci.yml; Issue #202 P1 receipt and PR #219"
+
+[[requirement_groups]]
+name = "python-maintenance-dispositions"
+outcome = "applicable"
+condition = "Actionable findings and held proposals require owned reasons, next actions and time-bounded review."
+ids = ["ENG-PY-024"]
+evidence = "docs/05-security/supply-chain.md maintenance dispositions; Issue #202; deferred PR #205 and review-held PR #212; scan owner/next_action/review_trigger fields"
+
+[[requirement_groups]]
+name = "python-maintenance-health"
+outcome = "applicable"
+condition = "Maintained assessments and claimed unattended publication require freshness, failure and effective-authority visibility."
+ids = ["ENG-PY-025"]
+evidence = "scripts/dependency_lifecycle.py health; src/polysia/developer/dependency_preflight.py; .github/workflows/ci.yml; docs/05-security/supply-chain.md; Issue #202 P1 run-linked receipt"

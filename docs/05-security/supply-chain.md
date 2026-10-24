@@ -93,6 +93,25 @@ Failures/partial scans exit nonzero; `noop` only registers events and never
 counts as freshness. Task/backlog disposition lives in
 [Issue #202](https://github.com/PolySia-Systems/Platform/issues/202).
 Each material hold records source time, owner, reason, next action and trigger.
+The Platform dependency maintainer reviews actionable findings and existing
+holds at least weekly, no later than seven calendar days after assessment or
+the previous review, and earlier on an advisory or compatibility change.
+Record the dated review and its next due date in the finding's Issue or PR;
+renewal requires a reason and next action. An expired hold is overdue work,
+not an approved Standards exception or evidence that the dependency is safe.
+
+Current carried dispositions, reviewed 2026-10-24, next review due 2026-10-31:
+
+| Finding | Disposition and reason | Accountable owner | Next action and earlier trigger |
+|---|---|---|---|
+| [Runtime bundle #205](https://github.com/PolySia-Systems/Platform/pull/205) | Deferred: runtime acceptance is absent; old source predates corrected certifi/security main. | Platform runtime maintainer | Obtain explicit bundle decision, then regenerate against current main and run affected gates; owner decision, advisory or compatibility change triggers earlier review. |
+| [Actions major #212](https://github.com/PolySia-Systems/Platform/pull/212) | Held for human source/major-version review; outside automatic pip scope. | Platform dependency maintainer | Review exact Actions sources and compatibility, reconcile current main and run affected gates; owner decision, advisory or compatibility change triggers earlier review. |
+
+The corrected security findings and completed low-risk proposal remain linked
+to their integration and audit evidence in the Issue #202 P1 receipt. These
+routine maintenance holds do not waive a mandatory requirement. New scan
+findings retain their own source time, coverage, reason, owner and weekly
+review trigger; unavailable registry or advisory data remains unknown.
 
 ### Trusted publication and merge
 

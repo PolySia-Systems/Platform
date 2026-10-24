@@ -10,7 +10,12 @@
 | Engineering runtime baseline | CPython `3.14.8`; deployed patch requires a dated host receipt |
 | Supported CI runtime | Python `3.14.8` (`>=3.14,<3.15`) |
 | Polymarket SDK | `polymarket-client==0.13.0` |
-| Conformance status | `STANDARDS_V0_5_2_SELECTED_PROFILES_ENFORCED` |
+| Conformance status | `STANDARDS_V1_0_0_SELECTED_PROFILES_ENFORCED` |
+
+Standards adoption updated 2026-10-24: immutable v1.0.0 at
+`ccc3f4f69dbb9bdb94fefa10fc6bc22bd5f9bead`, PRF-BASE/PRF-PYS only;
+[consumer review](standards-conformance-v1.0.0.md). This adoption does not
+change the dated runtime/deployment evidence below.
 
 This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,

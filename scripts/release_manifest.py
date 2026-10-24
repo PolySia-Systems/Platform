@@ -52,6 +52,7 @@ def manifest(
             raise ValueError("encryption runtime differs from its reviewed pin")
         with os_packages.open("rb") as stream:
             inventory_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    adoption = tomllib.loads(Path("standards/adoption.toml").read_text(encoding="utf-8"))
     return {
         "schema_version": "platform-release/v1",
         "commit": commit,
@@ -71,8 +72,8 @@ def manifest(
         "configuration_schema": "platform-installation/v1",
         "financial_schema": 9,
         "defaults": {"TRADING_MODE": "DATA_ONLY", "LIVE_TRADING_ENABLED": False},
-        "standards_release": "v0.5.2",
-        "standards_commit": "2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c",
+        "standards_release": adoption["standards_release"],
+        "standards_commit": adoption["standards_commit"],
     }
 
 
