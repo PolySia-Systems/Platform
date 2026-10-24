@@ -20,6 +20,8 @@ from scripts import dependency_locks as locks  # noqa: E402
 from scripts.dependency_policy import (  # noqa: E402
     DEV_LOCK,
     EXPECTED_REPOSITORY,
+    PUBLICATION_APP_BOT_ID,
+    PUBLICATION_APP_LOGIN,
     PYPROJECT,
     RUNTIME_LOCK,
     is_trusted_dependency_actor,
@@ -49,6 +51,50 @@ def command(*args: str, body: object = None) -> object:
 
 def api(path: str) -> object:
     return command("api", f"repos/{EXPECTED_REPOSITORY}/{path}")
+
+
+def trusted_pr_author(pr: dict) -> bool:
+    user = pr["user"]
+    return is_trusted_dependency_actor(user["login"], pr.get("head", {}).get("ref", "")) and (
+        user["login"] != PUBLICATION_APP_LOGIN
+        or (user.get("id") == PUBLICATION_APP_BOT_ID and user.get("type") == "Bot")
+    )
+
+
+def app_request(*, proposal: dict | None = None) -> object:
+    """Use the separate installation token only for scope read or PR creation.
+
+    Its private key never enters this process; gh receives only the masked,
+    short-lived token through its environment. Provider output stays captured.
+    """
+    token = os.environ.get("DEPENDENCY_PR_TOKEN", "")
+    if not token or (
+        os.environ.get("DEPENDENCY_APP_SLUG") != "polysia-platform-dependencies"
+        or os.environ.get("DEPENDENCY_APP_INSTALLATION") != "173681867"
+    ):
+        raise ValueError("missing or unexpected publication App installation")
+    args = ("gh", "api", "--method", "GET", "/installation/repositories?per_page=100")
+    if proposal is not None:
+        if proposal.get("base") != "main" or not proposal.get("head", "").startswith(
+            "codex/scheduled-lock-refresh-"
+        ):
+            raise ValueError("App may publish only scheduled dependency PRs to main")
+        args = ("gh", "api", "--method", "POST", f"repos/{EXPECTED_REPOSITORY}/pulls",
+                "--input", "-")
+    result = subprocess.run(
+        args, input=None if proposal is None else json.dumps(proposal), check=True,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        env={**os.environ, "GH_TOKEN": token},
+    )
+    return json.loads(result.stdout)
+
+
+def verify_app_scope() -> None:
+    scope = app_request()
+    if scope.get("total_count") != 1 or [
+        repo.get("full_name") for repo in scope.get("repositories", [])
+    ] != [EXPECTED_REPOSITORY]:
+        raise ValueError("publication App token must be restricted to Platform only")
 
 
 def main_head() -> str:
@@ -93,7 +139,7 @@ def scheduled_target(base: str, files: dict[str, str]) -> dict:
     branch, pr = active[0]
     head = branch["commit"]["sha"]
     if pr and (
-        pr["user"]["login"] != "github-actions[bot]"
+        not trusted_pr_author(pr)
         or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
         or pr["base"]["ref"] != "main"
         or pr["head"]["sha"] != head
@@ -212,6 +258,15 @@ def publish(directory: Path, run_id: str) -> dict:
         if target["disposed"]:
             return dict(outcome="previously_disposed", pull_request=target["disposed"]["html_url"])
         branch, head, pr = target["branch"], target["head"], target["pr"]
+        # Do not synchronize an already-open PR with GITHUB_TOKEN: that event
+        # requires maintainer approval. Preserve changed/legacy proposals.
+        differs = head is None or head == base or any(
+            locks._git_text(EXPECTED_REPOSITORY, head, name) != text
+            for name, text in files.items()
+        )
+        if pr and (pr["user"]["login"] != PUBLICATION_APP_LOGIN or differs):
+            raise ValueError("active proposal needs owner disposition; preserve its head")
+        verify_app_scope()
         if head is None:
             command(
                 "api",
@@ -223,9 +278,7 @@ def publish(directory: Path, run_id: str) -> dict:
                 body={"ref": f"refs/heads/{branch}", "sha": base},
             )
             head = base
-        if head == base or any(
-            locks._git_text(EXPECTED_REPOSITORY, head, name) != text for name, text in files.items()
-        ):
+        if differs:
             head = locks.commit_files_to_branch(
                 repository=EXPECTED_REPOSITORY,
                 branch=branch,
@@ -236,14 +289,8 @@ def publish(directory: Path, run_id: str) -> dict:
         pr = (
             pr
             if pr
-            else command(
-                "api",
-                "--method",
-                "POST",
-                f"repos/{EXPECTED_REPOSITORY}/pulls",
-                "--input",
-                "-",
-                body={
+            else app_request(
+                proposal={
                     "head": branch,
                     "base": "main",
                     "draft": decision.action != "auto_merge",
@@ -254,6 +301,13 @@ def publish(directory: Path, run_id: str) -> dict:
                 },
             )
         )
+        if not trusted_pr_author(pr) or pr["user"]["login"] != PUBLICATION_APP_LOGIN:
+            raise ValueError("published PR has unexpected App identity")
+        if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
+            raise ValueError("base or proposal changed after App publication")
+        return dict(outcome="published", policy=decision.action, head=head,
+                    pull_request=pr["html_url"], run=run_id,
+                    required_pr_checks="awaiting qualifying pull_request CI")
     if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
         raise ValueError("base or proposal changed before CI dispatch")
     # GITHUB_TOKEN commits do not cause ordinary CI push/PR triggers.
@@ -288,7 +342,7 @@ def confirm_integration(pr: dict, head: str) -> None:
         not pr.get("merged") or pr.get("state") != "closed"
         or pr["head"]["sha"] != head or pr["base"]["ref"] != "main"
         or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
-        or not is_trusted_dependency_actor(pr["user"]["login"], branch)
+        or not trusted_pr_author(pr)
         or not branch.startswith(("codex/scheduled-lock-refresh-", "dependabot/pip/"))
         or not re.fullmatch(r"[0-9a-f]{40}", pr.get("merge_commit_sha") or "")
     ):
@@ -384,12 +438,12 @@ def merge_after_ci(run_id: str) -> dict:
         raise ValueError("ambiguous CI proposal")
     pr = api(f"pulls/{proposals[0]['number']}")
     actor = pr["user"]["login"]
-    if actor not in {"dependabot[bot]", "github-actions[bot]"}:
+    if actor not in {"dependabot[bot]", "github-actions[bot]", PUBLICATION_APP_LOGIN}:
         return dict(outcome="human_review", reason="maintainer proposal")
     if (
         pr["head"]["ref"] != branch or pr["base"]["ref"] != "main"
         or pr["head"]["repo"]["full_name"] != EXPECTED_REPOSITORY
-        or not is_trusted_dependency_actor(actor, branch)
+        or not trusted_pr_author(pr)
     ):
         raise ValueError("CI proposal identity changed")
     if pr["state"] == "closed" and not pr.get("merged"):
@@ -587,7 +641,7 @@ def main() -> int:
         )
         if "not permitted to create or approve pull requests" in (error.stderr or ""):
             result["missing_capability"] = "GITHUB_TOKEN pull-request creation"
-    except ValueError, RuntimeError, KeyError, OSError:
+    except ValueError, RuntimeError, KeyError, OSError, subprocess.TimeoutExpired:
         result = dict(
             outcome="failed",
             category="stale_or_invalid_evidence",

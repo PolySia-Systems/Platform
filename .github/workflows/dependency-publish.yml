@@ -71,10 +71,33 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Publish validated dependency proposal
+        # Only trusted-main code receives this PR-only installation token.
+        # The pinned official action masks it and revokes it in its post step.
+        # Canonical commits, protected merges and cleanup retain GITHUB_TOKEN.
+        # Native Dependabot synchronization does not use the App credential.
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ github.event.workflow_run.id }}
-        if: steps.proposal.outputs.present == 'true'
+        if: steps.proposal.outputs.present == 'true' && github.event.workflow_run.event == 'pull_request'
+        run: python scripts/dependency_publication.py --artifact "$RUNNER_TEMP/proposal" --run "$SOURCE_RUN"
+      - name: Create scoped publication token
+        id: pr-token
+        if: steps.proposal.outputs.present == 'true' && github.event.workflow_run.event != 'pull_request'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEPENDENCY_PUBLICATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDENCY_PUBLICATION_APP_PRIVATE_KEY }}
+          owner: PolySia-Systems
+          repositories: Platform
+          permission-pull-requests: write
+      - name: Publish scheduled proposal through approved App
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          DEPENDENCY_PR_TOKEN: ${{ steps.pr-token.outputs.token }}
+          DEPENDENCY_APP_SLUG: ${{ steps.pr-token.outputs.app-slug }}
+          DEPENDENCY_APP_INSTALLATION: ${{ steps.pr-token.outputs.installation-id }}
+        if: steps.proposal.outputs.present == 'true' && github.event.workflow_run.event != 'pull_request'
         run: python scripts/dependency_publication.py --artifact "$RUNNER_TEMP/proposal" --run "$SOURCE_RUN"
 
   merge:

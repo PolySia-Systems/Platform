@@ -327,8 +327,9 @@ def test_preflight_invalidates_on_dirty_inputs_and_age(proposal):
     assert dependency_preflight(root, ("README.md",), NOW)["status"] == "GO"
 
 
+@pytest.mark.parametrize("repeat", ["same", "legacy", "different", "denied"])
 def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
-    proposal, monkeypatch
+    proposal, monkeypatch, repeat
 ):
     root, artifact, _ = proposal
     for path in (root, artifact):
@@ -397,9 +398,11 @@ def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
                 dict(
                     number=9,
                     state="open",
-                    user={"login": "github-actions[bot]"},
+                    user={"login": publication.PUBLICATION_APP_LOGIN,
+                          "id": publication.PUBLICATION_APP_BOT_ID, "type": "Bot"},
                     base={"ref": "main"},
-                    head={"sha": HEAD, "repo": {"full_name": EXPECTED_REPOSITORY}},
+                    head={"ref": state["branch"], "sha": HEAD,
+                          "repo": {"full_name": EXPECTED_REPOSITORY}},
                     html_url="https://example/pr/9",
                 )
             )
@@ -411,11 +414,15 @@ def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
         assert kwargs["expected_head"] == BASE
         state["writes"] += 1
         state["branches"][0]["commit"]["sha"] = HEAD
+        state["contents"] = kwargs["files"].copy()
         return HEAD
 
     monkeypatch.setattr(publication, "ROOT", root)
     monkeypatch.setattr(publication, "api", api)
     monkeypatch.setattr(publication, "command", command)
+    monkeypatch.setattr(publication, "verify_app_scope", lambda: None)
+    monkeypatch.setattr(publication, "app_request", lambda *, proposal:
+                        command("api", "--method", "POST", "repos/fixture/pulls", body=proposal))
     monkeypatch.setattr(
         publication.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, BASE)
     )
@@ -423,12 +430,32 @@ def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
     monkeypatch.setattr(
         locks,
         "_git_text",
-        lambda repo, ref, path: (artifact if ref == HEAD else root).joinpath(path).read_text(),
+        lambda repo, ref, path: state["contents"][path] if ref == HEAD
+        else root.joinpath(path).read_text(),
     )
+    if repeat == "denied":
+        def denied():
+            raise ValueError("App scope unavailable")
+        monkeypatch.setattr(publication, "verify_app_scope", denied)
+        with pytest.raises(ValueError, match="App scope"):
+            publication.publish(artifact, "1234")
+        assert state["branches"] == [] and state["writes"] == 0
+        return
     first = publication.publish(artifact, "1234")
     assert first["policy"] == "auto_merge" and first["head"] == HEAD
-    assert publication.publish(artifact, "1234")["pull_request"] == first["pull_request"]
-    assert state["writes"] == state["dispatches"] == len(state["prs"]) == 1
+    if repeat == "legacy":
+        state["prs"][0]["user"] = {"login": "github-actions[bot]"}
+    elif repeat == "different":
+        lock = artifact / DEV_LOCK
+        lock.write_text(lock.read_text().replace("iniconfig==2.3.1", "iniconfig==2.3.2"))
+        seal(artifact, root, identity)
+    if repeat == "same":
+        assert publication.publish(artifact, "1234")["pull_request"] == first["pull_request"]
+    else:
+        with pytest.raises(ValueError, match="preserve its head"):
+            publication.publish(artifact, "1234")
+    assert state["writes"] == len(state["prs"]) == 1
+    assert state["dispatches"] == 0  # The App opened event supplies qualifying PR CI.
     assert len(state["branches"]) == 1
 
 

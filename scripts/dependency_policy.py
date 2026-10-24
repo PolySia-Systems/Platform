@@ -20,6 +20,8 @@ RiskAction = Literal["auto_merge", "human_review", "reject"]
 EXPECTED_REPOSITORY = "PolySia-Systems/Platform"
 EXPECTED_BASE_BRANCH = "main"
 DEPENDABOT_LOGIN = "dependabot[bot]"
+PUBLICATION_APP_LOGIN = "polysia-platform-dependencies[bot]"
+PUBLICATION_APP_BOT_ID = 345725125
 SCHEDULED_BRANCH_PREFIX = "codex/scheduled-lock-refresh-"
 DEPENDABOT_BRANCH_PREFIXES = (
     "dependabot/pip/",
@@ -195,7 +197,10 @@ def is_low_risk_version_bump(previous: str, current: str) -> bool:
 def is_trusted_dependency_actor(actor: str, head_branch: str) -> bool:
     return (
         actor == DEPENDABOT_LOGIN and head_branch.startswith(DEPENDABOT_BRANCH_PREFIXES)
-    ) or (actor == "github-actions[bot]" and head_branch.startswith(SCHEDULED_BRANCH_PREFIX))
+    ) or (
+        actor in {"github-actions[bot]", PUBLICATION_APP_LOGIN}
+        and head_branch.startswith(SCHEDULED_BRANCH_PREFIX)
+    )
 
 
 def classify_dependency_change(change: DependencyChange) -> RiskDecision:

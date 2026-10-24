@@ -105,6 +105,27 @@ def test_ci_health_check_is_independent_and_cannot_mutate_from_pr():
     assert health["permissions"]["issues"] == "write"
 
 
+def test_app_secret_is_only_in_trusted_publisher_and_token_is_narrow_and_revoked():
+    path = ROOT / ".github/workflows/dependency-publish.yml"
+    publisher = yaml.safe_load(path.read_text())
+    steps = publisher["jobs"]["publish"]["steps"]
+    mint = next(s for s in steps if s.get("id") == "pr-token")
+    assert mint["uses"] == (
+        "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
+    )
+    assert mint["with"] == {
+        "client-id": "${{ secrets.DEPENDENCY_PUBLICATION_APP_CLIENT_ID }}",
+        "private-key": "${{ secrets.DEPENDENCY_PUBLICATION_APP_PRIVATE_KEY }}",
+        "owner": "PolySia-Systems", "repositories": "Platform",
+        "permission-pull-requests": "write",
+    }  # Default post step revokes the installation token.
+    assert "proposal.outputs.present == 'true'" in mint["if"]
+    assert "event != 'pull_request'" in mint["if"]
+    for name, job in publisher["jobs"].items():
+        if name != "publish":
+            assert "DEPENDENCY_PUBLICATION_APP" not in json.dumps(job)
+
+
 def test_sdk_declaration_cannot_trigger_unreviewed_lock_generation(monkeypatch):
     monkeypatch.setattr(dependency_locks, "_pr_changed_files", lambda *_: ("pyproject.toml",))
     original = (ROOT / "pyproject.toml").read_text()
