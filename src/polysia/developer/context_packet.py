@@ -72,7 +72,7 @@ class DirectoryPacketCache:
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             return None
         return payload if isinstance(payload, dict) else None
 
@@ -101,9 +101,19 @@ def build_context_packet(
     if observed.tzinfo is None or observed.utcoffset() is None:
         raise DeveloperContextError("packet clock must be timezone-aware UTC")
     scope_paths = _normalize_scope(root, scope)
-    classifier = classify_paths or load_classify_paths(root)
-    classified_paths = scope_paths or repository.changed_paths
-    change_map = classifier(list(classified_paths))
+    classified_paths = tuple(dict.fromkeys((*repository.changed_paths, *scope_paths)))
+    policy_module = sys.modules[load_classify_paths(root).__module__]
+    if git_runner is None:
+        actual = policy_module.actual_diff(root, base="origin/main", local=True, event="local")
+        classified_paths = tuple(dict.fromkeys((*actual["paths"], *scope_paths)))
+        projection = policy_module.project_policy(
+            classified_paths,
+            **actual["source"],
+            diagnostics=actual["diagnostics"],
+        )
+    else:
+        projection = policy_module.project_policy(classified_paths, head=repository.head)
+    change_map = policy_module.ChangeMap(**projection["flags"])
     env = dict(environment or os.environ)
     opaque_task = _opaque_task_reference(task_reference)
     invalidation = _invalidation(
@@ -116,6 +126,7 @@ def build_context_packet(
     )
     preflight = dependency_preflight(root, classified_paths, observed)
     invalidation["dependency_preflight"] = preflight
+    invalidation["validation_policy"] = projection
     cache_key = _digest(invalidation)
     cache_allowed = cache is not None and not repository.dirty
     if cache_allowed and cache is not None:
@@ -128,6 +139,7 @@ def build_context_packet(
         task_reference=task_reference,
         scope_paths=scope_paths,
         change_map=change_map,
+        projection=projection,
         invalidation=invalidation,
         observed=observed,
         env=env,
@@ -187,12 +199,22 @@ def render_text(packet: Mapping[str, object]) -> str:
         lines.append(f"- do not: {item}")
     lines.extend(["", "## Validation"])
     lines.append(f"- classifier: {validation.get('classifier')}")
+    policy = _mapping(validation.get("policy"))
+    lines.append(f"- policy: v{policy.get('version')} {policy.get('policy')}")
+    lines.append(f"- source: {json.dumps(policy.get('source'), sort_keys=True)}")
+    for item in _list(policy.get("diagnostics")):
+        lines.append(f"- conservative fallback: {item}")
     lines.append(f"- change_map: {json.dumps(validation.get('change_map'), sort_keys=True)}")
     for item in _list(validation.get("gates")):
         row = _mapping(item)
         applies = "APPLY" if row.get("applies") else "skip"
         lines.append(f"- {applies}: {row.get('command')} — {row.get('why')}")
     lines.extend(["", "## Evidence"])
+    for category in ("recommendations", "verified", "stale_or_failed", "unknown_or_unavailable"):
+        items = _list(evidence.get(category))
+        lines.extend(f"- {category}: {item}" for item in items)
+        if category == "verified" and not items:
+            lines.append("- verified: none; native outcomes were not inspected")
     for item in _list(evidence.get("reusable")):
         lines.append(f"- reusable: {item}")
     for item in _list(evidence.get("missing")):
@@ -241,6 +263,7 @@ def _assemble(
     task_reference: str | None,
     scope_paths: tuple[str, ...],
     change_map: object,
+    projection: dict[str, Any],
     invalidation: dict[str, object],
     observed: datetime,
     env: Mapping[str, str],
@@ -317,9 +340,10 @@ def _assemble(
         "boundaries": _boundaries(scope_paths),
         "validation": {
             "classifier": "scripts/classify_ci_changes.py",
-            "classified_paths": list(scope_paths or repository.changed_paths),
+            "classified_paths": projection["paths"],
             "change_map": _change_map_dict(change_map),
-            "gates": list(gates_for(change_map)),
+            "policy": projection,
+            "gates": list(gates_for(projection)),
         },
         "evidence": _evidence(repository, env),
         "unresolved": unresolved,
@@ -479,6 +503,14 @@ def _evidence(repository: RepositoryIdentity, env: Mapping[str, str]) -> dict[st
     trading_mode = env.get("TRADING_MODE", "DATA_ONLY")
     live_enabled = env.get("LIVE_TRADING_ENABLED", "false")
     return {
+        "recommendations": ["Policy gates recommend checks; they are not validation evidence."],
+        "verified": [],
+        "stale_or_failed": ["Dirty inputs invalidate previous evidence"]
+        if repository.dirty
+        else [],
+        "unknown_or_unavailable": [
+            "Native CI outcomes were not fetched or verified by this packet"
+        ],
         "reusable": reusable,
         "missing": missing,
         "stale_if_dirty": True,
@@ -574,6 +606,7 @@ def _change_map_dict(change_map: object) -> dict[str, bool]:
             "dependencies",
             "windows",
             "comprehensive",
+            "browser",
         )
     }
 

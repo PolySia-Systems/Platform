@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import json
 import subprocess
 import sys
 import time
@@ -95,8 +97,7 @@ def run_checks(
                 elapsed = clock() - check_started
                 write(_result_line(check.label, elapsed, "SKIP"))
                 write(
-                    f"Local reference {check.required_ref} is unavailable; "
-                    "no fetch was attempted."
+                    f"Local reference {check.required_ref} is unavailable; no fetch was attempted."
                 )
                 continue
 
@@ -124,7 +125,67 @@ def run_checks(
 
 
 def main() -> int:
-    return run_checks(build_checks())
+    parser = argparse.ArgumentParser(
+        description="Local validation; native CI owns OS/artifact proof."
+    )
+    parser.add_argument("--mode", choices=("scoped", "full-local"))
+    parser.add_argument("--base", default="origin/main")
+    parser.add_argument(
+        "--plan", action="store_true", help="Print policy without executing checks."
+    )
+    arguments = parser.parse_args()
+    if arguments.mode is None:
+        write_line("Legacy fast check: omits pytest/build; not comprehensive validation.")
+        return run_checks(build_checks())
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+    from scripts.classify_ci_changes import actual_diff
+
+    policy = actual_diff(
+        REPOSITORY_ROOT,
+        base=arguments.base,
+        local=True,
+        event="local",
+        validation_scope="full" if arguments.mode == "full-local" else "auto",
+    )
+    if arguments.plan:
+        print(json.dumps(policy, indent=2, sort_keys=True))
+        return 0
+    checks, pending = scoped_checks(policy)
+    write_line(f"Policy {policy['policy']} / source {policy['source']}")
+    for message in policy["diagnostics"]:
+        write_line(f"Conservative fallback: {message}")
+    for check_id in pending:
+        write_line(f"PENDING {check_id}: requires native CI execution context")
+    result = run_checks(checks)
+    if result == 0 and pending:
+        write_line("Local checks passed; native contexts remain PENDING (exit 2).")
+        return 2
+    return result
+
+
+def scoped_checks(policy: dict, python_executable: str | None = None) -> tuple:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+    from scripts.classify_ci_changes import validate_projection
+
+    validate_projection(policy)
+    checks, pending = [], []
+    for item in policy["checks"]:
+        if not item["required"]:
+            continue
+        context = item["context"]
+        if context != "portable" and not (context == "linux" and sys.platform == "linux"):
+            pending.append(item["id"])
+            continue
+        command = tuple(
+            python_executable or sys.executable if part == "python" else part
+            for part in item["command"]
+        )
+        if item["id"] == "hygiene" and policy["source"]["base"]:
+            command += ("--base", policy["source"]["base"])
+        if item["id"] == "sbom":
+            (REPOSITORY_ROOT / "artifacts").mkdir(exist_ok=True)
+        checks.append(Check(item["id"], command))
+    return tuple(checks), tuple(pending)
 
 
 if __name__ == "__main__":

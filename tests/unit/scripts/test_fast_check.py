@@ -4,7 +4,39 @@ import itertools
 import sys
 from pathlib import Path
 
-from scripts.fast_check import Check, build_checks, run_checks
+from scripts.classify_ci_changes import project_policy
+from scripts.fast_check import Check, build_checks, run_checks, scoped_checks
+
+
+def test_scoped_commands_follow_shared_policy_and_keep_native_contexts_pending() -> None:
+    policy = project_policy(["pyproject.toml"])
+    checks, pending = scoped_checks(policy, "python-test")
+    assert "windows" in pending and "image" in pending and "install-recovery" in pending
+    assert "ci-gate" in pending
+    required_portable = {
+        item["id"]
+        for item in policy["checks"]
+        if item["required"] and item["context"] == "portable"
+    }
+    assert required_portable <= {check.label for check in checks}
+    assert next(check for check in checks if check.label == "standards").command == (
+        "python-test",
+        "scripts/validate_standards.py",
+        "--mode",
+        "full",
+    )
+
+
+def test_editorial_scoped_check_never_installs_environment() -> None:
+    checks, pending = scoped_checks(project_policy(["README.md"]), "python-test")
+    assert {check.label for check in checks} == {
+        "hygiene",
+        "standards",
+        "secrets",
+        "policy-contract",
+    }
+    assert pending == ("ci-gate",)
+    assert all("install" not in check.command for check in checks)
 
 
 def test_build_checks_selects_commands_in_required_order() -> None:

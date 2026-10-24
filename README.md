@@ -160,14 +160,29 @@ for canonical paths and the bounded flat-alias removal policy.
 
 ## Validation
 
-Run the fast, cross-platform pre-push check for immediate local feedback:
+Use the shared CI policy for scoped local feedback, or request every local gate:
+
+```powershell
+python scripts/fast_check.py --mode scoped
+python scripts/fast_check.py --mode full-local
+python scripts/fast_check.py --mode scoped --plan
+```
+
+The plan includes the complete committed, staged, unstaged and relevant untracked
+diff. Missing comparison refs select full validation. Commands use vetted argument
+lists. Native Linux, Windows, browser, image/install and final CI authority remain
+`PENDING` when unavailable locally; exit 2 means local checks passed with native
+contexts pending. No dependencies are installed by this checker.
+
+The compatible no-argument route remains available:
 
 ```powershell
 python scripts/fast_check.py
 ```
 
 This fail-fast command checks diffs, Standards, secrets, compilation, Ruff,
-Mypy, and environment integrity. It does not replace complete Pytest or CI.
+Mypy, and environment integrity. This legacy route omits Pytest and build and is
+not comprehensive validation. See the [validation contract](docs/03-requirements/developer-context-packet.md#validation-policy-and-local-preflight).
 
 The repository quality gates are:
 

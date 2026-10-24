@@ -6,7 +6,7 @@ from scripts.classify_ci_changes import ChangeMap, classify_event, classify_path
 
 
 def test_documentation_only_changes_are_lightweight() -> None:
-    result = classify_paths(("README.md", "docs/05-security/supply-chain.md"))
+    result = classify_paths(("README.md", "docs/README.md"))
 
     assert result == ChangeMap(
         quality=True,
@@ -22,7 +22,7 @@ def test_documentation_only_changes_are_lightweight() -> None:
 def test_source_tests_and_tooling_receive_distinct_risk_maps() -> None:
     source = classify_paths(("src/polysia/domain/orders/models.py",))
     tests = classify_paths(("tests/unit/domain/test_orders.py",))
-    tooling = classify_paths(("scripts/check_changed_docs.py",))
+    tooling = classify_paths(("scripts/report_fixture.py",))
 
     assert source.python and source.package
     assert not source.container and not source.windows
@@ -47,10 +47,12 @@ def test_packaging_dependency_container_and_windows_changes_are_explicit() -> No
         dependencies=True,
         windows=True,
         comprehensive=False,
+        browser=True,
     )
     assert development_lock.dependencies and development_lock.windows
-    assert development_lock.python and not development_lock.package
-    assert deployment.container and not deployment.python
+    assert development_lock.python and development_lock.package
+    assert development_lock.container  # Docker builder installs the development lock.
+    assert deployment.container and deployment.python and deployment.browser
     assert powershell.windows and not powershell.python
 
 
@@ -58,10 +60,8 @@ def test_job_specific_ci_configuration_is_bounded() -> None:
     windows = classify_paths((".github/actions/windows/action.yml",))
     supply_chain = classify_paths((".github/actions/supply-chain/action.yml",))
 
-    assert windows.quality and windows.windows and not windows.comprehensive
-    assert not windows.python and not windows.dependencies and not windows.container
-    assert supply_chain.quality and supply_chain.dependencies
-    assert not supply_chain.comprehensive and not supply_chain.windows
+    assert windows == ChangeMap.full()
+    assert supply_chain == ChangeMap.full()
 
 
 def test_shared_or_unknown_configuration_fails_closed() -> None:
@@ -75,11 +75,10 @@ def test_shared_or_unknown_configuration_fails_closed() -> None:
 
 
 def test_scheduled_and_manual_auto_events_run_periodic_gates() -> None:
-    for event in ("schedule", "workflow_dispatch"):
-        result = classify_event(event)
-        assert result.dependencies and result.windows
-        assert not result.quality and not result.container
-        assert not result.comprehensive
+    assert classify_event("schedule") == ChangeMap.full()
+    manual = classify_event("workflow_dispatch")
+    assert manual.dependencies and manual.windows
+    assert not manual.quality and not manual.container
 
 
 def test_manual_full_and_unknown_events_fail_closed() -> None:
@@ -95,8 +94,6 @@ def test_empty_pull_request_diff_fails_closed() -> None:
     "docs/03-requirements/shadow-contract.json",
     "docs/examples/acquisition.yaml",
     "docs/migrations/upgrade.sql",
-    "docs/console/index.html",
-    "standards/adoption.toml",
     "plans/runtime.py",
     "prompts/runner.sh",
 ])
@@ -116,3 +113,8 @@ def test_deployment_selects_behavioral_contract_checks() -> None:
 ])
 def test_installed_runtime_entry_points_select_container_contract(path: str) -> None:
     assert classify_paths((path,)).container
+
+
+def test_browser_document_asset_is_executable_not_editorial() -> None:
+    result = classify_paths(("docs/console/index.html",))
+    assert result.python and result.browser

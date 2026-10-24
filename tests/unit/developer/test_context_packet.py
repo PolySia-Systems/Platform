@@ -32,7 +32,7 @@ def _git(root: Path, dirty: str = ""):
             return HEAD
         if joined == "git branch --show-current":
             return "codex/developer-context-packet"
-        if joined == "git status --porcelain=v1":
+        if joined == "git status --porcelain=v1 -z --untracked-files=all":
             return dirty
         raise AssertionError(joined)
 
@@ -84,6 +84,28 @@ def test_packet_reports_identity_instructions_and_ci_classifier() -> None:
         "stated scope without weakening safety defaults."
     )
     assert "PR #160" in encoded
+
+
+def test_document_scope_cannot_remove_actual_dirty_validation_paths() -> None:
+    root = Path(__file__).resolve().parents[3]
+    packet = build_context_packet(
+        root, task_reference="Issue #224", scope=("README.md",), now=NOW,
+        git_runner=_git(root, dirty=" M locks/requirements-dev-py314.txt\n"),
+    )
+    validation = packet["validation"]
+    assert set(validation["classified_paths"]) == {"README.md", "locks/requirements-dev-py314.txt"}
+    assert validation["policy"]["flags"]["container"] is True
+    assert validation["policy"]["flags"]["windows"] is True
+    assert packet["evidence"]["verified"] == []
+    assert packet["evidence"]["unknown_or_unavailable"]
+
+
+def test_git_status_retains_both_rename_sides_and_untracked_paths() -> None:
+    from polysia.developer.git_state import _changed_paths
+
+    assert _changed_paths("R  README.md\0src/polysia/config/settings.py\0?? new.py\0") == [
+        "README.md", "src/polysia/config/settings.py", "new.py",
+    ]
 
 
 def test_dirty_state_invalidates_cached_packet(tmp_path: Path) -> None:
@@ -296,7 +318,7 @@ def test_gates_follow_existing_classifier() -> None:
     source_gates = {item["command"]: item["applies"] for item in gates_for(source_map)}
     assert source_gates["python -m pytest -q"] is True
     assert source_gates["python -m build"] is True
-    assert source_gates[cyclonedx] is False
+    assert source_gates[cyclonedx] is True  # Shared policy consumers are trust controls.
     dependency_map = classify_paths(("pyproject.toml",))
     dependency_gates = {item["command"]: item["applies"] for item in gates_for(dependency_map)}
     assert dependency_gates["python -m pip_audit --strict --vulnerability-service osv"] is True
