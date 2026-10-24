@@ -41,41 +41,20 @@ jobs:
       dependencies: ${{ steps.filter.outputs.dependencies }}
       windows: ${{ steps.filter.outputs.windows }}
       comprehensive: ${{ steps.filter.outputs.comprehensive }}
+      browser: ${{ steps.filter.outputs.browser }}
+      policy: ${{ steps.filter.outputs.policy }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
         name: Classify validation scope
-        shell: pwsh
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           VALIDATION_SCOPE: ${{ inputs.validation_scope || 'auto' }}
         run: |
-          $eventName = $env:GITHUB_EVENT_NAME
-          $files = @()
-          if ($eventName -in @('pull_request', 'push')) {
-            $base = $env:BASE_SHA
-            if ([string]::IsNullOrWhiteSpace($base) -or $base -match '^0+$') {
-              $base = git rev-parse "$env:GITHUB_SHA^"
-              if ($LASTEXITCODE -ne 0) {
-                throw "Unable to resolve a comparison base."
-              }
-            }
-            $files = @(git diff --name-only --diff-filter=ACDMRTUXB $base $env:GITHUB_SHA)
-            if ($LASTEXITCODE -ne 0) {
-              throw "Unable to classify changed paths."
-            }
-          }
-
-          $output = $files | python scripts/classify_ci_changes.py `
-            --event $eventName `
-            --validation-scope $env:VALIDATION_SCOPE `
-            --format github-output
-          if ($LASTEXITCODE -ne 0) {
-            throw "CI change classification failed."
-          }
-          $output | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+          python scripts/ci_policy_contract.py
+          python scripts/classify_ci_changes.py --repository . --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$GITHUB_EVENT_NAME" --validation-scope "$VALIDATION_SCOPE" --format github-output >> "$GITHUB_OUTPUT"
 
   quality:
     needs: changes
@@ -166,7 +145,7 @@ jobs:
       - name: Compile
         run: python -m compileall -q src tests
       - name: Full Pytest
-        run: python -m pytest -q
+        run: python -m pytest -q --durations=25 --junitxml=artifacts/windows-pytest.xml
       - name: Environment integrity
         run: python -m pip check
       - name: Dependency lock check
@@ -175,6 +154,14 @@ jobs:
         run: python -m build
       - name: CLI smoke
         run: python -m polysia.cli --help
+      - name: Retain Windows timing
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-timing
+          path: artifacts/windows-pytest.xml
+          if-no-files-found: error
+          retention-days: 30
 
   container:
     needs: changes
@@ -255,7 +242,7 @@ jobs:
 
   browser-acceptance:
     needs: changes
-    if: needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -425,47 +412,15 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      CHANGES_RESULT: ${{ needs.changes.result }}
-      QUALITY_REQUIRED: ${{ needs.changes.outputs.quality }}
-      QUALITY_RESULT: ${{ needs.quality.result }}
-      BROWSER_REQUIRED: ${{ needs.changes.outputs.python }}
-      BROWSER_RESULT: ${{ needs.browser-acceptance.result }}
-      WINDOWS_REQUIRED: ${{ needs.changes.outputs.windows }}
-      WINDOWS_RESULT: ${{ needs.windows-compatibility.result }}
-      CONTAINER_REQUIRED: ${{ needs.changes.outputs.container }}
-      CONTAINER_RESULT: ${{ needs.container.result }}
-      SUPPLY_CHAIN_REQUIRED: ${{ needs.changes.outputs.dependencies }}
-      SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
-      INSTALLATION_RESULT: ${{ needs.installation-acceptance.result }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Verify required jobs
-        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VALIDATION_SCOPE: ${{ inputs.validation_scope || 'auto' }}
         run: |
-          set -euo pipefail
-          if [[ "$CHANGES_RESULT" != "success" ]]; then
-            echo "changes job did not succeed: $CHANGES_RESULT"
-            exit 1
-          fi
-
-          check_job() {
-            local name="$1"
-            local required="$2"
-            local result="$3"
-            if [[ "$required" == "true" && "$result" != "success" ]]; then
-              echo "$name was required but concluded: $result"
-              exit 1
-            fi
-            if [[ "$required" != "true" && "$result" != "skipped" ]]; then
-              echo "$name was not required but concluded: $result"
-              exit 1
-            fi
-          }
-
-          check_job quality "$QUALITY_REQUIRED" "$QUALITY_RESULT"
-          check_job browser-acceptance "$BROWSER_REQUIRED" "$BROWSER_RESULT"
-          check_job windows-compatibility "$WINDOWS_REQUIRED" "$WINDOWS_RESULT"
-          check_job container "$CONTAINER_REQUIRED" "$CONTAINER_RESULT"
-          check_job installation-acceptance "$CONTAINER_REQUIRED" "$INSTALLATION_RESULT"
-          check_job supply-chain "$SUPPLY_CHAIN_REQUIRED" "$SUPPLY_CHAIN_RESULT"
-          echo "All required CI jobs succeeded."
+          python scripts/ci_policy_contract.py
+          python scripts/classify_ci_changes.py --repository . --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$GITHUB_EVENT_NAME" --validation-scope "$VALIDATION_SCOPE" --verify-gate

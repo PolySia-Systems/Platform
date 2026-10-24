@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -115,8 +116,9 @@ def _changed_paths(repository: Path, base: str, head: str) -> list[Path]:
     result = _git(
         repository,
         "diff",
+        "--no-renames",
         "--name-only",
-        "--diff-filter=ACMRTUXB",
+        "--diff-filter=ACDMRTUXB",
         "-z",
         base,
         head,
@@ -529,8 +531,7 @@ def validate(repository: Path, requested_base: str, head: str) -> list[str]:
             errors.append(f"changed path escapes repository: {relative.as_posix()}")
             continue
         if not target.exists():
-            errors.append(f"changed path does not exist: {relative.as_posix()}")
-            continue
+            continue  # Deleted paths remain in the diff/policy; they have no new links.
         if not _has_exact_case(repository, target):
             errors.append(f"changed path has wrong case: {relative.as_posix()}")
             continue
@@ -550,6 +551,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate a CI diff and local Markdown links.")
     parser.add_argument("--base", default="", help="Base commit, or empty/zero for HEAD parent.")
     parser.add_argument("--head", default="HEAD", help="Head commit to validate.")
+    parser.add_argument("--local", action="store_true", help="Include all local changed paths.")
     parser.add_argument(
         "--architecture-only",
         action="store_true",
@@ -559,7 +561,32 @@ def main() -> int:
 
     repository = Path.cwd().resolve()
     try:
-        if arguments.architecture_only:
+        if arguments.local:
+            sys.path.insert(0, str(repository))
+            from scripts.classify_ci_changes import actual_diff
+
+            projection = actual_diff(
+                repository,
+                base=arguments.base or "origin/main",
+                head=arguments.head,
+                local=True,
+                event="local",
+            )
+            _git(repository, "diff", "--check")
+            _git(repository, "diff", "--cached", "--check")
+            if projection["source"]["base"]:
+                _git(
+                    repository,
+                    "diff",
+                    "--check",
+                    projection["source"]["base"],
+                    projection["source"]["head"],
+                )
+            errors = _validate_repository_hygiene(repository)
+            errors.extend(_validate_architecture_docs(repository))
+            for relative in projection["paths"]:
+                errors.extend(validate_present_path(repository, relative))
+        elif arguments.architecture_only:
             errors = _validate_architecture_docs(repository)
             print("checked architecture documentation consistency")
         else:
@@ -584,6 +611,17 @@ def main() -> int:
     else:
         print("changed-file validation passed")
     return 0
+
+
+def validate_present_path(repository: Path, relative: str) -> list[str]:
+    target = (repository / relative).resolve()
+    if not target.is_relative_to(repository):
+        return [f"changed path escapes repository: {relative}"]
+    if not target.exists():
+        return []  # Deletions are policy inputs, not missing new files.
+    if not _has_exact_case(repository, target):
+        return [f"changed path has wrong case: {relative}"]
+    return _validate_links(repository, target) if target.suffix.lower() == ".md" else []
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ def inspect_repository(
     if len(head) != 40 or any(char not in "0123456789abcdef" for char in head.lower()):
         raise DeveloperContextError("HEAD is not a 40-character SHA")
     branch = runner(root, ("git", "branch", "--show-current")).strip() or "HEAD"
-    porcelain = runner(root, ("git", "status", "--porcelain=v1"))
+    porcelain = runner(root, ("git", "status", "--porcelain=v1", "-z", "--untracked-files=all"))
     changed = tuple(_changed_paths(porcelain))
     fingerprint = hashlib.sha256(porcelain.encode("utf-8")).hexdigest()
     return RepositoryIdentity(
@@ -61,6 +61,7 @@ def run_git(root: Path, command: Sequence[str]) -> str:
             capture_output=True,
             cwd=root,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError) as error:
@@ -70,11 +71,27 @@ def run_git(root: Path, command: Sequence[str]) -> str:
 
 def _changed_paths(porcelain: str) -> list[str]:
     paths: list[str] = []
+    if "\0" in porcelain:
+        records = iter(porcelain.split("\0"))
+        for record in records:
+            if not record:
+                continue
+            if len(record) < 4:
+                raise DeveloperContextError("malformed Git status")
+            paths.append(record[3:])
+            if "R" in record[:2] or "C" in record[:2]:
+                original = next(records, "")
+                if not original:
+                    raise DeveloperContextError("incomplete Git rename status")
+                paths.append(original)
+        return paths
+    # Legacy injected runners may supply line-delimited porcelain.
     for line in porcelain.splitlines():
         if len(line) < 4:
             continue
         entry = line[3:]
         if " -> " in entry:
-            entry = entry.split(" -> ", 1)[1]
+            original, entry = entry.split(" -> ", 1)
+            paths.append(original)
         paths.append(entry.replace("\\", "/"))
     return paths

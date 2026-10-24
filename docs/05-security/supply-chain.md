@@ -262,7 +262,7 @@ always run diff, local path/link, Standards, and tracked-file secret checks.
 Executable Python changes run complete quality validation on canonical Linux,
 including deterministic lock verification; full Windows compatibility runs
 weekly, manually, and for verified Windows-sensitive changes. The container job
-runs only for Docker, deployment, runtime-lock, entrypoint, health, backup,
+runs for Docker, deployment, runtime/development-lock, entrypoint, health, backup,
 state-path, or related executable configuration changes. The supply-chain job
 performs a strict OSV audit and publishes a CycloneDX SBOM on canonical Linux
 for dependency changes, on a weekly schedule, and by manual dispatch. It
@@ -274,6 +274,45 @@ A final fail-closed CI Gate checks that every job required by the risk-based
 change map succeeded. Manual comprehensive validation covers migrations and
 uncertain changes without making all future CI-only pull requests permanently
 run unrelated jobs.
+
+The [shared validation policy](../03-requirements/developer-context-packet.md#validation-policy-and-local-preflight)
+owns applicability for native CI, scoped/full local checking and disposable context
+packets. Weekly CI is comprehensive. Workflow, classifier, Gate and trust-control
+changes select comprehensive validation. Known control records are validated
+against their schema, immutable pin, applicability and consumer evidence without
+requiring the full development environment. The complete historical P2 diff also
+changed release-manifest implementation and retains image/install obligations.
+Every PR runs dependency-free policy/Gate contracts without development installation;
+Gate validates policy/source identity, complete inputs, flags and mandatory outcomes.
+Job names and native final-head PR and exact-commit release authority are preserved.
+
+### Full Windows health observation
+
+`windows-health.yml` observes trusted-main CI daily at 06:43 UTC. It runs only the
+stdlib `scripts/windows_health.py` with the existing `contents:read`, `actions:read`
+and `issues:write` permissions. It installs no product, dispatches no tests and
+executes no PR code. Weekly full CI remains the producer of periodic evidence.
+GitHub schedule configuration does not prove future clock execution or independent
+monitoring; see [GitHub's schedule semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+Qualifying evidence must come from CI push/schedule/manual runs on this repository's
+main, with exact source SHA/attempt, Windows runner, complete successful install,
+compile, full Pytest, integrity, lock, build and CLI steps. The observer records
+workflow/Windows-job and dependency/metadata input hashes; timing retention is
+required when present in that source's contract. Failed/partial runs and nine-day
+overdue execution are actionable. Unrelated lightweight green runs and in-progress
+attempts cannot clear a failure. Only later complete qualifying Windows evidence
+can recover it.
+
+Observation is bounded to 100 main CI run summaries, 30 job queries and 12 meaningful
+source candidates, stopping at a verified success boundary. Insufficient history,
+unsupported source contracts, API denials and notification errors remain visible.
+One marker-identified health Issue is created/reopened/updated only on meaningful
+state changes and closed on recovery. While healthy it stays quiet. Inspect that
+Issue and the observer workflow on failure, repair the native CI cause, and let a
+qualifying full Windows run establish recovery. Do not expand permissions or copy
+PR statuses. Rollback is revert of the validation-efficiency merge; disable only
+this observer if it is the failing route, retaining weekly CI and main protections.
 
 ## Rollback
 

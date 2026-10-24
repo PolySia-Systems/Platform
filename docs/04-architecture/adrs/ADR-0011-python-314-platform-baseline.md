@@ -121,7 +121,25 @@ request has merged. Shared or uncertain CI-control changes fail closed to
 comprehensive validation, and an explicit manual full-validation mode remains
 available.
 
-## Rollback
+## 2026-10-25 bounded validation-policy amendment
+
+CURRENT: one versioned projection in `scripts/classify_ci_changes.py` owns
+applicability for CI, scoped/full-local checking and disposable developer packets.
+The [validation contract](../../03-requirements/developer-context-packet.md#validation-policy-and-local-preflight)
+specifies complete-diff union, conservative fallback, mandatory policy/Gate
+contracts, Linux behavior authority and conditional browser/package/image/install
+and Windows contexts. Weekly CI is comprehensive; daily trusted-main Windows
+health observation reports meaningful failures/partial/overdue evidence without
+running or dispatching tests. Full Windows retains duration and JUnit timing output.
+No performance saving or future scheduled execution follows from this decision.
+Python support, dependencies, Standards pin and trading behavior are unchanged.
+
+## Rollback of the validation-policy amendment
+
+Revert the validation-efficiency merge as one coherent unit so CI, local checker,
+packet and Gate remain aligned. Do not reuse release artifacts under a new SHA.
+
+## Earlier policy rollback
 
 Revert the Linux-first CI policy commit to restore Windows quality on relevant
 ordinary pull requests and the separate Linux smoke job. Reverting the earlier

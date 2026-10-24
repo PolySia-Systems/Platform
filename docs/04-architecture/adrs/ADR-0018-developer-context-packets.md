@@ -27,7 +27,22 @@ Cache identity includes the sanitized task reference. Dirty worktrees never
 reuse or publish a cached packet; their file contents can change while Git's
 porcelain path list remains the same.
 
-## Consequences
+## 2026-10-25 bounded validation-policy amendment
+
+CURRENT: the packet adds the shared versioned policy projection, including source
+and policy identity, actual paths, contexts, reasons and fallback diagnostics.
+Requested document scope unions with actual validation paths and cannot narrow
+them. Both rename sides, deletions and local staged/unstaged/untracked paths are
+retained. Policy/source identity joins cache invalidation; dirty-cache refusal and
+task/safety trust boundaries remain. Catalog renders the policy instead of owning
+an applicability table. Recommendations, verified evidence, stale/failed evidence
+and unknown/unavailable evidence remain distinct. This offline packet does not
+verify native CI and creates no evidence-fetching service or cross-commit cache.
+The [validation contract](../../03-requirements/developer-context-packet.md#validation-policy-and-local-preflight)
+owns the detailed behavior. Rollback reverts the complete validation-efficiency
+merge, preserving consumer/CI policy parity.
+
+## Consequences of the original decision
 
 Ordinary resume remains the Issue or PR. `docs/README.md` remains the
 documentation entrance. Validation scope stays owned by

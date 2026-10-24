@@ -270,92 +270,27 @@ def _scope_matches(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def gates_for(change_map: object) -> tuple[dict[str, object], ...]:
-    quality = bool(getattr(change_map, "quality", False))
-    python = bool(getattr(change_map, "python", False))
-    package = bool(getattr(change_map, "package", False))
-    container = bool(getattr(change_map, "container", False))
-    dependencies = bool(getattr(change_map, "dependencies", False))
-    gates: list[dict[str, object]] = [
+    """Render policy recommendations; never maintain a second applicability table."""
+    import sys
+
+    if isinstance(change_map, dict):
+        from polysia.developer.context_packet import load_classify_paths
+
+        module = sys.modules[load_classify_paths(Path(__file__).resolve().parents[3]).__module__]
+        module.validate_projection(change_map)
+        checks = change_map["checks"]
+    else:
+        module = sys.modules[type(change_map).__module__]
+        checks = module.checks_for(change_map)
+    return tuple(
         {
-            "command": "git diff --check",
-            "applies": True,
-            "why": "Whitespace and conflict-marker hygiene for every delivery.",
-            "owner": "CI quality job / AGENTS.md validation policy",
-        },
-        {
-            "command": "python scripts/validate_standards.py --mode full",
-            "applies": quality,
-            "why": "Adopted Standards pin and local evidence stay valid.",
-            "owner": ".github/workflows/ci.yml quality job",
-        },
-        {
-            "command": "python -m polysia.security.secret_scan",
-            "applies": quality,
-            "why": "Tracked content must not introduce secrets.",
-            "owner": ".github/workflows/ci.yml quality job",
-        },
-        {
-            "command": "python -m compileall -q src tests",
-            "applies": python,
-            "why": "Python syntax of the package and tests.",
-            "owner": "scripts/classify_ci_changes.py python patterns",
-        },
-        {
-            "command": "python -m ruff check .",
-            "applies": python,
-            "why": "Lint of the changed Python surface.",
-            "owner": "scripts/classify_ci_changes.py python patterns",
-        },
-        {
-            "command": "python -m mypy src",
-            "applies": python,
-            "why": "Type check of the package.",
-            "owner": "scripts/classify_ci_changes.py python patterns",
-        },
-        {
-            "command": "python -m pytest -q",
-            "applies": python,
-            "why": "Behavior, contract, and safety tests.",
-            "owner": "scripts/classify_ci_changes.py python patterns",
-        },
-        {
-            "command": "python -m pip check",
-            "applies": python,
-            "why": "Installed environment integrity.",
-            "owner": "scripts/classify_ci_changes.py python patterns",
-        },
-        {
-            "command": "python scripts/dependency_locks.py check",
-            "applies": python,
-            "why": "Lock files remain synchronized with pyproject.toml.",
-            "owner": "scripts/classify_ci_changes.py python patterns",
-        },
-        {
-            "command": "python -m build",
-            "applies": package,
-            "why": "Packaging metadata and build reproducibility.",
-            "owner": "scripts/classify_ci_changes.py package patterns",
-        },
-        {
-            "command": "docker build --tag polysia:ci .",
-            "applies": container,
-            "why": "Image and CLI entry remain buildable.",
-            "owner": "scripts/classify_ci_changes.py container patterns",
-        },
-        {
-            "command": "python -m pip_audit --strict --vulnerability-service osv",
-            "applies": dependencies,
-            "why": "Supply-chain audit applies only when dependency inputs change.",
-            "owner": "AGENTS.md supply-chain gates / CI dependencies job",
-        },
-        {
-            "command": (
-                "cyclonedx-py environment --output-format JSON "
-                "--output-file artifacts/sbom.json"
-            ),
-            "applies": dependencies,
-            "why": "SBOM generation applies only when dependency inputs change.",
-            "owner": "AGENTS.md supply-chain gates / CI dependencies job",
-        },
-    ]
-    return tuple(gates)
+            "id": item["id"],
+            "command": " ".join(item["command"]) or item["id"],
+            "applies": item["required"],
+            "why": item["reason"],
+            "context": item["context"],
+            "evidence_status": "recommendation",
+            "owner": "scripts/classify_ci_changes.py",
+        }
+        for item in checks
+    )
