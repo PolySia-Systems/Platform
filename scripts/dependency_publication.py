@@ -425,6 +425,11 @@ def merge_after_ci(run_id: str) -> dict:
     ):
         raise ValueError("unexpected CI evidence")
     branch, head = run["head_branch"], run["head_sha"]
+    # Actions, Docker, Conda and maintainer proposals are always reviewed.
+    # Their heads/bases may move while a pip proposal integrates; they must
+    # not enter pip freshness checks or produce false publication failures.
+    if not branch.startswith(("codex/scheduled-lock-refresh-", "dependabot/pip/")):
+        return dict(outcome="human_review", reason="outside automated pip proposal scope")
     proposals = api(f"pulls?state=all&head=PolySia-Systems:{branch}&per_page=100")
     if len(proposals) >= 100:
         raise ValueError("incomplete proposal history; preserve ref")
