@@ -126,6 +126,10 @@ auto-merge approval queued across subsequent changes. Runtime, SDK, build,
 crypto, prerelease/epoch/local/post versions, `0.x` minor, new/removed packages
 and ambiguous updates require review. Actions proposals require source review;
 metadata-only Actions auto-approval has been removed.
+Completion callbacks hold non-pip branches for review before checking mutable
+proposal heads or bases. A held Actions, Docker, Conda or maintainer PR becoming
+stale cannot be reported as a pip publication failure; eligible pip proposals
+retain every freshness, identity, CI and guarded-cleanup check.
 
 A scheduled proposal identity binds the base and candidate content. Reruns
 reuse the single active, verified App proposal only when its content is identical.

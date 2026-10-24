@@ -130,6 +130,28 @@ def test_real_callback_merges_exact_head_confirms_integration_and_guarded_cleanu
     assert callback["merges"] == callback["deletes"] == 1
 
 
+@pytest.mark.parametrize("branch", [
+    "dependabot/github_actions/action-8", "dependabot/docker/python-4",
+    "dependabot/conda/python-4", "codex/maintainer-proposal",
+])
+def test_outside_pip_scope_stays_reviewed_when_main_or_proposal_moves(callback, branch):
+    callback["run"]["head_branch"] = branch
+    callback["main"] = OTHER
+    callback["pr"]["head"]["sha"] = OTHER
+    result = publication.merge_after_ci("1234")
+    assert result == dict(outcome="human_review", reason="outside automated pip proposal scope")
+    assert callback["merges"] == callback["deletes"] == 0
+    assert callback["main_reads"] == callback["pr_reads"] == 0
+
+
+def test_outside_scope_callback_still_rejects_untrusted_ci(callback):
+    callback["run"]["head_branch"] = "dependabot/github_actions/action-8"
+    callback["run"]["path"] = ".github/workflows/untrusted.yml"
+    with pytest.raises(ValueError, match="unexpected CI evidence"):
+        publication.merge_after_ci("1234")
+    assert callback["merges"] == callback["deletes"] == 0
+
+
 @pytest.mark.parametrize("identity", ["registered", "wrong_id", "wrong_type"])
 def test_app_pr_requires_exact_registered_identity_and_existing_verified_commit(callback, identity):
     callback["pr"]["user"] = dict(login=publication.PUBLICATION_APP_LOGIN,
