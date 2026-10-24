@@ -105,6 +105,14 @@ python -m pip install --no-deps -e .
 Dependency maintenance, scan/preflight commands, publication permissions and
 review boundaries are documented in [supply-chain controls](docs/05-security/supply-chain.md).
 
+Dependency lifecycle implementation (P1) and adoption of immutable Standards
+`v1.0.0` (P2) are complete; [Issue #202](https://github.com/PolySia-Systems/Platform/issues/202)
+holds the acceptance receipts. Ongoing dependency reviews remain in the
+[maintenance backlog](https://github.com/PolySia-Systems/Platform/issues/208)
+and their pull requests. `main` is the integration branch; temporary branches
+remain while their work is pending, and scheduled maintenance can create new
+ones. Completion of P1/P2 does not approve those updates or authorize deployment.
+
 On Linux activate with `source .venv/bin/activate`. Initial dependency bootstrap
 downloads packages; the fixture commands below then run without provider access
 or secrets. The explicit Windows Conda bootstrap remains available through
