@@ -217,7 +217,10 @@ def classify_paths(paths: Iterable[str]) -> ChangeMap:
 
     return ChangeMap(
         quality=True,
-        python=any(_matches(path, (*PYTHON_PATTERNS, *BROWSER_PATTERNS)) for path in changed),
+        python=any(
+            _matches(path, (*PYTHON_PATTERNS, *BROWSER_PATTERNS, *DEPENDENCY_PATTERNS))
+            for path in changed
+        ),
         package=any(_matches(path, (*PACKAGE_PATTERNS, *DEPENDENCY_PATTERNS)) for path in changed),
         container=any(_matches(path, CONTAINER_PATTERNS) for path in changed),
         dependencies=any(_matches(path, DEPENDENCY_PATTERNS) for path in changed),

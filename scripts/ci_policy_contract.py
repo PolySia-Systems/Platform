@@ -58,6 +58,7 @@ class PolicyContracts(unittest.TestCase):
             ),
             (("src/polysia/application/services/shadow_reporting.py",), {"browser"}, set()),
             (("tests/conftest.py",), {"browser"}, set()),
+            ((".github/dependabot.yml",), {"compile", "package", "audit", "windows"}, set()),
             (("deploy/platform_bootstrap.py",), {"image", "install-recovery", "windows"}, set()),
             ((".github/workflows/ci.yml",), {"windows", "image", "browser", "audit"}, set()),
             (("AGENTS.md",), {"windows", "image", "audit"}, set()),
@@ -70,6 +71,8 @@ class PolicyContracts(unittest.TestCase):
                 self.assertTrue(required <= selected, required - selected)
                 self.assertFalse(omitted & selected, omitted & selected)
                 validate_projection(policy)
+                if policy["flags"]["package"]:
+                    self.assertTrue(policy["flags"]["python"], "package needs quality environment")
         mixed = classify_paths(("README.md", "scripts/release_manifest.py"))
         self.assertTrue(mixed.container)
 
