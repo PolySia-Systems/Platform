@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-28
-- Last amended: 2026-10-19
+- Last amended: 2026-10-25
 - Supersedes: ADR-0005
 
 ## Context
