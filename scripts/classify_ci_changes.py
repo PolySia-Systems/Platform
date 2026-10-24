@@ -195,6 +195,14 @@ def _matches(path: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def _known_path(path: str) -> bool:
+    return _matches(path, (
+        *PYTHON_PATTERNS, *PACKAGE_PATTERNS, *CONTAINER_PATTERNS, *DEPENDENCY_PATTERNS,
+        *WINDOWS_PATTERNS, *COMPREHENSIVE_PATTERNS, *LIGHTWEIGHT_PATTERNS,
+        *RECORD_PATHS, *BROWSER_PATTERNS,
+    ))
+
+
 def classify_paths(paths: Iterable[str]) -> ChangeMap:
     changed = tuple(paths)
     if any(not valid_path(path) for path in changed):
@@ -203,23 +211,7 @@ def classify_paths(paths: Iterable[str]) -> ChangeMap:
         return ChangeMap.full()
 
     comprehensive = any(_matches(path, COMPREHENSIVE_PATTERNS) for path in changed)
-    recognized = all(
-        _matches(
-            path,
-            (
-                *PYTHON_PATTERNS,
-                *PACKAGE_PATTERNS,
-                *CONTAINER_PATTERNS,
-                *DEPENDENCY_PATTERNS,
-                *WINDOWS_PATTERNS,
-                *COMPREHENSIVE_PATTERNS,
-                *LIGHTWEIGHT_PATTERNS,
-                *RECORD_PATHS,
-                *BROWSER_PATTERNS,
-            ),
-        )
-        for path in changed
-    )
+    recognized = all(_known_path(path) for path in changed)
     if comprehensive or not recognized:
         return ChangeMap.full()
 
@@ -366,6 +358,10 @@ def project_policy(
         problems.append("empty or unavailable diff; full validation")
     if any(not valid_path(path) for path in actual):
         problems.append("irregular path; full validation")
+    if any(valid_path(path) and not _known_path(path) for path in actual):
+        problems.append("unknown path; full validation")
+    if event not in {"local", "push", "pull_request", "schedule", "workflow_dispatch"}:
+        problems.append("unknown event; full validation")
     flags = classify_event(
         "push" if event == "local" else event,
         actual,

@@ -93,6 +93,8 @@ class PolicyContracts(unittest.TestCase):
         self.assertTrue(selected.container and selected.windows and selected.comprehensive)
 
     def test_ambiguity_and_version_rejection(self):
+        self.assertIn("unknown path; full validation",
+                      project_policy(["new/unknown.xyz"])["diagnostics"])
         for paths in (
             (),
             ("",),
