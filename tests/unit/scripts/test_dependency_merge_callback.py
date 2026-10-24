@@ -130,6 +130,19 @@ def test_real_callback_merges_exact_head_confirms_integration_and_guarded_cleanu
     assert callback["merges"] == callback["deletes"] == 1
 
 
+@pytest.mark.parametrize("identity", ["registered", "wrong_id", "wrong_type"])
+def test_app_pr_requires_exact_registered_identity_and_existing_verified_commit(callback, identity):
+    callback["pr"]["user"] = dict(login=publication.PUBLICATION_APP_LOGIN,
+                                  id=publication.PUBLICATION_APP_BOT_ID, type="Bot")
+    if identity == "registered":
+        assert publication.merge_after_ci("1234")["cleanup"] == "deleted"
+    else:
+        callback["pr"]["user"]["id" if identity == "wrong_id" else "type"] = "unexpected"
+        with pytest.raises(ValueError, match="identity changed"):
+            publication.merge_after_ci("1234")
+        assert callback["merges"] == callback["deletes"] == 0
+
+
 def test_green_dispatch_cannot_replace_qualifying_required_pr_ci(callback, monkeypatch, capsys):
     callback["run"]["event"] = "workflow_dispatch"
     monkeypatch.setattr("sys.argv", ["publication", "--run", "1234", "--merge-after-ci"])

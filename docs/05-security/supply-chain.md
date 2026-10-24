@@ -106,7 +106,8 @@ changes, and validates complete shared pins, declarations and build constraints.
 GitHub atomically enforces `expectedHeadOid` when committing the lock pair.
 Missing, partial, stale, ambiguous or tampered evidence fails closed.
 
-The publisher explicitly dispatches full CI after its final commit.
+For native Dependabot synchronization the publisher explicitly dispatches full
+CI after its final commit.
 [GITHUB_TOKEN push events do not trigger CI; token-created PR events create
 approval-required runs](https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs).
 The explicit full dispatch provides engineering validation.
@@ -114,7 +115,10 @@ The explicit full dispatch provides engineering validation.
 The handler rejects that event as merge authority even when every job succeeds.
 Qualifying PR CI and unchanged repository rules remain required; a maintainer's
 approval of the token-created PR workflows is human-assisted evidence.
-The publisher suppresses an already running/successful dispatch for the same head. A
+The publisher suppresses an already running/successful dispatch for the same head.
+Scheduled proposals instead use the approved PR-only App after the canonical
+commit, so the normal `pull_request` event supplies qualifying CI. They do not
+dispatch substitute checks. A
 separate completion handler reclassifies the live diff after successful PR CI,
 verifies `CI Gate` belongs to that exact run/head, requires the current base,
 then requests an exact-head merge under repository rules. It never leaves an
@@ -124,8 +128,12 @@ and ambiguous updates require review. Actions proposals require source review;
 metadata-only Actions auto-approval has been removed.
 
 A scheduled proposal identity binds the base and candidate content. Reruns
-reuse the single active, verified bot proposal; stale/ambiguous branches stop
-for review. Completed proposals do not block a new candidate or get resurrected.
+reuse the single active, verified App proposal only when its content is identical.
+An open proposal with changed content, a legacy author, or a stale/ambiguous branch
+stops for owner disposition without updating its head. This preserves the bounded
+PR-only App permission: synchronizing an existing branch with `GITHUB_TOKEN`
+would require human workflow approval. Completed proposals do not block a new
+candidate or get resurrected.
 Existing branch diffs and signed bot identity are assessed before dispatch;
 the final merge head must also be a verified bot commit.
 Interrupted or denied publication preserves its branch for assessed recovery.
@@ -161,22 +169,35 @@ capability to disabled to roll back this route; retain read defaults and branch
 rules. Actual production-cycle evidence and its limitations belong to
 [Issue #202](https://github.com/PolySia-Systems/Platform/issues/202).
 
-The real `virtualenv` patch in #215 established publication and successful full
-dispatch validation, but its PR workflows await maintainer approval and its
-required PR gate remains expected. Unattended merge and cleanup are therefore
-unverified. An additional publication credential route needs explicit scoped
-approval and implementation. The minimum App proposal is a private App installed
-only on Platform, with pull requests write and implicit metadata read. Its token
-would create/update PRs only; branch/commit writes, reads, merge and guarded
-cleanup would retain the existing scoped job tokens. The new PR author's exact
-registered bot identity must be reviewed alongside the existing verified commit
-identity and immutable provenance. Installation tokens must be short-lived and
-limited to trusted-main jobs, with a repository-only private-key secret and
-rotation/revocation ownership. Report and health jobs retain their existing
-tokens. The existing actor allowlist must not
-be broadened before that identity and route are reviewed; an unreviewed App or
-maintainer token is not a substitute. Uninstalling the App and revoking its key,
-token/secret and actor entry is the rollback for that separately approved route.
+The owner approved and installed the private `polysia-platform-dependencies`
+App (App ID `5408199`, installation `173681867`) on Platform alone on
+2026-10-21. Its only grants are pull requests write and implicit metadata read;
+webhooks, user authorization and device flow are disabled. The exact PR-author
+login `polysia-platform-dependencies[bot]`, numeric bot ID `345725125`, and Bot
+type are required. This does not add the App to the trusted commit identities.
+Canonical commits, protected merge and guarded cleanup retain the existing
+scoped `GITHUB_TOKEN`; report and health jobs receive no App credential.
+
+Repository Actions secrets `DEPENDENCY_PUBLICATION_APP_CLIENT_ID` and
+`DEPENDENCY_PUBLICATION_APP_PRIVATE_KEY` supply only the trusted-main publisher.
+The official MIT-licensed `actions/create-github-app-token` v3.3.0 is pinned to
+verified commit `64ab729a6294000f5aa4a4bc0b73d1f32bc45510`. It requests only
+Platform and pull requests write, masks its token, and revokes it in its default
+post step (tokens otherwise expire within one hour). The publisher verifies the
+installation/slug and token repository inventory before branch mutation. Only
+PR creation uses this separate token, through the child process environment;
+it never enters arguments, artifacts or candidate execution. No new Python or
+runtime package is required. A maintainer token is not an unattended substitute.
+
+Owner: Platform dependency maintainer. Rotate by generating a replacement key,
+updating the repository secret, verifying the next genuine publication, then
+revoking the old key. Inspect token-revocation warnings; a successful job alone
+does not establish revocation. Rollback: suspend/uninstall this installation,
+remove its two repository secrets, and revert the workflow/exact actor entry.
+Preserve open proposals and branch rules. The original #215 is historical
+engineering evidence; actual App publication, required PR CI, unattended merge
+and cleanup acceptance are recorded separately in
+[Issue #202](https://github.com/PolySia-Systems/Platform/issues/202).
 
 ### Independent maintenance health and developer preflight
 
