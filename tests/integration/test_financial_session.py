@@ -1252,3 +1252,24 @@ def test_single_cash_ledger_never_aggregates_different_collateral_assets() -> No
         authorization(
             instruments=(SCOPE, replace(SCOPE, token="another", collateral="other-asset"))
         )
+
+
+async def test_retained_order_cutoff_is_latest_durable_time_not_json_key_order(h: Harness) -> None:
+    from polysia.monitoring.financial_session import financial_session_view
+
+    identity = await h.coordinator.submit(opportunity())
+    h.now += timedelta(seconds=10)
+    h.fill(identity)
+    view = financial_session_view(h.journal.read(), h.auth, now=h.now)
+    assert view["orders"][0]["updated_at"] == h.now.isoformat()
+
+
+async def test_funnel_keeps_timely_events_when_financial_admission_is_drained(h: Harness) -> None:
+    from polysia.monitoring.financial_session import financial_session_view
+
+    h.coordinator.set_mode(SessionMode.DRAIN)
+    with pytest.raises(SessionBlocked, match="drained"):
+        await h.coordinator.submit(opportunity())
+    view = financial_session_view(h.journal.read(), h.auth, now=h.now)
+    assert view["funnel"]["attributable_timely_events"] == 1
+    assert view["funnel"]["eligible_decisions"] == 0

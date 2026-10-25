@@ -307,6 +307,7 @@ class FinancialSessionCoordinator:
                 if self.mode not in {TradingMode.PAPER, TradingMode.LIVE}:
                     raise SessionBlocked("DATA_ONLY_blocks_financial_session")
                 edge = opportunity.validate(self.authority, now=self.clock())
+                self._decision_phase(identity, timely=True)
                 self.latency.record(
                     "source_to_observation",
                     int(
@@ -320,7 +321,7 @@ class FinancialSessionCoordinator:
                 action = "ENTRY" if opportunity.event.side == "BUY" else "REDUCE"
                 self._guard(self.journal.read(), action)
                 snapshot = await self._snapshot(opportunity)
-                self._decision_phase(identity, timely=True, eligible=True)
+                self._decision_phase(identity, eligible=True)
                 intent = OrderIntent(
                     strategy_id=opportunity.strategy,
                     token_id=opportunity.event.instrument.token,

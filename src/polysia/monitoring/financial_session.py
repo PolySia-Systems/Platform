@@ -136,7 +136,7 @@ def financial_session_view(
                 "state": row["state"],
                 "side": row["side"],
                 "token": row["token"],
-                "updated_at": list(row.get("timeline", {}).values())[-1]
+                "updated_at": max(row.get("timeline", {}).values(), key=datetime.fromisoformat)
                 if row.get("timeline")
                 else row["created_at"],
                 "timeline": row.get("timeline", {}),
