@@ -44,6 +44,7 @@ def test_document_role_does_not_depend_on_parent_directory(directory: str) -> No
         assert classify_paths((f"{directory}/{asset}",)) == ChangeMap.full()
     for control in ("AGENTS.md", "AGENTS.override.md"):
         assert classify_paths((f"{directory}/{control}",)) == ChangeMap.full()
+        assert classify_paths((f"{directory}/{control.lower()}",)) == ChangeMap.full()
 
 
 @pytest.mark.parametrize("risky", [

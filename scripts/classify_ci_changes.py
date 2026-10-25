@@ -333,6 +333,12 @@ def valid_path(path: object) -> bool:
         return False
     if path.startswith("/") or any(p in {"", ".", ".."} for p in path.split("/")):
         return False
+    # Windows may discover these instruction names case-insensitively. A
+    # noncanonical spelling must never fall through to ordinary Markdown.
+    name = path.rsplit("/", 1)[-1]
+    controls = {"agents.md": "AGENTS.md", "agents.override.md": "AGENTS.override.md"}
+    if name.lower() in controls and name != controls[name.lower()]:
+        return False
     # Canonical roots and known control names are case-sensitive on Linux.
     roots = {"src", "tests", "scripts", "docs", "standards", "locks", "deploy", ".github"}
     root = path.split("/")[0]

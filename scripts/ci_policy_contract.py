@@ -121,6 +121,8 @@ class PolicyContracts(unittest.TestCase):
         for control in (
             "AGENTS.md", "AGENTS.override.md", "docs/04-architecture/AGENTS.md",
             "docs/10-operations/AGENTS.override.md", ".github/workflows/ci.yml",
+            "agents.override.md", "docs/10-operations/agents.md",
+            "docs/03-requirements/agents.override.md",
             "docs/03-requirements/contract.json", "docs/10-operations/fixture.html",
         ):
             with self.subTest(control=control):
