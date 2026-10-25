@@ -18,10 +18,8 @@ or production dependency is added for this deferred possibility.
 ## Context
 
 CURRENT Platform has native public readers, PolyCop ingestion and separate
-intelligence/financial SQLite stores. Its optional WI workflow starts another
-application. That workflow remains a historical import consumer until native
-replacement and retained-import parity are verified; it is not a deployment
-dependency for the new Platform epoch.
+intelligence/financial SQLite stores. Native research, reporting and recovery
+belong to the same Platform release.
 
 ## Decision
 
@@ -38,7 +36,6 @@ retain attribution. Incomplete walks cannot publish a successful cohort.
 
 New acquisition authority is Platform-owned, numeric, durable and charged before
 requests. STOP, expiry and unknown in-flight charges survive restart and restore.
-WI's stopped campaigns and exhausted authority are never inherited or renewed.
 Research processes have no signer or external execution capability.
 
 TARGET deployment promotes an immutable hosted artifact to Helsinki; Nuremberg
@@ -48,8 +45,8 @@ stays private. This ADR does not certify deployment or observational usefulness.
 
 ## Consequences and rollback
 
-One release owns implementation and recovery. No WI checkout, process, mounted
-volume or private-repository credential may be required by the final artifact.
+One Platform release owns implementation and recovery, including its required
+processes, storage and installed assets.
 Use separate schema roots for transitions; preserve originals and post-cutover
 evidence. Rollback selects the previous compatible artifact and root, with
 acquisition stopped and consumed authority reconciled before any resume.

@@ -42,8 +42,8 @@ flowchart LR
 CURRENT software is verified in the package and tests; it is not a claim that
 all host services or public access are commissioned. The [dated execution record](../../../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
 owns operational receipts; a runtime query owns live state. The [runbook](../../../10-operations/independent-platform-shadow.md)
-owns release, STOP, recovery and rollback actions. Existing WI roots, credentials,
-campaigns and unrelated services are preserved. Old topology snapshots are dated
+owns release, STOP, recovery and rollback actions. Unrelated services are
+preserved. Old topology snapshots are dated
 evidence, not the authority for new activation.
 
 ## Boundaries and limitations

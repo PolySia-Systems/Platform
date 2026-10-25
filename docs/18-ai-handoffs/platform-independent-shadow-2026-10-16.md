@@ -21,7 +21,7 @@ passed. Subsequent Markdown-only receipts do not change this runtime artifact.
 
 | Criterion | Verdict | Evidence / limit |
 |---|---|---|
-| Engineering and independence | PASS | Exact selected Standards v0.5.2; full hosted matrix; standalone installed image on both hosts; no WI service dependency or Live path |
+| Engineering and independence | PASS | Exact selected Standards v0.5.2; full hosted matrix; standalone installed image on both hosts; no Live path |
 | Reporting correctness | PASS | Nonempty deterministic Decimal/UTC fixtures, supported interval and gap tests; installed retained report and cold restore reproduce the same analytical digest |
 | Operational usefulness | OPEN | Actual retained diagnostic has zero opportunities; source freshness is insufficient under the frozen profile; no continuous admission |
 | Reliability and diagnosis | PASS within tested scope | Durable STOP/charges survive promotion and restore; bounded failure, duplicate, expiry and recovery-fence tests; installed schedules and terminal publication verified |
@@ -42,24 +42,22 @@ prompt and selected `platform.polysia.movafegh.com`. Platform remains public.
 Work is limited to Platform DATA_ONLY engineering and commissioning, scoped
 project deployment/Access/Tunnel, bounded acquisition under a new manifest,
 encrypted backups and isolated recovery. Real account mutation, Live, host
-reboots and unrelated services are excluded. WI campaigns remain stopped.
+reboots and unrelated services are excluded.
 
 Publication inventory: existing Platform source/tests/configuration; selected
 first-party Standards requirement identities and consumer evidence at v0.5.2;
 new Platform implementation. No whole private repository, operational dataset,
-credential or private observation is approved for publication. WI implementation
-will be reused only where needed after consumer and third-party notice review.
-Original WI and Standards repositories remain unchanged.
+credential or private observation is approved for publication. The Standards
+repository remains unchanged.
 
 ## Verified starting identities
 
 - Platform: clean `main`, `ca9f37df91a5b9659726fa18312b381ccb081d83`.
-- WI reference: clean `5f9f3604b2b27d1da4116b2133717a1ed2578d42`.
 - Latest released Standards: immutable v0.5.2,
   `2ccbe4dbbcb3574db52e5a8eb73e968a9165a83c`, release 414090521.
 - Open #142 is an older frozen canary task, not authority to rerun it unchanged.
-- Both designated hosts permit administrative SSH; unrelated services and WI
-  assets exist and must be preserved. No Platform service was found.
+- Both designated hosts permit administrative SSH; unrelated services
+  must be preserved. No Platform service was found.
 - Supplied hostname resolves through the proxy; public HTTPS verification failed
   during TLS negotiation. Secure Console access is not yet established.
 
@@ -188,7 +186,7 @@ and rejects higher numeric ceilings, lower closure reserves or a longer run
 duration. It permits a new bounded diagnostic window and the specifically required
 public metadata endpoint under the owner's existing delegation. Ordinary
 initialization still rejects replacing an active policy. This is an explicit
-audited action, not automatic allowance renewal or reopening a WI campaign.
+audited action, not automatic allowance renewal.
 
 
 ## Preserved continuation and source freshness
@@ -246,8 +244,8 @@ completed generations plus plaintext staging/restore reserve inside the new
 filesystem. Upload identity `polysia-platform-upload` has only chrooted SFTP;
 protected recovery key remains under root's separate configuration directory.
 Daily backup and isolated cold-recovery checks target RPO <=24h and RTO <=60m;
-only actual drill receipts establish those bounds. No existing WI allocation,
-backup, key or unrelated container is changed. Rollback disables the new units
+only actual drill receipts establish those bounds. No unrelated allocation,
+backup, key or container is changed. Rollback disables the new units
 and upload identity; retain the new ciphertext, key and allocation for recovery.
 
 The scoped Access-app creation request returned HTTP 403. The existing API
@@ -271,7 +269,7 @@ and web stopped. A new runtime root retained SQLite Backup API snapshots of the
 Platform diagnostic, including one experiment, two polls and zero opportunities.
 All 11 requests / 2,371,503 bytes and durable STOP were preserved; original roots
 remain intact. This is explicitly retained isolated-diagnostic data, not continuous
-admission or an imported WI experiment. Candidate worker startup reported STOPPED.
+admission. Candidate worker startup reported STOPPED.
 The publisher exposed two defects before commissioning could pass: SQLite WAL
 bookkeeping cannot always operate through a physically read-only directory; older
 provider metadata lacks latency fields. Source connections remain `mode=ro` plus
@@ -302,10 +300,7 @@ locks, migrations, historical readers and documentation links. Three modules hav
 only test/entry/manual static consumers: the CLI is the declared entry point;
 latency benchmark helpers remain an offline research API with unique tests; the
 Copy signal outcome accessor preserves a historical schema/public research contract.
-The old WI producer wrapper remains only for supported historical import/parity
-consumers and is absent from all new service/backup dependencies. No demonstrated
-safe deletion justified breaking these consumers; apparent duplication is retained
-for those explicit reasons. This is a reachability review, not proof that every
+This is a reachability review, not proof that every
 line is necessary. Six changed Mermaid diagrams were rendered and visually checked;
 other views retain their semantics with refreshed delta-review metadata.
 
@@ -527,8 +522,8 @@ Bounded CPU/memory, job locks, finite timeouts, log rotation, two-generation
 retention and restore cleanup remain installed. The candidate schedules also
 continued publishing while the model session was unavailable; final supervision
 uses only host paths and retained artifacts. No laptop scheduler/tunnel/key is
-required. WI and Standards reference checkouts remained clean at their starting
-identities; no WI campaign, data or unrelated service was changed.
+required. The Standards reference checkout remained clean at its starting
+identity; no unrelated service was changed.
 
 At the 13:24 UTC checkpoint the web unit was inactive with no port 8765 listener.
 Access creation had returned 403. Browser security changes required per-action
@@ -645,7 +640,7 @@ allowance or activate both connectors/writers as automatic failover.
 - Research/source owner: usefulness needs materially new source evidence and
   nonempty, fully valued frozen-policy activity plus matching resource admission.
   Do not rerun the unchanged empty diagnostic, widen freshness for a pass, reset
-  counters, renew expired authority implicitly or restart WI.
+  counters or renew expired authority implicitly.
 - Owner: authenticated access is confirmed. Actual comprehension remains OPEN
   until interpreting results, exclusions and controls has a human receipt.
   Automated journeys and login cannot supply that verdict.
@@ -779,7 +774,7 @@ within the stated engineering and verification scope. `OBSERVATION_SUFFICIENT`
 and `PRODUCT_ACCEPTED` are not achieved. New bounded observation needs separately
 authorized current numeric authority and matching admission. Previously exposed
 credential closure and actual owner comprehension remain separate owner actions.
-No acquisition renewal, WI restart, Live action or new paid service occurred.
+No acquisition renewal, Live action or new paid service occurred.
 
 ## 19 October 2026 product-completion delivery
 
@@ -839,7 +834,7 @@ Required checks included:
   compatibility evidence, not an owner Conda environment claim.
 
 No Live, signing, external account mutation, provider acquisition, new admission, campaign
-renewal, budget refill, Wallet-Intelligence restart, production credential rotation,
+renewal, budget refill, production credential rotation,
 DNS/Cloudflare/ingress change or shared-host upgrade occurred.
 
 ### Primary activation refusal and preserved state
@@ -1078,4 +1073,4 @@ environments, configuration, keys and ciphertext are deliberately retained.
 bounded release/install/recovery scope. Human acceptance, public-domain commissioning,
 old exposed-credential revocation confirmation and new economic observation remain
 separate. No Live, wallet/signing/venue mutation, provider acquisition, admission,
-WI restart, new infrastructure, host upgrade or ingress change occurred.
+new infrastructure, host upgrade or ingress change occurred.

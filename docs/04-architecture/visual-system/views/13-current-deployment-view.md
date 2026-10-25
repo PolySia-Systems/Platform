@@ -56,8 +56,8 @@ The fresh v0.4.0 private installation has a separate dated receipt. Software is
 verified in the package and tests; this diagram does not claim that
 all host services or public access are commissioned. The [dated execution record](../../../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
 owns operational receipts; a runtime query owns live state. The [runbook](../../../10-operations/independent-platform-shadow.md)
-owns release, STOP, recovery and rollback actions. Existing WI roots, credentials,
-campaigns and unrelated services are preserved. Old topology snapshots are dated
+owns release, STOP, recovery and rollback actions. Unrelated services are
+preserved. Old topology snapshots are dated
 evidence, not the authority for new activation.
 
 ## Boundaries and limitations

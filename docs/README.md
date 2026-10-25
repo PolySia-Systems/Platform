@@ -59,7 +59,7 @@ Previous runtime receipts are historical after the owner's server reset.
 ## Operations and safety
 
 - [Operations documentation](10-operations/)
-- [Wallet Intelligence research intake](10-operations/wallet-intelligence-research-intake.md)
+- [Retained research artifact intake](10-operations/wallet-intelligence-research-intake.md)
 - [Current operational truth](10-operations/server-deployment.md#current-operational-truth)
 - [Risk register](00-governance/registers/risks.md)
 - [Live safety gates](04-architecture/adrs/ADR-0008-live-safety-gates.md)
