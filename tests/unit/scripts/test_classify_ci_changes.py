@@ -30,6 +30,33 @@ def test_source_tests_and_tooling_receive_distinct_risk_maps() -> None:
     assert tooling.python and not tooling.package
 
 
+@pytest.mark.parametrize("directory", [
+    "docs/03-requirements", "docs/04-architecture/adrs", "docs/10-operations",
+    "docs/00-governance", "docs/05-security",
+])
+def test_document_role_does_not_depend_on_parent_directory(directory: str) -> None:
+    prose = f"{directory}/guide.md"
+    assert classify_paths((prose,)) == ChangeMap(
+        quality=True, python=False, package=False, container=False,
+        dependencies=False, windows=False, comprehensive=False,
+    )
+    for asset in ("contract.json", "contract.yaml", "upgrade.sql", "fixture.html", "run.py"):
+        assert classify_paths((f"{directory}/{asset}",)) == ChangeMap.full()
+    for control in ("AGENTS.md", "AGENTS.override.md"):
+        assert classify_paths((f"{directory}/{control}",)) == ChangeMap.full()
+        assert classify_paths((f"{directory}/{control.lower()}",)) == ChangeMap.full()
+
+
+@pytest.mark.parametrize("risky", [
+    "locks/requirements-dev-py314.txt", "src/polysia/storage/console_commands.py",
+    "deploy/platform_bootstrap.py", ".github/workflows/ci.yml",
+])
+def test_prose_never_cancels_risky_requirements(risky: str) -> None:
+    assert classify_paths(("docs/00-governance/PROJECT_STATUS.md", risky)) == classify_paths(
+        (risky,),
+    )
+
+
 def test_packaging_dependency_container_and_windows_changes_are_explicit() -> None:
     package = classify_paths(("pyproject.toml",))
     runtime_lock = classify_paths(("locks/requirements-runtime-py314.txt",))

@@ -114,9 +114,6 @@ WINDOWS_PATTERNS = (
 )
 COMPREHENSIVE_PATTERNS = (
     "scripts/check_changed_docs.py",
-    "docs/03-requirements/**",
-    "docs/04-architecture/adrs/**",
-    "docs/10-operations/**",
     ".python-version",
     "environment.yml",
     ".github/CODEOWNERS",
@@ -127,8 +124,6 @@ COMPREHENSIVE_PATTERNS = (
     "AGENTS.override.md",
     ".gitignore",
     ".gitattributes",
-    "docs/00-governance/**",
-    "docs/05-security/**",
     "scripts/fast_check.py",
     "scripts/ci_policy_contract.py",
     "scripts/windows_health.py",
@@ -138,6 +133,13 @@ COMPREHENSIVE_PATTERNS = (
     ".github/workflows/**",
     "scripts/classify_ci_changes.py",
     "tests/unit/scripts/test_classify_ci_changes.py",
+)
+DOCUMENT_ASSET_PATTERNS = (
+    "docs/03-requirements/**",
+    "docs/04-architecture/adrs/**",
+    "docs/10-operations/**",
+    "docs/00-governance/**",
+    "docs/05-security/**",
 )
 LIGHTWEIGHT_PATTERNS = (
     "*.md",
@@ -199,7 +201,7 @@ def _known_path(path: str) -> bool:
     return _matches(path, (
         *PYTHON_PATTERNS, *PACKAGE_PATTERNS, *CONTAINER_PATTERNS, *DEPENDENCY_PATTERNS,
         *WINDOWS_PATTERNS, *COMPREHENSIVE_PATTERNS, *LIGHTWEIGHT_PATTERNS,
-        *RECORD_PATHS, *BROWSER_PATTERNS,
+        *DOCUMENT_ASSET_PATTERNS, *RECORD_PATHS, *BROWSER_PATTERNS,
     ))
 
 
@@ -210,7 +212,14 @@ def classify_paths(paths: Iterable[str]) -> ChangeMap:
     if not changed:
         return ChangeMap.full()
 
-    comprehensive = any(_matches(path, COMPREHENSIVE_PATTERNS) for path in changed)
+    # Prose about a control is not an executable control. AGENTS and actual
+    # trust inputs still match independently; non-Markdown document assets
+    # retain the full coverage previously assigned to their directories.
+    comprehensive = any(
+        _matches(path, COMPREHENSIVE_PATTERNS)
+        or (_matches(path, DOCUMENT_ASSET_PATTERNS) and not path.endswith(".md"))
+        for path in changed
+    )
     recognized = all(_known_path(path) for path in changed)
     if comprehensive or not recognized:
         return ChangeMap.full()
@@ -323,6 +332,12 @@ def valid_path(path: object) -> bool:
     if any(ord(char) < 32 for char in path) or "\\" in path or ":" in path:
         return False
     if path.startswith("/") or any(p in {"", ".", ".."} for p in path.split("/")):
+        return False
+    # Windows may discover these instruction names case-insensitively. A
+    # noncanonical spelling must never fall through to ordinary Markdown.
+    name = path.rsplit("/", 1)[-1]
+    controls = {"agents.md": "AGENTS.md", "agents.override.md": "AGENTS.override.md"}
+    if name.lower() in controls and name != controls[name.lower()]:
         return False
     # Canonical roots and known control names are case-sensitive on Linux.
     roots = {"src", "tests", "scripts", "docs", "standards", "locks", "deploy", ".github"}

@@ -146,3 +146,19 @@ ordinary pull requests and the separate Linux smoke job. Reverting the earlier
 2026-08-16 compatibility decision would additionally restore the obsolete
 Python 3.11/3.13/3.14 matrix and requires a separate compatibility review.
 Never alter signer, funder, wallet, or credential values as part of rollback.
+
+## 2026-10-25 documentation-role correction
+
+The owner authorizes a bounded correction to PR #225's broad directory rules.
+Ordinary Markdown in requirements, ADR, governance, security and operations
+folders requires document/Standards/secret/policy/Gate checks; its parent folder
+alone does not require the product's Windows, image or installation matrix.
+Actual instruction inputs (including nested AGENTS/overrides), executable
+controls and non-Markdown assets retain their comprehensive coverage. Mixed
+diffs combine obligations; unknown/invalid inputs remain conservative.
+
+This corrects observed over-selection in documentation-only PR #226 while
+preserving dependency/OS-sensitive, weekly, manual and exact-source release
+gates. It changes no supported runtime, dependency pin or trading behavior.
+The implementation receives comprehensive validation; a subsequent necessary
+operator-documentation PR must demonstrate the real native lightweight route.
