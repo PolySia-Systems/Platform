@@ -2,7 +2,6 @@
 
 Status: implemented DATA_ONLY software; commissioning and real-observation
 acceptance are separate receipts. See the [execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md).
-Historical WI campaigns, roots and authority remain separate and stopped.
 
 ## Release and isolated roots
 
@@ -404,9 +403,6 @@ Stop acquisition durably first. Select the prior compatible immutable image and
 its schema root; preserve newer observations, counters and open-position evidence.
 Never downgrade an active financial schema in place or erase a failed migration.
 Disable only the dedicated new units/connector/upload identity when rolling back;
-retain ciphertext and the protected recovery key. Preserve WI and unrelated services.
-The legacy `wallet-intelligence local` producer wrapper remains solely for existing
-historical import/parity consumers; it is not used by the new worker, Console,
-reporting or restore. Remove it only after retained-import parity and the documented
-consumer migration are proven. Public research replay/accessor APIs with unique
-historical-schema tests likewise remain experimental rather than live runtime gates.
+retain ciphertext and the protected recovery key. Preserve unrelated services.
+Public research replay/accessor APIs with unique historical-schema tests remain
+experimental rather than live runtime gates.

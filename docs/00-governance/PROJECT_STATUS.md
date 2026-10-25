@@ -139,7 +139,7 @@ receipts are not perpetual live-host truth.
 CURRENT code provides a bounded private Console, native research profile,
 Platform-owned durable acquisition authority, provider-free financial snapshot and
 supported interval reports, and encrypted isolated recovery tooling. The new
-runtime does not require a WI checkout/service. See the [operating procedure](../10-operations/independent-platform-shadow.md)
+runtime is contained in the Platform release. See the [operating procedure](../10-operations/independent-platform-shadow.md)
 and [ADR-0021](../04-architecture/adrs/ADR-0021-independent-platform-shadow.md).
 Release v0.2.0 at `e0ad838d78c42739bff9dcce64d391e99bf57ffe` passed the full
 hosted release matrix. Dated 2026-10-16 receipts establish private Helsinki
