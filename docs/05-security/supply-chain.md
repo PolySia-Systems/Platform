@@ -286,6 +286,16 @@ Every PR runs dependency-free policy/Gate contracts without development installa
 Gate validates policy/source identity, complete inputs, flags and mandatory outcomes.
 Job names and native final-head PR and exact-commit release authority are preserved.
 
+Ordinary Markdown about governance, security or operations does not select the
+product matrix merely through its directory. It retains document/link, full
+Standards, secret, policy-contract and CI Gate checks. Actual instruction/control
+inputs (including AGENTS/overrides), executable/non-Markdown document assets,
+unknown inputs and mixed risky changes retain their required coverage. No skip
+label or Windows-off switch can cancel a mandatory check. Gate verifies the
+explicit skipped outcome for unselected jobs as well as success for required jobs.
+A lightweight documentation run produces no replacement release image; later
+release publication still requires full exact-source validation and artifacts.
+
 ### Full Windows health observation
 
 `windows-health.yml` observes trusted-main CI daily at 06:43 UTC. It runs only the
