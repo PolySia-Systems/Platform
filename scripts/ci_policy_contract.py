@@ -95,6 +95,67 @@ class PolicyContracts(unittest.TestCase):
         selected = classify_paths(paths)
         self.assertTrue(selected.container and selected.windows and selected.comprehensive)
 
+    def test_real_documentation_diff_and_control_roles(self):
+        # Actual PR #226 inputs, plus prose in the other formerly broad roots.
+        paths = (
+            "docs/00-governance/PROJECT_STATUS.md",
+            "docs/04-architecture/adrs/ADR-0021-independent-platform-shadow.md",
+            "docs/04-architecture/visual-system/views/13-current-deployment-view.md",
+            "docs/04-architecture/visual-system/views/14-target-deployment-view.md",
+            "docs/10-operations/independent-platform-shadow.md",
+            "docs/10-operations/wallet-intelligence-research-intake.md",
+            "docs/18-ai-handoffs/platform-independent-shadow-2026-10-16.md",
+            "docs/README.md",
+        )
+        baseline = {"hygiene", "standards", "secrets", "policy-contract", "ci-gate"}
+        for scope in (
+            *((path,) for path in paths), paths,
+            ("docs/03-requirements/developer-context-packet.md",),
+            ("docs/05-security/supply-chain.md",),
+        ):
+            with self.subTest(scope=scope):
+                policy = project_policy(scope)
+                selected = {c["id"] for c in policy["checks"] if c["required"]}
+                self.assertEqual(selected, baseline)
+                validate_projection(policy)
+        for control in (
+            "AGENTS.md", "AGENTS.override.md", "docs/04-architecture/AGENTS.md",
+            "docs/10-operations/AGENTS.override.md", ".github/workflows/ci.yml",
+            "docs/03-requirements/contract.json", "docs/10-operations/fixture.html",
+        ):
+            with self.subTest(control=control):
+                self.assertTrue(classify_paths((*paths, control)).comprehensive)
+
+    def test_documentation_rename_and_deleted_control(self):
+        with tempfile.TemporaryDirectory(prefix="polysia-doc-policy-") as directory:
+            root = Path(directory).resolve()
+
+            def git(*args):
+                return subprocess.run(
+                    ("git", *args), cwd=root, check=True, capture_output=True,
+                ).stdout.decode().strip()
+
+            git("init", "-q")
+            (root / "docs/10-operations").mkdir(parents=True)
+            (root / "docs/03-requirements").mkdir(parents=True)
+            (root / "docs/10-operations/guide.md").write_text("Fixture prose")
+            (root / "AGENTS.md").write_text("Fixture instructions")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-qm", "fixture")
+            base = git("rev-parse", "HEAD")
+            git("mv", "docs/10-operations/guide.md", "docs/03-requirements/guide.md")
+            policy = actual_diff(root, base=base, local=True, event="local")
+            self.assertEqual(set(policy["paths"]), {
+                "docs/10-operations/guide.md", "docs/03-requirements/guide.md",
+            })
+            self.assertEqual(
+                {c["id"] for c in policy["checks"] if c["required"]},
+                {"hygiene", "standards", "secrets", "policy-contract", "ci-gate"},
+            )
+            (root / "AGENTS.md").unlink()
+            self.assertTrue(actual_diff(root, base=base, local=True)["flags"]["comprehensive"])
+
     def test_ambiguity_and_version_rejection(self):
         self.assertIn("unknown path; full validation",
                       project_policy(["new/unknown.xyz"])["diagnostics"])
@@ -122,7 +183,10 @@ class PolicyContracts(unittest.TestCase):
             project_policy(["README.md"], validation_scope="typo")
 
     def test_gate_acceptance_and_rejection(self):
-        for paths in (("README.md",), (".github/workflows/ci.yml",)):
+        for paths in (
+            ("README.md",), ("docs/00-governance/PROJECT_STATUS.md",),
+            (".github/workflows/ci.yml",),
+        ):
             policy = project_policy(paths)
             needs = {
                 "changes": {
@@ -133,6 +197,11 @@ class PolicyContracts(unittest.TestCase):
             for job, flag in JOB_FLAGS.items():
                 needs[job] = {"result": "success" if policy["flags"][flag] else "skipped"}
             verify_gate(policy, needs, policy)
+            if not policy["flags"]["windows"]:
+                broken = copy.deepcopy(needs)
+                broken["windows-compatibility"]["result"] = "success"
+                with self.assertRaises(ValueError):
+                    verify_gate(policy, broken)
             for status in (None, "failure", "cancelled", "timed_out", "skipped"):
                 broken = copy.deepcopy(needs)
                 broken["quality"]["result"] = status
