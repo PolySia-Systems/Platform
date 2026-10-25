@@ -116,8 +116,16 @@ compatibility; it cannot override the authoritative shared policy.
 
 Every PR requires path/link/diff hygiene, full adopted Standards validation,
 tracked-secret checks, policy/Gate contracts and the native CI Gate. Recognized
-editorial files skip development installation. Governance, trust controls and
-executable document assets are not blanket prose. Known adoption/conformance
+editorial files skip development installation. Ordinary Markdown in requirements,
+ADR, governance, security and operations directories is documentary: describing
+an operational or governance control does not make the document executable.
+Root/nested AGENTS and overrides, workflow/classifier/Gate/trust code remain
+comprehensive. Noncanonical instruction-name case aliases are irregular inputs
+and select full validation. Non-Markdown assets in those governed document
+directories retain comprehensive validation; unknown/executable assets elsewhere remain conservative.
+Changes combine by union, so prose cannot cancel a lock, OS or deployment gate.
+Review document meaning and applicable command examples; do not automatically
+execute untrusted Markdown snippets. Known adoption/conformance
 records require the full schema/pin/applicability/fact/evidence validator and
 consumer contracts; unsupported record schemas or meanings fail validation.
 Executable Python/tooling requires the complete canonical Linux behavior/safety
@@ -134,6 +142,17 @@ final-head PR checks or another commit's artifacts.
 `fast_check.py --mode scoped` runs applicable portable commands without installing
 anything. `--mode full-local` selects all checks; `--plan` prints the policy.
 Required native contexts remain pending with exit 2 after successful local work.
+
+Use `python scripts/fast_check.py --mode scoped --base origin/main --plan`
+while reviewing a branch/working-tree change to inspect actual paths, check IDs
+and reasons without executing them. A clean tree compared with identical main
+has no classified change: empty/missing/ambiguous inputs deliberately select full
+validation. When assessing a completed change, use its actual base revision;
+do not interpret an empty comparison as proof of a cheap documentation diff.
+Auto/full are selection modes, not a global Windows-off bypass. Dependency,
+Python/bootstrap, packaging and supported OS-sensitive changes still require
+Windows; weekly, explicit full and exact-commit release coverage remain.
+
 The no-argument legacy command is unchanged except for an accurate label: it
 omits Pytest/build and is not comprehensive. A local Windows run never proves the
 canonical Linux suite. CI Gate re-collects the actual diff, verifies the full

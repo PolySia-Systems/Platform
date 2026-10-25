@@ -174,6 +174,14 @@ lists. Native Linux, Windows, browser, image/install and final CI authority rema
 `PENDING` when unavailable locally; exit 2 means local checks passed with native
 contexts pending. No dependencies are installed by this checker.
 
+Automatic CI treats ordinary Markdown in requirements, ADR, governance, security
+and operations directories as documentation. Actual instruction/control inputs
+(including AGENTS), executable/unknown assets and mixed risky changes keep their
+required gates. Windows needs no routine manual disable: auto selection follows
+actual inputs; explicit full validation and weekly/release coverage remain.
+An empty or unavailable comparison selects conservative full work; inspect the
+plan against the actual base before interpreting a clean-tree result.
+
 The compatible no-argument route remains available:
 
 ```powershell
