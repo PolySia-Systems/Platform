@@ -76,9 +76,9 @@ class EvidencePort:
         if self.current.open:
             orders.append(
                 _order(
-                status="LIVE",
-                matched_size=self.current.matched_size,
-                side=self.current.side,
+                    status="LIVE",
+                    matched_size=self.current.matched_size,
+                    side=self.current.side,
                 )
             )
         if self.current.additional_open_order and order_id is None:
@@ -557,3 +557,53 @@ async def test_terminal_retry_reuses_evidence_without_reads_or_mutation(tmp_path
     assert second == first
     assert mutation_calls == 1
     assert evidence.read_calls == reads_after_first
+
+
+@pytest.mark.asyncio
+async def test_incremental_fill_price_subtracts_known_baseline_notional(tmp_path: Path) -> None:
+    target = CancellationTarget(
+        ORDER_ID,
+        TOKEN_ID,
+        "BUY",
+        Decimal("3"),
+        Decimal("2"),
+        Decimal("0.84"),
+    )
+    result, _, _, _ = await _run(
+        tmp_path,
+        [
+            Observation(
+                matched_size=Decimal("4"),
+                trade_size=Decimal("4"),
+                position=Decimal("4"),
+                trade_price=Decimal("0.42"),
+            )
+        ],
+        target=target,
+        position_baseline=Decimal("2"),
+    )
+    assert result.outcome is CancellationFinalityOutcome.PARTIAL_FILL_DETECTED
+    assert result.fill_size == Decimal("2")
+    assert result.fill_price == Decimal("0.42")
+
+
+@pytest.mark.asyncio
+async def test_missing_positive_baseline_notional_never_invents_incremental_price(
+    tmp_path: Path,
+) -> None:
+    target = CancellationTarget(ORDER_ID, TOKEN_ID, "BUY", Decimal("3"), Decimal("2"))
+    result, _, _, _ = await _run(
+        tmp_path,
+        [
+            Observation(
+                matched_size=Decimal("4"),
+                trade_size=Decimal("4"),
+                position=Decimal("4"),
+                trade_price=Decimal("0.42"),
+            )
+        ],
+        target=target,
+        position_baseline=Decimal("2"),
+    )
+    assert result.outcome is CancellationFinalityOutcome.UNKNOWN
+    assert result.fill_price == 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from html import escape
 
@@ -43,6 +44,15 @@ CANONICAL_SECTIONS: tuple[str, ...] = (
     "economic_impact",
     "telemetry_health",
     "confidence",
+)
+
+SESSION_STAGES: tuple[str, ...] = (
+    "source_to_observation",
+    "account_reconciliation",
+    "decision_to_risk",
+    "submit_to_ack",
+    "submit_to_fill",
+    "submit_to_finality",
 )
 
 
@@ -125,6 +135,7 @@ def build_latency_performance_intelligence(
     health: dict[str, object] | None = None,
     economic_pairs: list[tuple[int, float]] | None = None,
     previous_deploy_sha: str | None = None,
+    session_run_id: str | None = None,
 ) -> dict[str, object]:
     policy = policy or LatencyPolicy()
     moment = now or datetime.now(UTC)
@@ -302,7 +313,190 @@ def build_latency_performance_intelligence(
         "telemetry_health": _health_view(stored_health, health, moment),
         "venue": venue.to_dict(),
     }
+    session = _financial_session_latency(
+        measurements,
+        policy=policy,
+        now=moment,
+        run_id=session_run_id,
+    )
+    if session is not None:
+        execution = _mapping(report["execution"])
+        execution["financial_session"] = session
     return report
+
+
+def financial_session_latency_view(report: dict[str, object]) -> dict[str, object]:
+    """Sanitized retained projection suitable for financial_session_view(latency=...)."""
+    observed = _mapping(_mapping(report.get("execution")).get("financial_session"))
+    return observed or {
+        "status": "UNKNOWN",
+        "stages": [],
+        "bottleneck": None,
+        "sample_count": 0,
+        "missing_count": None,
+        "censored_count": None,
+        "clock_quality": "UNKNOWN",
+        "queue_pressure": "UNKNOWN",
+        "ip_signer_capacity": "UNKNOWN",
+        "financial_event_denominator": "UNKNOWN",
+    }
+
+
+def _financial_session_latency(
+    measurements: tuple[dict[str, object], ...],
+    *,
+    policy: LatencyPolicy,
+    now: datetime,
+    run_id: str | None,
+) -> dict[str, object] | None:
+    rows = tuple(
+        row
+        for row in measurements
+        if str(row.get("kind", "")).startswith("financial_session.")
+        and (run_id is None or row.get("experiment_id") == run_id)
+    )
+    if not rows:
+        return None
+    stages = [
+        _session_stage(
+            stage,
+            tuple(row for row in rows if row["kind"] == "financial_session." + stage),
+            policy=policy,
+            now=now,
+        )
+        for stage in SESSION_STAGES
+    ]
+    observed_stages = [item for item in stages if item["record_count"]]
+    credible = [item for item in observed_stages if item["p50_ns"] is not None]
+    bottleneck = (
+        max(credible, key=lambda item: _duration(item["p50_ns"]) or 0) if credible else None
+    )
+    stamps = [stamp for row in rows if (stamp := _measurement_timestamp(row)) is not None]
+    return {
+        "version": "financial-session-latency/v1",
+        "status": "OBSERVED_RETAINED_TELEMETRY",
+        "run_id": run_id,
+        "stages": stages,
+        "bottleneck": None if bottleneck is None else bottleneck["stage"],
+        "bottleneck_basis": "largest_available_stage_p50; overlapping_stages_are_not_summed",
+        "record_count": len(rows),
+        "sample_count": sum(_duration(item["sample_count"]) or 0 for item in stages),
+        "missing_count": sum(_duration(item["missing_count"]) or 0 for item in stages),
+        "censored_count": sum(_duration(item["censored_count"]) or 0 for item in stages),
+        "error_count": sum(_duration(item["error_count"]) or 0 for item in stages),
+        "clock_quality": "SOURCE_CLOCK_UNVERIFIED_OR_INCOMPLETE"
+        if any(
+            item["clock_quality"] not in {"MONOTONIC_LOCAL", "VERIFIED_SOURCE_UTC"}
+            for item in observed_stages
+        )
+        else "OBSERVED_STAGE_CLOCKS_VALID",
+        "window_start": min(stamps).isoformat() if stamps else None,
+        "window_end": max(stamps).isoformat() if stamps else None,
+        "denominator": "retained_stage_records; not distinct orders or financial opportunities",
+        "financial_event_denominator": "UNKNOWN; use the mandatory financial journal",
+        "retention_or_load_limit_truncation": "UNKNOWN; at most 20000 measurements were loaded",
+        "queue_pressure": "UNKNOWN",
+        "ip_signer_capacity": "UNKNOWN",
+        "resource_cost": "UNKNOWN; telemetry rows do not price provider or infrastructure usage",
+        "unbound_record_count": sum(
+            not row.get("experiment_id") or not row.get("poll_run_id") for row in rows
+        ),
+    }
+
+
+def _session_stage(
+    stage: str,
+    rows: tuple[dict[str, object], ...],
+    *,
+    policy: LatencyPolicy,
+    now: datetime,
+) -> dict[str, object]:
+    counts = Counter(str(row.get("status", "UNKNOWN")) for row in rows)
+    censored = sum(count for status, count in counts.items() if status.startswith("censored"))
+    missing = sum(_duration(row.get("value_ns")) is None for row in rows)
+    unhealthy = sum("clock_unhealthy" in str(row.get("status", "")) for row in rows)
+    source_unknown = sum(
+        stage == "source_to_observation" and row.get("status") != "source_clock_verified"
+        for row in rows
+    )
+    accepted_statuses = {"ok", "error", "source_clock_quality_unknown", "source_clock_verified"}
+    samples = [
+        value
+        for row in rows
+        if (value := _duration(row.get("value_ns"))) is not None
+        and row.get("status") in accepted_statuses
+    ]
+    stamps = [stamp for row in rows if (stamp := _measurement_timestamp(row)) is not None]
+    future_stamps = sum(stamp > now for stamp in stamps)
+    identities = {
+        (
+            str(row.get("host_id", UNKNOWN)),
+            str(row.get("deploy_sha", UNKNOWN)),
+            str(row.get("configuration_version", UNKNOWN)),
+        )
+        for row in rows
+    }
+    # Do not manufacture a percentile threshold by pooling incompatible releases.
+    metrics = percentiles(
+        samples,
+        policy=policy,
+        freshness_seconds=freshness_seconds(max(stamps) if stamps else None, now=now),
+        missing_evidence=len(identities) > 1,
+        clock_unhealthy=bool(unhealthy or source_unknown or future_stamps),
+    ).to_dict()
+    quality = (
+        "UNKNOWN"
+        if not rows
+        else "CLOCK_UNHEALTHY"
+        if unhealthy or future_stamps
+        else "SOURCE_CLOCK_UNKNOWN"
+        if source_unknown
+        else "INCOMPLETE_LOCAL_DURATION"
+        if missing or censored
+        else "VERIFIED_SOURCE_UTC"
+        if stage == "source_to_observation"
+        else "MONOTONIC_LOCAL"
+    )
+    return {
+        **metrics,
+        "stage": stage,
+        "record_count": len(rows),
+        "missing_count": missing,
+        "censored_count": censored,
+        "error_count": counts["error"],
+        "source_clock_unknown_count": source_unknown,
+        "clock_unhealthy_count": unhealthy,
+        "invalid_timestamp_count": len(rows) - len(stamps),
+        "future_timestamp_count": future_stamps,
+        "clock_quality": quality,
+        "identity_segment_count": len(identities),
+        "identity_scope": "MIXED_IDENTITIES_NO_POOLED_PERCENTILES"
+        if len(identities) > 1
+        else "SINGLE_RETAINED_IDENTITY"
+        if identities
+        else "UNKNOWN",
+        "window_start": min(stamps).isoformat() if stamps else None,
+        "window_end": max(stamps).isoformat() if stamps else None,
+        "percentile_population": "uncensored_completed_durations_including_errors; counts_overlap",
+        "time_basis": "UTC_source_timestamps"
+        if stage == "source_to_observation"
+        else "monotonic_local_duration",
+    }
+
+
+def _duration(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _measurement_timestamp(row: dict[str, object]) -> datetime | None:
+    value = row.get("started_at_utc")
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+        return None if stamp.tzinfo is None else stamp.astimezone(UTC)
+    except ValueError:
+        return None
 
 
 def render_latency_report_json(report: dict[str, object]) -> str:

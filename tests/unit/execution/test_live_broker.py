@@ -71,6 +71,7 @@ class FakeLiveAdapter:
         return self.limit_order_response
 
     async def place_market_order(self, **kwargs: Any) -> dict[str, str]:
+        self.submission_events.append("market_posted")
         self.market_orders.append(kwargs)
         return {"status": "accepted"}
 
@@ -602,9 +603,7 @@ async def test_live_open_orders_connects_with_explicit_account_ack() -> None:
         "token_id": "token-1",
     }
     assert adapter.connected is True
-    assert adapter.open_order_calls == [
-        {"token_id": "token-1", "order_id": None, "market": None}
-    ]
+    assert adapter.open_order_calls == [{"token_id": "token-1", "order_id": None, "market": None}]
 
 
 @pytest.mark.asyncio
@@ -885,3 +884,99 @@ async def test_invalid_buy_sell_parameter_combinations_are_blocked() -> None:
 
     assert adapter.market_orders == []
     assert adapter.connected is False
+
+
+@pytest.mark.asyncio
+async def test_market_claim_is_after_final_refresh_and_immediately_before_adapter() -> None:
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),
+    )
+
+    async def refresh() -> VerifiedLiveRiskSnapshot:
+        adapter.submission_events.append("refresh")
+        return verified_snapshot()
+
+    await broker.place_market_order(
+        make_intent(size="2"),
+        RiskContext(),
+        i_understand_this_places_real_orders=True,
+        dry_run=False,
+        amount=Decimal("1"),
+        max_price=Decimal("0.5"),
+        refresh_verified_state=refresh,
+        before_submit=lambda: adapter.submission_events.append("durable_claim"),
+    )
+    assert adapter.submission_events == ["refresh", "refresh", "durable_claim", "market_posted"]
+
+
+@pytest.mark.asyncio
+async def test_market_claim_failure_prevents_adapter_call() -> None:
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),
+    )
+
+    def fail_claim() -> None:
+        raise OSError("mandatory financial persistence unavailable")
+
+    with pytest.raises(OSError, match="mandatory financial"):
+        await broker.place_market_order(
+            make_intent(size="2"),
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            amount=Decimal("1"),
+            max_price=Decimal("0.5"),
+            verified_state=verified_snapshot(),
+            before_submit=fail_claim,
+        )
+    assert not adapter.market_orders
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["price", "size", "expiration", "post_only"])
+async def test_session_limit_never_changes_frozen_approved_economics(mismatch: str) -> None:
+    from polysia.domain.financial_session import ApprovedSessionLimit, SessionLimitRequest
+
+    now = datetime.now(UTC)
+    expiration = int(now.timestamp()) + 600
+    adapter = FakeLiveAdapter()
+    broker = LiveBroker(
+        adapter=adapter,
+        risk_engine=live_risk_engine(),
+        settings=live_settings(),
+        allowed_token_ids=("token-1",),
+        geoblock_check=FakeGeoblockCheck(),
+        clock=lambda: now,
+    )
+    approved = ApprovedSessionLimit(
+        SessionLimitRequest(
+            "strategy-1", "token-1", "BUY", Decimal("0.5"), Decimal("2"), expiration, False
+        ),
+        "approved",
+        now,
+    )
+    intent = make_intent(
+        price="0.6" if mismatch == "price" else "0.5", size="3" if mismatch == "size" else "2"
+    )
+    with pytest.raises(LiveBrokerError, match="exactly match"):
+        await broker.place_limit_order(
+            intent,
+            RiskContext(),
+            i_understand_this_places_real_orders=True,
+            dry_run=False,
+            expiration=expiration + 1 if mismatch == "expiration" else expiration,
+            post_only=mismatch == "post_only",
+            approved_limit=approved,
+            verified_state=verified_snapshot(now=now),
+        )
+    assert not adapter.limit_orders

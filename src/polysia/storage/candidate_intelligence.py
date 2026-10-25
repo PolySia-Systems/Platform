@@ -26,6 +26,7 @@ from polysia.domain.wallet_intelligence import (
     CandidateStatus,
     CandidateWalletFeature,
     DataReadinessStatus,
+    normalize_evm_wallet,
 )
 from polysia.storage.wallet_intelligence import (
     CandidateStoreError,
@@ -267,6 +268,70 @@ class CandidateIntelligenceRepository:
             current_observations=current_observations,
         )
 
+    def link_source_snapshot(
+        self,
+        source_id: str,
+        source_snapshot_id: str,
+        *,
+        chain: str,
+        lease: CandidatePipelineLease,
+        linked_at: datetime,
+    ) -> tuple[str, ...]:
+        """Register acquired source rows in the existing canonical identity owner.
+
+        This does not run the legacy provider-score policy or select a trader.
+        It also admits sampled native discovery without inventing a score.
+        """
+        linked_at = _utc(linked_at, field_name="linked_at")
+        history = self.load_source_history(source_id, source_snapshot_id)
+        identities = tuple(
+            (observation, normalize_evm_wallet(chain, observation.external_wallet_id))
+            for observation in history.current_observations
+        )
+        if len({identity[0] for _, identity in identities}) != len(identities):
+            raise CandidateIntelligenceStoreError("Source canonical wallet identity collision.")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_live_lease(connection, lease, at=linked_at)
+            for observation, (wallet_id, normalized_chain, address) in identities:
+                _link_canonical_identity(
+                    connection,
+                    source_id=source_id,
+                    source_wallet_key=observation.wallet_key,
+                    wallet_id=wallet_id,
+                    chain=normalized_chain,
+                    normalized_address=address,
+                    first_seen_at=observation.accepted_at,
+                    last_seen_at=observation.accepted_at,
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return tuple(identity[0] for _, identity in identities)
+
+    def canonical_sources(self, source_ids: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+        """Retained source links include candidates absent from current snapshots."""
+        if not source_ids or len(source_ids) != len(set(source_ids)):
+            raise ValueError("explicit unique source identities are required")
+        for source_id in source_ids:
+            _require_identifier(source_id, field_name="source_id")
+        placeholders = ",".join("?" for _ in source_ids)
+        connection = self._connect(read_only=True)
+        try:
+            rows = connection.execute(
+                "SELECT wallet_id,source_id FROM wallet_source_links WHERE source_id IN ("
+                + placeholders
+                + ") ORDER BY wallet_id,source_id",
+                source_ids,
+            ).fetchall()
+        finally:
+            connection.close()
+        return tuple((str(row["wallet_id"]), str(row["source_id"])) for row in rows)
+
     def load_wallet_histories(
         self,
         source_id: str,
@@ -433,52 +498,16 @@ class CandidateIntelligenceRepository:
                 )
             source_id = str(run["source_id"])
             for feature in features:
-                connection.execute(
-                    "INSERT INTO canonical_wallets "
-                    "(wallet_id, chain, normalized_address, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT(wallet_id) DO UPDATE SET "
-                    "updated_at = excluded.updated_at",
-                    (
-                        feature.wallet_id,
-                        feature.chain,
-                        feature.normalized_address,
-                        _iso(feature.first_seen_at),
-                        _iso(feature.last_seen_at),
-                    ),
+                _link_canonical_identity(
+                    connection,
+                    source_id=source_id,
+                    source_wallet_key=feature.source_wallet_key,
+                    wallet_id=feature.wallet_id,
+                    chain=feature.chain,
+                    normalized_address=feature.normalized_address,
+                    first_seen_at=feature.first_seen_at,
+                    last_seen_at=feature.last_seen_at,
                 )
-                canonical = connection.execute(
-                    "SELECT chain, normalized_address FROM canonical_wallets "
-                    "WHERE wallet_id = ?",
-                    (feature.wallet_id,),
-                ).fetchone()
-                if canonical is None or (
-                    str(canonical["chain"]), str(canonical["normalized_address"])
-                ) != (feature.chain, feature.normalized_address):
-                    raise CandidateIntelligenceStoreError(
-                        "Canonical wallet identity did not reconcile."
-                    )
-                connection.execute(
-                    "INSERT INTO wallet_source_links "
-                    "(source_id, source_wallet_key, wallet_id, linked_at, last_seen_at) "
-                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT(source_id, source_wallet_key) "
-                    "DO UPDATE SET last_seen_at = excluded.last_seen_at",
-                    (
-                        source_id,
-                        feature.source_wallet_key,
-                        feature.wallet_id,
-                        _iso(feature.first_seen_at),
-                        _iso(feature.last_seen_at),
-                    ),
-                )
-                link = connection.execute(
-                    "SELECT wallet_id FROM wallet_source_links "
-                    "WHERE source_id = ? AND source_wallet_key = ?",
-                    (source_id, feature.source_wallet_key),
-                ).fetchone()
-                if link is None or str(link["wallet_id"]) != feature.wallet_id:
-                    raise CandidateIntelligenceStoreError(
-                        "Source wallet link did not reconcile."
-                    )
                 self._insert_feature(connection, run_id, feature)
             for evaluation in evaluations:
                 connection.execute(
@@ -757,6 +786,48 @@ class CandidateIntelligenceRepository:
             raise CandidateIntelligenceStoreError(
                 "Candidate Intelligence SQLite integrity check failed."
             )
+
+
+def _link_canonical_identity(
+    connection: sqlite3.Connection,
+    *,
+    source_id: str,
+    source_wallet_key: str,
+    wallet_id: str,
+    chain: str,
+    normalized_address: str,
+    first_seen_at: datetime,
+    last_seen_at: datetime,
+) -> None:
+    connection.execute(
+        "INSERT INTO canonical_wallets "
+        "(wallet_id,chain,normalized_address,created_at,updated_at) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(wallet_id) DO UPDATE SET "
+        "updated_at=MAX(canonical_wallets.updated_at,excluded.updated_at)",
+        (wallet_id, chain, normalized_address, _iso(first_seen_at), _iso(last_seen_at)),
+    )
+    canonical = connection.execute(
+        "SELECT chain,normalized_address FROM canonical_wallets WHERE wallet_id=?",
+        (wallet_id,),
+    ).fetchone()
+    if canonical is None or (canonical["chain"], canonical["normalized_address"]) != (
+        chain,
+        normalized_address,
+    ):
+        raise CandidateIntelligenceStoreError("Canonical wallet identity did not reconcile.")
+    connection.execute(
+        "INSERT INTO wallet_source_links "
+        "(source_id,source_wallet_key,wallet_id,linked_at,last_seen_at) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(source_id,source_wallet_key) DO UPDATE SET "
+        "last_seen_at=MAX(wallet_source_links.last_seen_at,excluded.last_seen_at)",
+        (source_id, source_wallet_key, wallet_id, _iso(first_seen_at), _iso(last_seen_at)),
+    )
+    linked = connection.execute(
+        "SELECT wallet_id FROM wallet_source_links WHERE source_id=? AND source_wallet_key=?",
+        (source_id, source_wallet_key),
+    ).fetchone()
+    if linked is None or linked["wallet_id"] != wallet_id:
+        raise CandidateIntelligenceStoreError("Source wallet link did not reconcile.")
 
 
 def _source_score(metrics_json: str) -> Decimal | None:

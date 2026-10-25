@@ -18,6 +18,7 @@ from polysia.adapters.polymarket.secure import (
 )
 from polysia.config.settings import AppSettings, TradingMode
 from polysia.config.structured_logging import get_logger
+from polysia.domain.financial_session import ApprovedSessionLimit
 from polysia.execution.canonical_order import (
     ApprovedOrder,
     CanonicalMarketOrderRequest,
@@ -145,6 +146,7 @@ class LiveBroker:
         order_id: str,
         i_understand_this_modifies_live_orders: bool,
         dry_run: bool = True,
+        before_cancel: Callable[[], None] | None = None,
     ) -> LiveBrokerResult:
         """Cancel one live order, defaulting to a sanitized dry-run preview."""
         self._assert_live_account_write_allowed(
@@ -164,6 +166,8 @@ class LiveBroker:
         if not self._adapter.is_connected:
             await self._adapter.connect()
 
+        if before_cancel is not None:
+            before_cancel()
         response = await self._adapter.cancel_order(order_id=order_id)
         return LiveBrokerResult(
             submitted=True,
@@ -233,6 +237,7 @@ class LiveBroker:
         builder_code: str | None = None,
         refresh_before_submit: Callable[[], Awaitable[PreparedLimitOrder]] | None = None,
         before_submit: Callable[[], None] | None = None,
+        approved_limit: ApprovedSessionLimit | None = None,
         verified_state: VerifiedLiveRiskSnapshot | None = None,
         refresh_verified_state: Callable[[], Awaitable[VerifiedLiveRiskSnapshot]] | None = None,
     ) -> LiveBrokerResult:
@@ -353,6 +358,10 @@ class LiveBroker:
                     "refreshed live state no longer matches the approved limit order"
                 )
             approved_intent = refreshed_intent
+        _assert_exact_limit_approval(
+            approved_limit, approved_intent, expiration=expiration,
+            post_only=post_only, now=self._clock(),
+        )
         if before_submit is not None:
             before_submit()
         if prepared_venue_order is not None:
@@ -393,6 +402,7 @@ class LiveBroker:
         approved: ApprovedOrder | None = None,
         verified_state: VerifiedLiveRiskSnapshot | None = None,
         refresh_verified_state: Callable[[], Awaitable[VerifiedLiveRiskSnapshot]] | None = None,
+        before_submit: Callable[[], None] | None = None,
     ) -> LiveBrokerResult:
         """Approve, preview, or submit a live market order."""
         try:
@@ -485,6 +495,8 @@ class LiveBroker:
         adapter_kwargs = bound.request.as_adapter_kwargs()
         if builder_code is not None:
             adapter_kwargs["builder_code"] = builder_code
+        if before_submit is not None:
+            before_submit()
         response = await self._adapter.place_market_order(**adapter_kwargs)
         _assert_order_response_ok(response)
         return LiveBrokerResult(
@@ -584,6 +596,7 @@ class LiveBroker:
                 live_trading_enabled=self._settings.live_trading_enabled,
                 now=self._clock(),
                 max_stale_data_age_ms=self._risk_engine.limits.max_stale_data_age_ms,
+                edge=context.edge,
             )
         except (LiveStateUnavailableError, LiveStateStaleError) as error:
             raise LiveBrokerError(str(error)) from error
@@ -650,6 +663,21 @@ class LiveBroker:
             "polymarket_live_dry_run",
             request=request,
         )
+
+
+def _assert_exact_limit_approval(
+    approved: ApprovedSessionLimit | None, actual: ApprovedOrderIntent, *,
+    expiration: int | None, post_only: bool, now: datetime,
+) -> None:
+    if approved is None:
+        return
+    frozen = approved.request
+    if ((actual.strategy_id, actual.token_id, actual.side, actual.price, actual.approved_size,
+         expiration, post_only) != (frozen.strategy_id, frozen.token_id, frozen.side, frozen.price,
+                                  frozen.shares, frozen.expiration, frozen.post_only)):
+        raise LiveBrokerError("limit request does not exactly match the Risk-approved request")
+    if expiration is None or expiration <= int(now.timestamp()):
+        raise LiveBrokerError("Risk-approved limit request expired before submit")
 
 
 def _assert_order_response_ok(response: Any) -> None:
