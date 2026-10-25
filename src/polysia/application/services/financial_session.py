@@ -545,11 +545,32 @@ class FinancialSessionCoordinator:
                 ):
                     raise SessionBlocked("daily_loss_limit")
                 token = opportunity.event.instrument.token
+                pending_quantities = self._pending_buy_quantities(state)
+                position_tokens = set(ledger.positions) | set(pending_quantities)
                 if (
-                    token not in ledger.positions
-                    and len(ledger.positions) >= self.authority.max_positions
+                    token not in position_tokens
+                    and len(position_tokens) >= self.authority.max_positions
                 ):
                     raise SessionBlocked("position_concurrency_limit")
+                if (
+                    ledger.get(token).size + pending_quantities.get(token, ZERO) + shares
+                    > self.risk.limits.max_position_per_token
+                ):
+                    raise SessionBlocked("risk_reserved_token_quantity_limit")
+                market_tokens = {
+                    item.token
+                    for item in self.authority.instruments
+                    if item.market == opportunity.event.instrument.market
+                }
+                market_bound = sum(
+                    (
+                        ledger.get(item).size + pending_quantities.get(item, ZERO)
+                        for item in market_tokens
+                    ),
+                    ZERO,
+                )
+                if market_bound + shares > self.risk.limits.max_position_per_market:
+                    raise SessionBlocked("risk_reserved_market_quantity_limit")
                 for field, limit in (
                     ("market", self.authority.max_market_exposure),
                     ("wallet", self.authority.max_wallet_exposure),
@@ -606,6 +627,21 @@ class FinancialSessionCoordinator:
             state["decisions"][identity]["eligible"] = True
 
         self.journal.mutate("ATTEMPT_AND_RESERVATION", {"intent_id": identity}, update)
+
+    @staticmethod
+    def _pending_buy_quantities(state: dict[str, Any]) -> dict[str, Decimal]:
+        pending: dict[str, Decimal] = {}
+        confirmed: dict[str, Decimal] = {}
+        for fill in state["fills"]:
+            key = fill["intent_id"]
+            confirmed[key] = confirmed.get(key, ZERO) + Decimal(fill["shares"])
+        for identity, row in state["orders"].items():
+            if row["state"] in TERMINAL or row["side"] != "BUY":
+                continue
+            remainder = max(ZERO, Decimal(row["shares"]) - confirmed.get(identity, ZERO))
+            if remainder:
+                pending[row["token"]] = pending.get(row["token"], ZERO) + remainder
+        return pending
 
     @staticmethod
     def _position_opened_at(state: dict[str, Any], token: str) -> datetime | None:

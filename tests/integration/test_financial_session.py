@@ -1180,3 +1180,75 @@ async def test_two_source_cohort_to_independent_risk_entry_exit_and_human_view(
         assert address not in str(selection.to_console_dict()) + str(view)
     finally:
         allowed.journal.close()
+
+
+async def test_pending_buy_on_another_token_consumes_position_slot(tmp_path: Path) -> None:
+    second_scope = replace(SCOPE, token="token-B", market="market-B")
+    local = Harness(tmp_path, authorization(instruments=(SCOPE, second_scope)))
+    try:
+        await local.coordinator.submit(opportunity())
+        other = opportunity(occurrence="other-token")
+        other = replace(other, event=replace(other.event, instrument=second_scope))
+        with pytest.raises(SessionBlocked, match="position_concurrency_limit"):
+            await local.coordinator.submit(other)
+        assert len(local.execution.submissions) == 1
+        assert local.journal.read()["attempts"] == 1
+    finally:
+        local.journal.close()
+
+
+async def test_pending_buy_shares_consume_independent_risk_token_limit(h: Harness) -> None:
+    h.risk = RiskEngine(limits=replace(h.risk.limits, max_position_per_token=D("3")))
+    h.coordinator.risk = h.risk
+    await h.coordinator.submit(opportunity())
+    with pytest.raises(SessionBlocked, match="risk_reserved_token_quantity_limit"):
+        await h.coordinator.submit(opportunity(occurrence="second"))
+    assert len(h.execution.submissions) == 1
+
+
+async def test_pending_buy_shares_consume_independent_risk_market_limit(tmp_path: Path) -> None:
+    second_scope = replace(SCOPE, token="token-B")
+    local = Harness(tmp_path, authorization(instruments=(SCOPE, second_scope), max_positions=2))
+    try:
+        local.risk = RiskEngine(limits=replace(local.risk.limits, max_position_per_market=D("3")))
+        local.coordinator.risk = local.risk
+        await local.coordinator.submit(opportunity())
+        other = opportunity(occurrence="same-market-other-token")
+        other = replace(other, event=replace(other.event, instrument=second_scope))
+        with pytest.raises(SessionBlocked, match="risk_reserved_market_quantity_limit"):
+            await local.coordinator.submit(other)
+        assert len(local.execution.submissions) == 1
+    finally:
+        local.journal.close()
+
+
+async def test_partial_fill_reduces_pending_quantity_without_double_count(h: Harness) -> None:
+    h.risk = RiskEngine(limits=replace(h.risk.limits, max_position_per_token=D("4")))
+    h.coordinator.risk = h.risk
+    first = await h.coordinator.submit(opportunity())
+    h.fill(first, size="1", terminal=False)
+    await h.coordinator.submit(opportunity(occurrence="second"))
+    assert len(h.execution.submissions) == 2
+
+
+async def test_pending_sells_do_not_free_future_buy_quantity(tmp_path: Path) -> None:
+    local = Harness(tmp_path, authorization(max_concurrent_orders=3))
+    try:
+        local.risk = RiskEngine(limits=replace(local.risk.limits, max_position_per_token=D("4")))
+        local.coordinator.risk = local.risk
+        first = await local.coordinator.submit(opportunity())
+        local.fill(first)
+        await local.coordinator.submit(opportunity(occurrence="pending-buy"))
+        await local.coordinator.submit(opportunity(occurrence="pending-sell", side="SELL"))
+        with pytest.raises(SessionBlocked, match="risk_reserved_token_quantity_limit"):
+            await local.coordinator.submit(opportunity(occurrence="new-entry"))
+        assert len(local.execution.submissions) == 3
+    finally:
+        local.journal.close()
+
+
+def test_single_cash_ledger_never_aggregates_different_collateral_assets() -> None:
+    with pytest.raises(SessionBlocked, match="requires_one_collateral"):
+        authorization(
+            instruments=(SCOPE, replace(SCOPE, token="another", collateral="other-asset"))
+        )

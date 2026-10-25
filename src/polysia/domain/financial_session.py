@@ -133,6 +133,8 @@ class SessionAuthorization:
             raise SessionBlocked("empty_authorized_scope")
         if len({item.token for item in self.instruments}) != len(self.instruments):
             raise SessionBlocked("ambiguous_token_mapping")
+        if len({item.collateral for item in self.instruments}) != 1:
+            raise SessionBlocked("single_cash_ledger_requires_one_collateral")
         for value in (
             self.max_order_all_in,
             self.max_open_exposure,

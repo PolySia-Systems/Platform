@@ -37,6 +37,11 @@ remain available to their original consumers; spend/max-price is not treated
 as a maximum share quantity for the new session. Confirmed evidence that cannot
 replay safely, including a SELL overfill, is retained in a private quarantine;
 entries drain and economics remain UNKNOWN until explicit reconciliation.
+Held and remaining pending BUY quantities share the independent Risk token and
+market limits and consume position slots atomically. Confirmed partial fills
+reduce the pending remainder; pending SELLs do not free future BUY capacity.
+This single-cash-ledger slice refuses envelopes spanning different collateral
+assets rather than adding incomparable amounts.
 
 Cancellation of a partial order passes the remaining quantity and matched
 baseline to the existing finality gate. Incremental fill-price calculation
