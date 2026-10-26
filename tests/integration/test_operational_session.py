@@ -391,14 +391,36 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         ),
     )
     stop = threading.Event()
+    checkpoint_requested = threading.Event()
+    checkpoint_checked = threading.Event()
     errors = []
 
     def supervise():
-        while not stop.wait(0.005):
+        while checkpoint_requested.wait():
+            checkpoint_requested.clear()
+            if stop.is_set():
+                return
             try:
                 supervisor.inspect()
             except Exception as error:
                 errors.append(type(error).__name__)
+            finally:
+                checkpoint_checked.set()
+
+    def await_supervisor(seconds: float) -> None:
+        # Frozen fixture time needs an inspection for a new checkpoint, not
+        # 200 redundant durable health writes/second. Schedule the actual owner
+        # at the real publisher wait boundary; retain its original ACK deadline.
+        checkpoint_checked.clear()
+        checkpoint_requested.set()
+        checkpoint_checked.wait(seconds)
+
+    from functools import partial
+
+    import polysia.adapters.polymarket.session_composition as composition
+
+    monkeypatch.setattr(composition, "CheckpointPublisher",
+                        partial(CheckpointPublisher, wait=await_supervisor))
 
     thread = threading.Thread(target=supervise, daemon=True)
     thread.start()
@@ -490,7 +512,9 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         if session is not None:
             await session.close()
         stop.set()
+        checkpoint_requested.set()
         thread.join(timeout=3)
+        assert not thread.is_alive()
     assert not errors
 
 
