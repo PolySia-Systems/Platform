@@ -552,3 +552,26 @@ def test_sdk_route_scope_denies_unreviewed_v3_namespace_and_contract(tmp_path):
         require_sdk_scope(replace(config, exchange="0x" + "3" * 40), auth.instruments)
     with pytest.raises(SessionBlocked, match="scope_mismatch"):
         require_sdk_scope(config, (replace(auth.instruments[0], token="101"),))
+
+
+def test_frozen_input_hash_and_parser_share_one_snapshot(tmp_path, monkeypatch):
+    import polysia.deployment.financial_session_runtime as runtime
+
+    path = tmp_path / "bound.json"
+    original = b'{"bound":"original"}'
+    path.write_bytes(original)
+    reader = runtime.read_publication_bytes
+    reads = []
+
+    def rotate_after_read(target, *, maximum_bytes):
+        raw = reader(target, maximum_bytes=maximum_bytes)
+        reads.append(target)
+        target.write_bytes(b'{"bound":"unreviewed replacement"}')
+        return raw
+
+    monkeypatch.setattr(runtime, "read_publication_bytes", rotate_after_read)
+    expected = hashlib.sha256(original).hexdigest()
+    assert runtime.read_bound_json(path, expected) == {"bound": "original"}
+    assert reads == [path]
+    with pytest.raises(SessionBlocked, match="frozen_retained_input_changed"):
+        runtime.read_bound_json(path, expected)

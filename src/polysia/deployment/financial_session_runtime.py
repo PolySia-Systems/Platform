@@ -33,6 +33,7 @@ from polysia.domain.financial_session import (
 )
 from polysia.risk.limits import RiskLimits
 from polysia.security.session_authority import SessionCustody, SessionReceiptVerifier
+from polysia.storage.atomic_files import read_publication_bytes
 from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.financial_session import FinancialSessionJournal
 
@@ -218,14 +219,12 @@ def capacity_workload(config: SessionRuntimeConfig) -> str:
 
 
 def validate_capacity_record(config: SessionRuntimeConfig, *, now: datetime) -> dict[str, Any]:
-    path = config.capacity_evidence_path
-    if (
-        path.is_symlink()
-        or path.stat().st_size > 100_000
-        or hashlib.sha256(path.read_bytes()).hexdigest() != config.capacity_evidence_digest
-    ):
-        raise SessionBlocked("capacity_qualification_evidence_changed")
-    record = read_small_json(path)
+    record = read_bound_json(
+        config.capacity_evidence_path,
+        config.capacity_evidence_digest,
+        maximum_bytes=100_000,
+        reason="capacity_qualification_evidence_changed",
+    )
     if (
         record.get("version") != "financial-session-capacity/v1"
         or record.get("workload_digest") != capacity_workload(config)
@@ -382,3 +381,19 @@ def read_small_json(path: Path) -> Any:
     if path.is_symlink() or path.stat().st_size > 4_000_000:
         raise SessionBlocked("retained_input_outside_bound")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_bound_json(
+    path: Path,
+    expected_sha256: str,
+    *,
+    maximum_bytes: int = 4_000_000,
+    reason: str = "frozen_retained_input_changed",
+) -> Any:
+    """Hash and interpret the same bounded snapshot, including during rotation."""
+    if path.is_symlink():
+        raise SessionBlocked(reason)
+    raw = read_publication_bytes(path, maximum_bytes=maximum_bytes)
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise SessionBlocked(reason)
+    return json.loads(raw)

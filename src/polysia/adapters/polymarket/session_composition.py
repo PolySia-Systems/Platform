@@ -8,7 +8,6 @@ credential derivation, approvals, redemption, transfers or fallback account.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import shutil
@@ -62,6 +61,7 @@ from polysia.control.service import ControlService
 from polysia.deployment.financial_session_runtime import (
     SessionRuntimeConfig,
     publish_redacted,
+    read_bound_json,
     validate_capacity_record,
 )
 from polysia.deployment.session_supervision import CheckpointPublisher
@@ -858,21 +858,15 @@ async def create_live_session(
         raise SessionBlocked("composed_SDK_contract_requires_reviewed_0_13_0")
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
     require_sdk_scope(config, authority.instruments)
-    for path, expected in (
-        (config.cohort_path, config.cohort_file_digest),
-        (config.follower_samples_path, config.follower_samples_file_digest),
-    ):
-        if (
-            path.is_symlink()
-            or path.stat().st_size > 4_000_000
-            or hashlib.sha256(path.read_bytes()).hexdigest() != expected
-        ):
-            raise SessionBlocked("frozen_retained_input_changed")
-    selection = SharedCohortSelection.from_dict(json.loads(config.cohort_path.read_bytes()))
+    selection = SharedCohortSelection.from_dict(
+        read_bound_json(config.cohort_path, config.cohort_file_digest)
+    )
     selection.require_integrity()
     if frozenset(selection.selected_wallet_ids) != authority.wallets:
         raise SessionBlocked("authority_cohort_mismatch")
-    sample_payload = json.loads(config.follower_samples_path.read_bytes())
+    sample_payload = read_bound_json(
+        config.follower_samples_path, config.follower_samples_file_digest
+    )
     samples = TypeAdapter(tuple[FollowerSample, ...]).validate_python(
         sample_payload.get("samples") if isinstance(sample_payload, dict) else sample_payload,
         extra="forbid",
