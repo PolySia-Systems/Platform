@@ -115,15 +115,16 @@ class ScriptedJsonTransport:
                 reason="lab-injected-outage",
             )
         if self.rows_by_call is None:
-            return []
+            return {"data": [], "pagination": {"has_more": False, "next_cursor": None}}
         index = min(self.calls - 1, len(self.rows_by_call) - 1)
         rows = list(self.rows_by_call[index])
-        if self.v2_pages and path == "/v2/trades":
+        if path == "/v2/trades":
             requested_wallet = str(params.get("user", "")).casefold()
             rows = [
                 row for row in rows
                 if str(row.get("proxyWallet", "")).casefold() == requested_wallet
             ]
+        if self.v2_pages and path == "/v2/trades":
             midpoint = len(rows) // 2
             cursor = params.get("cursor")
             page = rows[midpoint:] if cursor == "lab-page-2" else rows[:midpoint]
@@ -134,7 +135,7 @@ class ScriptedJsonTransport:
                     "next_cursor": "lab-page-2" if cursor is None else None,
                 },
             }
-        return rows
+        return {"data": rows, "pagination": {"has_more": False, "next_cursor": None}}
 
 
 class ScriptedMarketStream:
@@ -306,7 +307,7 @@ def _collector(
     aliases = dict(aliases) if aliases is not None else _aliases()
     wallet = DataApiWalletPollSource(
         REST_TRADES_CANDIDATE,
-        path="/trades",
+        path="/v2/trades",
         source_id=TRADES_SOURCE_ID,
         aliases=aliases,
         transport=transport,
@@ -618,7 +619,7 @@ def lab_source_factory(
     async def factory(**_kwargs: object) -> tuple[tuple[Any, ...], dict[str, object]]:
         wallet = DataApiWalletPollSource(
             REST_TRADES_CANDIDATE,
-            path="/v2/trades" if v2_pages else "/trades",
+            path="/v2/trades",
             source_id=TRADES_SOURCE_ID,
             aliases=aliases,
             transport=transport,
