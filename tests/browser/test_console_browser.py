@@ -254,7 +254,7 @@ def console_fixture(tmp_path: Path) -> Any:
             verify=verifier,
             commands=commands,
             csrf_secret=b"test-fixture-only" * 3,
-            scoped_targets=frozenset({"fixture-lab", "fixture-session:stop"}),
+            scoped_targets=frozenset({"fixture-lab", "fixture-session:stop", "fixture-run:stop"}),
         )
     )
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

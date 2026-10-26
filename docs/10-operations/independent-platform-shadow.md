@@ -265,6 +265,84 @@ visible when total equity is UNKNOWN. Zero simulations is no measurable result.
 
 ## Console, STOP and failed dependencies
 
+### Human Console H1 engineering preview and recovery
+
+CURRENT engineering on the Human Console migration branch exposes `/h1` through
+the same authenticated gateway. `/` retains the existing presentation during
+H1. This seam is removed only after H2 parity; neither route is a claim of new
+deployment or operational authorization. [ADR-0024](../04-architecture/adrs/ADR-0024-human-console-contract-and-static-build.md)
+owns the build, contract and retirement decision. No host changes are needed to
+run synthetic tests.
+
+Overview distinguishes configured/recorded mode, dataset, redacted account
+fingerprint, unknown venue/environment, component validity and independent
+supervision. Recorded RUNNING can coexist with an independent STOP observation;
+the blocker prioritizes STOP without rewriting the retained financial history.
+Money remains exact strings. Exposure is held cost plus reservations, not market
+value. The new account field is a stable one-way fingerprint of the existing
+binding, never the private account binding itself.
+
+The H1 operation catalog exposes existing registered financial STOP/drain and
+bounded Shadow drain/finalize requests. Acquisition STOP remains explicitly
+linked to its retained Console route. Financial STOP can leave exposure and stop
+automatic exits; drain blocks new entries while protective work stays with its
+owner. Resume/close/cancel and authority issuance are unavailable in H1.
+
+On response loss, retain the displayed request identity and choose **Recover
+exact receipt**. Phase REQUESTED/CLAIMED/APPLIED/FAILED/BLOCKED and observed effect
+are separate. FAILED with UNKNOWN is unresolved: inspect the protected owner and
+reconcile; do not infer that nothing happened. Only an absent exact receipt,
+unchanged authenticated context and still-valid original preview permit the
+explicit **Resend identical request** button with the original key/payload.
+There is no automatic resend or replay after login. Reload recovery uses **Your
+durable command receipts** and exact authenticated lookup, beyond recent history.
+Reader/actor and current target policy still limit disclosure. Missing identity
+or store availability requires the protected CLI/supervisor path; an optional
+analytical panel cannot authorize or block a valid backend protective STOP.
+
+Build/verify in the pinned development environment:
+
+```bash
+python scripts/console_contract.py --check
+python scripts/console_fixture.py --check
+npm ci --ignore-scripts --prefix frontend
+npm test --prefix frontend
+npm run build --prefix frontend
+npm run verify --prefix frontend
+python -m build
+```
+
+After intentionally editing the Python contract, run
+`python scripts/console_contract.py` and `python scripts/console_fixture.py`
+before rebuilding. Check in the generated bundle as one unit. Hatch rejects
+stale/missing manifests and verifies both wheel and sdist-to-wheel. Runtime
+installation never invokes npm. The manifest source identity, embedded HTML
+identity and authenticated API identity must agree. Asset hashes are part of
+the financial package binding: do not hot-replace UI or reuse previous run
+approval/digests after release changes.
+
+Synthetic installed browser acceptance uses `POLYSIA_BROWSER_TESTS=1` and
+`POLYSIA_REQUIRE_WHEEL=1`, with `python -m pytest -q tests/browser -o pythonpath=`
+after installing the built wheel. It uses temporary HTTPS keys, real financial
+projection, gateway, command store and supervisor STOP owner, with no real
+provider/account. `output/playwright/h1-*.png` and `h1-footprint.json` are CI
+artifacts. The footprint uses 10,000 synthetic wallets/200 orders, >=100 paint
+samples and 1,000 fully settled refreshes across 25h of accelerated browser time;
+it is not an operational soak. Screen-reader and human acceptance remain pending.
+
+H2 resumes from the focused draft PR. Exact source owners are
+`frontend/src/App.tsx`, `client.ts`, `validation.ts`, `messages.ts` and CSS;
+`monitoring/console_contract.py`, `console_gateway.py`, `console_projection.py`,
+`console_bundle.py`, `financial_session.py`; `storage/console_commands.py`;
+`frontend/build.mjs`, `hatch_build.py` and CI/classifier tests. Complete the
+ADR's parity ledger, then remove `monitoring/console_assets/{index.html,
+console.js,console.css,demo.json}` and temporary route names only after verified
+consumer parity. Retain protected exports, backend/CLI owners and historical
+records. The PR's exact commit, bundle manifest source/files hashes and CI wheel
+identity are the immutable resume inputs; do not substitute an older release.
+
+### Existing protected access and operator route
+
 `system console --config WEB_JSON` binds loopback only. Deployment requires a
 verified Cloudflare Access issuer/audience, explicit owner role map, protected CSRF
 secret, owner-only Access policy and a dedicated Tunnel to loopback port 8765.

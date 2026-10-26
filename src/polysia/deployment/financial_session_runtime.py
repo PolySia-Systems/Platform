@@ -175,7 +175,8 @@ def package_tree_digest(root: Path | None = None) -> str:
     root = root or Path(__file__).parents[1]
     hasher = hashlib.sha256()
     for path in sorted(root.rglob("*")):
-        if path.is_file() and path.suffix in {".py", ".sql", ".html", ".js", ".css"}:
+        if path.is_file() and (path.suffix in {".py", ".sql", ".html", ".js", ".css"}
+                               or "human_console_assets" in path.parts):
             hasher.update(path.relative_to(root).as_posix().encode())
             hasher.update(hashlib.sha256(path.read_bytes()).digest())
     return hasher.hexdigest()

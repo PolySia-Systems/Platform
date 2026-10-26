@@ -1,0 +1,91 @@
+{
+  "actions": [],
+  "api": "console/v1",
+  "atomic": false,
+  "blocker": "Independent STOP is observed. Preserve STOP and reconcile remaining exposure through the protected operator route.",
+  "components": [
+    {
+      "generation": "2d57c9c0db11ae1fda3ba7d436578093042ab1bc2ce1fcde764167b50eda3a13",
+      "name": "publication",
+      "observed_at": "2026-10-26T00:00:00+00:00",
+      "reason": "independently_dated_evidence",
+      "scope": {
+        "account": "1c868c63e61f1351499eb1d97fd8d78d4c47bead687b38ea2af4180f6a8eeefe",
+        "run": "fixture-run",
+        "venue": null
+      },
+      "state": "AVAILABLE",
+      "valid_until": "2026-10-26T00:01:00+00:00"
+    },
+    {
+      "generation": "2d57c9c0db11ae1fda3ba7d436578093042ab1bc2ce1fcde764167b50eda3a13",
+      "name": "financial",
+      "observed_at": "2026-10-26T00:00:00+00:00",
+      "reason": "independently_dated_evidence",
+      "scope": {
+        "account": "1c868c63e61f1351499eb1d97fd8d78d4c47bead687b38ea2af4180f6a8eeefe",
+        "run": "fixture-run",
+        "venue": null
+      },
+      "state": "AVAILABLE",
+      "valid_until": "2026-10-26T00:00:30+00:00"
+    },
+    {
+      "generation": null,
+      "name": "supervision",
+      "observed_at": "2026-10-26T00:00:00+00:00",
+      "reason": "independently_dated_evidence",
+      "scope": {
+        "account": null,
+        "run": "fixture-run",
+        "venue": null
+      },
+      "state": "AVAILABLE",
+      "valid_until": "2026-10-26T00:00:15+00:00"
+    }
+  ],
+  "context": {
+    "configured_mode": "PAPER",
+    "dataset": "SYNTHETIC",
+    "environment": "UNKNOWN",
+    "generation": "2d57c9c0db11ae1fda3ba7d436578093042ab1bc2ce1fcde764167b50eda3a13",
+    "observed_mode": "PAPER",
+    "provenance": "console-producer-fixture/v1",
+    "scope": {
+      "account": "1c868c63e61f1351499eb1d97fd8d78d4c47bead687b38ea2af4180f6a8eeefe",
+      "run": "fixture-run",
+      "venue": null
+    }
+  },
+  "financial": {
+    "authority": "WITHIN_WINDOW",
+    "authority_until": "2026-10-26T00:05:00+00:00",
+    "cash": {
+      "meaning": "Reconciled cash",
+      "unit": "collateral-v2",
+      "value": "100"
+    },
+    "economics": "NO_FINANCIAL_OBSERVATIONS",
+    "exposure": {
+      "meaning": "Held cost plus pending reservations; not market value",
+      "unit": "collateral-v2",
+      "value": "1.010"
+    },
+    "positions": 0,
+    "reconciliation": "MATCHED",
+    "reserved": {
+      "meaning": "Pending order reservation",
+      "unit": "collateral-v2",
+      "value": "1.010"
+    },
+    "status": "RUNNING",
+    "unknown_orders": 0
+  },
+  "release": "0.4.0",
+  "server_time": "2026-10-26T00:00:00+00:00",
+  "supervision": {
+    "next_action": "Inspect protected supervisor / CLI; Console cannot grant or restore financial authority.",
+    "reason": "synthetic_protective_stop",
+    "status": "STOPPED"
+  }
+}

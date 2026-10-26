@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from polysia.application.services.financial_session import TERMINAL, session_ledger
 from polysia.config.settings import TradingMode
-from polysia.domain.financial_session import SessionAuthorization, utc
+from polysia.domain.financial_session import SessionAuthorization, digest, utc
 from polysia.portfolio.pnl import calculate_portfolio_pnl
 
 ZERO = Decimal("0")
@@ -92,6 +92,15 @@ def financial_session_view(
     return {
         "version": "financial-session-view/v1",
         "as_of": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=authority.max_evidence_age_seconds)).isoformat(),
+        "identity": {
+            "run": authority.run_id,
+            "account": digest(("console-account/v1", authority.binding.account)),
+            "venue": None,
+            "currency": authority.instruments[0].collateral,
+            "configured_mode": trading_mode.value,
+            "environment": "UNKNOWN",
+        },
         "scope": "bounded session library; publication does not activate execution",
         "activation": "NOT_COMMISSIONED",
         "trading_mode": trading_mode.value,
@@ -136,6 +145,8 @@ def financial_session_view(
                 "order_id": row["order_id"],
                 "state": row["state"],
                 "side": row["side"],
+                "shares": row.get("shares"),
+                "price": row.get("price"),
                 "token": row["token"],
                 "updated_at": max(row.get("timeline", {}).values(), key=datetime.fromisoformat)
                 if row.get("timeline")

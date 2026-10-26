@@ -11,3 +11,8 @@
 !locks/requirements-runtime-py314.txt
 !src/
 !src/**
+!hatch_build.py
+!frontend/
+!frontend/**
+frontend/node_modules/
+frontend/.build/

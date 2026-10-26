@@ -150,9 +150,8 @@ function sessionView() {
   orderTimeline();
 }
 async function loadOnce() {
-  const signal = AbortSignal.timeout(10000);
-  await loadScopedControls(signal);
-  try { const commandResponse = IS_DEMO ? null : await fetch("/api/commands", {signal, cache:"no-store", credentials:"same-origin"});
+  await loadScopedControls(AbortSignal.timeout(10000));
+  try { const commandResponse = IS_DEMO ? null : await fetch("/api/commands", {signal:AbortSignal.timeout(10000), cache:"no-store", credentials:"same-origin"});
     if (IS_DEMO) { text("receipt", "Demo is read-only. Commands use retained evidence only."); }
     else {
     if (!commandResponse.ok) throw new Error("Command receipt service unavailable.");
@@ -176,12 +175,14 @@ async function loadOnce() {
     } } }
   catch { text("receipt", "Command receipt service unavailable; inspect the protected recovery route."); }
   try {
-    const response = await fetch(IS_DEMO ? "/api/demo" : "/api/report", {signal, cache:"no-store", credentials:"same-origin"});
+    const response = await fetch(IS_DEMO ? "/api/demo" : "/api/report", {signal:AbortSignal.timeout(10000), cache:"no-store", credentials:"same-origin"});
     if (!response.ok) throw new Error(`Publication unavailable (${response.status})`);
     publication = await response.json();
+    const recordedMode = publication.financial_session?.trading_mode;
+    text("recorded-mode", IS_DEMO ? "Synthetic demo · no execution" : `Recorded mode: ${["DATA_ONLY", "PAPER", "LIVE"].includes(recordedMode) ? recordedMode : "UNKNOWN"} · publication is not permission`);
     reportFailure = null;
     try { if (!IS_DEMO) {
-      const healthResponse = await fetch("/api/health", {signal, cache:"no-store", credentials:"same-origin"});
+      const healthResponse = await fetch("/api/health", {signal:AbortSignal.timeout(10000), cache:"no-store", credentials:"same-origin"});
       if (!healthResponse.ok) throw new Error("Publisher health unavailable; inspect retained receipts.");
       const health = await healthResponse.json();
       publisherFailure = health.status === "FAILED"
@@ -225,6 +226,7 @@ async function loadOnce() {
     if (!Object.keys(publication).length) { sessionView(); wallets(); }
   }
   freshness();
+  await loadSupervision(AbortSignal.timeout(4000));
 }
 document.getElementById("wallet-filter").addEventListener("input", () => { walletPage = 0; text("wallet-detail", ""); wallets(); });
 document.getElementById("wallet-previous").addEventListener("click", () => { walletPage--; wallets(); });
@@ -335,7 +337,8 @@ async function loadSupervision(signal) {
     const response = await fetch("/api/supervision", {signal, cache:"no-store", credentials:"same-origin"});
     if (!response.ok) throw new Error("Independent supervision UNKNOWN");
     const value = await response.json();
-    const current = Date.parse(value.expires_at) > Date.now();
+    const current = Date.parse(value.expires_at) > Date.now()
+      && value.scope === publication.financial_session?.identity?.run;
     text("independent-supervision", `Independent supervision: ${current ? value.status : "EXPIRED"}. ${readable(value.reason)}. ${readable(value.next_action)}. This observation takes precedence over a retained worker view.`);
     if (publication.version === "operational-session-publication/v1" && (!current || value.status !== "SUPERVISED")) text("session-status", `Financial actions BLOCKED by independent supervision: ${current ? value.status : "EXPIRED"}. Retained order and economics evidence remains below.`);
   } catch { text("independent-supervision", "Independent supervision UNKNOWN; financial readiness is not established by a retained publication.");

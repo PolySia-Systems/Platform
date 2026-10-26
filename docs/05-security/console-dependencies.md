@@ -1,5 +1,48 @@
 # Console dependency decision
 
+## Human Console H1 static frontend, 2026-10-27
+
+The scoped owner activation selects React/React DOM 19.3.1, Mantine core/hooks
+9.7.4, TypeScript 7.0.2 and Vite 8.3.5. Node 24.22.1/npm 11.19.1 and one npm
+lockfile pin development builds; production has no Node process or asset fetch.
+Registry peer/engine metadata and the current official React, Vite and Mantine
+documentation were checked before selection. Strict TypeScript and a generated
+Python-owned schema provide checked boundary types; no runtime framework or
+Python dependency was added.
+
+Rolldown 1.2.15 (MIT), already Vite's locked bundler, is also declared as an
+exact direct development dependency because the final-byte recipe uses its
+published AST parser. The recipe escapes whitespace in ordinary template
+literals without changing their runtime string values; tagged raw templates
+fail for explicit review. This preserves the existing whitespace gate rather
+than exempting generated assets. Its semantic regression tests run in Node.
+
+Need: compose context, modal/focus, investigation and command recovery lifetimes
+without maintaining more handwritten DOM state. Alternatives are continued
+vanilla JavaScript or another component library; the retained Mantine proof
+passes the actual Python CSP, portal/focus and RTL tests, so a second library
+prototype is unnecessary. All direct packages above are maintained upstream
+and MIT licensed. The build ships production transitive license notices, npm
+audit fails on low-or-higher advisories, and CI generates a CycloneDX JS SBOM.
+These join existing Python audit/SBOM gates; no Standards profile is expanded.
+
+`react-remove-scroll-bar@2.3.8` declares MIT but omits LICENSE in its npm tarball
+and at its published gitHead. The retained notice in `frontend/licenses/` comes
+from the maintainer's official
+[license blob](https://github.com/theKashey/react-remove-scroll-bar/blob/7c08c3990396ecefd90f99ff5d9a34f26f5b5616/LICENSE),
+reviewed on this date; it is not claimed as a file from the historical tarball.
+Other notices come directly from locked installed packages, including both
+type-fest licenses. Build-input and shipped-byte hashes cover these notices.
+
+Security/maintenance cost: JavaScript dependencies require advisory and upstream
+pin review; React renders untrusted text without HTML insertion. Static CSP
+retains self-only scripts, no eval and a narrowly scoped style nonce. No CDN,
+service worker, financial browser persistence, telemetry or automatic mutation
+retry is introduced. Wheel/sdist/container and installed browser checks verify
+the exact shipped assets. Rollback restores a complete retained release and
+keeps STOP and financial custody; it never swaps UI bytes within a bound run.
+See [ADR-0024](../04-architecture/adrs/ADR-0024-human-console-contract-and-static-build.md).
+
 Date: 2026-10-16. Scope: protected Platform Console only.
 
 ## Optional local HTTPS gateway

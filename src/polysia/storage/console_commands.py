@@ -41,6 +41,8 @@ class ConsoleCommandStore:
                     idempotency TEXT PRIMARY KEY,digest TEXT NOT NULL,preview TEXT NOT NULL,
                     target TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,
                     result TEXT,UNIQUE(target,revision));
+                CREATE TABLE IF NOT EXISTS console_preview_bindings(
+                    preview_id TEXT PRIMARY KEY,context TEXT NOT NULL,identity TEXT NOT NULL);
             """)
             columns = {row[1] for row in connection.execute("PRAGMA table_info(commands)")}
             for name in ("parameters", "result"):
@@ -312,3 +314,62 @@ class ConsoleCommandStore:
             return [dict(row) for row in connection.execute(
                 "SELECT idempotency,target,revision,status,result FROM scoped_commands "
                 "ORDER BY rowid DESC LIMIT 100")]
+
+    def bind_console_preview(self, preview_id: str, *, context: str, identity: str) -> None:
+        with closing(sqlite3.connect(self._path)) as connection, connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO console_preview_bindings VALUES(?,?,?)",
+                (preview_id, context, identity),
+            )
+
+    def console_preview(self, preview_id: str, *, context: str, identity: str) -> dict[str, Any]:
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection:
+            row = connection.execute(
+                "SELECT p.preview FROM scoped_previews p JOIN console_preview_bindings b "
+                "ON b.preview_id=p.identity WHERE b.preview_id=? AND b.context=? AND b.identity=?",
+                (preview_id, context, identity),
+            ).fetchone()
+        if row is None:
+            raise ValueError("console_preview_binding_differs")
+        return json.loads(row[0])
+
+    def console_receipts(
+        self,
+        *,
+        subject: str,
+        targets: frozenset[str],
+        key: str | None = None,
+        before: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Exact recovery and bounded history, scoped to current actor and target policy."""
+        if not targets:
+            return []
+        if not 1 <= limit <= 100 or (
+            key is not None and re.fullmatch(r"[a-zA-Z0-9-]{16,80}", key) is None
+        ):
+            raise ValueError("invalid_receipt_query")
+        conditions = [
+            "json_extract(preview,'$.actor')=?",
+            "target IN (" + ",".join("?" for _ in targets) + ")",
+        ]
+        values: list[Any] = [subject, *sorted(targets)]
+        if key is not None:
+            conditions.append("idempotency=?")
+            values.append(key)
+        if before is not None:
+            if before < 1:
+                raise ValueError("invalid_history_cursor")
+            conditions.append("rowid<?")
+            values.append(before)
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection:
+            connection.row_factory = sqlite3.Row
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT rowid,idempotency,preview,target,revision,status,result "
+                    "FROM scoped_commands "
+                    "WHERE " + " AND ".join(conditions) + " ORDER BY rowid DESC LIMIT ?",
+                    (*values, limit),
+                )
+            ]
