@@ -36,7 +36,7 @@ export const m = {
   uncertain: 'Response lost. Execution may have occurred. Recover the exact receipt before any retry.',
   notFound: 'No durable receipt found. The same request may be resent only while its original preview and identity remain valid.',
   unresolved: 'Effect unresolved. FAILED does not prove non-execution. Reconcile with the protected owner.',
-  requested: 'Request recorded. Inspect the durable receipt for the owner’s observed effect.',
+  requested: 'Request acceptance and the owner’s observed effect are separate. Inspect a durable receipt for the outcome.',
   key: 'Request identity', receiptKey: 'Exact request identity', lookup: 'Look up receipt',
   readOnly: 'Reader access', valid: 'Identity valid', renew: 'Refresh identity',
   source: 'Source evidence', financial: 'Financial evidence', supervision: 'Supervision evidence',
