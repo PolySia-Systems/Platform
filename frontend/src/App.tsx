@@ -61,7 +61,8 @@ export default function App() {
   const invalidate = useCallback(() => {
     epoch.current += 1; setPreview(null);
     // An ambiguous request identity stays visible for exact recovery, never replayed.
-    setCommandState(previous => previous === 'sending' || previous === 'uncertain' ? 'uncertain' : 'idle');
+    setCommandState(previous => previous === 'sending' ? 'uncertain'
+      : previous === 'uncertain' || previous === 'absent' ? previous : 'idle');
   }, []);
   const identityFailure = useCallback(() => {
     authEpoch.current += 1;

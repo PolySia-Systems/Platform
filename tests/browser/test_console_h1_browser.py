@@ -153,6 +153,45 @@ def test_h1_lost_apply_response_exact_recovery_and_no_duplicate_effect(h1_fixtur
         browser.close()
 
 
+def test_h1_absent_receipt_stays_pinned_across_context_and_visibility_change(h1_fixture):
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, commands, _, _, _, _ = h1_fixture
+    with sync_playwright() as runtime:
+        browser = launch(runtime)
+        context = context_for(browser, origin, token)
+        page = context.new_page()
+        page.goto(origin + "/h1")
+        page.get_by_role("button", name="Operate", exact=True).first.click()
+        page.locator("#operation").select_option("session.stop|fixture-run:stop")
+        page.get_by_role("button", name="Preview operation").click()
+        expect(page.get_by_role("dialog")).to_be_visible()
+        keys = []
+
+        def no_dispatch(route):
+            keys.append(route.request.post_data_json["idempotency_key"])
+            route.abort("timedout")
+
+        page.route("**" + PREFIX + "/apply", no_dispatch)
+        page.get_by_role("button", name="Request exact operation").click()
+        page.get_by_role("button", name="Recover exact receipt").click()
+        expect(page.get_by_role("button", name="Resend identical request")).to_be_visible()
+        page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow'))")
+        expect(page.get_by_role("button", name="Preview operation")).to_be_disabled()
+        expect(page.locator("#operation")).to_be_disabled()
+        expect(page.get_by_role("button", name="Recover exact receipt")).to_be_visible()
+        expect(page.get_by_role("button", name="Resend identical request")).not_to_be_visible()
+        expect(page.get_by_text(keys[0], exact=True)).to_be_visible()
+        assert len(keys) == 1
+        assert (
+            commands.pending_scoped(
+                targets=frozenset({"fixture-run:stop"}), operations=frozenset({"session.stop"})
+            )
+            == []
+        )
+        browser.close()
+
+
 def test_h1_rtl_zoom_keyboard_error_expiry_and_late_preview(h1_fixture):
     from playwright.sync_api import expect, sync_playwright
 

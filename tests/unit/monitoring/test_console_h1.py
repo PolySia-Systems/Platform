@@ -137,7 +137,9 @@ def test_actual_producer_scope_mode_supervision_and_exact_amounts(tmp_path):
     assert data["components"][-1]["reason"] == "supervision_scope_mismatch"
 
 
-@pytest.mark.parametrize("mutation", ["missing", "expired", "bad_status", "future"])
+@pytest.mark.parametrize(
+    "mutation", ["missing", "expired", "bad_status", "malformed_status", "future"]
+)
 def test_supervision_is_independently_invalidated(tmp_path, mutation):
     app, _, _ = setup(tmp_path)
     path = tmp_path / "supervisor-status.json"
@@ -149,6 +151,8 @@ def test_supervision_is_independently_invalidated(tmp_path, mutation):
             raw["expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         if mutation == "bad_status":
             raw["status"] = "MAYBE_READY"
+        if mutation == "malformed_status":
+            raw["status"] = []
         if mutation == "future":
             raw["observed_at"] = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         path.write_text(json.dumps(raw))
@@ -328,6 +332,7 @@ def test_bundle_custody_traversal_missing_changed_and_financial_binding(tmp_path
         ("cash", "NaN"),
         ("cash", 1.01),
         ("configured_mode", "UNSAFE"),
+        ("configured_mode", "LIVE"),
         ("scope", "missing"),
     ],
 )
@@ -347,6 +352,23 @@ def test_malformed_safety_contract_never_becomes_ready(tmp_path, field, value):
     path.write_text(json.dumps(raw))
     snapshot = call(app, PREFIX + "/snapshot")[2]
     assert not all(c["state"] == "AVAILABLE" for c in snapshot["components"])
+
+
+@pytest.mark.parametrize("mode", ["DATA_ONLY", "PAPER", "LIVE"])
+def test_valid_recorded_and_configured_modes_survive_the_actual_gateway(tmp_path, mode):
+    app, _, _ = setup(tmp_path)
+    path = tmp_path / "publication.json"
+    raw = json.loads(path.read_text())
+    raw["financial_session"]["identity"]["configured_mode"] = mode
+    raw["financial_session"]["trading_mode"] = mode
+    path.write_text(json.dumps(raw))
+    status, _, snapshot = call(app, PREFIX + "/snapshot")
+    assert status == "200 OK"
+    assert snapshot["context"]["configured_mode"] == snapshot["context"]["observed_mode"] == mode
+    assert (
+        next(c for c in snapshot["components"] if c["name"] == "financial")["state"] == "AVAILABLE"
+    )
+    assert app._commands.scoped_status() == []
 
 
 def test_expired_csrf_preview_session_payload_key_and_context_recheck(tmp_path, monkeypatch):
