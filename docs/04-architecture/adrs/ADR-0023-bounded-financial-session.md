@@ -1,8 +1,8 @@
 # ADR-0023: Bounded continuous financial session
 
 - Date: 2026-10-25
-- Status: Proposed; engineering implementation is authorized, continuous Live
-  composition and operational approval are pending an explicit owner decision.
+- Status: Proposed; engineering implementation is authorized, default-disabled composition is implemented under review in PR #230;
+  operational acceptance and commissioning remain pending an explicit owner decision.
 - Scope: Python modular monolith; one account and one active host.
 - Related: [ADR-0016](ADR-0016-verified-live-state-approved-order.md),
   [ADR-0021](ADR-0021-independent-platform-shadow.md),
@@ -17,11 +17,13 @@ position accounting are reused. A market-order claim hook now has the same
 placement as the existing limit-order hook: after final reapproval, immediately
 before adapter submission. No existing experiment cap or CLI has been widened.
 
-CURRENT engineering library: a source-neutral session coordinator, authority
-carrier, private SQLite journal and redacted publication projection work with
-deterministic accounts, including the existing LiveBroker bridge. This does not
-establish an operationally commissioned continuous Live service. No production
-composition root, authority issuer, account access or activation is created.
+CURRENT engineering: the source-neutral coordinator, private SQLite journal,
+LiveBroker bridge and redacted Console are connected by a default-disabled
+composition. It includes actual SDK signing/transport, account/chain readers,
+public source corroboration, retained qualification, receipt verification,
+independent STOP/checkpoint supervision and isolated backup verification. Tests
+replace network/clock and use generated keys and temporary stores. No issuer,
+real account access, deployment or activation has been performed.
 
 ## Proposed operational decision
 
@@ -106,3 +108,58 @@ checkpoint custody, exact account reader/occurrence completeness, commissioned
 supervisor and host eligibility, measured numeric budgets, and a separately
 approved run envelope remain prerequisites to continuous Live operation.
 Engineering tests and a draft PR do not approve those actions.
+
+
+## E2 implementation boundary and trust assumptions
+
+`polysia ops session run` returns a disabled result in DATA_ONLY/PAPER before
+constructing Live collaborators. The Live branch lazily composes the actual
+adapter only after receipt, frozen identity and current custody verification.
+The SDK route is restricted to standard CTF Exchange V2 and an EOA account.
+The prepared EIP-712 signature is recovered against the authorized exchange;
+amounts, token, side, expiry, post-only and identity must equal the exact Risk
+request. Hidden SDK rounding, builder routes and V3 namespace routing reject.
+
+Pure immutable CopyPolicy is shared with ContinuousShadow. Leader/policy
+allocations are a projection within the existing financial owner, not a second
+ledger or generalized allocator. Timer/price exits use separate immutable
+position triggers. Confirmed non-fill cash recognition extends PositionLedger;
+no redemption/transfer method is exposed. Shadow Lab uses the existing lifecycle
+and stores, common acquisition authority and isolated virtual capital.
+
+Custody and STOP are separate from the financial journal/witness. A financial
+commit precedes atomic checkpoint publication; independent supervision verifies
+the exact attached-database checkpoint plus backup/liveness/disk evidence and
+retains ACK. The worker waits for that exact ACK before continuing. Failure after
+a financial commit fences later writes; it cannot undo an external effect or
+reconstruct authority. A bounded publication gap retains the old proof without
+refreshing health. Cold recovery requires exact independently held proof;
+restored stale authority, two writers and missing proof block.
+
+Fresh provisioning begins with commissioning STOP. Its release is atomic against
+checkpoint/revocation/current healthy evidence and cannot clear later explicit
+or supervision STOP. A healthy ACK never clears STOP. Restrictive emergency STOP
+and revocation remain local privileged actions; no automatic financial resume
+exists. The Console may request only a scoped STOP; APPLIED follows retained
+custody effect, not acceptance into its queue.
+
+This is a software boundary, not protection against an administrator restoring
+or modifying every trusted file. Commissioning must install OS identities/ACLs:
+worker writes its journal and outbox; supervisor alone owns independent custody,
+STOP and ACK; research/web lack signer and financial-store access; receipt issuer
+private keys remain outside these processes. Read/write access to custody must
+be granted narrowly for the implemented methods under a reviewed deployment
+boundary. Python file modes alone do not enforce Windows ACLs. Local same-volume
+SQLite atomicity, fsync/rename behavior, exclusive locks and bounded free disk
+are required. Backups verify isolated financial+witness copies without restoring
+active witness/custody; failure-domain separation, offsite retention/encryption
+and an owner-approved active recovery remain commissioning prerequisites.
+
+Actual HTTP invocation accounting is durable before transport, including pages,
+eligibility and SDK calls. An interrupted request keeps its full bound and
+unknown result. Queue rejection is distinguished from transport invocation.
+Bounded bytes/timeouts/no retry/redirect/compression are software constraints;
+physical egress, provider billing and unrelated processes require conservative
+shared or disjoint host allocations. Optional telemetry/publication has bounded
+resources and cannot bless financial readiness. Capacity probes and synthetic
+benchmarks do not establish MaximumVerified capacity.

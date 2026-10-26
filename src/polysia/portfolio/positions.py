@@ -66,17 +66,46 @@ class PositionLedger:
             return self._apply_sell(fill)
         raise ValueError(f"unsupported fill side {fill.side!r}")
 
+    def observe_redemption(
+        self, removed: tuple[tuple[str, Decimal], ...], confirmed_cash: Decimal, *, at: datetime
+    ) -> None:
+        """Recognize actual confirmed cash and removed inventory, never a permission.
+
+        Resolution by itself must not call this method. It is distinct from the
+        historical synthetic settle_resolution simulation contract.
+        """
+        cost = ZERO
+        for token, shares in removed:
+            current = self.get(token)
+            if not ZERO < shares <= current.size:
+                raise ValueError("redemption exceeds known holdings")
+            cost += shares * current.avg_price
+        if not confirmed_cash.is_finite() or confirmed_cash < ZERO:
+            raise ValueError("confirmed cash must be nonnegative")
+        for token, shares in removed:
+            current = self.get(token)
+            if shares == current.size:
+                self.positions.pop(token)
+            else:
+                self.positions[token] = Position(token, current.size - shares, current.avg_price)
+        self.cash += confirmed_cash
+        realized = confirmed_cash - cost
+        self.realized_pnl += realized
+        day = _utc_day(at)
+        self.daily_realized_pnl[day] = self.daily_realized_pnl.get(day, ZERO) + realized
+        self.last_event_at = at.astimezone(UTC)
+
     def _apply_buy(self, fill: PaperFill) -> Position:
         current = self.get(fill.token_id)
         new_size = current.size + fill.size
         if new_size <= ZERO:
             raise ValueError("buy fill produced non-positive position size")
         day = _utc_day(fill.created_at)
-        new_avg_price = ((current.avg_price * current.size) + (fill.price * fill.size)) / new_size
+        new_avg_price = ((current.avg_price * current.size) + fill.notional) / new_size
         self.fees += fill.fee
         self.daily_fees[day] = self.daily_fees.get(day, ZERO) + fill.fee
         self.last_event_at = fill.created_at.astimezone(UTC)
-        self.cash -= fill.price * fill.size + fill.fee
+        self.cash -= fill.notional + fill.fee
         updated = Position(token_id=fill.token_id, size=new_size, avg_price=new_avg_price)
         self.positions[fill.token_id] = updated
         return updated
@@ -86,10 +115,10 @@ class PositionLedger:
         if fill.size > current.size:
             raise ValueError("sell fill exceeds current position")
         day = _utc_day(fill.created_at)
-        realized = (fill.price - current.avg_price) * fill.size
+        realized = fill.notional - current.avg_price * fill.size
         self.fees += fill.fee
         self.daily_fees[day] = self.daily_fees.get(day, ZERO) + fill.fee
-        self.cash += fill.price * fill.size - fill.fee
+        self.cash += fill.notional - fill.fee
         self.realized_pnl += realized
         self.daily_realized_pnl[day] = self.daily_realized_pnl.get(day, ZERO) + realized
         self.last_event_at = fill.created_at.astimezone(UTC)

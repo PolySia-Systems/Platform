@@ -49,7 +49,8 @@ def financial_session_view(
         else {}
     )
     pnl = calculate_portfolio_pnl(ledger, marks)
-    quarantined = bool(state.get("quarantined_fills") or state.get("quarantined_finality"))
+    quarantined = bool(state.get("quarantined_fills") or state.get("quarantined_finality")
+                       or state.get("quarantined_cash_events"))
     decisions = state["decisions"]
     counts = discovery_counts or {}
     reasons = Counter(row["reason"] for row in decisions.values() if row["reason"])

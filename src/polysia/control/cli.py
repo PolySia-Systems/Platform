@@ -2,20 +2,26 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from pydantic import ValidationError
 
+from polysia.control.local_identity import local_scope
 from polysia.control.models import (
     ControlApplyCommand,
     ControlPlanCommand,
     OperationalState,
     StrategyControlKey,
 )
+from polysia.control.scoped_operations import Operation
 from polysia.control.service import ControlError, ControlService
 from polysia.control.shadow_runtime import STALE_PRICE_SHADOW_TARGET, ShadowIntentBoundary
+from polysia.domain.financial_session import canonical_json
+from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.control import ControlRepository
 from polysia.storage.db import SQLiteDatabase
 
@@ -166,3 +172,36 @@ def _fail(error: Exception) -> None:
 
 
 __all__ = ["control_app"]
+
+
+@control_app.command("scoped-preview")
+def scoped_preview(
+    operation: Operation,
+    target: str,
+    database: Annotated[Path, typer.Option(exists=True)],
+    registry: Annotated[Path, typer.Option(exists=True)],
+    arguments: str = "{}",
+) -> None:
+    actor, role, targets = local_scope(registry)
+    fields = json.loads(arguments)
+    if not isinstance(fields, dict):
+        raise typer.BadParameter("operation arguments must be an object")
+    preview = ControlService.preview_scoped(ConsoleCommandStore(database), operation=operation,
+        target=target, actor=actor, role=role, allowed_targets=targets, now=datetime.now(UTC),
+        arguments=tuple(sorted(fields.items())))
+    typer.echo(canonical_json({**asdict(preview), "preview_id": preview.fingerprint}))
+
+
+@control_app.command("scoped-apply")
+def scoped_apply(
+    preview_id: str,
+    expected_revision: int,
+    idempotency_key: str,
+    database: Annotated[Path, typer.Option(exists=True)],
+    registry: Annotated[Path, typer.Option(exists=True)],
+) -> None:
+    actor, role, targets = local_scope(registry)
+    receipt = ConsoleCommandStore(database).submit_scoped(subject=actor, role=role,
+        preview_id=preview_id, expected_revision=expected_revision, idempotency_key=idempotency_key,
+        now=datetime.now(UTC), allowed_targets=targets)
+    typer.echo(canonical_json(receipt))

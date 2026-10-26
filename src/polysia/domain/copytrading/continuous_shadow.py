@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
+from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.copytrading.models import LeaderTradeAction
 from polysia.domain.copytrading.wallet_capacity import require_software_count
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
@@ -90,6 +91,7 @@ class ContinuousShadowConfig:
     selection_observed_at: datetime | None = None
     selection_preflight_digest: str | None = None
     capacity_evidence: dict[str, object] | None = None
+    copy_policy: CopyPolicy | None = None
 
     def __post_init__(self) -> None:
         decimal_values = (
@@ -234,6 +236,8 @@ class ContinuousShadowConfig:
         for value in (self.policy_version, self.cost_model_version, self.bankroll_version):
             if not value.strip():
                 raise ValueError("continuous Shadow versions must not be empty")
+        if self.copy_policy is not None and self.policy_version != self.copy_policy.version:
+            raise ValueError("CopyPolicy version must match the frozen Shadow policy version")
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -292,6 +296,12 @@ class ContinuousShadowConfig:
                 "selection_preflight_digest": self.selection_preflight_digest,
                 "capacity_evidence": self.capacity_evidence,
             })
+        if self.copy_policy is not None:
+            import json
+            from dataclasses import asdict
+
+            from polysia.domain.financial_session import canonical_json
+            payload["copy_policy"] = json.loads(canonical_json(asdict(self.copy_policy)))
         return payload
 
     def capacity_workload(self) -> dict[str, object]:

@@ -343,3 +343,32 @@ item. CODEOWNERS remains optional owner GitHub configuration.
 The default PyPI advisory endpoint remains unavailable through the workstation
 proxy. OSV provided the successful strict audit result; future release evidence
 should record the selected advisory service and timestamp.
+
+
+## E2 direct runtime imports (2026-10-26)
+
+The disabled session composition now directly declares three packages already
+present at exactly the same versions in both canonical locks. No resolved
+package or version is added or upgraded: `cryptography==50.0.2` (Apache-2.0 OR
+BSD-3-Clause), `eth-account==0.13.7` (MIT), and `httpx==0.28.1` (BSD-3-Clause).
+License expressions are from the installed distributions' metadata. These are
+maintained within the existing complete dependency lifecycle/advisory closure;
+this statement does not claim latest-version or advisory-free status.
+
+Cryptography supplies explicit Ed25519 receipt verification. Reusing JWT actor
+labels or an editable grant would not verify this canonical owner envelope; a
+new PKI service is unnecessary. Eth-account verifies the actual prepared EIP-712
+EOA signature against the authorized exchange. Trusting an unsigned SDK object
+would omit that boundary; implementing Ethereum signing independently would add
+avoidable cryptographic code. HTTPX provides a bounded streaming transport for
+all existing SDK/RPC clients, including request admission and retained evidence.
+An unwrapped SDK transport would escape the financial request/byte owner.
+
+Security-sensitive reachability is restricted to the new disabled composition
+and separately gated account qualification. Tests use generated keys and HTTP
+fakes; no real credentials are read. The exact existing versions remain pinned
+and the Standards import mapping records their direct ownership. Regenerate
+locks through `scripts/dependency_locks.py`; never hand-edit rows. Removing the
+new composition and its direct declarations reverts this reachability; preserve
+financial state, witness, consumed receipt custody and STOP. Existing SDK/PyJWT
+transitive requirements remain and are not removed as part of rollback.

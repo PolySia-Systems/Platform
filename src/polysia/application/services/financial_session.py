@@ -16,10 +16,14 @@ from polysia.application.ports.financial_session import (
     SessionExecutionPort,
 )
 from polysia.config.settings import TradingMode
+from polysia.domain.copytrading.copy_policy import CopyPolicy
+from polysia.domain.copytrading.financial_allocation import allocation_key, allocations
 from polysia.domain.financial_session import (
     AccountObservation,
     ApprovedSessionLimit,
     ConfirmedSessionFill,
+    ObservedRedemption,
+    PositionTrigger,
     RuntimeBinding,
     SessionAuthorization,
     SessionBlocked,
@@ -58,19 +62,23 @@ TERMINAL = {"REJECTED", "CANCELLED", "FINALIZED"}
 def session_ledger(state: dict[str, Any]) -> PositionLedger:
     """Replay confirmed fills through the existing Decimal accounting owner."""
     ledger = PositionLedger(cash=Decimal(state["opening"]["cash"]))
-    for row in state["fills"]:
-        ledger.apply_fill(
-            PaperFill(
-                fill_id=row["fill_id"],
-                order_id=row["order_id"],
-                token_id=row["token"],
-                side=row["side"],
-                price=Decimal(row["price"]),
-                size=Decimal(row["shares"]),
-                fee=Decimal(row["fee"]),
-                created_at=datetime.fromisoformat(row["confirmed_at"]),
-            )
-        )
+    events = [(datetime.fromisoformat(row["confirmed_at"]), "fill", row)
+              for row in state["fills"]]
+    events += [(datetime.fromisoformat(row["occurred_at"]), "redemption", row)
+               for row in state.get("cash_events", [])]
+    for _, kind, row in sorted(events, key=lambda event: (
+        event[0], tuple(event[2].get("chain_order") or (-1, -1)))):
+        if kind == "redemption":
+            ledger.observe_redemption(
+                tuple((token, Decimal(quantity)) for token, quantity in row["removed"]),
+                Decimal(row["confirmed_cash"]), at=datetime.fromisoformat(row["occurred_at"]))
+        else:
+            ledger.apply_fill(PaperFill(
+                fill_id=row["fill_id"], order_id=row["order_id"], token_id=row["token"],
+                side=row["side"], price=Decimal(row["price"]), size=Decimal(row["shares"]),
+                fee=Decimal(row["fee"]), created_at=datetime.fromisoformat(row["confirmed_at"]),
+                gross_notional=None if row.get("gross_notional") is None
+                    else Decimal(row["gross_notional"])))
     return ledger
 
 
@@ -86,6 +94,8 @@ class FinancialSessionCoordinator:
         monotonic: Callable[[], int] = monotonic_ns,
         trading_mode: TradingMode = TradingMode.DATA_ONLY,
         telemetry: LatencyRecorder | None = None,
+        independent_guard: Callable[[], None] | None = None,
+        copy_policy: CopyPolicy | None = None,
     ) -> None:
         self.journal, self.execution, self.risk = journal, execution, risk
         self.binding, self.clock, self.monotonic = binding, clock, monotonic
@@ -94,6 +104,10 @@ class FinancialSessionCoordinator:
         self._supervision_tick: int | None = None
         self.latency = SessionLatency(telemetry, clock=clock, monotonic=monotonic)
         self._submitted_ticks: dict[str, int] = {}
+        self.independent_guard = independent_guard
+        if copy_policy is not None and copy_policy.fingerprint != binding.policy:
+            raise SessionBlocked("active_copy_policy_binding_mismatch")
+        self.copy_policy = copy_policy
 
     @property
     def authority(self) -> SessionAuthorization:
@@ -122,6 +136,8 @@ class FinancialSessionCoordinator:
 
         def update(state: dict[str, Any]) -> None:
             if mode is SessionMode.RUNNING:
+                if state.get("entry_stop_latched"):
+                    raise SessionBlocked("entry_stop_latched_new_authority_required")
                 self.authority.assert_action(self.binding, self.clock(), "ENTRY")
                 self._supervised(state)
                 if not state["reconciliation_ok"] or state["incidents"]:
@@ -129,6 +145,17 @@ class FinancialSessionCoordinator:
             state["mode"] = mode.value
 
         self.journal.mutate("MODE", {"mode": mode.value}, update)
+
+    def drain_entries(self, *, receipt: str) -> None:
+        """A scoped operator request cannot be undone by worker restart."""
+        if not receipt:
+            raise SessionBlocked("drain_receipt_required")
+
+        def update(state: dict[str, Any]) -> None:
+            state["entry_stop_latched"] = receipt
+            state["mode"] = SessionMode.DRAIN.value
+
+        self.journal.mutate("OPERATOR_DRAIN", {"receipt": receipt}, update)
 
     def _supervised(self, state: dict[str, Any]) -> None:
         now = utc(self.clock())
@@ -170,6 +197,50 @@ class FinancialSessionCoordinator:
 
         self.journal.mutate("ACCOUNT_RECONCILIATION", asdict(observation), update)
         return matched
+
+    def observe_redemption(self, event: ObservedRedemption, account: AccountObservation) -> None:
+        """Trusted adapter recognition; this method has no venue-mutation port."""
+        account.require_complete(self.binding.account, now=self.clock(),
+                                 max_age=self.authority.max_evidence_age_seconds)
+        if (event.account != self.binding.account or event.collateral not in {
+            item.collateral for item in self.authority.instruments
+        } or event.occurred_at > self.clock()):
+            raise SessionBlocked("redemption_account_or_collateral_mismatch")
+
+        def update(state: dict[str, Any]) -> None:
+            events = state.setdefault("cash_events", [])
+            encoded = json_safe(asdict(event))
+            known = next((item for item in events if item["event_id"] == event.event_id), None)
+            if known is not None:
+                if known != encoded:
+                    raise SessionBlocked("conflicting_redemption_observation")
+                return
+            # This bounded slice cannot infer same-block interleaving with open
+            # orders. Keep such evidence quarantined for assessed reconciliation.
+            unresolved = any(row["state"] not in TERMINAL for row in state["orders"].values())
+            last_fill = max((datetime.fromisoformat(row["confirmed_at"]) for row in state["fills"]),
+                            default=self.authority.starts_at)
+            if unresolved or event.occurred_at <= last_fill:
+                state.setdefault("quarantined_cash_events", []).append(encoded)
+                state["mode"], state["reconciliation_ok"] = "DRAIN", False
+                state["incidents"].append({"reason": "redemption_ordering_or_finality_unknown"})
+                return
+            ledger = session_ledger(state)
+            try:
+                ledger.observe_redemption(event.removed, event.confirmed_cash, at=event.occurred_at)
+            except ValueError:
+                state.setdefault("quarantined_cash_events", []).append(encoded)
+                state["mode"], state["reconciliation_ok"] = "DRAIN", False
+                state["incidents"].append({"reason": "redemption_inventory_unknown"})
+                return
+            events.append(encoded)
+            state["allocations"] = self.allocation_view(state)
+            state["last_account"] = asdict(account)
+            state["reconciliation_ok"] = self._account_matches(state, account)
+            if not state["reconciliation_ok"]:
+                state["mode"] = "DRAIN"
+                state["incidents"].append({"reason": "redemption_account_mismatch"})
+        self.journal.mutate("OBSERVED_REDEMPTION", asdict(event), update)
 
     def record_valuation(
         self,
@@ -228,6 +299,7 @@ class FinancialSessionCoordinator:
             not unknown
             and not state["quarantined_fills"]
             and not state["quarantined_finality"]
+            and not state.get("quarantined_cash_events")
             and ledger.cash == observation.cash
             and expected_positions == actual_positions
             and expected_open == observation.open_order_ids
@@ -250,15 +322,25 @@ class FinancialSessionCoordinator:
             reserve = 0 if protective else self.authority.protective_request_reserve
             if state["requests"] + charge.requests > self.authority.max_requests - reserve:
                 raise SessionBlocked("request_budget_exhausted")
-            if state["response_bytes"] + charge.response_bytes > self.authority.max_response_bytes:
+            byte_reserve = 0 if protective else self.authority.protective_byte_reserve
+            cost_reserve = ZERO if protective else self.authority.protective_cost_reserve
+            if state["response_bytes"] + charge.response_bytes > (
+                self.authority.max_response_bytes - byte_reserve
+            ):
                 raise SessionBlocked("response_budget_exhausted")
-            if Decimal(state["source_cost"]) + charge.source_cost > self.authority.max_source_cost:
+            if Decimal(state["source_cost"]) + charge.source_cost > (
+                self.authority.max_source_cost - cost_reserve
+            ):
                 raise SessionBlocked("source_cost_budget_exhausted")
             state["requests"] += charge.requests
+            state["resource_class"] = "PROTECTIVE" if protective else "ENTRY"
             state["response_bytes"] += charge.response_bytes
             state["source_cost"] = str(Decimal(state["source_cost"]) + charge.source_cost)
 
         self.journal.mutate("REQUEST_RESERVED", {"action": action, **asdict(charge)}, update)
+        register = getattr(self.execution, "register_bound", None)
+        if register is not None:
+            register(action, charge)
 
     async def _snapshot(self, opportunity: SessionOpportunity) -> VerifiedLiveRiskSnapshot:
         self._charge("ACCOUNT", protective=opportunity.event.side != "BUY")
@@ -449,8 +531,13 @@ class FinancialSessionCoordinator:
             if duplicate:
                 original = state["decisions"][identity]["evidence"]["event"]
                 conflict = any(
-                    original[field] != provenance[field] for field in ("side", "instrument")
+                    original.get(field) != provenance.get(field)
+                    for field in ("side", "instrument", "occurred_at", "leader_price")
                 )
+                if original.get("source") == provenance.get("source") == "polygon-finalized-rpc":
+                    conflict = conflict or original.get("source_key") != provenance.get(
+                        "source_key"
+                    )
                 if (
                     original["finalized"] is True
                     and provenance["finalized"] is False
@@ -494,6 +581,8 @@ class FinancialSessionCoordinator:
         self.journal.mutate("DECISION_PHASE", {"intent_id": identity, **values}, update)
 
     def _guard(self, state: dict[str, Any], action: str) -> None:
+        if self.independent_guard is not None:
+            self.independent_guard()
         self.authority.assert_action(self.binding, self.clock(), action)
         if self.risk.kill_switch.is_active() or state["mode"] == "STOP":
             raise SessionBlocked("STOP_or_kill_switch")
@@ -516,16 +605,21 @@ class FinancialSessionCoordinator:
             self._guard(state, action)
             ledger = session_ledger(state)
             active = [o for o in state["orders"].values() if o["state"] not in TERMINAL]
-            if identity in state["orders"] or state["attempts"] >= self.authority.max_attempts:
+            entry = action == "ENTRY"
+            attempt_reserve = self.authority.protective_attempt_reserve if entry else 0
+            order_reserve = self.authority.protective_order_reserve if entry else 0
+            if (identity in state["orders"] or state["attempts"] >=
+                    self.authority.max_attempts - attempt_reserve):
                 raise SessionBlocked("duplicate_or_attempt_budget_exhausted")
-            if len(active) >= self.authority.max_concurrent_orders:
+            if len(active) >= self.authority.max_concurrent_orders - order_reserve:
                 raise SessionBlocked("concurrent_order_limit")
             shares = approved.request.shares
             notional = shares * opportunity.price
             all_in = notional * (1 + self.authority.fee_rate)
             if all_in > self.authority.max_order_all_in:
                 raise SessionBlocked("all_in_order_limit")
-            if Decimal(state["turnover"]) + all_in > self.authority.max_turnover:
+            turnover_reserve = self.authority.protective_turnover_reserve if entry else ZERO
+            if Decimal(state["turnover"]) + all_in > self.authority.max_turnover - turnover_reserve:
                 raise SessionBlocked("turnover_limit")
             if action == "ENTRY":
                 reserved = sum((Decimal(o["reservation"]) for o in active), ZERO)
@@ -586,7 +680,37 @@ class FinancialSessionCoordinator:
                     if held + used + all_in > limit:
                         raise SessionBlocked(field + "_concentration_limit")
             else:
-                if opportunity.exit_trigger == "MAX_HOLDING":
+                owned = self.allocation_view(state)
+                policy = opportunity.policy_digest or self.binding.policy
+                allocation = owned.get(allocation_key(
+                    self.binding.account, opportunity.event.instrument.token,
+                    opportunity.event.wallet, policy,
+                ))
+                if allocation is None or shares + allocation["pending_sell"] > (
+                    allocation["quantity"]
+                ):
+                    raise SessionBlocked("exit_exceeds_leader_policy_allocation")
+                if self.copy_policy is not None:
+                    trigger, permitted = self.copy_policy.exit_decision(
+                        held=allocation["quantity"], reserved_sell=allocation["pending_sell"],
+                        cost_basis=allocation["cost_basis"], bid=opportunity.price,
+                        exit_fee_per_share=opportunity.cost_per_share or ZERO,
+                        entry_fees=allocation["fees"],
+                        opened_at=datetime.fromisoformat(allocation["opened_at"]), now=self.clock(),
+                        leader_before=opportunity.leader_position_before,
+                        leader_reduction=opportunity.leader_reduced_shares,
+                        share_quantum=self.copy_policy.quantity_quantum)
+                    if trigger != opportunity.exit_trigger or shares > permitted:
+                        raise SessionBlocked("exit_not_due_under_frozen_copy_policy")
+                    event = opportunity.event
+                    if isinstance(event, PositionTrigger) and (
+                        event.position_id != digest((allocation["account"], allocation["token"],
+                            allocation["wallet"], allocation["opened_at"]))
+                        or event.position_revision != digest((allocation["quantity"],
+                                                             allocation["cost_basis"]))
+                    ):
+                        raise SessionBlocked("position_trigger_revision_changed")
+                elif opportunity.exit_trigger == "MAX_HOLDING":
                     opened_at = self._position_opened_at(state, opportunity.event.instrument.token)
                     if (
                         opened_at is None
@@ -611,6 +735,7 @@ class FinancialSessionCoordinator:
                 "token": opportunity.event.instrument.token,
                 "market": opportunity.event.instrument.market,
                 "wallet": opportunity.event.wallet,
+                "policy_digest": opportunity.policy_digest or self.binding.policy,
                 "shares": str(shares),
                 "price": str(opportunity.price),
                 "reservation": str(all_in if action == "ENTRY" else ZERO),
@@ -661,10 +786,21 @@ class FinancialSessionCoordinator:
     def _attributed_cost(
         state: dict[str, Any], ledger: PositionLedger, field: str, key: str
     ) -> Decimal:
-        tokens = {
-            o["token"] for o in state["orders"].values() if o[field] == key and o["side"] == "BUY"
-        }
+        owned = allocations(state, account=state["authorization"]["binding"]["account"],
+                            aggregate={token: (position.size, position.size * position.avg_price)
+                                       for token, position in ledger.positions.items()})
+        if field == "wallet":
+            return sum((row["cost_basis"] for row in owned.values() if row["wallet"] == key), ZERO)
+        tokens = {o["token"] for o in state["orders"].values() if o[field] == key}
         return sum((ledger.get(t).size * ledger.get(t).avg_price for t in tokens), ZERO)
+
+    def allocation_view(self, state: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+        state = self.journal.read() if state is None else state
+        ledger = session_ledger(state)
+        return allocations(state, account=self.binding.account, aggregate={
+            token: (position.size, position.size * position.avg_price)
+            for token, position in ledger.positions.items()
+        })
 
     def _transition(
         self,
@@ -764,6 +900,12 @@ class FinancialSessionCoordinator:
             # ACK never finalizes or releases a reservation. The existing
             # cancellation finality gate supplies subsequent read-only evidence.
 
+    def begin_finality_observation(self, identity: str) -> None:
+        """A missing open-order row starts read-only verification, never closure."""
+        if self.independent_guard is not None:
+            self.independent_guard()
+        self._transition(identity, "CANCEL_PENDING")
+
     def apply_order_evidence(
         self,
         identity: str,
@@ -773,6 +915,7 @@ class FinancialSessionCoordinator:
         finality: str,
         evidence_id: str,
         account: AccountObservation,
+        _defer_account_reconciliation: bool = False,
     ) -> None:
         """Trusted adapter evidence, including late fills, is durable before release.
 
@@ -853,7 +996,12 @@ class FinancialSessionCoordinator:
                     raise SessionBlocked("fill_evidence_identity_mismatch")
                 encoded = json_safe(asdict(fill))
                 if fill.fill_id in known:
-                    if known[fill.fill_id] != encoded:
+                    # Optional precision/ordering fields were absent from the
+                    # original v1 records. Their absent defaults are equivalent;
+                    # new nonempty evidence is never silently substituted.
+                    normalized = {"gross_notional": None, "chain_order": None,
+                                  **known[fill.fill_id]}
+                    if normalized != encoded:
                         raise SessionBlocked("conflicting_duplicate_fill")
                     continue
                 try:
@@ -867,6 +1015,7 @@ class FinancialSessionCoordinator:
                             fill.shares,
                             fill.confirmed_at,
                             fill.fee,
+                            fill.gross_notional,
                         )
                     )
                 except ValueError:
@@ -898,7 +1047,9 @@ class FinancialSessionCoordinator:
                     {"reason": "fill_exceeds_approved_quantity", "intent": identity}
                 )
             actual_spend = sum(
-                (Decimal(f["price"]) * Decimal(f["shares"]) + Decimal(f["fee"]) for f in linked),
+                ((Decimal(f["gross_notional"]) if f.get("gross_notional") is not None
+                  else Decimal(f["price"]) * Decimal(f["shares"])) + Decimal(f["fee"])
+                 for f in linked),
                 ZERO,
             )
             if row["side"] == "BUY" and actual_spend > Decimal(row["reservation"]):
@@ -966,15 +1117,18 @@ class FinancialSessionCoordinator:
                 if quantity
                 else "NONE"
             )
-            row["settlement_state"] = "CONFIRMED" if finality != "OPEN" else "UNCONFIRMED"
+            row["settlement_state"] = "CONFIRMED" if (
+                finality != "OPEN" or previous_state in TERMINAL) else "UNCONFIRMED"
             row["timeline"]["order_evidence"] = self.clock()
             if finality != "OPEN":
                 row["timeline"]["finality"] = self.clock()
-            matched = self._account_matches(state, account)
+            matched = (
+                False if _defer_account_reconciliation else self._account_matches(state, account)
+            )
             state["reconciliation_ok"] = matched
             state["reconciled_at"] = account.observed_at.isoformat()
             state["decisions"][identity]["result"] = row["state"]
-            if not matched:
+            if not matched and not _defer_account_reconciliation:
                 state["mode"] = "DRAIN"
                 state["incidents"].append(
                     {"reason": "unmatched_external_account_activity", "evidence": asdict(account)}
@@ -983,6 +1137,7 @@ class FinancialSessionCoordinator:
                 state["incidents"].append({"reason": "negative_account_cash"})
             if state["incidents"]:
                 state["mode"] = "DRAIN"
+            state["allocations"] = self.allocation_view(state)
 
         self.journal.mutate(
             "CONFIRMED_ORDER_EVIDENCE",
@@ -1010,7 +1165,8 @@ class FinancialSessionCoordinator:
         evidence: CancellationEvidencePort,
         config: CancellationFinalityConfig,
         sleeper: Callable[[float], Awaitable[None]],
-        confirmed_fills: tuple[ConfirmedSessionFill, ...] = (),
+        confirmed_fills: tuple[ConfirmedSessionFill, ...]
+        | Callable[[], tuple[ConfirmedSessionFill, ...]] = (),
     ) -> CancellationFinalityResult:
         """Reuse the existing bounded gate; never send a second cancellation."""
         if self._operation.locked():
@@ -1065,7 +1221,7 @@ class FinancialSessionCoordinator:
             self.apply_order_evidence(
                 identity,
                 order_id=row["order_id"],
-                fills=confirmed_fills,
+                fills=confirmed_fills() if callable(confirmed_fills) else confirmed_fills,
                 finality=(
                     "CONFIRMED_PARTIAL"
                     if result.outcome is CancellationFinalityOutcome.CONFIRMED_NO_FILL

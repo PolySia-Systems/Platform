@@ -40,6 +40,9 @@ class LeaderTradeEvent:
     observed_at: datetime
     external_evidence_reference: str | None
     schema_version: str = "1.0"
+    leader_position_before: Decimal | None = None
+    baseline_evidence_digest: str | None = None
+    source_occurrence_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in (

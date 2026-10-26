@@ -14,6 +14,7 @@ from polysia.cli_commands import (
     platform_recovery,
     platform_worker,
     research,
+    session,
     shadow_reporting,
     wallet_intelligence,
     wallet_intelligence_research,
@@ -22,6 +23,7 @@ from polysia.cli_commands import (
 from polysia.control.cli import control_app
 
 app = typer.Typer(
+    pretty_exceptions_show_locals=False,
     help=(
         "PolySia — risk-controlled trading and prediction-market platform. "
         "Polymarket is the first venue adapter, not the platform identity."
@@ -48,6 +50,7 @@ app.add_typer(system_app, name="system")
 app.add_typer(market_app, name="market")
 app.add_typer(research_app, name="research")
 app.add_typer(ops_app, name="ops")
+ops_app.add_typer(session.session_app, name="session")
 app.add_typer(control_app, name="control")
 app.add_typer(live_app, name="live")
 app.add_typer(wallet_intelligence_app, name="wallet-intelligence")
