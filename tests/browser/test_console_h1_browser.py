@@ -224,10 +224,36 @@ def test_h1_optional_requests_cannot_block_protective_stop(h1_fixture):
         browser.close()
 
 
-def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixture):
+def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixture, monkeypatch):
     from playwright.sync_api import expect, sync_playwright
 
-    origin, token, _, _, _, _, _ = h1_fixture
+    import polysia.monitoring.console as console_module
+    from polysia.control.service import ControlService
+
+    origin, token, commands, _, owner, _, _ = h1_fixture
+    from datetime import UTC, datetime
+
+    plan = ControlService.preview_scoped(
+        commands,
+        operation="session.stop",
+        target="fixture-run:stop",
+        actor="fixture-owner",
+        role="operator",
+        allowed_targets=frozenset({"fixture-run:stop"}),
+        now=datetime.now(UTC),
+    )
+    commands.submit_scoped(
+        subject="fixture-owner",
+        role="operator",
+        preview_id=plan.fingerprint,
+        expected_revision=0,
+        idempotency_key="footprint-fixture-intent",
+        now=datetime.now(UTC),
+        allowed_targets=frozenset({"fixture-run:stop"}),
+    )
+    owner.process_controls()
+    server_time = [time.time()]
+    monkeypatch.setattr(console_module.time, "time", lambda: server_time[0])
     with sync_playwright() as runtime:
         browser = launch(runtime)
         context = context_for(browser, origin, token)
@@ -237,6 +263,18 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
         page.goto(origin + "/h1")
         expect(page.get_by_label("Exact financial amounts")).to_contain_text("100")
         cold = time.perf_counter() - start
+        snapshot_cold_ms = page.evaluate("""() => performance.getEntriesByType('resource')
+            .find(entry => entry.name.endsWith('/snapshot'))?.duration ?? null""")
+        start = time.perf_counter()
+        snapshot_response = context.request.get(origin + PREFIX + "/snapshot")
+        snapshot_warm_ms = (time.perf_counter() - start) * 1000
+        start = time.perf_counter()
+        records_response = context.request.get(origin + PREFIX + "/records?kind=wallet")
+        records_cold_ms = (time.perf_counter() - start) * 1000
+        start = time.perf_counter()
+        assert context.request.get(origin + PREFIX + "/records?kind=wallet").status == 200
+        records_warm_ms = (time.perf_counter() - start) * 1000
+        assert snapshot_response.status == records_response.status == 200
         start = time.perf_counter()
         page.reload()
         expect(page.get_by_label("Exact financial amounts")).to_contain_text("100")
@@ -254,12 +292,28 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
         cdp.send("HeapProfiler.collectGarbage")
         baseline = cdp.send("Runtime.getHeapUsage")["usedSize"]
         baseline_nodes = cdp.send("Memory.getDOMCounters")["nodes"]
+        requests, failures, posts = [], [], []
+
+        def intermittent_history(route):
+            requests.append(route.request.url)
+            if len(requests) % 10 == 0:
+                failures.append(route.request.url)
+                route.abort("timedout")
+            else:
+                route.continue_()
+
+        page.route("**" + PREFIX + "/receipts", intermittent_history)
+        page.on(
+            "request",
+            lambda request: posts.append(request.url) if request.method == "POST" else None,
+        )
         # Ten accelerated 2.5h gaps plus 1,000 fully settled protected refreshes.
         # This is a lab clock jump, never an operational soak or server lifetime claim.
         page.clock.install()
         cycle_start = time.perf_counter()
         refresh_button = page.get_by_role("button", name="Refresh evidence")
         for _ in range(10):
+            server_time[0] += 9000  # Actual server CSRF windows rotate alongside browser gaps.
             page.clock.fast_forward(9_000_000)
             expect(refresh_button).to_be_enabled()
             page.evaluate("""async () => {
@@ -284,6 +338,7 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
         assert page.locator("article").count() < 20
         assert final - baseline < 5 * 1024 * 1024
         assert final_nodes - baseline_nodes < 100
+        assert len(requests) >= 1000 and len(failures) >= 100 and posts == []
         p95 = sorted(timings)[94]
         record = {
             "environment": platform.platform(),
@@ -293,12 +348,23 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
             "orders": 200,
             "cold_overview_seconds": cold,
             "warm_overview_seconds": warm,
+            "api_snapshot_cold_ms": snapshot_cold_ms,
+            "api_snapshot_warm_ms": snapshot_warm_ms,
+            "api_records_cold_ms": records_cold_ms,
+            "api_records_warm_ms": records_warm_ms,
+            "snapshot_bytes": len(snapshot_response.body()),
+            "page_50_bytes": len(records_response.body()),
             "interaction_samples": 100,
             "interaction_p95_ms": p95,
             "interaction_mean_ms": statistics.mean(timings),
             "refresh_cycles": 1000,
             "cycle_wall_seconds": cycle_seconds,
             "accelerated_browser_hours": 25,
+            "server_csrf_rotations": 10,
+            "receipt_requests": len(requests),
+            "receipt_failures": len(failures),
+            "retained_durable_receipts": 1,
+            "automatic_mutation_retries": len(posts),
             "heap_before": baseline,
             "heap_after": final,
             "dom_nodes_before": baseline_nodes,
