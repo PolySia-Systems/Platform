@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Modal, useDirection } from '@mantine/core';
-import type { ActionCatalog, Component, Detail, Money, Page, Preview, Receipt, Receipts, Session, Snapshot } from './contract.generated';
+import type { Action, ActionCatalog, Component, Detail, Money, Page, Preview, Receipt, Receipts, Session, Snapshot } from './contract.generated';
 import { ApiError, post, read } from './client';
 import { m } from './messages';
 import s from './Console.module.css';
@@ -53,6 +53,7 @@ export default function App() {
   const active = useRef(true);
   const currentIdentity = useRef('');
   const currentContext = useRef('');
+  const selectedAction = useRef<Action | null>(null);
   const [rtl, setRtl] = useState(new URLSearchParams(location.search).get('locale') === 'fa-IR');
   const validIdentity = session !== null && !authFailure && clock < Date.parse(session.valid_until);
   const now = () => anchor.current.server + performance.now() - anchor.current.mono;
@@ -88,7 +89,7 @@ export default function App() {
       read<Snapshot>('/snapshot', 'Snapshot').then(value => {
         if (!current()) return;
         const context = JSON.stringify([value.context, value.actions]);
-        if (currentContext.current && currentContext.current !== context) invalidate();
+        if (currentContext.current && currentContext.current !== context && !selectedAction.current?.protective) invalidate();
         currentContext.current = context; setSnapshot(value); setFailure('');
       }).catch(error => { if (current()) { setFailure(errorText(error));
         if (error instanceof ApiError && error.status === 403) identityFailure(); } }),
@@ -97,7 +98,12 @@ export default function App() {
       }).catch(error => { if (current()) { setHistoryError(m.historyUnavailable);
         if (error instanceof ApiError && error.status === 403) identityFailure(); } }),
       read<ActionCatalog>('/protective-actions', 'ActionCatalog').then(value => {
-        if (current()) setProtective(value);
+        if (current()) {
+          const selected = selectedAction.current;
+          if (selected?.protective && !value.actions.some(a => a.context === selected.context
+            && a.operation === selected.operation && a.target === selected.target)) invalidate();
+          setProtective(value);
+        }
       }).catch(error => { if (current()) { setProtective(null);
         if (error instanceof ApiError && error.status === 403) identityFailure(); } }),
     ]).then(() => undefined).finally(() => { refreshTask.current = null; if (active.current) setRefreshBusy(false); });
@@ -124,9 +130,11 @@ export default function App() {
 
   const actions = [...(protective?.actions ?? []), ...(snapshot?.actions ?? []).filter(a => !a.protective)];
   const action = actions.find(a => a.operation + '|' + a.target === chosen);
-  const changeAction = (value: string) => { invalidate(); setChosen(value); setIntent(null); setReceipt(null); setCommandError(''); };
+  const changeAction = (value: string) => { invalidate(); selectedAction.current = actions.find(a => a.operation + '|' + a.target === value) ?? null;
+    setChosen(value); setIntent(null); setReceipt(null); setCommandError(''); };
   const makePreview = async () => {
     if (!action || !validIdentity || !session) return;
+    selectedAction.current = action;
     const version = ++epoch.current;
     setCommandState('previewing'); setCommandError('');
     try {

@@ -12,4 +12,6 @@ test('generated template whitespace keeps exact runtime string values', () => {
 test('tagged raw template bytes cannot be silently changed', () => {
   const code = 'String.raw`raw  \n`';
   assert.throws(() => escapeTemplateWhitespace(code, parseAst(code)), /explicit review/);
+  const escaped = '`value\\ \n`';
+  assert.throws(() => escapeTemplateWhitespace(escaped, parseAst(escaped)), /explicit review/);
 });

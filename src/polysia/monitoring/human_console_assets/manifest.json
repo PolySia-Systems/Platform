@@ -2,11 +2,11 @@
   "version": 1,
   "api": "console/v1",
   "release": "0.4.0",
-  "source": "4f90900afbe267e389d33cb128fda0e5273940dc1199a3649392260c308f196f",
+  "source": "64b9d48ff652379bc3ac284cbd2df7ca08c6e02f27ec5a718adc7e15a8f953d7",
   "files": {
-    "main-018124642f11.js": "018124642f113a40598e81fd18ef7c564dc0eb50e96d3fda7cbd3be842c77974",
+    "main-4581c767f238.js": "4581c767f238f1a007938011cc52ff2106ba3a026b16642f4b7330bb7739d972",
     "style-MHKPQ29D.css": "5c18c44c7d302ad9ed6f4e18866b4e548bee807f22f11dd37cdb8cb895e94a5e",
     "notices.txt": "a20f9c816d1d092278cd132b13837b85b51ae2c7eabd22f7a50ca8bdb27fc80c",
-    "index.html": "f19f97767271855b53ec4dc0a1c44d6298167652ab59abc24177dd88c2bcf282"
+    "index.html": "815fd8cce4328b3895794487da594b36ed58ad659cad2b8baafdc2f9396396b6"
   }
 }

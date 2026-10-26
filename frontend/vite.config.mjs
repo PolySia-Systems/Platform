@@ -8,8 +8,11 @@ export function escapeTemplateWhitespace(code, ast) {
     if (node.type === 'TemplateLiteral') {
       for (const part of node.quasis) {
         const raw = part.value.raw;
-        const escaped = raw.replace(/[ \t]+(?=\r?\n)/g, value =>
-          [...value].map(c => c === ' ' ? '\\x20' : '\\t').join(''));
+        const escaped = raw.replace(/[ \t]+(?=\r?\n)/g, (value, offset) => {
+          const slashes = raw.slice(0,offset).match(/\\+$/)?.[0].length ?? 0;
+          if (slashes % 2) throw Error('Escaped template whitespace needs explicit review');
+          return [...value].map(c => c === ' ' ? '\\x20' : '\\t').join('');
+        });
         if (raw !== escaped) {
           if (parent?.type === 'TaggedTemplateExpression') throw Error('Tagged raw whitespace needs explicit review');
           const start = code.indexOf(raw, part.start);
