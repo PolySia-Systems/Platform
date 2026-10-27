@@ -94,6 +94,7 @@ def test_eight_journeys_visual_accessibility_and_rtl(rich_console, width):  # no
             page.get_by_role("button", name="Preview operation", exact=True).focus()
             page.keyboard.press("Enter")
             expect(page.get_by_role("dialog")).to_be_visible()
+            expect(page.get_by_role("dialog")).to_contain_text("acquisition.stop")
             page.keyboard.press("Tab")
             assert page.get_by_role("dialog").evaluate(
                 "node => node.contains(document.activeElement)"

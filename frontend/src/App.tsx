@@ -313,7 +313,7 @@ export default function App() {
     <Modal opened={preview !== null && commandState === 'preview'} onClose={() => { invalidate(); setIntent(null); }}
       title={m.previewTitle} centered returnFocus transitionProps={{ duration: 0 }} closeButtonProps={{ 'aria-label': m.close }}>
       {preview && <><p>{preview.impact}</p><dl className={s.facts}><dt>{m.actor}</dt><dd>{identifier(preview.actor)}</dd>
-        <dt>{m.target}</dt><dd>{identifier(preview.target)}</dd><dt>{m.revision}</dt><dd>{preview.expected_revision}</dd>
+        <dt>{m.target}</dt><dd>{identifier(preview.operation)} · {identifier(preview.target)}</dd><dt>{m.revision}</dt><dd>{preview.expected_revision}</dd>
         <dt>{m.expires}</dt><dd><Timestamp value={preview.expires_at} /></dd></dl>
         <dl className={s.facts}>{(preview.arguments ?? []).map(fact => <div key={fact.label}><dt>{fact.label}</dt><dd>{identifier(fact.value)}</dd></div>)}</dl>
         <p className={s.muted}>{m.permit}</p><Button onClick={() => void apply()} disabled={!validIdentity}>{m.confirm}</Button></>}
