@@ -111,7 +111,17 @@ class SessionSupervisor:
 
     def inspect(self) -> SessionRecoveryCheckpoint:
         now = utc(self.clock())
-        self.process_controls()
+        try:
+            self.process_controls()
+        except OSError, sqlite3.Error:
+            # The optional web queue must not kill independent supervision. A
+            # possibly missed STOP is control uncertainty: latch STOP in custody
+            # and continue checking/acknowledging committed financial evidence.
+            state = self.custody.snapshot(self.authority.fingerprint)
+            if not state["stopped"] or state["stop_reason"] == "commissioning_stop":
+                self.custody.stop(
+                    self.authority.fingerprint, reason="scoped_control_store_unavailable"
+                )
         try:
             checkpoint = committed_checkpoint(self.journal, self.witness)
             heartbeat = _small_json(self.outbox)
