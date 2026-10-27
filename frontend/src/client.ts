@@ -5,6 +5,7 @@ export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message); }
 }
 export async function read<T>(path: string, name: keyof typeof schemas, signal?: AbortSignal): Promise<T> {
+  if (new URLSearchParams(location.search).get('example') === '1') path += (path.includes('?') ? '&' : '?') + 'example=1';
   const response = await fetch(prefix + path, { credentials: 'same-origin', cache: 'no-store',
     signal: signal ?? AbortSignal.timeout(4000), redirect: 'error' });
   if (!response.ok) throw new ApiError(response.status, 'read_failed');

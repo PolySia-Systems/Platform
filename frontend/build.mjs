@@ -57,7 +57,7 @@ if (process.argv.includes('--check')) {
   const script = Object.keys(files).find(p => p.endsWith('.js'));
   const css = Object.keys(files).find(p => p.endsWith('.css'));
   if (!script || !css) throw Error('Missing Console entry');
-  const html = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="style-nonce" content="{{nonce}}"><title>PolySia Console</title><link rel="stylesheet" href="/h1/assets/${css}"><script type="module" src="/h1/assets/${script}"></script></head><body><div id="root"></div></body></html>\n`;
+  const html = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="style-nonce" content="{{nonce}}"><title>PolySia Console</title><link rel="stylesheet" href="/assets/${css}"><script type="module" src="/assets/${script}"></script></head><body><div id="root"></div></body></html>\n`;
   const document = html.replace('<title>', `<meta name="bundle-source" content="${source}"><title>`);
   writeFileSync(resolve(output,'index.html'),document); files['index.html'] = hash(document);
   writeFileSync(resolve(output,'manifest.json'), JSON.stringify({

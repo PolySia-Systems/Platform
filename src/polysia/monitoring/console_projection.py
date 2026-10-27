@@ -15,10 +15,12 @@ from polysia.monitoring.console_contract import (
     Component,
     Context,
     Detail,
+    Fact,
     Financial,
     Money,
     Page,
     Record,
+    RecordLink,
     Scope,
     Supervision,
 )
@@ -54,6 +56,7 @@ def component(
                 raw.get("as_of")
                 or raw.get("published_at")
                 or raw.get("observed_at")
+                or raw.get("checked_at")
                 or raw.get("at")
             )
             if not isinstance(stamp, str):
@@ -98,19 +101,27 @@ class ConsoleReadModel:
         self.scope = Scope.model_validate(
             {key: identity.get(key) for key in ("run", "account", "venue")}
         )
-        self._records: dict[str, dict[str, Record]] = {"wallet": {}, "order": {}}
+        self._records: dict[str, dict[str, Record]] = {"wallet": {}, "order": {}, "position": {}}
         self._indexed = False
+        self._wallet_rows: dict[str, dict[str, Any]] = {}
+        self._wallet_links: dict[str, list[RecordLink]] = {}
+        self._search_text: dict[tuple[str, str], str] = {}
 
     def _index(self) -> None:
         if self._indexed:
             return
-        self._records = {"wallet": {}, "order": {}}
+        self._records = {"wallet": {}, "order": {}, "position": {}}
+        self._wallet_rows, self._wallet_links, self._search_text = {}, {}, {}
         identity = evidence_object((self.financial_raw or {}).get("identity", {}))
         diagnostic = evidence_object(self.publication.get("diagnostic", {}))
-        wallets = evidence_object(diagnostic.get("discovery", {})).get("candidates", [])
-        # E2 session publications use the retained selection owner.
-        wallets = wallets or evidence_object(self.publication.get("selection", {})).get(
-            "candidates", []
+        selection = evidence_object(self.publication.get("selection", {}))
+        # An explicit empty selection is authoritative; do not revive stale discovery rows.
+        wallets = (
+            selection["records"]
+            if "records" in selection
+            else selection["candidates"]
+            if "candidates" in selection
+            else evidence_object(diagnostic.get("discovery", {})).get("candidates", [])
         )
         if not isinstance(wallets, list):
             raise ValueError("wallet_records_array_required")
@@ -131,7 +142,24 @@ class ConsoleReadModel:
                     "updated_at": row.get("last_qualifying_activity"),
                     "fill_state": None,
                     "settlement_state": None,
+                    "sources": row.get("sources", [])[:64],
+                    "facts": [],
                 },
+            )
+            key = str(row["wallet_id"])
+            self._wallet_rows[key] = row
+            self._search_text[("wallet", key)] += (
+                " "
+                + " ".join(
+                    str(row.get(field, ""))
+                    for field in (
+                        "ranking_explanation",
+                        "reasons",
+                        "exclusions",
+                        "execution_eligibility",
+                        "eligibility",
+                    )
+                ).casefold()
             )
         orders = (self.financial_raw or {}).get("orders", [])
         if not isinstance(orders, list):
@@ -157,8 +185,120 @@ class ConsoleReadModel:
                     ),
                     "fill_state": row.get("fill_state", "UNKNOWN"),
                     "settlement_state": row.get("settlement_state", "UNKNOWN"),
+                    "facts": [
+                        Fact(
+                            label=name.replace("_", " "),
+                            value=str(row[name])[:2048] if row.get(name) is not None else None,
+                        ).model_dump()
+                        for name in (
+                            "wallet",
+                            "policy_digest",
+                            "reservation",
+                            "trigger_id",
+                            "evidence_digest",
+                        )
+                    ]
+                    + [
+                        Fact(
+                            label="Risk " + name,
+                            value=str(evidence_object(row.get("risk", {})).get(name, "UNKNOWN")),
+                        ).model_dump()
+                        for name in ("approved", "reason")
+                    ]
+                    + [
+                        Fact(label="Timeline " + name, value=str(value)).model_dump()
+                        for name, value in list(evidence_object(row.get("timeline", {})).items())[
+                            :20
+                        ]
+                    ]
+                    + [
+                        Fact(
+                            label="Fill " + str(fill.get("fill_id", "UNKNOWN"))[:128],
+                            value=" · ".join(
+                                f"{name}: {fill.get(name, 'UNKNOWN')}"
+                                for name in ("shares", "price", "fee", "confirmed_at")
+                            )[:2048],
+                        ).model_dump()
+                        for fill in row.get("fills", [])[:30]
+                    ],
+                    "links": [
+                        RecordLink(
+                            kind="wallet", identity=row["wallet"], label="Retained source wallet"
+                        ).model_dump()
+                    ]
+                    if row.get("wallet") in self._records["wallet"]
+                    else [],
                 },
             )
+        for row in (self.financial_raw or {}).get("positions", []):
+            row = evidence_object(row)
+            self._add(
+                "position",
+                dict(
+                    identity=row["token"],
+                    kind="position",
+                    state=row.get("state", "UNKNOWN"),
+                    reason=None,
+                    side=None,
+                    token=row["token"],
+                    order_id=None,
+                    quantity=self._amount(
+                        row.get("shares"),
+                        "shares",
+                        "Confirmed inventory; uncertainty stays UNKNOWN",
+                    ),
+                    price=self._amount(
+                        row.get("average_price"),
+                        identity.get("currency"),
+                        "Average accounted price per share",
+                    ),
+                    updated_at=row.get("updated_at"),
+                    fill_state=None,
+                    settlement_state="OBSERVED_CASH"
+                    if row.get("cash_events")
+                    else "UNSETTLED_OR_UNKNOWN",
+                    facts=[
+                        Fact(
+                            label=name.replace("_", " "),
+                            value=str(row[name])[:2048] if row.get(name) is not None else None,
+                        )
+                        for name in ("mark", "valuation_method", "redeemable")
+                    ]
+                    + [
+                        Fact(
+                            label="Settled cash " + str(event.get("event_id", "UNKNOWN"))[:128],
+                            value=str(event.get("confirmed_cash", "UNKNOWN"))
+                            + " "
+                            + str(identity.get("currency", "UNKNOWN")),
+                        )
+                        for event in row.get("cash_events", [])[:30]
+                    ],
+                    links=[
+                        RecordLink(kind="order", identity=key, label="Retained order")
+                        for key in row.get("orders", [])[:100]
+                    ],
+                ),
+            )
+        for row in orders:
+            wallet = row.get("wallet")
+            if isinstance(wallet, str):
+                self._wallet_links.setdefault(wallet, []).append(
+                    RecordLink(
+                        kind="order", identity=row["intent_id"], label="Retained decision and order"
+                    )
+                )
+        for key, record in self._records["order"].items():
+            if record.token in self._records["position"]:
+                self._records["order"][key] = record.model_copy(
+                    update={
+                        "links": [
+                            *record.links,
+                            RecordLink(
+                                kind="position", identity=record.token, label="Confirmed inventory"
+                            ),
+                        ]
+                    }
+                )
         self._indexed = True
 
     @staticmethod
@@ -170,6 +310,16 @@ class ConsoleReadModel:
         if record.identity in self._records[kind]:
             raise ValueError("duplicate_projection_identity")
         self._records[kind][record.identity] = record
+        self._search_text[(kind, record.identity)] = " ".join(
+            [
+                record.identity,
+                record.token or "",
+                record.order_id or "",
+                record.reason or "",
+                *record.sources,
+                *(fact.value or "" for fact in record.facts),
+            ]
+        ).casefold()
 
     def context(self) -> Context:
         identity = evidence_object((self.financial_raw or {}).get("identity", {}))
@@ -206,14 +356,48 @@ class ConsoleReadModel:
                     update={"state": "PARTIAL", "reason": "financial_identity_incomplete"}
                 )
             authority = evidence_object(raw.get("remaining_authority", {}))
+            account_at = raw.get("account_observed_at")
+            account_until = raw.get("account_valid_until")
+            if (not account_at or not account_until) and meta.state == "AVAILABLE":
+                meta = meta.model_copy(
+                    update={"state": "PARTIAL", "reason": "account_validity_unknown"}
+                )
+            elif account_at and account_until:
+                account_meta = component(
+                    "financial",
+                    {"observed_at": account_at, "expires_at": account_until},
+                    now=now,
+                    generation=self.generation,
+                    scope=self.scope,
+                )
+                if account_meta.state != "AVAILABLE" and meta.state == "AVAILABLE":
+                    meta = meta.model_copy(
+                        update={
+                            "state": account_meta.state,
+                            "reason": "account_evidence_not_current",
+                        }
+                    )
+                if account_meta.valid_until and meta.valid_until:
+                    meta = meta.model_copy(
+                        update={"valid_until": min(meta.valid_until, account_meta.valid_until)}
+                    )
+            reconciled = exposure.get("reconciliation") == "MATCHED"
+            if not reconciled and meta.state == "AVAILABLE":
+                meta = meta.model_copy(
+                    update={"state": "PARTIAL", "reason": "reconciliation_blocked"}
+                )
             value = Financial(
                 status=raw.get("status", "UNKNOWN"),
                 authority=authority.get("status", "UNKNOWN"),
                 authority_until=authority.get("expires_at"),
                 reconciliation=exposure.get("reconciliation", "UNKNOWN"),
-                economics=evidence_object(raw.get("economics", {})).get("status", "UNKNOWN"),
+                economics=evidence_object(raw.get("economics", {})).get("status", "UNKNOWN")
+                if reconciled
+                else "UNKNOWN_RECONCILIATION_BLOCKED",
                 cash=self._amount(
-                    exposure.get("cash"), identity.get("currency"), "Reconciled cash"
+                    exposure.get("cash") if reconciled else None,
+                    identity.get("currency"),
+                    "Reconciled cash" if reconciled else "Cash unknown until reconciliation",
                 ),
                 exposure=self._amount(
                     exposure.get("open_exposure"),
@@ -225,6 +409,8 @@ class ConsoleReadModel:
                 ),
                 positions=exposure.get("positions"),
                 unknown_orders=exposure.get("unknown_orders"),
+                account_observed_at=account_at,
+                account_valid_until=account_until,
             )
             return value, meta
         except ValueError:
@@ -241,17 +427,19 @@ class ConsoleReadModel:
         sort: str = "identity",
         limit: int = 50,
         cursor: str = "",
+        source: str = "",
     ) -> Page:
-        self._index()
         if (
             kind not in self._records
             or not 1 <= limit <= 100
             or len(query) > 128
             or len(state) > 64
+            or len(source) > 128
             or sort not in {"identity", "-identity"}
         ):
             raise ValueError("invalid_bounded_query")
-        binding = fingerprint((kind, query, state, sort, limit))
+        self._index()
+        binding = fingerprint((kind, query, state, sort, limit, source))
         offset = 0
         if cursor:
             try:
@@ -270,7 +458,9 @@ class ConsoleReadModel:
         rows = [
             row
             for row in self._records[kind].values()
-            if query.casefold() in row.identity.casefold() and (not state or state == row.state)
+            if query.casefold() in self._search_text[(kind, row.identity)]
+            and (not state or state == row.state)
+            and (not source or source in row.sources)
         ]
         rows.sort(key=lambda row: row.identity, reverse=sort == "-identity")
         end = offset + limit
@@ -290,7 +480,8 @@ class ConsoleReadModel:
         )
         return Page(
             generation=self.generation,
-            items=rows[offset:end],
+            # Detailed causal evidence is decoded only for one selected record.
+            items=[row.model_copy(update={"facts": [], "links": []}) for row in rows[offset:end]],
             total=len(rows),
             next_cursor=next_cursor,
         )
@@ -298,12 +489,43 @@ class ConsoleReadModel:
     def detail(self, kind: str, identity: str, generation: str) -> Detail:
         if generation != self.generation:
             raise LookupError("cursor_expired")
-        self._index()
-        if kind not in self._records or identity not in self._records[kind]:
+        if kind not in self._records or len(identity) > 256:
             raise KeyError("record_missing")
+        self._index()
+        if identity not in self._records[kind]:
+            raise KeyError("record_missing")
+        record = self._records[kind][identity]
+        if kind == "wallet":
+            from polysia.monitoring.console_workspaces import text
+
+            raw = self._wallet_rows[identity]
+            links = self._wallet_links.get(identity, [])
+            record = record.model_copy(
+                update={
+                    "links": links[:100],
+                    "facts": [
+                        Fact(label=name.replace("_", " "), value=text(raw.get(name)))
+                        for name in (
+                            "execution_eligibility",
+                            "eligibility",
+                            "ranking_explanation",
+                            "reasons",
+                            "exclusions",
+                            "rank",
+                            "last_qualifying_activity",
+                        )
+                    ]
+                    + [
+                        Fact(
+                            label="Retained downstream orders (first 100 links)",
+                            value=str(len(links)),
+                        )
+                    ],
+                }
+            )
         return Detail(
             generation=self.generation,
-            record=self._records[kind][identity],
+            record=record,
             trace="Only retained producer links are shown; missing causal links remain UNKNOWN.",
         )
 

@@ -58,7 +58,7 @@ Previous runtime receipts are historical after the owner's server reset.
 
 ## Operations and safety
 
-- [Human Console H1 contract/build decision and H2 removal gate](04-architecture/adrs/ADR-0024-human-console-contract-and-static-build.md)
+- [Human Console contract, static build and completed presentation migration](04-architecture/adrs/ADR-0024-human-console-contract-and-static-build.md)
 
 - [Bounded financial-session engineering and commissioning prerequisites](10-operations/continuous-financial-session.md)
 

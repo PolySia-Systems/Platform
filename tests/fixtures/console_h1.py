@@ -30,6 +30,8 @@ def publication(
         # Rebase only fixture clocks, never financial values or permission.
         view["as_of"] = now.isoformat()
         view["expires_at"] = (now + timedelta(seconds=30)).isoformat()
+        view["account_observed_at"] = now.isoformat()
+        view["account_valid_until"] = view["expires_at"]
         view["remaining_authority"]["expires_at"] = (now + timedelta(minutes=5)).isoformat()
         view["orders"] = [
             {**view["orders"][0], "intent_id": f"order-{index:05}", "updated_at": now.isoformat()}

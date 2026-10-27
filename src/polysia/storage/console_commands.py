@@ -43,6 +43,8 @@ class ConsoleCommandStore:
                     result TEXT,UNIQUE(target,revision));
                 CREATE TABLE IF NOT EXISTS console_preview_bindings(
                     preview_id TEXT PRIMARY KEY,context TEXT NOT NULL,identity TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS console_acquisition_previews(
+                    identity TEXT PRIMARY KEY,preview TEXT NOT NULL);
             """)
             columns = {row[1] for row in connection.execute("PRAGMA table_info(commands)")}
             for name in ("parameters", "result"):
@@ -88,6 +90,10 @@ class ConsoleCommandStore:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with closing(sqlite3.connect(self._path, timeout=1)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM scoped_commands WHERE idempotency=?", (idempotency_key,)
+            ).fetchone():
+                raise ValueError("idempotency_conflict")
             existing = connection.execute(
                 "SELECT revision, digest, status FROM commands WHERE idempotency_key=?",
                 (idempotency_key,),
@@ -132,6 +138,64 @@ class ConsoleCommandStore:
                 for row in rows
             ],
         }
+
+    def acquisition_revision(self) -> int:
+        """Protective admission must not decode optional receipt-history payloads."""
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection:
+            return int(
+                connection.execute("SELECT COALESCE(MAX(revision),0) FROM commands").fetchone()[0]
+            )
+
+    def save_acquisition_preview(self, identity: str, preview: dict[str, Any]) -> None:
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection, connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO console_acquisition_previews VALUES(?,?)",
+                (identity, canonical_json(preview)),
+            )
+
+    def acquisition_preview(self, identity: str) -> dict[str, Any] | None:
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection:
+            row = connection.execute(
+                "SELECT preview FROM console_acquisition_previews WHERE identity=?", (identity,)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def human_receipts(
+        self,
+        *,
+        subject: str,
+        targets: frozenset[str],
+        key: str | None,
+        before: tuple[str, str] | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Stable combined history; both queues retain their original owner semantics."""
+        if not 1 <= limit <= 100 or (
+            key is not None and re.fullmatch(r"[a-zA-Z0-9-]{16,80}", key) is None
+        ):
+            raise ValueError("invalid_receipt_query")
+        placeholders = ",".join("?" for _ in targets) or "NULL"
+        sql = (
+            "SELECT * FROM (SELECT idempotency,preview,target,revision,status,result,"
+            "strftime('%Y-%m-%dT%H:%M:%fZ',json_extract(preview,'$.created_at')) AS at "
+            "FROM scoped_commands WHERE json_extract(preview,'$.actor')=? "
+            f"AND target IN ({placeholders}) UNION ALL "
+            "SELECT idempotency_key,json_object('operation','acquisition.'||action,"
+            "'target','acquisition'), 'acquisition',revision,status,result,created_at "
+            "FROM commands WHERE actor=?) WHERE 1=1"
+        )
+        values: list[Any] = [subject, *sorted(targets), subject]
+        if key is not None:
+            sql += " AND idempotency=?"
+            values.append(key)
+        if before is not None:
+            sql += " AND (at<? OR (at=? AND idempotency<?))"
+            values.extend((before[0], before[0], before[1]))
+        sql += " ORDER BY at DESC,idempotency DESC LIMIT ?"
+        values.append(limit)
+        with closing(sqlite3.connect(self._path, timeout=1)) as connection:
+            connection.row_factory = sqlite3.Row
+            return [dict(row) for row in connection.execute(sql, values)]
 
     def block_superseded_resumes(self) -> None:
         """A later STOP fences all earlier resume work, including after restart."""
@@ -215,15 +279,27 @@ class ConsoleCommandStore:
         return 0 if row is None else int(row[0])
 
     def submit_scoped(
-        self, *, subject: str, role: str, preview_id: str, expected_revision: int,
-        idempotency_key: str, now: datetime, allowed_targets: frozenset[str],
+        self,
+        *,
+        subject: str,
+        role: str,
+        preview_id: str,
+        expected_revision: int,
+        idempotency_key: str,
+        now: datetime,
+        allowed_targets: frozenset[str],
     ) -> dict[str, Any]:
         if role != "operator" or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", idempotency_key):
             raise ValueError("trusted_scoped_operator_required")
         with closing(sqlite3.connect(self._path, timeout=1)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT preview FROM scoped_previews WHERE identity=?",
-                                     (preview_id,)).fetchone()
+            if connection.execute(
+                "SELECT 1 FROM commands WHERE idempotency_key=?", (idempotency_key,)
+            ).fetchone():
+                raise ValueError("scoped_idempotency_conflict")
+            row = connection.execute(
+                "SELECT preview FROM scoped_previews WHERE identity=?", (preview_id,)
+            ).fetchone()
             if row is None:
                 raise ValueError("unknown_immutable_preview")
             preview = json.loads(row[0])
@@ -239,21 +315,30 @@ class ConsoleCommandStore:
             if existing:
                 if existing[0] != content_digest:
                     raise ValueError("scoped_idempotency_conflict")
-                return {"status": existing[1], "result": json.loads(existing[2])
-                        if existing[2] else None, "revision": existing[3]}
-            if (preview["expected_revision"] != expected_revision
-                    or not datetime.fromisoformat(preview["created_at"]) <= utc(now)
-                    < datetime.fromisoformat(preview["expires_at"])):
+                return {
+                    "status": existing[1],
+                    "result": json.loads(existing[2]) if existing[2] else None,
+                    "revision": existing[3],
+                }
+            if preview["expected_revision"] != expected_revision or not datetime.fromisoformat(
+                preview["created_at"]
+            ) <= utc(now) < datetime.fromisoformat(preview["expires_at"]):
                 raise ValueError("stale_or_expired_preview")
-            current = connection.execute("SELECT revision FROM scoped_targets WHERE target=?",
-                                         (preview["target"],)).fetchone()
+            current = connection.execute(
+                "SELECT revision FROM scoped_targets WHERE target=?", (preview["target"],)
+            ).fetchone()
             if (0 if current is None else current[0]) != expected_revision:
                 raise ValueError("scoped_revision_conflict")
             revision = expected_revision + 1
-            connection.execute("INSERT INTO scoped_commands VALUES(?,?,?,?,?,'REQUESTED',NULL)",
-                (idempotency_key, content_digest, row[0], preview["target"], revision))
-            connection.execute("INSERT INTO scoped_targets VALUES(?,?) ON CONFLICT(target) "
-                "DO UPDATE SET revision=excluded.revision", (preview["target"], revision))
+            connection.execute(
+                "INSERT INTO scoped_commands VALUES(?,?,?,?,?,'REQUESTED',NULL)",
+                (idempotency_key, content_digest, row[0], preview["target"], revision),
+            )
+            connection.execute(
+                "INSERT INTO scoped_targets VALUES(?,?) ON CONFLICT(target) "
+                "DO UPDATE SET revision=excluded.revision",
+                (preview["target"], revision),
+            )
             return {"status": "REQUESTED", "revision": revision, "effect": "NOT_OBSERVED"}
 
     def claim_scoped(self, idempotency_key: str, *, now: datetime) -> dict[str, Any] | None:

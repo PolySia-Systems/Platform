@@ -1,7 +1,7 @@
 # ADR-0024: Human Console contract and static build
 
 - Date: 2026-10-27
-- Status: Accepted for H1 engineering under explicit scoped owner activation.
+- Status: Accepted for H1/H2 engineering under explicit scoped owner activations.
 - Scope: Console presentation, redacted read models, existing command gateway,
   reproducible static assets. Operational acceptance remains EXTERNAL.
 - Depends on: [ADR-0022](ADR-0022-guided-single-installation.md) and
@@ -72,7 +72,7 @@ changing cooked string values, then names the final JavaScript by its byte hash;
 tagged raw templates require explicit review. Tests prove exact value preservation.
 This satisfies the unchanged whitespace gate for upstream CSS template literals.
 The financial package-tree digest includes every new shipped asset, including manifest and
-notices. A UI replacement changes financial binding; H1 grants no hot deployment
+notices. A UI replacement changes financial binding; engineering grants no hot deployment
 or renewal of an existing financial authority.
 
 ## Alternatives, maintenance and rollback
@@ -92,31 +92,87 @@ affected worker/web process through the protected operator procedure. Retain
 STOP, financial stores, custody and consumed allowance. Do not downgrade data,
 replace assets during a bound run or manufacture new authority.
 
-## H1 seam and bounded H2 acceptance
+## Completed presentation migration and compatibility
 
-CURRENT `/h1` contains Overview, bounded wallet/order investigation and the
-permitted command/receipt journey. `/` retains the existing presentation and its
-verified routes/assets/tests. This is a migration-branch seam, not a deployable
-dual-console product. H2 must migrate all required task groups and remove the
-old HTML/JS/CSS/demo presentation plus `/h1` routing before replacement is
-accepted. Required protected exports, CLI, command owners and historical
-evidence survive.
+H1 established the contract/build/slice at source
+`7ea1c292b35093b5f0b281d05a98d037c891e8be` with exact-head CI. H2 retains that
+architecture. CURRENT `/` serves the sole Human Console and `/assets/` its
+allowlisted static files. The previous handwritten HTML/JS/CSS/demo files and
+`/h1`, `/h1/assets/`, `/demo`, `/api/demo`, `/console.js`, `/console.css` routes
+are removed. The same presentation offers `/?example=1`, a clearly synthetic
+read-only dataset. Its session has reader identity, its action catalog is empty,
+and its data never enters canonical reports or financial stores. This is a
+dataset choice, not a second presentation or migration switch.
 
-H2 must complete policy/Lab argument choices and all currently supported
-operations, acquisition control preview/recovery, sources/selection/rationale,
-capability/setup/capacity/incidents, Shadow evaluation/exports, and any missing
-producer-supported position/decision/fill links. Missing causal links stay
-UNKNOWN. It must close the parity/removal ledger, broaden accessibility and
-resource-isolation evidence, and obtain separately commissioned human acceptance.
-It must not invent financial resume/close/cancel or an authority issuer.
+Overview, Investigate, Operate, Evaluate and System / Setup now share compact
+scope/mode/identity context and explicit protective target choices. Bounded
+wallet/source/filter/detail and order/position views preserve selection reasons,
+frozen policy, Risk/trigger/reservation/fill links and cash events only when
+retained by the publisher. Missing links remain UNKNOWN. Confirmed resolution
+can mark inventory `REDEEMABLE_REVIEW`; it grants no redemption authority.
+Closed inventory is distinct from externally observed settled cash. Account
+observation/expiry are independent of publication time: refreshing a publication
+cannot renew an account read. Blocked reconciliation qualifies cash and economics
+as UNKNOWN without altering accounting or discarding confirmed evidence.
 
-Freeze H2 lab budgets at Overview <=2 s, p95 interaction-to-paint <=200 ms over
+`console_workspaces.py` maps allowlisted redacted facts into bounded typed
+sections/tables. No arbitrary JSON dump, private path, URL navigation, SQL,
+signer, custody or provider access is added to web handlers. Tables show their
+own unavailable/empty/partial state and counts; a missing dataset is never a
+healthy zero. Wallet details are lazy; a cached reverse index connects only
+retained wallet/order IDs. List pages omit detailed traces and remain 50/100.
+Workspace responses are limited to 220,000 bytes; the client accepts at most
+250,000 characters. Catalogs are schema-bounded to 128 actions, 64 choices per
+argument and two arguments per operation; excessive configurations fail visibly
+and retain the protected CLI path.
+
+Registered Shadow create/clone/start/drain/resume/finalize/archive/compare and
+policy-stage forms reuse `ControlService` and `ShadowLab`. The publisher exposes
+registered template digests and assumptions through `ShadowLab.console_view`;
+the web never reads its private configuration. Related choices require published
+existing slots. Console clone previews also bind the source-policy digest; the
+owner rejects an unpublished concurrent policy change before creating a slot.
+The optional scoped guard is additive; existing direct consumers retain their
+prior contract and can adopt the guard without a presentation compatibility layer.
+Only CREATED Shadow slots can
+stage templates; running positions remain frozen. Full financial policy editing,
+financial resume/close/cancel, redemption and authority issuance remain deferred.
+Acquisition STOP/drain/resume/export retain the original acquisition queue and
+owner; additive immutable previews bind their exact identity, revision, bounds
+and expiry. Both queues share authenticated exact receipt/history lookup, stable
+history cursors and cross-queue idempotency-key conflict protection. There is no
+automatic replay, optimistic effect or persistent browser financial payload.
+
+The UI serializes an unresolved intended request rather than replacing its key.
+For immediate emergency action while a request is unresolved or the control
+store is unavailable, use the independent OS-protected CLI/custody path.
+Optional analytics and history cannot invalidate an otherwise valid protective
+preview. A corrupt optional history result cannot prevent acquisition revision
+admission. An unreadable command queue latches independent custody STOP once,
+without terminating supervisor financial checks or clearing an existing STOP.
+Financial witness uncertainty still fails closed. Local real-collaborator fault
+tests complement existing separate-identity/container and checkpoint tests;
+they do not certify deployed host isolation.
+
+Protected `/api/report`, `/download/comparison.csv`, `/reports/<digest>.json`,
+current acquisition/scoped command APIs and emergency CLI contracts remain.
+These are backend owner/consumer interfaces, not retained presentation adapters.
+Their removal requires a separate versioned consumer migration; H2 does not
+claim zero historical APIs. Browser contracts, installed private-HTTPS/keyboard
+journeys and regression assertions are ported to the sole presentation.
+
+H2 lab budgets remain Overview <=2 s, p95 interaction-to-paint <=200 ms over
 >=100 samples, initial JS <=400 KiB gzip, default/max pages 50/100, and <=5 MiB
-post-GC heap growth / <=100 extra DOM nodes over 1,000 settled refreshes. The
-10,000-wallet/200-order fixture and 25h accelerated browser clock are synthetic;
-neither is a multi-day soak. CI/PR artifacts own actual measurements and exact
-source identities, not this decision's prose. Manual screen-reader testing,
-human acceptance, deployment, Live authorization and economics are unobserved.
+post-GC heap growth / <=100 extra DOM nodes over 1,000 settled refreshes.
+The 10,000-wallet/200-order fixture, 25h accelerated clock, 10 CSRF rotations and
+100 injected receipt failures are synthetic. Actual wall time and named runner
+measurements live in CI/PR artifacts, not a fabricated multi-day soak.
+
+Axe automation, keyboard/focus, 200%-equivalent reflow and representative Persian
+text/RTL are bounded engineering evidence. Screen-reader and human acceptance,
+real host cgroups/ACLs/shared-egress isolation, independent backup commissioning,
+alert delivery, real-data qualification, deployment, Live authorization and
+economics remain EXTERNAL/UNKNOWN. No production-readiness claim follows.
 
 ## Official sources reviewed
 

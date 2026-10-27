@@ -38,7 +38,7 @@ export default defineConfig({
       return code.replace(/^["']use client["'];\s*/, '');
     }
   } }],
-  base: '/h1/assets/',
+  base: '/assets/',
   build: {
     target: 'es2022', outDir: '.build', emptyOutDir: true,
     cssCodeSplit: false, modulePreload: false,

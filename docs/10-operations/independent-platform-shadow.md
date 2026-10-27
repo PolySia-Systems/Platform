@@ -265,40 +265,86 @@ visible when total equity is UNKNOWN. Zero simulations is no measurable result.
 
 ## Console, STOP and failed dependencies
 
-### Human Console H1 engineering preview and recovery
+### Human Console and command recovery
 
-CURRENT engineering on the Human Console migration branch exposes `/h1` through
-the same authenticated gateway. `/` retains the existing presentation during
-H1. This seam is removed only after H2 parity; neither route is a claim of new
-deployment or operational authorization. [ADR-0024](../04-architecture/adrs/ADR-0024-human-console-contract-and-static-build.md)
-owns the build, contract and retirement decision. No host changes are needed to
-run synthetic tests.
+CURRENT engineering serves exactly one Console at `/`, with allowlisted
+`/assets/`. H1's temporary route and the old handwritten HTML/JS/CSS/demo assets
+are retired. `/?example=1` uses the same presentation with a synthetic reader
+dataset, empty command catalog and no canonical financial exports. Protected
+retained JSON/CSV/archived exports and backend/CLI owners survive the migration.
+[ADR-0024](../04-architecture/adrs/ADR-0024-human-console-contract-and-static-build.md)
+owns the contract, build and migration decision; the focused PR owns delivery
+status and final validation. This is engineering evidence, not host commissioning.
 
-Overview distinguishes configured/recorded mode, dataset, redacted account
-fingerprint, unknown venue/environment, component validity and independent
-supervision. Recorded RUNNING can coexist with an independent STOP observation;
-the blocker prioritizes STOP without rewriting the retained financial history.
-Money remains exact strings. Exposure is held cost plus reservations, not market
-value. The new account field is a stable one-way fingerprint of the existing
-binding, never the private account binding itself.
+Overview separates environment, configured/recorded mode, dataset, actor role,
+run/account fingerprint, entry authority and actual observed state. Each component
+has its own scope, age and expiry; independent STOP outranks retained RUNNING.
+A fresh publisher cannot renew an old account observation or worker receipt.
+Cash and economics remain UNKNOWN while reconciliation is blocked. Exposure is
+held cost plus reservations, not market value; unpriced liabilities remain UNKNOWN.
 
-The H1 operation catalog exposes existing registered financial STOP/drain and
-bounded Shadow drain/finalize requests. Acquisition STOP remains explicitly
-linked to its retained Console route. Financial STOP can leave exposure and stop
-automatic exits; drain blocks new entries while protective work stays with its
-owner. Resume/close/cancel and authority issuance are unavailable in H1.
+Investigate uses server pages (default 50/max 100), bounded source/state/search
+filters, generation-bound cursors and exact details beyond the first page.
+Wallet selection reasons and downstream policy/Risk/trigger/reservation/fill
+links come only from trusted retained IDs. Confirmed holdings, pending orders,
+partial fills, cancellation uncertainty, resolution review, closed inventory
+and observed settled cash are distinct facts. Missing causal evidence is UNKNOWN.
+No credential, private custody, private journal or provider is queried by web code.
+
+Operate presents registered server choices for acquisition STOP/drain/resume/export,
+bounded Shadow create/clone/start/drain/resume/finalize/archive/compare and
+registered policy staging, plus financial entry drain/STOP. Clone previews bind
+the source policy and reject a concurrent change before owner execution.
+Staging applies only
+to a CREATED Shadow slot; existing positions retain frozen policy. Full financial
+policy authoring, financial resume/close/cancel, redemption and authority issuance
+are unavailable. STOP acquisition halts source work, not a financial worker.
+Financial drain blocks entries while permitted protection stays with its owner.
+Financial STOP can leave exposure and halt automatic exits. Read the exact target
+and preview impact before requesting work.
 
 On response loss, retain the displayed request identity and choose **Recover
-exact receipt**. Phase REQUESTED/CLAIMED/APPLIED/FAILED/BLOCKED and observed effect
-are separate. FAILED with UNKNOWN is unresolved: inspect the protected owner and
-reconcile; do not infer that nothing happened. Only an absent exact receipt,
-unchanged authenticated context and still-valid original preview permit the
-explicit **Resend identical request** button with the original key/payload.
-There is no automatic resend or replay after login. Reload recovery uses **Your
-durable command receipts** and exact authenticated lookup, beyond recent history.
-Reader/actor and current target policy still limit disclosure. Missing identity
-or store availability requires the protected CLI/supervisor path; an optional
-analytical panel cannot authorize or block a valid backend protective STOP.
+exact receipt**. REQUESTED/CLAIMED/APPLIED/FAILED/BLOCKED and observed effect are
+separate. FAILED with UNKNOWN is unresolved; inspect the owner and reconcile.
+Only an absent exact receipt with unchanged identity/context and a valid original
+preview permits **Resend identical request**, using the same key and payload.
+There is no automatic resend or login replay. Reload uses authenticated durable
+history/exact lookup beyond recent windows. Readers and current target policy
+still constrain disclosure. Report downloads use only validated retained digests.
+
+The UI serializes unresolved intent. For an immediate emergency while a request
+is unresolved, identity is unavailable, bundle integrity fails or the command
+store is unavailable, use the independent protected route:
+
+```bash
+polysia ops session emergency-stop --custody CUSTODY_PATH AUTHORITY_FINGERPRINT
+```
+
+This is an OS-protected restrictive operation, never an authorization issuer.
+Keep custody paths and credentials out of browser inputs. Optional analytics or
+history cannot invalidate a valid protective preview. Command-store corruption
+latches independent STOP without terminating financial supervision or overwriting
+an existing STOP; it does not permit entries. Financial witness uncertainty still
+fails closed. Acknowledgement/health cannot clear durable STOP or consumed limits.
+
+Evaluate separates fixed cohort/capital/window/policy and independent virtual
+returns from actual fills, provider/infrastructure costs and evidence limits.
+No observations means NO_MEASURABLE_RESULT; no retained series means no chart.
+Source-removal replay is counterfactual. Goldsky remains DEFERRED. System / Setup
+separates configured, verified and authorized prerequisites, exact account
+verification, quotas/gaps/timing/capacity, independent backup/restore and incident
+state versus actual notification delivery. A healthy browser is not readiness.
+
+| Console term | Meaning |
+|---|---|
+| AVAILABLE | This component's dated evidence is within its bounded validity, not financial permission. |
+| PARTIAL / UNKNOWN | Required evidence or causal links are missing or incompatible; never a healthy zero. |
+| STALE | Producer/account validity expired; a new HTTP response does not renew it. |
+| REQUESTED | Durable queue acceptance; owner execution has not been established. |
+| APPLIED / OBSERVED | The existing owner recorded the effect; holdings/cash still follow financial evidence. |
+| FAILED / UNKNOWN | Effect may have occurred; no automatic retry or inferred rollback. |
+| REDEEMABLE_REVIEW | Fresh confirmed resolution evidence requires separate redemption review/authority; cash is not assumed. |
+| CLOSED / observed cash | Closed inventory and a trusted cash event are separately retained; neither is inferred from STOP. |
 
 Build/verify in the pinned development environment:
 
@@ -312,34 +358,40 @@ npm run verify --prefix frontend
 python -m build
 ```
 
-After intentionally editing the Python contract, run
-`python scripts/console_contract.py` and `python scripts/console_fixture.py`
-before rebuilding. Check in the generated bundle as one unit. Hatch rejects
-stale/missing manifests and verifies both wheel and sdist-to-wheel. Runtime
-installation never invokes npm. The manifest source identity, embedded HTML
-identity and authenticated API identity must agree. Asset hashes are part of
-the financial package binding: do not hot-replace UI or reuse previous run
-approval/digests after release changes.
+Intentional contract edits run the two Python scripts without `--check` before
+rebuilding. Commit source, generated mapping/fixture and complete hashed bundle
+as one unit. Hatch rejects missing/stale manifests for wheel and sdist-to-wheel.
+Runtime installation needs no Node, npm download or dev server. Session/preview
+checks verify installed asset bytes and bundle identity; old tabs fail closed.
+UI/manifest/notices remain in financial package binding: no hot asset replacement
+or reuse of old run approval after a release change. The additive command-preview
+schema is initialized through existing owner maintenance, never a financial-state
+migration. Roll back a complete retained compatible release, preserving financial
+stores, custody STOP, receipts and consumed allowance; do not downgrade data.
 
-Synthetic installed browser acceptance uses `POLYSIA_BROWSER_TESTS=1` and
-`POLYSIA_REQUIRE_WHEEL=1`, with `python -m pytest -q tests/browser -o pythonpath=`
-after installing the built wheel. It uses temporary HTTPS keys, real financial
-projection, gateway, command store and supervisor STOP owner, with no real
-provider/account. `output/playwright/h1-*.png` and `h1-footprint.json` are CI
-artifacts. The footprint uses 10,000 synthetic wallets/200 orders, >=100 paint
-samples and 1,000 fully settled refreshes across 25h of accelerated browser time;
-it is not an operational soak. Screen-reader and human acceptance remain pending.
+For tokens/layout/read-only cards, follow the
+[developer entry](../03-requirements/developer-context-packet.md#developer-entry).
+Installed acceptance uses `POLYSIA_BROWSER_TESTS=1 POLYSIA_REQUIRE_WHEEL=1` and
+`python -m pytest -q tests/browser -o pythonpath=` after installing the built
+wheel outside source imports. Axe is a pinned development-only test engine.
+`output/playwright/h2-*.png`, `h2-accessibility-*.json` and `h2-footprint.json`
+retain measurements and named ordinary/unknown/error/critical views. The workload
+is 10,000 synthetic wallets/200 orders, >=100 paint samples and 1,000 settled
+refresh/error/receipt cycles across 25h accelerated time and CSRF expiry; actual
+wall time is recorded. It is not a multi-day soak or user research. Keyboard,
+focus, 200%-equivalent reflow and representative Persian/RTL complement automated
+accessibility; screen-reader and human acceptance remain unperformed.
 
-H2 resumes from the focused draft PR. Exact source owners are
-`frontend/src/App.tsx`, `client.ts`, `validation.ts`, `messages.ts` and CSS;
-`monitoring/console_contract.py`, `console_gateway.py`, `console_projection.py`,
-`console_bundle.py`, `financial_session.py`; `storage/console_commands.py`;
-`frontend/build.mjs`, `hatch_build.py` and CI/classifier tests. Complete the
-ADR's parity ledger, then remove `monitoring/console_assets/{index.html,
-console.js,console.css,demo.json}` and temporary route names only after verified
-consumer parity. Retain protected exports, backend/CLI owners and historical
-records. The PR's exact commit, bundle manifest source/files hashes and CI wheel
-identity are the immutable resume inputs; do not substitute an older release.
+Deployment requires separate activation. Integrate dependency PR #229, then #230,
+then the Console PR; refresh final integrated CI and retain exact source/tree,
+wheel/image/archive hashes, bundle source/files hashes and API/release identity.
+Use Python 3.14, Node 24.22.1/npm 11.19.1 only for development builds, console/v1
+and release 0.4.0; tested browser versions and exact artifacts belong to the final
+CI/PR receipt. Commission identity/host/TLS, cgroups/ACLs/shared egress, resource
+limits, independent custody/checkpoint supervision, protected backup/restore,
+notification delivery and real source/account qualification before considering
+run-specific authority. No synthetic check approves ADR-0023's operational decision,
+Live, profitability or economics. Preserve the active review/dependency branches.
 
 ### Existing protected access and operator route
 
@@ -390,13 +442,14 @@ systemctl enable --now polysia-platform-tunnel.service
 Verify both services are active and only `127.0.0.1:8765` is listening.
 Missing-identity origin requests must be 403. Public anonymous JSON GETs for `/`,
 `/api/report`, `/api/health`, `/api/commands`, `/download/comparison.csv`,
-`/console.js` and `/console.css`, and an anonymous command POST, must be rejected.
+`/assets/<manifest-asset>`, and an anonymous command POST, must be rejected.
 Ordinary browser navigation must reach the named Access login with normal TLS.
 The owner completes email login personally; never collect OTPs in chat. Restarting
 this route does not renew acquisition authority.
 
-Visible Console pages perform serialized read-only refresh approximately every
-20 seconds with a 10-second request deadline. Hidden pages suspend refresh and
+Visible Console pages run one read-only refresh group every 15 seconds, with
+independent four-second deadlines for snapshot/session/history/protective catalog.
+The selected optional workspace has its own cancellable bounded read. Hidden pages suspend refresh and
 refresh immediately on return. Local aging continues during network failure;
 worker age, publication age and retained financial cutoff are separate. A fresh
 publisher cannot make an old worker receipt healthy. Background reads do not

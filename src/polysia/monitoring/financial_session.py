@@ -7,12 +7,28 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from pydantic import TypeAdapter
+
 from polysia.application.services.financial_session import TERMINAL, session_ledger
 from polysia.config.settings import TradingMode
-from polysia.domain.financial_session import SessionAuthorization, digest, utc
+from polysia.domain.financial_session import (
+    PositionTrigger,
+    SessionAuthorization,
+    SourceOccurrence,
+    digest,
+    utc,
+)
 from polysia.portfolio.pnl import calculate_portfolio_pnl
 
 ZERO = Decimal("0")
+_TRIGGER = TypeAdapter(SourceOccurrence | PositionTrigger)
+
+
+def trigger_identity(evidence: dict[str, Any]) -> str | None:
+    try:
+        return _TRIGGER.validate_python(evidence.get("event")).identity
+    except ValueError:
+        return None
 
 
 def financial_session_view(
@@ -49,8 +65,11 @@ def financial_session_view(
         else {}
     )
     pnl = calculate_portfolio_pnl(ledger, marks)
-    quarantined = bool(state.get("quarantined_fills") or state.get("quarantined_finality")
-                       or state.get("quarantined_cash_events"))
+    quarantined = bool(
+        state.get("quarantined_fills")
+        or state.get("quarantined_finality")
+        or state.get("quarantined_cash_events")
+    )
     decisions = state["decisions"]
     counts = discovery_counts or {}
     reasons = Counter(row["reason"] for row in decisions.values() if row["reason"])
@@ -68,6 +87,7 @@ def financial_session_view(
         peak = max(peak, value)
         drawdown = max(drawdown, peak - value)
     fill_counts = Counter(fill["intent_id"] for fill in state["fills"])
+    account_at = state.get("last_account", {}).get("observed_at") or state.get("reconciled_at")
     divergence = []
     for identity in orders:
         leader = decisions[identity]["evidence"]["event"].get("leader_price")
@@ -104,6 +124,13 @@ def financial_session_view(
         "scope": "bounded session library; publication does not activate execution",
         "activation": "NOT_COMMISSIONED",
         "trading_mode": trading_mode.value,
+        "account_observed_at": account_at,
+        "account_valid_until": (
+            datetime.fromisoformat(account_at)
+            + timedelta(seconds=authority.max_evidence_age_seconds)
+        ).isoformat()
+        if account_at
+        else None,
         "status": state["mode"],
         "remaining_authority": {
             "status": "DENIED"
@@ -155,8 +182,56 @@ def financial_session_view(
                 "fill_state": row.get("fill_state", "UNKNOWN"),
                 "settlement_state": row.get("settlement_state", "UNKNOWN"),
                 "reason": decisions[identity]["reason"],
+                "wallet": row.get("wallet"),
+                "policy_digest": row.get("policy_digest"),
+                "reservation": row.get("reservation"),
+                "evidence_digest": row.get("evidence_digest"),
+                "trigger_id": trigger_identity(decisions[identity].get("evidence", {})),
+                "risk": {
+                    "approved": decisions[identity].get("risk", {}).get("approved"),
+                    "reason": decisions[identity].get("risk", {}).get("reason"),
+                },
+                "fills": [
+                    {
+                        key: fill.get(key)
+                        for key in ("fill_id", "shares", "price", "fee", "confirmed_at")
+                    }
+                    for fill in state["fills"]
+                    if fill["intent_id"] == identity
+                ],
             }
             for identity, row in orders.items()
+        ],
+        "positions": [
+            {
+                "token": token,
+                "state": "UNKNOWN_QUARANTINED"
+                if quarantined
+                else "OPEN"
+                if ledger.get(token).size
+                else "CLOSED",
+                "shares": None if quarantined else str(ledger.get(token).size),
+                "average_price": str(ledger.get(token).avg_price)
+                if not quarantined and token in ledger.positions
+                else None,
+                "mark": str(marks[token]) if token in marks else None,
+                "valuation_method": latest["method"] if valuation_fresh and latest else None,
+                "redeemable": "REDEEMABLE_REVIEW"
+                if not quarantined
+                and ledger.get(token).size > ZERO
+                and token in marks
+                and latest is not None
+                and latest["method"] == "confirmed_resolution"
+                else "UNKNOWN",
+                "orders": [identity for identity, row in orders.items() if row["token"] == token],
+                "cash_events": [
+                    {key: event.get(key) for key in ("event_id", "confirmed_cash", "occurred_at")}
+                    for event in state.get("cash_events", [])
+                    if token in dict(event["removed"])
+                ],
+                "updated_at": now.isoformat(),
+            }
+            for token in sorted({fill["token"] for fill in state["fills"]})
         ],
         "funnel": {
             "discovered": counts.get("discovered"),

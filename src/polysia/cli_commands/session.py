@@ -458,19 +458,7 @@ def lab_publish(config: ConfigPath, output: Annotated[Path, typer.Option()]) -> 
         try:
             publish_redacted(
                 output,
-                {
-                    "version": "shadow-lab-publication/v1",
-                    "published_at": datetime.now(UTC),
-                    "experiments": [
-                        lab.slot(target)
-                        for target in sorted(lab.targets)
-                        if lab.slot(target) is not None
-                    ],
-                    "acquisition": lab.acquisition.status(),
-                    "incidents": lab.incidents.projection(),
-                    "financial_authority": "ABSENT",
-                    "virtual_capital": "ISOLATED_PER_EXPERIMENT",
-                },
+                lab.console_view(),
             )
         finally:
             await lab.close()

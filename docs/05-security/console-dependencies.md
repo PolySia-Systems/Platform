@@ -1,6 +1,6 @@
 # Console dependency decision
 
-## Human Console H1 static frontend, 2026-10-27
+## Human Console static frontend, 2026-10-27
 
 The scoped owner activation selects React/React DOM 19.3.1, Mantine core/hooks
 9.7.4, TypeScript 7.0.2 and Vite 8.3.5. Node 24.22.1/npm 11.19.1 and one npm
@@ -9,6 +9,18 @@ Registry peer/engine metadata and the current official React, Vite and Mantine
 documentation were checked before selection. Strict TypeScript and a generated
 Python-owned schema provide checked boundary types; no runtime framework or
 Python dependency was added.
+
+H2 adds exact development-only `axe-core@4.14.0` (MPL-2.0), maintained by
+Deque, for automated accessibility checks of the installed protected Console.
+It runs only in synthetic browser tests, is absent from the shipped bundle and
+runtime notices, and joins the JavaScript audit/SBOM inventory. Testing inspects
+the real document through Playwright; CSP is never relaxed. Keyboard, focus,
+reflow and representative RTL checks complement automation. Incomplete rules
+remain explicit evidence, not a WCAG certification or screen-reader acceptance.
+Alternative: manual-only checks, which lack repeatable contrast/semantic coverage.
+Rollback removes this development dependency and its audit fixture together;
+it has no production runtime or financial behavior. See the
+[official engine and license](https://github.com/dequelabs/axe-core).
 
 Rolldown 1.2.15 (MIT), already Vite's locked bundler, is also declared as an
 exact direct development dependency because the final-byte recipe uses its

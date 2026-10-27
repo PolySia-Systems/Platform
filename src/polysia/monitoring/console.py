@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import html
 import json
 import re
 import secrets
@@ -253,11 +252,19 @@ class ConsoleApplication:
                 return respond(
                     "409 Conflict", {"reason": "invalid_or_incompatible_console_request"}
                 )
-        if path == "/h1" or isinstance(path, str) and path.startswith("/h1/assets/"):
+        if path == "/" or isinstance(path, str) and path.startswith("/assets/"):
             try:
                 directory = Path(__file__).with_name("human_console_assets")
                 manifest = verify_bundle(directory)
-                if path == "/h1":
+                if path == "/":
+                    headers.append(
+                        (
+                            "Set-Cookie",
+                            "__Host-polysia-csrf="
+                            + self._csrf(subject)
+                            + "; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600",
+                        )
+                    )
                     nonce = secrets.token_urlsafe(24)
                     headers = [
                         (
@@ -274,7 +281,7 @@ class ConsoleApplication:
                         document.replace("{{nonce}}", nonce),
                         media="text/html; charset=utf-8",
                     )
-                name = path.removeprefix("/h1/assets/")
+                name = path.removeprefix("/assets/")
                 if name not in manifest["files"] or name == "index.html":
                     return respond("404 Not Found", {"reason": "unknown_asset"})
                 media = {".css": "text/css", ".js": "text/javascript", ".txt": "text/plain"}[
@@ -317,41 +324,18 @@ class ConsoleApplication:
                     if path == "/api/supervision"
                     else "publisher-status.json"
                 )
-                if status_file.stat().st_size > 4096:
+                if status_file.is_symlink():
+                    raise ValueError("health_receipt_symlink")
+                with status_file.open("rb") as stream:
+                    health_bytes = stream.read(4097)
+                if len(health_bytes) > 4096:
                     raise ValueError("health_receipt_too_large")
-                return respond("200 OK", json.loads(status_file.read_text(encoding="utf-8")))
+                return respond("200 OK", json.loads(health_bytes))
             except OSError, ValueError:
                 return respond(
                     "503 Service Unavailable",
                     {"status": "UNKNOWN", "reason": "publisher_receipt_missing"},
                 )
-        if path in {"/console.css", "/console.js"}:
-            asset = Path(__file__).with_name("console_assets") / path.removeprefix("/")
-            media = "text/css" if path.endswith("css") else "text/javascript"
-            return respond("200 OK", asset.read_text(encoding="utf-8"), media=media)
-        if path == "/api/demo":
-            demo = Path(__file__).with_name("console_assets") / "demo.json"
-            return respond("200 OK", json.loads(demo.read_text(encoding="utf-8")))
-        if path in {"/", "/demo"}:
-            csrf = self._csrf(subject)
-            headers.append(
-                (
-                    "Set-Cookie",
-                    "__Host-polysia-csrf="
-                    + csrf
-                    + "; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600",
-                )
-            )
-            document = (
-                (Path(__file__).with_name("console_assets") / "index.html")
-                .read_text(
-                    encoding="utf-8",
-                )
-                .replace("{{csrf}}", html.escape(csrf, quote=True))
-                .replace("{{role}}", "reader" if path == "/demo" else role)
-                .replace("{{dataset_mode}}", "demo" if path == "/demo" else "retained")
-            )
-            return respond("200 OK", document, media="text/html; charset=utf-8")
         if isinstance(path, str) and re.fullmatch(r"/reports/[a-f0-9]{64}\.json", path):
             try:
                 archive = self._publication.parent / "reports" / path.rsplit("/", 1)[1]

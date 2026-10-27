@@ -2,11 +2,11 @@
   "version": 1,
   "api": "console/v1",
   "release": "0.4.0",
-  "source": "85f9994a375b9dc5b1d4e07446fc266be6113ea0fa0484d1f3644d42ee5e9422",
+  "source": "72bb450adfa747a06ce47d2a97993d7e1e7a29f58deb0a4934f3f28dd536641f",
   "files": {
-    "main-a287fbde2966.js": "a287fbde29668b1292a06cfc4143517c4fc84a6ab4292dcef64b711a474432a5",
-    "style-DsUVeoec.css": "3482cfb6adef6a9a602a5d7e6b31ad1bf92930e09de224248a1a034dc385fb8c",
+    "main-2095cfe73cd4.js": "2095cfe73cd4beb983c0da83de0952dbc4a35d8a60ce681c4422081ab01ae774",
+    "style-DqvLxDsg.css": "ab91e01fa319601a7febed269801044cb3ded781d4e1984bc0535bdde2861e70",
     "notices.txt": "a20f9c816d1d092278cd132b13837b85b51ae2c7eabd22f7a50ca8bdb27fc80c",
-    "index.html": "3d7f413a70edec82dc71068665f6ccf0299505ddcad4fc249b2d43b6b381799e"
+    "index.html": "5eff078bea158ce5a06074373580af3a2f48467870bdc1dba625a2440b115885"
   }
 }

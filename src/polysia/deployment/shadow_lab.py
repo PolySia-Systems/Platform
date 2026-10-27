@@ -181,6 +181,11 @@ class ShadowLab:
                 source = self.slot(arguments["source"])
                 if source is None or arguments["source"] not in self.targets:
                     raise SessionBlocked("shadow_lab_clone_source_unavailable")
+                if (
+                    arguments.get("source_policy_digest", source["policy_digest"])
+                    != source["policy_digest"]
+                ):
+                    raise SessionBlocked("shadow_lab_clone_source_policy_changed")
                 policy = source["policy_digest"]
             config = self.templates.get(str(policy))
             if config is None:
@@ -358,6 +363,37 @@ class ShadowLab:
                 "SELECT * FROM continuous_shadow_lab_slots WHERE target=?", (target,)
             ).fetchone()
             return None if row is None else dict(row)
+
+    def console_view(self) -> dict[str, Any]:
+        """Registered public choices; excludes endpoints, credentials and private evidence."""
+        return {
+            "version": "shadow-lab-publication/v1",
+            "published_at": self.clock().isoformat(),
+            "experiments": [
+                slot for target in sorted(self.targets) if (slot := self.slot(target)) is not None
+            ],
+            "targets": sorted(self.targets),
+            "policies": [
+                {
+                    "digest": identity,
+                    "version": template.copy_policy.version,
+                    "capital": str(template.follower_bankroll),
+                    "unit": None,
+                    "cost_model": template.cost_model_version,
+                    "cohort": self.selection.digest,
+                    "window": (
+                        f"{template.period_duration_seconds} seconds configured; "
+                        "observed window is separate"
+                    ),
+                }
+                for identity, template in sorted(self.templates.items())
+                if template.copy_policy is not None
+            ],
+            "acquisition": self.acquisition.status(),
+            "incidents": self.incidents.projection(),
+            "financial_authority": "ABSENT",
+            "virtual_capital": "ISOLATED_PER_EXPERIMENT",
+        }
 
     def _phase(self, target: str, phase: str, experiment_id: str) -> None:
         with closing(sqlite3.connect(self.store.path)) as connection, connection:

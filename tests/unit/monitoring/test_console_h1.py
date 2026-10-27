@@ -134,7 +134,10 @@ def test_actual_producer_scope_mode_supervision_and_exact_amounts(tmp_path):
     )
     data = call(app, PREFIX + "/snapshot")[2]
     assert data["supervision"]["status"] == "UNKNOWN"
-    assert data["components"][-1]["reason"] == "supervision_scope_mismatch"
+    assert (
+        next(item for item in data["components"] if item["name"] == "supervision")["reason"]
+        == "supervision_scope_mismatch"
+    )
 
 
 @pytest.mark.parametrize(
@@ -321,8 +324,8 @@ def test_bundle_custody_traversal_missing_changed_and_financial_binding(tmp_path
     with pytest.raises(ValueError):
         verify_bundle(bundle)
     app, _, _ = setup(tmp_path / "gateway")
-    assert call(app, "/h1/assets/../console.py")[0] == "404 Not Found"
-    assert call(app, "/h1", token="invalid")[0] == "403 Forbidden"
+    assert call(app, "/assets/../console.py")[0] == "404 Not Found"
+    assert call(app, "/", token="invalid")[0] == "403 Forbidden"
 
 
 @pytest.mark.parametrize(

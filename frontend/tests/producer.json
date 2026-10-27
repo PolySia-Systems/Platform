@@ -5,7 +5,7 @@
   "blocker": "Independent STOP is observed. Preserve STOP and reconcile remaining exposure through the protected operator route.",
   "components": [
     {
-      "generation": "2d57c9c0db11ae1fda3ba7d436578093042ab1bc2ce1fcde764167b50eda3a13",
+      "generation": "2dc798507179000ef2097110b971e0650ecc145a53fb490e237ce9c7496b79de",
       "name": "publication",
       "observed_at": "2026-10-26T00:00:00+00:00",
       "reason": "independently_dated_evidence",
@@ -18,7 +18,7 @@
       "valid_until": "2026-10-26T00:01:00+00:00"
     },
     {
-      "generation": "2d57c9c0db11ae1fda3ba7d436578093042ab1bc2ce1fcde764167b50eda3a13",
+      "generation": "2dc798507179000ef2097110b971e0650ecc145a53fb490e237ce9c7496b79de",
       "name": "financial",
       "observed_at": "2026-10-26T00:00:00+00:00",
       "reason": "independently_dated_evidence",
@@ -29,6 +29,19 @@
       },
       "state": "AVAILABLE",
       "valid_until": "2026-10-26T00:00:30+00:00"
+    },
+    {
+      "generation": "2dc798507179000ef2097110b971e0650ecc145a53fb490e237ce9c7496b79de",
+      "name": "worker",
+      "observed_at": null,
+      "reason": "producer_time_missing_or_invalid",
+      "scope": {
+        "account": null,
+        "run": null,
+        "venue": null
+      },
+      "state": "INCOMPATIBLE",
+      "valid_until": null
     },
     {
       "generation": null,
@@ -42,13 +55,26 @@
       },
       "state": "AVAILABLE",
       "valid_until": "2026-10-26T00:00:15+00:00"
+    },
+    {
+      "generation": null,
+      "name": "publisher",
+      "observed_at": null,
+      "reason": "evidence_missing",
+      "scope": {
+        "account": null,
+        "run": null,
+        "venue": null
+      },
+      "state": "UNAVAILABLE",
+      "valid_until": null
     }
   ],
   "context": {
     "configured_mode": "PAPER",
     "dataset": "SYNTHETIC",
     "environment": "UNKNOWN",
-    "generation": "2d57c9c0db11ae1fda3ba7d436578093042ab1bc2ce1fcde764167b50eda3a13",
+    "generation": "2dc798507179000ef2097110b971e0650ecc145a53fb490e237ce9c7496b79de",
     "observed_mode": "PAPER",
     "provenance": "console-producer-fixture/v1",
     "scope": {
@@ -58,6 +84,8 @@
     }
   },
   "financial": {
+    "account_observed_at": "2026-10-26T00:00:00+00:00",
+    "account_valid_until": "2026-10-26T00:00:30+00:00",
     "authority": "WITHIN_WINDOW",
     "authority_until": "2026-10-26T00:05:00+00:00",
     "cash": {

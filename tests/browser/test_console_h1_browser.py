@@ -52,12 +52,14 @@ def test_h1_production_csp_visual_detail_and_real_supervisor_receipt(h1_fixture,
         browser = launch(runtime)
         context = context_for(browser, origin, token, width=width)
         context.add_init_script(
-            "window.cspViolations=[];document.addEventListener('securitypolicyviolation',e=>window.cspViolations.push(e.violatedDirective+':'+e.blockedURI))"
+            "window.cspViolations=[];document.addEventListener('securitypolicyvio"
+            "lation',e=>window.cspViolations.push(e.violatedDirective+':'+e.block"
+            'edURI))'
         )
         page = context.new_page()
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
-        response = page.goto(origin + "/h1")
+        response = page.goto(origin + "/")
         assert "unsafe-inline" not in response.headers["content-security-policy"]
         assert "unsafe-eval" not in response.headers["content-security-policy"]
         expect(page.get_by_role("heading", name="A clear view of the session.")).to_be_visible()
@@ -117,7 +119,7 @@ def test_h1_lost_apply_response_exact_recovery_and_no_duplicate_effect(h1_fixtur
         browser = launch(runtime)
         context = context_for(browser, origin, token)
         page = context.new_page()
-        page.goto(origin + "/h1")
+        page.goto(origin + "/")
         page.get_by_role("button", name="Operate", exact=True).first.click()
         page.locator("#operation").select_option("session.stop|fixture-run:stop")
         page.get_by_role("button", name="Preview operation", exact=True).click()
@@ -161,7 +163,7 @@ def test_h1_absent_receipt_stays_pinned_across_context_and_visibility_change(h1_
         browser = launch(runtime)
         context = context_for(browser, origin, token)
         page = context.new_page()
-        page.goto(origin + "/h1")
+        page.goto(origin + "/")
         page.get_by_role("button", name="Operate", exact=True).first.click()
         page.locator("#operation").select_option("session.stop|fixture-run:stop")
         page.get_by_role("button", name="Preview operation").click()
@@ -200,7 +202,7 @@ def test_h1_rtl_zoom_keyboard_error_expiry_and_late_preview(h1_fixture):
         browser = launch(runtime)
         context = context_for(browser, origin, token, width=1280)
         page = context.new_page()
-        page.goto(origin + "/h1?locale=fa-IR")
+        page.goto(origin + "/?locale=fa-IR")
         expect(page.get_by_label("Session context")).to_contain_text("PAPER")
         expect(page.locator("html")).to_have_attribute("dir", "rtl")
         page.screenshot(path=str(OUTPUT / "h1-rtl.png"), full_page=True)
@@ -251,7 +253,7 @@ def test_h1_optional_requests_cannot_block_protective_stop(h1_fixture):
         page = context.new_page()
         page.route("**" + PREFIX + "/snapshot", lambda route: route.abort("timedout"))
         page.route("**" + PREFIX + "/receipts", lambda route: route.abort("timedout"))
-        page.goto(origin + "/h1")
+        page.goto(origin + "/")
         page.get_by_role("button", name="Operate", exact=True).first.click()
         page.locator("#operation").select_option("session.stop|fixture-run:stop")
         page.get_by_role("button", name="Preview operation").click()
@@ -269,7 +271,11 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
     import polysia.monitoring.console as console_module
     from polysia.control.service import ControlService
 
-    origin, token, commands, _, owner, _, _ = h1_fixture
+    origin, token, commands, _, owner, _, root = h1_fixture
+    from tests.fixtures.console_h2 import write
+
+    rich = write(root)
+    cash = rich["financial_session"]["exposure"]["cash"]
     from datetime import UTC, datetime
 
     plan = ControlService.preview_scoped(
@@ -299,8 +305,8 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
         page = context.new_page()
         cdp = context.new_cdp_session(page)
         start = time.perf_counter()
-        page.goto(origin + "/h1")
-        expect(page.get_by_label("Exact financial amounts")).to_contain_text("100")
+        page.goto(origin + "/")
+        expect(page.get_by_label("Exact financial amounts")).to_contain_text(cash)
         cold = time.perf_counter() - start
         snapshot_cold_ms = page.evaluate("""() => performance.getEntriesByType('resource')
             .find(entry => entry.name.endsWith('/snapshot'))?.duration ?? null""")
@@ -314,9 +320,15 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
         assert context.request.get(origin + PREFIX + "/records?kind=wallet").status == 200
         records_warm_ms = (time.perf_counter() - start) * 1000
         assert snapshot_response.status == records_response.status == 200
+        filter_start = time.perf_counter()
+        filtered = context.request.get(
+            origin + PREFIX + "/records?kind=wallet&q=wallet-09999&source=polycop"
+        )
+        filter_ms = (time.perf_counter() - filter_start) * 1000
+        assert filtered.status == 200 and filtered.json()["total"] == 1
         start = time.perf_counter()
         page.reload()
-        expect(page.get_by_label("Exact financial amounts")).to_contain_text("100")
+        expect(page.get_by_label("Exact financial amounts")).to_contain_text(cash)
         warm = time.perf_counter() - start
         timings = []
         for index in range(100):
@@ -382,6 +394,10 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
         record = {
             "environment": platform.platform(),
             "python": platform.python_version(),
+            "cpu": platform.processor(),
+            "logical_cpus": os.cpu_count(),
+            "filter_ms": filter_ms,
+            "filtered_bytes": len(filtered.body()),
             "browser": browser.version,
             "wallets": 10_000,
             "orders": 200,
@@ -412,7 +428,7 @@ def test_h1_reference_footprint_100_interactions_and_1000_refresh_cycles(h1_fixt
             "provider_calls": 0,
         }
         OUTPUT.mkdir(parents=True, exist_ok=True)
-        (OUTPUT / "h1-footprint.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+        (OUTPUT / "h2-footprint.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
         assert cold < 2
         assert p95 < 200
         browser.close()

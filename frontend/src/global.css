@@ -1,6 +1,8 @@
-:root { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #243b45; background: #f4f6f6;
+:root, :root[data-mantine-color-scheme='light'] { --console-muted: #52676f; --console-ink: #17323b; --console-sidebar: #132d34; --console-surface: #fff; --console-accent: #126b60; font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #243b45; background: #f4f6f6;
   --mantine-font-family: Inter, "Segoe UI", system-ui, sans-serif; --mantine-primary-color-filled: #126b60;
   --mantine-primary-color-filled-hover: #0c564e; --mantine-color-blue-filled: #126b60; --mantine-color-blue-filled-hover: #0c564e;
+  --mantine-color-blue-outline: var(--console-accent);
+  --mantine-color-blue-outline-hover: #e6f3ee;
   --mantine-radius-default: 6px; }
 * { box-sizing: border-box; }
 body { margin: 0; }

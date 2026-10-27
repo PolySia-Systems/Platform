@@ -74,8 +74,19 @@ class ScopedPreview:
             "policy.stage": {"policy_digest"},
             "shadow.create": {"policy_digest"},
         }
-        if set(fields) != allowed.get(self.operation, set()) or len(fields) != len(self.arguments):
+        required = allowed.get(self.operation, set())
+        optional = {"source_policy_digest"} if self.operation == "shadow.clone" else set()
+        if (
+            not required <= set(fields)
+            or set(fields) - required - optional
+            or len(fields) != len(self.arguments)
+        ):
             raise ValueError("operation arguments are not allowlisted")
+        if (
+            "source_policy_digest" in fields
+            and re.fullmatch(r"[a-f0-9]{64}", fields["source_policy_digest"]) is None
+        ):
+            raise ValueError("clone_policy_digest_invalid")
         if any(
             re.fullmatch(r"[A-Za-z0-9._:@/-]{1,128}", value) is None for value in fields.values()
         ):
