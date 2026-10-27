@@ -159,7 +159,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -174,8 +174,10 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Compile
         run: python -m compileall -q src tests
+      - name: Operational composition preflight
+        run: python -m pytest -q -x --tb=short tests/integration/test_operational_session.py
       - name: Full Pytest
-        run: python -m pytest -q --durations=25 --junitxml=artifacts/windows-pytest.xml
+        run: python -m pytest -q -x --tb=short --durations=25 --junitxml=artifacts/windows-pytest.xml
       - name: Environment integrity
         run: python -m pip check
       - name: Dependency lock check
