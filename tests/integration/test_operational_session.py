@@ -418,9 +418,19 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
     from functools import partial
 
     import polysia.adapters.polymarket.session_composition as composition
+    from polysia.application.services.financial_session import FinancialSessionCoordinator
 
     monkeypatch.setattr(composition, "CheckpointPublisher",
                         partial(CheckpointPublisher, wait=await_supervisor))
+    # UTC is frozen for this composition proof. Freeze the coordinator's
+    # monotonic clock too, so slow fixture filesystem work does not simulate
+    # elapsed supervision time. Dedicated expiry tests advance monotonic time
+    # and prove that supervision expiry still blocks submission.
+    monkeypatch.setattr(
+        composition,
+        "FinancialSessionCoordinator",
+        partial(FinancialSessionCoordinator, monotonic=lambda: 0),
+    )
 
     thread = threading.Thread(target=supervise, daemon=True)
     thread.start()
