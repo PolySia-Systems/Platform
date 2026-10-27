@@ -26,7 +26,7 @@ export function EvidenceWorkspace({ panel, generation, identity, clock, onIdenti
     });
     return () => controller.abort();
   }, [panel, generation, identity, onIdentityFailure]);
-  return <div aria-label={m.evidenceWorkspace}>
+  return <div role="group" aria-label={m.evidenceWorkspace}>
     {error && <p role="alert">{error}</p>}
     {!value && !error && <p role="status">{m.loading}</p>}
     {value?.sections.map(section => {

@@ -51,11 +51,16 @@ def test_eight_journeys_visual_accessibility_and_rtl(rich_console, width):  # no
         for tab in ("Overview", "Investigate", "Operate", "Evaluate", "System / Setup"):
             page.get_by_role("button", name=tab, exact=True).click()
             expect(page.locator("#main")).to_have_attribute("aria-busy", "false")
-            if tab in {"Operate", "Evaluate", "System / Setup"}:
+            headings = {
+                "Operate": "Effective and staged policy",
+                "Evaluate": "Same-tape Shadow comparison",
+                "System / Setup": "Configured, verified and authorized",
+            }
+            if tab in headings:
                 expect(
-                    page.get_by_label("Qualified workspace evidence", exact=True)
-                    .get_by_role("heading")
-                    .first
+                    page.get_by_label("Qualified workspace evidence", exact=True).get_by_role(
+                        "heading", name=headings[tab], exact=True
+                    )
                 ).to_be_visible()
             if tab == "Operate":
                 expect(page.locator("#operation")).to_contain_text(
@@ -89,6 +94,21 @@ def test_eight_journeys_visual_accessibility_and_rtl(rich_console, width):  # no
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         # Keyboard/focus and 200%-equivalent CSS reflow remain separate from a native zoom claim.
         if width == 1440:
+            page.get_by_role("button", name="Evaluate", exact=True).click()
+            expect(page.get_by_role("heading", name="Same-tape Shadow comparison")).to_be_visible()
+            page.route("**/workspace?panel=system", lambda route: route.abort(), times=1)
+            page.get_by_role("button", name="System / Setup", exact=True).click()
+            evidence = page.get_by_role("group", name="Qualified workspace evidence", exact=True)
+            expect(evidence.get_by_role("alert")).to_contain_text("Evidence unavailable")
+            expect(
+                evidence.get_by_role("heading", name="Same-tape Shadow comparison")
+            ).to_have_count(0)
+            # Retry the failed read explicitly even when the publication generation is unchanged.
+            page.get_by_role("button", name="Refresh evidence", exact=False).click()
+            expect(
+                evidence.get_by_role("heading", name="Configured, verified and authorized")
+            ).to_be_visible()
+            expect(evidence.get_by_role("alert")).to_have_count(0)
             page.get_by_role("button", name="Operate", exact=True).click()
             page.locator("#operation").select_option("acquisition.stop|acquisition")
             page.get_by_role("button", name="Preview operation", exact=True).focus()

@@ -43,6 +43,7 @@ export default function App() {
   const [historyError, setHistoryError] = useState('');
   const [historyCursor, setHistoryCursor] = useState('');
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [workspaceRefresh, setWorkspaceRefresh] = useState(0);
   const refreshTask = useRef<Promise<void> | null>(null);
   const authEpoch = useRef(0);
   const [chosen, setChosen] = useState('');
@@ -220,7 +221,7 @@ export default function App() {
         <div className={s.pageHeading}><div><p className={s.eyebrow}>{m.eyebrow}</p>
           <h1>{tab === 'Overview' ? m.heading : tab === 'Investigate' ? m.investigateTitle : tab === 'Operate' ? m.operateTitle : tab === 'Evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
           <p>{tab === 'Overview' ? m.subtitle : tab === 'Investigate' ? m.investigateSubtitle : tab === 'Operate' ? m.operateSubtitle : tab === 'Evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p></div>
-          <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => void refresh()}>{m.refresh} ↻</Button>
+          <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>
         </div>
         {(authFailure || failure) && <div className={s.error} role="alert">{authFailure || failure}
           {authFailure && <Button onClick={() => void refresh()}>{m.renew}</Button>}</div>}
@@ -299,9 +300,9 @@ export default function App() {
                 setHistory(value); setHistoryCursor(value.next_cursor ?? ''); } catch (error) { setHistoryError(m.historyUnavailable); if (error instanceof ApiError && error.status === 403) identityFailure(); }
             }}>{m.next}</Button>}
           </section>
-          <EvidenceWorkspace panel="operate" generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />
+          <EvidenceWorkspace key={workspaceRefresh} panel="operate" generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />
         </>}
-        {(tab === 'Evaluate' || tab === 'System / Setup') && <EvidenceWorkspace panel={tab === 'Evaluate' ? 'evaluate' : 'system'}
+        {(tab === 'Evaluate' || tab === 'System / Setup') && <EvidenceWorkspace key={tab + workspaceRefresh} panel={tab === 'Evaluate' ? 'evaluate' : 'system'}
           generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />}
         {tab === 'Evaluate' && <section className={s.panel} aria-label={m.exports}><h2>{m.exports}</h2>
           {example ? <p>{m.exampleNoExports} <a href="/">{m.retained}</a></p> : <><p><a href="/api/report">{m.reportDownload}</a></p><p><a href="/download/comparison.csv">{m.comparisonDownload}</a></p></>}</section>}

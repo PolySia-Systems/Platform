@@ -449,7 +449,9 @@ this route does not renew acquisition authority.
 
 Visible Console pages run one read-only refresh group every 15 seconds, with
 independent four-second deadlines for snapshot/session/history/protective catalog.
-The selected optional workspace has its own cancellable bounded read. Hidden pages suspend refresh and
+The selected optional workspace has its own cancellable bounded read. Switching
+workspaces discards the previous view; explicit refresh retries a failed optional
+read even when the publication generation is unchanged. Hidden pages suspend refresh and
 refresh immediately on return. Local aging continues during network failure;
 worker age, publication age and retained financial cutoff are separate. A fresh
 publisher cannot make an old worker receipt healthy. Background reads do not
