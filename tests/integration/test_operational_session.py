@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import socket
-import threading
 from dataclasses import asdict, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -390,30 +389,14 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             }
         ),
     )
-    stop = threading.Event()
-    checkpoint_requested = threading.Event()
-    checkpoint_checked = threading.Event()
-    errors = []
-
-    def supervise():
-        while checkpoint_requested.wait():
-            checkpoint_requested.clear()
-            if stop.is_set():
-                return
-            try:
-                supervisor.inspect()
-            except Exception as error:
-                errors.append(type(error).__name__)
-            finally:
-                checkpoint_checked.set()
-
-    def await_supervisor(seconds: float) -> None:
-        # Frozen fixture time needs an inspection for a new checkpoint, not
-        # 200 redundant durable health writes/second. Schedule the actual owner
-        # at the real publisher wait boundary; retain its original ACK deadline.
-        checkpoint_checked.clear()
-        checkpoint_requested.set()
-        checkpoint_checked.wait(seconds)
+    def await_supervisor(_seconds: float) -> None:
+        # This proof composes the actual owners with deterministic scheduling.
+        # A polling thread can queue duplicate inspections and race SQLite reads
+        # with its own ACK transaction on slow Windows storage. Complete the
+        # actual inspection at the injected wait boundary; the publisher still
+        # enforces its original real monotonic ACK deadline. Separate-process
+        # supervision is exercised by the container/installation acceptance.
+        supervisor.inspect()
 
     from functools import partial
 
@@ -432,8 +415,6 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         partial(FinancialSessionCoordinator, monotonic=lambda: 0),
     )
 
-    thread = threading.Thread(target=supervise, daemon=True)
-    thread.start()
     session = None
     try:
         session = await compose_session(
@@ -521,11 +502,6 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
     finally:
         if session is not None:
             await session.close()
-        stop.set()
-        checkpoint_requested.set()
-        thread.join(timeout=3)
-        assert not thread.is_alive()
-    assert not errors
 
 
 @pytest.mark.asyncio
