@@ -2,10 +2,12 @@
 let publication = {}, revision = 0, inFlight = null;
 let refreshTimer = null, publisherFailure = null, reportFailure = null;
 let renderedWallets = "", renderedReceipts = "";
+let walletPage = 0;
+const WALLET_PAGE_SIZE = 50;
 const REFRESH_MS = 20000;
 const IS_DEMO = document.querySelector('meta[name="dataset-mode"]').content === "demo";
 // Keep English interface messages together; no translation framework is required.
-const STATUS_TEXT = {UNCONFIGURED:"Observation is not configured", STOPPED:"Acquisition is stopped", OBSERVING:"Observation active", WAITING_CADENCE:"Waiting for the next scheduled observation", WAITING_RETRY:"Waiting before a bounded retry", WAITING_SOURCE_EVIDENCE:"Waiting for complete source evidence", DRAINING:"Closing existing inventory only", FAILED:"An operation failed", BLOCKED:"An operation needs attention", UNKNOWN:"Current state is unknown", "STALE PUBLICATION":"Retained report is out of date", "STALE WORKER RECEIPT":"Worker status is out of date"};
+const STATUS_TEXT = {UNCONFIGURED:"Observation is not configured", STOPPED:"Acquisition is stopped", OBSERVING:"Observation active", WAITING_CADENCE:"Waiting for the next scheduled observation", WAITING_RETRY:"Waiting before a bounded retry", WAITING_SOURCE_EVIDENCE:"Waiting for complete source evidence", DRAINING:"Closing existing inventory only", FAILED:"An operation failed", BLOCKED:"An operation needs attention", UNKNOWN:"Current state is unknown", "PUBLICATION UNAVAILABLE":"Publication unavailable", "STALE PUBLICATION":"Retained report is out of date", "STALE WORKER RECEIPT":"Worker status is out of date"};
 function ageSeconds(value) {
   const stamp = Date.parse(value);
   return Number.isFinite(stamp) ? (Date.now() - stamp) / 1000 : null;
@@ -19,7 +21,9 @@ function freshness() {
   const publisherAge = ageSeconds(publication.published_at);
   const workerAge = ageSeconds(publication.last_attempt);
   let operation = publication.status || "UNKNOWN", next = publication.next_action;
-  if (publisherAge == null || publisherAge < -5 || publisherAge > 180) {
+  if (publisherAge == null && reportFailure) {
+    operation = "PUBLICATION UNAVAILABLE"; next = "Inspect the publisher; no current publication is available.";
+  } else if (publisherAge == null || publisherAge < -5 || publisherAge > 180) {
     operation = "STALE PUBLICATION"; next = "Inspect the publisher; this is retained state.";
   } else if (workerAge == null || workerAge < -5 || workerAge > 180) {
     operation = "STALE WORKER RECEIPT"; next = "Inspect the worker; publication is retained data.";
@@ -33,31 +37,117 @@ function freshness() {
 }
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
-  if (!document.hidden) refreshTimer = setTimeout(async () => {
-    await load(); scheduleRefresh();
-  }, REFRESH_MS);
+  if (!document.hidden) refreshTimer = setTimeout(() => { load(); }, REFRESH_MS);
 }
 async function load() {
   if (inFlight) return inFlight;
-  inFlight = loadOnce().finally(() => { inFlight = null; });
+  document.getElementById("main").setAttribute("aria-busy", "true");
+  inFlight = loadOnce().finally(() => {
+    inFlight = null;
+    // A completed refresh includes the next timer, not just rendered receipts.
+    // Expose readiness only after the serialized read and scheduling finish.
+    scheduleRefresh();
+    document.getElementById("main").setAttribute("aria-busy", "false");
+  });
   return inFlight;
 }
 const text = (id, value) => { document.getElementById(id).textContent = value ?? "UNKNOWN"; };
 const readable = value => value == null ? "UNKNOWN" : String(value);
+const rowsOrEmpty = value => Array.isArray(value) ? value : [];
+const detailsText = value => value == null ? "UNKNOWN" : typeof value === "object" ? JSON.stringify(value) : String(value);
+function tableRow(body, values) {
+  const row = document.createElement("tr");
+  values.forEach(value => { const cell = document.createElement("td"); cell.textContent = detailsText(value); row.append(cell); });
+  body.append(row); return row;
+}
+function tableEmpty(body, columns, message) {
+  const row = tableRow(body, [message]); row.firstChild.colSpan = columns;
+}
+function walletRecords() {
+  const discovery = publication.diagnostic?.discovery?.candidates;
+  return rowsOrEmpty(publication.selection?.records ?? discovery);
+}
+function walletRationale(row) {
+  const ranking = typeof row.ranking_explanation === "string" ? row.ranking_explanation.trim() : "";
+  return [ranking, ...rowsOrEmpty(row.reasons).map(detailsText)].filter(Boolean).join(" · ") || "UNKNOWN";
+}
+function walletExclusions(row) {
+  return Array.isArray(row.exclusions) ? row.exclusions.map(detailsText).join(", ") || "None recorded" : "UNKNOWN";
+}
 function wallets() {
-  const rows = publication.diagnostic?.discovery?.candidates || [];
+  const rows = walletRecords();
   const filter = document.getElementById("wallet-filter").value.trim().toLowerCase();
+  const filtered = rows.filter(row => [row.wallet_id, row.state, row.execution_eligibility, row.eligibility, walletRationale(row), ...rowsOrEmpty(row.sources), ...rowsOrEmpty(row.exclusions)].map(detailsText).join(" ").toLowerCase().includes(filter));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / WALLET_PAGE_SIZE));
+  walletPage = Math.min(Math.max(0, walletPage), pageCount - 1);
+  const first = walletPage * WALLET_PAGE_SIZE;
   const body = document.getElementById("wallets"); body.replaceChildren();
-  rows.filter(row => row.wallet_id.toLowerCase().includes(filter)).forEach(row => {
+  filtered.slice(first, first + WALLET_PAGE_SIZE).forEach(row => {
     const tr = document.createElement("tr");
     const identity = document.createElement("td"), link = document.createElement("button");
-    link.className = "wallet-link"; link.textContent = row.wallet_id;
-    link.addEventListener("click", () => text("wallet-detail", `${row.wallet_id}: ${row.state}; last qualifying activity ${readable(row.last_qualifying_activity)}; ${row.execution_eligibility}; ${(row.exclusions || []).join(", ")}`));
+    link.className = "wallet-link"; link.textContent = readable(row.wallet_id);
+    link.addEventListener("click", () => text("wallet-detail", `${readable(row.wallet_id)}: ${readable(row.state)} · Sources: ${rowsOrEmpty(row.sources).map(detailsText).join(", ") || "UNKNOWN"} · Last qualifying activity: ${readable(row.last_qualifying_activity)} · Execution eligibility: ${readable(row.execution_eligibility ?? row.eligibility)} · Selection rationale: ${walletRationale(row)} · Exclusions: ${walletExclusions(row)}. Discovery membership does not grant execution authority.`));
     identity.append(link); tr.append(identity);
-    [row.state, row.execution_eligibility].forEach(value => { const td = document.createElement("td"); td.textContent = readable(value); tr.append(td); });
+    [rowsOrEmpty(row.sources).map(detailsText).join(", ") + " · " + readable(row.state), row.execution_eligibility ?? row.eligibility].forEach(value => { const td = document.createElement("td"); td.textContent = readable(value); tr.append(td); });
     body.append(tr);
   });
-  if (!rows.length) { const tr = document.createElement("tr"), td = document.createElement("td"); td.colSpan = 3; td.textContent = "No retained cohort is available."; tr.append(td); body.append(tr); }
+  if (!filtered.length) tableEmpty(body, 3, rows.length ? "No discovery records match this search." : "No retained discovery records are available.");
+  text("wallet-page-status", `${filtered.length ? first + 1 : 0}–${Math.min(first + WALLET_PAGE_SIZE, filtered.length)} of ${filtered.length} matching / ${rows.length} available discovery records · Page ${walletPage + 1} of ${pageCount} · Live subscriptions: ${readable(publication.selection?.monitored_count)}.`);
+  document.getElementById("wallet-previous").disabled = walletPage === 0;
+  document.getElementById("wallet-next").disabled = walletPage + 1 >= pageCount;
+}
+function definitions(id, values, labels) {
+  const list = document.getElementById(id); list.replaceChildren();
+  labels.forEach(([key, label]) => {
+    const term = document.createElement("dt"), value = document.createElement("dd");
+    term.textContent = label; value.textContent = detailsText(values?.[key]); list.append(term, value);
+  });
+}
+function orderTimeline() {
+  const orders = rowsOrEmpty(publication.financial_session?.orders);
+  const filter = document.getElementById("order-filter").value.trim().toLowerCase();
+  const matched = orders.filter(row => [row.intent_id, row.order_id, row.state, row.side, row.token].map(readable).join(" ").toLowerCase().includes(filter));
+  const body = document.getElementById("order-timeline"); body.replaceChildren();
+  matched.slice(0, 50).forEach(row => tableRow(body, [
+    `${readable(row.order_id)} / ${readable(row.intent_id)}`, row.state,
+    `${readable(row.side)} · ${readable(row.token)}`,
+    `${readable(row.updated_at ?? row.created_at)} · ${readable(row.reason)}`,
+  ]));
+  if (!matched.length) tableEmpty(body, 4, orders.length ? "No orders match this search." : "No retained financial order evidence. Actual order state is UNKNOWN.");
+  text("order-count", `${Math.min(50, matched.length)} shown / ${matched.length} matching orders. Search an exact identity to inspect other retained orders.`);
+}
+function sessionView() {
+  const session = publication.financial_session;
+  text("session-status", session ? `${readable(session.status)} · Recorded mode: ${readable(session.trading_mode)} · Financial cutoff: ${readable(session.as_of ?? session.observed_at ?? session.generated_at)}` : "No financial-session receipt. Status, authority, and exposure are UNKNOWN.");
+  text("session-scope", `Scope: ${readable(session?.scope)} · Activation: ${readable(session?.activation)}`);
+  definitions("session-authority", session?.remaining_authority, [["status", "Authority state"], ["expires_at", "Entry expiry (UTC)"], ["protective_until", "Protective authority expiry (UTC)"], ["attempts", "Attempts remaining"], ["turnover", "Turnover remaining"], ["requests", "Requests remaining"]]);
+  definitions("session-exposure", session?.exposure, [["cash", "Cash"], ["open_exposure", "Open exposure"], ["reserved", "Reserved / unknown exposure"], ["positions", "Open positions"], ["reconciliation", "Reconciliation"]]);
+  const incidents = document.getElementById("session-incidents"); incidents.replaceChildren();
+  const incidentRows = rowsOrEmpty(session?.incidents);
+  incidentRows.forEach(row => {
+    const item = document.createElement("li");
+    item.textContent = `${readable(row.reason)} · Scope: ${readable(row.scope)} · At: ${readable(row.at)} · Next: ${readable(row.next_action)}`; incidents.append(item);
+  });
+  if (!incidentRows.length) {
+    const item = document.createElement("li");
+    item.textContent = session && Array.isArray(session.incidents) ? "No incidents are recorded in this publication; current account health still requires fresh supervision." : "Incident evidence is UNKNOWN. Inspect the supervised financial-session receipt.";
+    incidents.append(item);
+  }
+  const sources = rowsOrEmpty(session?.sources ?? publication.selection?.source_health);
+  const sourceBody = document.getElementById("source-health"); sourceBody.replaceChildren();
+  sources.forEach(row => tableRow(sourceBody, [row.source ?? row.source_id, `${readable(row.status)} · ${readable(row.phase)}`, `Age: ${readable(row.age_seconds)} seconds · Gaps: ${detailsText(row.gaps)}`, row.next_action]));
+  if (!sources.length) tableEmpty(sourceBody, 4, "Source health is UNKNOWN. No retained source-health receipt is available.");
+  const latency = session?.latency;
+  text("session-timing", latency ? `Bottleneck: ${detailsText(latency.bottleneck)} · Measured spans: ${readable(latency.sample_count)} · Missing / censored: ${readable(latency.missing_count)} / ${readable(latency.censored_count)} · Clock quality: ${readable(latency.clock_quality)}` : "Timing evidence is UNKNOWN. No complete financial-session trace is published.");
+  text("session-timing-detail", JSON.stringify(latency ?? {status:"UNKNOWN"}, null, 2));
+  const economics = session?.economics;
+  text("actual-economics-state", economics ? `${readable(economics.status)} · Valuation: ${readable(economics.valuation_method)} · As of: ${readable(economics.valued_at)}` : "No financial-session economics have been published. Actual results are UNKNOWN.");
+  const economicsBody = document.getElementById("actual-economics"); economicsBody.replaceChildren();
+  [["realized_pnl", "Realized before fees"], ["unrealized_pnl", "Unrealized"], ["fees", "Recorded fees"], ["net_pnl", "Net trading result"], ["drawdown", "Drawdown"], ["open_positions", "Open / censored positions"], ["provider_cost", "Provider cost (separate)"], ["infrastructure_cost", "Infrastructure cost (separate)"]].forEach(([key,label]) => tableRow(economicsBody, [label, economics?.[key]]));
+  const value = economics?.source_value ?? session?.source_value ?? publication.selection?.source_value;
+  text("source-value", typeof value === "string" ? value : value && typeof value === "object" ? `Shared coverage: ${readable(value.overlap_count)} · Exclusive coverage: ${detailsText(value.exclusive_coverage)} · ${readable(value.summary)}` : "Source value is UNKNOWN. Overlap and exclusive usable coverage have not been published.");
+  text("source-value-detail", JSON.stringify({source_value:value ?? {status:"UNKNOWN"},funnel:session?.funnel ?? {status:"UNKNOWN"},source_removal_replay:"COUNTERFACTUAL ESTIMATE"}, null, 2));
+  orderTimeline();
 }
 async function loadOnce() {
   const signal = AbortSignal.timeout(10000);
@@ -119,18 +209,25 @@ async function loadOnce() {
     });
     text("positions", JSON.stringify({control:state.control?.closing_positions || [],target:state.target?.closing_positions || []},null,2));
     const source = publication.diagnostic?.discovery || {}, authority = publication.authority || {}, windowAuthority = publication.authority_window || {};
-    text("source-sample", `${source.source_rows ?? "UNKNOWN"} sampled source rows · ${source.unique_wallets ?? "UNKNOWN"} qualifying identities · cutoff ${readable(source.cutoff)} · newest source age at fetch ${readable(source.seed_newest_age_seconds)} seconds`);
+    text("source-sample", `Diagnostic snapshot: ${source.source_rows ?? "UNKNOWN"} sampled source rows · ${source.unique_wallets ?? "UNKNOWN"} qualifying identities · cutoff ${readable(source.cutoff)} · newest source age at fetch ${readable(source.seed_newest_age_seconds)} seconds. Separate available discovery pool: ${walletRecords().length} records.`);
     text("authority-window", `Authority expires ${readable(windowAuthority.expires_at)} · ${authority.requests_charged ?? "UNKNOWN"} / ${windowAuthority.maximum_requests ?? "UNKNOWN"} requests · ${authority.bytes_charged ?? "UNKNOWN"} / ${windowAuthority.maximum_bytes ?? "UNKNOWN"} bytes charged. STOP does not settle financial positions.`);
     const exclusionRows = [source.excluded || {}, analytical.excluded_execution_evidence || {}].flatMap(rows => Object.entries(rows).map(([reason,count]) => `${count} excluded: ${reason.replaceAll("_", " ")}`));
     const reasons = document.getElementById("reasons"); reasons.replaceChildren();
     [...(analytical.reasons || []), ...exclusionRows, ...(report.limitations || []), ...(publication.alerts || [])].forEach(value => { const item = document.createElement("li"); item.textContent = value; reasons.append(item); });
     text("diagnostics", JSON.stringify({source:publication.diagnostics || {status:"UNKNOWN"},recovery:publication.backup_health || {status:"UNKNOWN"}}, null, 2));
-    const walletKey = JSON.stringify(publication.diagnostic?.discovery?.candidates || []);
+    sessionView();
+    const walletKey = JSON.stringify(walletRecords());
     if (walletKey !== renderedWallets) { wallets(); renderedWallets = walletKey; }
-  } catch (error) { reportFailure = error.message; }
+  } catch (error) {
+    reportFailure = error.message;
+    if (!Object.keys(publication).length) { sessionView(); wallets(); }
+  }
   freshness();
 }
-document.getElementById("wallet-filter").addEventListener("input", wallets);
+document.getElementById("wallet-filter").addEventListener("input", () => { walletPage = 0; text("wallet-detail", ""); wallets(); });
+document.getElementById("wallet-previous").addEventListener("click", () => { walletPage--; wallets(); });
+document.getElementById("wallet-next").addEventListener("click", () => { walletPage++; wallets(); });
+document.getElementById("order-filter").addEventListener("input", orderTimeline);
 document.querySelectorAll("button[data-action]").forEach(button => {
   button.disabled = IS_DEMO || document.querySelector('meta[name="role"]').content !== "operator";
   button.addEventListener("click", async () => {
@@ -153,10 +250,10 @@ document.querySelectorAll("button[data-action]").forEach(button => {
 });
 document.addEventListener("visibilitychange", () => {
   clearTimeout(refreshTimer);
-  if (!document.hidden) { load().finally(scheduleRefresh); freshness(); }
+  if (!document.hidden) { load(); freshness(); }
 });
 setInterval(() => { if (!document.hidden) freshness(); }, 1000);
-load().finally(scheduleRefresh);
+load();
 if (IS_DEMO) {
   document.querySelector('a[href="/api/report"]').href = "/api/demo";
   const comparison = document.querySelector('a[href="/download/comparison.csv"]');

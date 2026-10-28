@@ -3,4 +3,6 @@
 nav{display:flex;gap:24px;flex-wrap:wrap;padding:14px 5%;background:#fff;border-bottom:1px solid var(--line)}nav a{text-decoration:none;font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 
 .range{display:flex;flex-wrap:wrap;gap:1rem}.range label{display:flex;flex-direction:column}#receipts{overflow-wrap:anywhere}
+.session-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.session-grid h3{margin-top:0}dl{display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,1fr);gap:8px 16px;font-size:14px}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}.quiet{color:var(--muted);font-size:14px}.pagination{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:16px}.pagination p{flex:1;margin:0;min-width:180px;font-size:14px;color:var(--muted)}#session-incidents li{margin-bottom:10px;overflow-wrap:anywhere}h3{font-size:16px;margin-top:26px}section[id]{scroll-margin-top:18px}#wallet-detail{overflow-wrap:anywhere;border-left:3px solid var(--accent);padding-left:14px}#wallet-detail:empty{border:0;padding:0}
+@media(max-width:700px){.session-grid{grid-template-columns:1fr}.pagination{gap:12px}.pagination p{flex-basis:100%;order:-1}}
 @media(max-width:480px){.scroll table{min-width:560px}.scroll th:first-child,.scroll td:first-child{min-width:190px}}

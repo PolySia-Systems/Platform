@@ -58,6 +58,8 @@ Previous runtime receipts are historical after the owner's server reset.
 
 ## Operations and safety
 
+- [Bounded financial-session engineering and commissioning prerequisites](10-operations/continuous-financial-session.md)
+
 - [Operations documentation](10-operations/)
 - [Retained research artifact intake](10-operations/wallet-intelligence-research-intake.md)
 - [Current operational truth](10-operations/server-deployment.md#current-operational-truth)

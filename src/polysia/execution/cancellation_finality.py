@@ -47,6 +47,7 @@ class CancellationTarget:
     side: str
     expected_size: Decimal
     matched_size_baseline: Decimal = Decimal("0")
+    matched_notional_baseline: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not self.order_id or not self.token_id:
@@ -60,6 +61,12 @@ class CancellationTarget:
             or self.matched_size_baseline < 0
         ):
             raise ValueError("cancellation target sizes are invalid")
+        if self.matched_notional_baseline is not None and (
+            not self.matched_notional_baseline.is_finite()
+            or self.matched_notional_baseline < 0
+            or (self.matched_size_baseline == 0 and self.matched_notional_baseline != 0)
+        ):
+            raise ValueError("cancellation baseline notional is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +188,7 @@ class CancellationFinalityGate:
                     {
                         "expected_size": str(target.expected_size),
                         "matched_size_baseline": str(target.matched_size_baseline),
+                        **_notional_baseline_payload(target),
                         "order_id": target.order_id,
                         "side": target.side,
                         "token_id": target.token_id,
@@ -336,9 +344,7 @@ class CancellationFinalityGate:
 
         try:
             open_orders = await self._evidence_port.observe_open_orders(
-                order_id=(
-                    None if account_wide or len(targets) > 1 else targets[0].order_id
-                )
+                order_id=(None if account_wide or len(targets) > 1 else targets[0].order_id)
             )
         except Exception as error:
             errors.append(_endpoint_error("open_orders", error))
@@ -358,9 +364,7 @@ class CancellationFinalityGate:
                 errors.append(_endpoint_error("order_trades", error, target.order_id))
         for token_id in sorted(position_baselines):
             try:
-                position = await self._evidence_port.observe_position_size(
-                    token_id=token_id
-                )
+                position = await self._evidence_port.observe_position_size(token_id=token_id)
                 if not position.is_finite() or position < 0:
                     raise ValueError("position evidence must be finite and non-negative")
                 positions[token_id] = position
@@ -638,7 +642,31 @@ def _fill_decision(
                 payload=payload,
             )
         total_fill += movement
-        total_notional += sum((trade.size * trade.price for trade in trade_items), Decimal("0"))
+        token_targets = tuple(target for target in targets if target.token_id == token_id)
+        if any(
+            target.matched_size_baseline > 0 and target.matched_notional_baseline is None
+            for target in token_targets
+        ):
+            return _ObservationDecision(
+                kind="UNKNOWN",
+                reason="incremental fill price requires verified matched notional baseline",
+                payload=payload,
+            )
+        baseline_notional = sum(
+            (target.matched_notional_baseline or Decimal("0") for target in token_targets),
+            Decimal("0"),
+        )
+        incremental_notional = (
+            sum((trade.size * trade.price for trade in trade_items), Decimal("0"))
+            - baseline_notional
+        )
+        if not Decimal("0") < incremental_notional <= movement:
+            return _ObservationDecision(
+                kind="UNKNOWN",
+                reason="incremental fill notional contradicts baseline",
+                payload=payload,
+            )
+        total_notional += incremental_notional
 
     if not movement_detected:
         return None
@@ -768,6 +796,23 @@ def _terminal_result(
     if not isinstance(raw_outcome, str) or raw_outcome not in _TERMINAL_OUTCOMES:
         return None
     attempts = payload.get("observation_attempts")
+    targets = payload.get("targets")
+    if (
+        raw_outcome in {"FULL_FILL_DETECTED", "PARTIAL_FILL_DETECTED"}
+        and isinstance(targets, list)
+        and any(
+            isinstance(target, Mapping)
+            and Decimal(str(target.get("matched_size_baseline", "0"))) > 0
+            and target.get("matched_notional_baseline") is None
+            for target in targets
+        )
+    ):
+        return CancellationFinalityResult(
+            operation_id=operation_id,
+            outcome=CancellationFinalityOutcome.UNKNOWN,
+            observation_count=len(attempts) if isinstance(attempts, list) else 0,
+            reason="historical incremental fill price lacks verified baseline notional",
+        )
     return CancellationFinalityResult(
         operation_id=operation_id,
         outcome=CancellationFinalityOutcome(raw_outcome),
@@ -785,6 +830,14 @@ def _checkpoint_payload(checkpoint: Mapping[str, object]) -> dict[str, object]:
     return cast(dict[str, object], payload)
 
 
+def _notional_baseline_payload(target: CancellationTarget) -> dict[str, str]:
+    # Keep existing zero-baseline checkpoints byte-compatible. Positive-baseline
+    # incremental pricing requires explicit evidence, never a zero assumption.
+    if target.matched_notional_baseline is None:
+        return {}
+    return {"matched_notional_baseline": str(target.matched_notional_baseline)}
+
+
 def _validate_restored_request(
     payload: Mapping[str, object],
     targets: tuple[CancellationTarget, ...],
@@ -795,15 +848,14 @@ def _validate_restored_request(
         {
             "expected_size": str(target.expected_size),
             "matched_size_baseline": str(target.matched_size_baseline),
+            **_notional_baseline_payload(target),
             "order_id": target.order_id,
             "side": target.side,
             "token_id": target.token_id,
         }
         for target in targets
     ]
-    expected_baselines = {
-        token_id: str(size) for token_id, size in position_baselines.items()
-    }
+    expected_baselines = {token_id: str(size) for token_id, size in position_baselines.items()}
     if (
         payload.get("targets") != expected_targets
         or payload.get("position_baselines") != expected_baselines

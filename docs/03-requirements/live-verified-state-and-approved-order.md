@@ -40,3 +40,12 @@ state and an exact approved request; there is no automatic repair of assumed
 or unknown Live inputs.
 
 These rules do not change DATA_ONLY or `LIVE_TRADING_ENABLED=false` defaults.
+
+## Bounded session extension
+
+The [new session engineering contract](continuous-financial-session.md) reuses
+this immutable carrier and exact-order boundary. Its account identity is exact,
+and its daily loss input comes from confirmed fee-aware PositionLedger events.
+The historical account-read helper's daily cash effect is not reused as a
+session realized-P&L or cumulative-loss measure. Session provisioning/Live
+composition remains subject to proposed ADR-0023 and separate operational gates.
