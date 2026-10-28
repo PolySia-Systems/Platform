@@ -231,7 +231,13 @@ class ContinuousShadowConfig:
                     for key, value in self.selection_activity_counts.items()
                 ):
                     raise ValueError("active Shadow activity counts are invalid")
-        elif self.wallet_count is not None and not 1 <= self.wallet_count <= 3:
+        elif (
+            self.runtime_version not in {
+                "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
+            }
+            and self.wallet_count is not None
+            and not 1 <= self.wallet_count <= 3
+        ):
             raise ValueError("wallet_count exceeds the validated bound of three")
         for value in (self.policy_version, self.cost_model_version, self.bankroll_version):
             if not value.strip():

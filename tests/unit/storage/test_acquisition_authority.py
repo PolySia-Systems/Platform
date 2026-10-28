@@ -48,6 +48,59 @@ def test_manifest_cannot_replace_consumed_authority(tmp_path: Path) -> None:
         AcquisitionAuthority(path, replace(policy(), maximum_requests=4)).initialize()
 
 
+def test_explicit_endpoint_grant_preserves_stop_and_consumed_allowance(tmp_path: Path) -> None:
+    new_endpoint = "https://gamma-api.polymarket.com/events"
+    path = tmp_path / "extended.sqlite3"
+    authority = AcquisitionAuthority(path, policy())
+    authority.initialize()
+    authority.reserve(ENDPOINT, now=NOW, host="host")
+    authority.stop()
+    replacement = replace(policy(), policy_id="owner-new-route", endpoints=(ENDPOINT, new_endpoint))
+    with pytest.raises(AcquisitionBlockedError, match="expand_endpoints"):
+        authority.transition_policy(replacement, authorization_reference="owner-exact-new-route")
+    updated = authority.transition_policy(
+        replacement, authorization_reference="owner-exact-new-route",
+        authorized_new_endpoints=(new_endpoint,),
+    )
+    assert updated.status()["requests_charged"] == 1
+    assert updated.status()["bytes_charged"] == 1024
+    assert updated.status()["stopped"] is True
+    updated.resume(now=NOW, host="host")
+    updated.reserve(new_endpoint, now=NOW, host="host")
+    updated.reserve(ENDPOINT, now=NOW, host="host")
+    with pytest.raises(AcquisitionBlockedError, match="request_budget"):
+        updated.reserve(new_endpoint, now=NOW, host="host")
+    restarted = AcquisitionAuthority(path, replacement)
+    restarted.initialize()
+    assert restarted.status()["requests_charged"] == 3
+
+
+@pytest.mark.parametrize("authorized", [(), ("https://foreign.example/data",)])
+def test_endpoint_grant_must_match_every_addition(
+    tmp_path: Path, authorized: tuple[str, ...],
+) -> None:
+    authority = AcquisitionAuthority(tmp_path / "exact.sqlite3", policy())
+    authority.initialize()
+    with pytest.raises(AcquisitionBlockedError, match="expand_endpoints"):
+        authority.transition_policy(
+            replace(policy(), policy_id="new", endpoints=(ENDPOINT, "https://gamma.example/events")),
+            authorization_reference="owner-new-route", authorized_new_endpoints=authorized,
+        )
+    assert authority.status()["policy_digest"] == policy().digest
+
+
+def test_endpoint_grant_cannot_raise_other_limits(tmp_path: Path) -> None:
+    endpoint = "https://gamma.example/events"
+    authority = AcquisitionAuthority(tmp_path / "limits.sqlite3", policy())
+    authority.initialize()
+    with pytest.raises(AcquisitionBlockedError, match="raise_ceiling"):
+        authority.transition_policy(
+            replace(policy(), policy_id="new", endpoints=(ENDPOINT, endpoint), maximum_requests=4),
+            authorization_reference="owner-new-route", authorized_new_endpoints=(endpoint,),
+        )
+    assert authority.status()["policy_digest"] == policy().digest
+
+
 def test_limits_expiry_host_and_endpoint_fail_before_reservation(tmp_path: Path) -> None:
     authority = AcquisitionAuthority(tmp_path / "a.sqlite3", policy())
     authority.initialize()

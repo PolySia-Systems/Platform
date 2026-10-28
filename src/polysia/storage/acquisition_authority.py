@@ -143,14 +143,21 @@ class AcquisitionAuthority:
         replacement: AcquisitionPolicy,
         *,
         authorization_reference: str,
+        authorized_new_endpoints: tuple[str, ...] = (),
     ) -> AcquisitionAuthority:
         """Explicit owner-directed continuation; all lifetime charges survive."""
         if not 8 <= len(authorization_reference) <= 128:
             raise AcquisitionBlockedError("explicit_authority_reference_required")
         if replacement.host != self.policy.host or replacement.policy_id == self.policy.policy_id:
             raise AcquisitionBlockedError("replacement_identity_invalid")
-        if not set(replacement.endpoints).issubset(self.policy.endpoints):
+        additions = set(replacement.endpoints) - set(self.policy.endpoints)
+        if additions and additions != set(authorized_new_endpoints):
             raise AcquisitionBlockedError("replacement_cannot_expand_endpoints")
+        if (
+            len(set(authorized_new_endpoints)) != len(authorized_new_endpoints)
+            or set(authorized_new_endpoints) != additions
+        ):
+            raise AcquisitionBlockedError("explicit_exact_new_endpoint_authority_required")
         if replacement.window_seconds < self.policy.window_seconds:
             raise AcquisitionBlockedError("replacement_cannot_shorten_rate_window")
         # These are evidence-retention promises, not expendable request ceilings.

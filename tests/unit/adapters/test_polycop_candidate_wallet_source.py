@@ -66,6 +66,33 @@ def _page(page: int, total_pages: int, rows: list[dict[str, object]]) -> dict[st
     return {"data": rows, "page": page, "status": "success", "total_pages": total_pages}
 
 
+def test_reviewed_profile_metadata_is_bound_without_becoming_economic_features() -> None:
+    row = _row(1)
+    original = polycop_source._normalize_row(row, source_page=1, source_rank=1)
+    profile = {
+        "name": row["address"], "pseudonym": "public-label",
+        "profile_image": "https://example.invalid/" + str(row["address"]),
+        "profile_updated_at": 1793210000,
+    }
+    enriched = polycop_source._normalize_row({**row, **profile}, source_page=1, source_rank=1)
+    changed = polycop_source._normalize_row(
+        {**row, **profile, "name": "another-name"}, source_page=1, source_rank=1,
+    )
+    assert original.metrics == enriched.metrics == changed.metrics
+    assert len({original.row_digest, enriched.row_digest, changed.row_digest}) == 3
+    assert "profile_image" not in enriched.metrics
+
+
+@pytest.mark.parametrize("change", [
+    {"profile_updated_at": True}, {"profile_updated_at": -1},
+    {"name": None}, {"name": "x" * 2049}, {"unreviewed_field": "value"},
+])
+def test_profile_extension_still_rejects_unreviewed_values(change: dict[str, object]) -> None:
+    row = {**_row(1), "name": "n", "pseudonym": "p", "profile_image": "", "profile_updated_at": 1}
+    with pytest.raises(PolyCopSchemaChangedError):
+        polycop_source._normalize_row({**row, **change}, source_page=1, source_rank=1)
+
+
 @pytest.mark.asyncio
 async def test_fetches_every_dynamic_page_and_normalizes_without_address_leakage() -> None:
     first_page = _page(1, 2, [_row(1), _row(2)])

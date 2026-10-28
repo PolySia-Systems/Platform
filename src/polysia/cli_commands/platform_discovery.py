@@ -220,6 +220,9 @@ def continue_acquisition_policy(
     state: Annotated[Path, typer.Option("--state", exists=True)],
     authorization_reference: Annotated[str, typer.Option("--authorization-reference")],
     apply: Annotated[bool, typer.Option("--apply")] = False,
+    authorize_new_endpoint: Annotated[
+        list[str] | None, typer.Option("--authorize-new-endpoint")
+    ] = None,
 ) -> None:
     """Explicit owner-directed continuation; never raises caps or erases charges."""
     old, new = load_policy(previous_manifest), load_policy(next_manifest)
@@ -233,12 +236,16 @@ def continue_acquisition_policy(
                     "before": before,
                     "replacement_digest": new.digest,
                     "replacement": new.to_dict(),
+                    "authorized_new_endpoints": authorize_new_endpoint or [],
                 },
                 sort_keys=True,
             )
         )
         return
-    updated = authority.transition_policy(new, authorization_reference=authorization_reference)
+    updated = authority.transition_policy(
+        new, authorization_reference=authorization_reference,
+        authorized_new_endpoints=tuple(authorize_new_endpoint or ()),
+    )
     typer.echo(
         json.dumps(
             {"status": "APPLIED", "before": before, "after": updated.status()}, sort_keys=True

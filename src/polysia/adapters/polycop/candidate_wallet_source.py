@@ -28,6 +28,7 @@ SOURCE_ID = "polycop"
 SCHEMA_VERSION = "polycop-leaderboard-v1"
 
 _ENVELOPE_FIELDS = frozenset({"data", "page", "status", "total_pages"})
+_PROFILE_FIELDS = frozenset({"name", "profile_image", "profile_updated_at", "pseudonym"})
 _ROW_FIELDS = frozenset(
     {
         "actual_pnl",
@@ -364,8 +365,24 @@ def _normalize_row(
     source_rank: int,
 ) -> CandidateWalletRecord:
     actual_fields = frozenset(str(key) for key in row)
-    if actual_fields != _ROW_FIELDS:
+    if actual_fields not in {_ROW_FIELDS, _ROW_FIELDS | _PROFILE_FIELDS}:
         raise _schema_error("row_fields_changed", row)
+    profile_digest: str | None = None
+    if _PROFILE_FIELDS.issubset(actual_fields):
+        if (
+            any(
+                not isinstance(row[field], str) or len(row[field]) > 2048
+                for field in _PROFILE_FIELDS - {"profile_updated_at"}
+            )
+            or type(row["profile_updated_at"]) is not int
+            or row["profile_updated_at"] < 0
+        ):
+            raise _schema_error("profile_metadata_value_changed", row)
+        # Display names/URLs are not economic features and may contain identities.
+        # Retain their binding without projecting them into public metrics.
+        profile_digest = hashlib.sha256(
+            _canonical_json({key: row[key] for key in sorted(_PROFILE_FIELDS)}).encode("utf-8")
+        ).hexdigest()
     raw_address = row.get("address")
     if not isinstance(raw_address, str) or _WALLET_PATTERN.fullmatch(raw_address) is None:
         raise _schema_error("wallet_value_changed", row)
@@ -402,6 +419,8 @@ def _normalize_row(
     if _WALLET_SEARCH_PATTERN.search(_canonical_json(metrics)) is not None:
         raise _schema_error("wallet_value_outside_identity_field", row)
     digest_payload = {"address": address, "metrics": metrics}
+    if profile_digest is not None:
+        digest_payload["profile_metadata_sha256"] = profile_digest
     row_digest = hashlib.sha256(_canonical_json(digest_payload).encode("utf-8")).hexdigest()
     return CandidateWalletRecord(
         external_wallet_id=address,
