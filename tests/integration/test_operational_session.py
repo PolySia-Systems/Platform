@@ -394,8 +394,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         # A polling thread can queue duplicate inspections and race SQLite reads
         # with its own ACK transaction on slow Windows storage. Complete the
         # actual inspection at the injected wait boundary; the publisher still
-        # enforces its original real monotonic ACK deadline. Separate-process
-        # supervision is exercised by the container/installation acceptance.
+        # enforces its original real monotonic ACK deadline. Process ownership
+        # and durable STOP have separate acceptance tests.
         supervisor.inspect()
 
     from functools import partial
