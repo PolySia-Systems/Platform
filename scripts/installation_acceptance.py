@@ -181,6 +181,10 @@ def main() -> None:
     report = json.loads(request("/api/report")[2])
     assert report["status"] == "UNCONFIGURED" and report["real_orders"] is False
     assert not (state / "worker/authority.sqlite3").exists()
+    # A scheduled tick may have read the queue before this command is submitted.
+    # Quiesce the timer and wait for its current oneshot before testing a new tick.
+    run("systemctl", "stop", "polysia-platform-worker.timer")
+    run("systemctl", "start", "polysia-platform-worker.service")
     csrf_cookie = headers["Set-Cookie"].split(";", 1)[0]
     command_body = {
         "action": "stop",
@@ -200,6 +204,7 @@ def main() -> None:
     run("systemctl", "start", "polysia-platform-worker.service")
     receipt = json.loads(request("/api/commands")[2])
     assert receipt["receipts"][0]["status"] == "APPLIED"
+    run("systemctl", "start", "polysia-platform-worker.timer")
     publication = state / "publication/publication.json"
     original = publication.read_bytes()
     fixture = {
