@@ -30,7 +30,7 @@ hyperframe==6.1.0
 idna==3.20
 markdown-it-py==4.2.0
 mdurl==0.1.2
-msgpack==1.2.2
+msgpack==1.2.4
 parsimonious==0.10.0
 polymarket-client==0.13.0
 pycparser==3.11

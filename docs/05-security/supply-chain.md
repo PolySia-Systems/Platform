@@ -39,6 +39,17 @@ Both paths resolve runtime first and constrain development to runtime.
 Conda refresh is only
 for Python/bootstrap/environment-owner changes.
 
+Decision (2026-10-28, PR #233): the strict OSV gate reported
+[CVE-2026-114613](https://github.com/msgpack/msgpack-python/security/advisories/GHSA-j586-36cw-2gc2)
+in the existing `msgpack==1.2.2` transitive runtime/development dependency.
+The canonical targeted resolver selected `1.2.4` for both locks; no other pin
+changed. This upstream Apache-2.0 patch includes the memory-safety fix and
+[bounded container preallocation](https://github.com/msgpack/msgpack-python/blob/main/CHANGELOG.md).
+Retaining the vulnerable pin or suppressing the audit was rejected. SDK contract,
+composition and final-source native gates qualify compatibility. Rollback must
+select a complete compatible patched release, preserving custody and STOP;
+this dependency update grants no deployment or financial authority.
+
 ## CURRENT dependency lifecycle
 
 Decision (2026-10-20): retain Dependabot for pip declarations and Actions,
