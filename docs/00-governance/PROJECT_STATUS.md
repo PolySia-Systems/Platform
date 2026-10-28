@@ -21,6 +21,16 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
+Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
+Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
+full exact-main CI and was installed on the owner-confirmed Helsinki target in
+DATA_ONLY, with financial activation fenced. Independent Nuremberg recovery,
+protected access and bounded commissioning have a dated
+[D1 receipt](../18-ai-handoffs/console-d1-deployment-2026-10-28.md).
+Real financial custody, source/account qualification, human acceptance, external
+alert delivery and Live remain separate gates. No new public release was published.
+The older installation observations below remain historical evidence.
+
 The immutable `v0.4.0` release at source
 `4f3b611adae17defbcc6e24b4f9f917b466d5ad8` passed full exact-main CI 39274691513.
 It retains Python 3.14.8 and advances the consumed SDK boundary to 0.13.0 with
@@ -39,10 +49,10 @@ is distinct from human/public-domain acceptance and new economic observation.
 
 Engineering addition, 2026-10-26: [bounded financial-session requirements](../03-requirements/continuous-financial-session.md)
 describe a default-disabled connected session, immutable policies, bounded
-Shadow Lab and scoped Console/CLI controls under review in draft PR #230. Its
+Shadow Lab and scoped Console/CLI controls integrated through PR #230. Its
 [ADR-0023](../04-architecture/adrs/ADR-0023-bounded-financial-session.md) is Proposed;
-operational acceptance of the composition, protected integration, deployment, run authority,
-human acceptance and observed economics are separate gates. This note changes
+financial operational acceptance, run authority, human acceptance and observed
+economics remain separate gates after D1 DATA_ONLY delivery. This note changes
 no historical host receipt and does not claim an active financial session.
 
 | Fact | Authoritative owner |

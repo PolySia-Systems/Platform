@@ -1,5 +1,8 @@
 # Evidence Index
 
+- [`console-d1-deployment-2026-10-28.md`](console-d1-deployment-2026-10-28.md)
+  records protected Console integration, exact private artifacts, Helsinki
+  DATA_ONLY activation, independent Nuremberg recovery and bounded commissioning.
 - [`platform-independent-shadow-2026-10-16.md`](platform-independent-shadow-2026-10-16.md)
   records the independent Platform execution, bounded authority, exact artifacts,
   source-freshness and Access blockers, and separate commissioning/recovery acceptance.
