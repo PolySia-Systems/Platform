@@ -64,3 +64,5 @@ PolySia-source-*.tar.gz
 
 # Synthetic browser acceptance evidence.
 /output/playwright/
+frontend/node_modules/
+frontend/.build/

@@ -113,6 +113,8 @@ WINDOWS_PATTERNS = (
     "tests/unit/deployment/test_sqlite_backup.py",
 )
 COMPREHENSIVE_PATTERNS = (
+    "frontend/**",
+    "hatch_build.py",
     "scripts/check_changed_docs.py",
     ".python-version",
     "environment.yml",

@@ -1,0 +1,26 @@
+:root, :root[data-mantine-color-scheme='light'] { --console-muted: #52676f; --console-ink: #17323b; --console-sidebar: #132d34; --console-surface: #fff; --console-accent: #126b60; font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #243b45; background: #f4f6f6;
+  --mantine-font-family: Inter, "Segoe UI", system-ui, sans-serif; --mantine-primary-color-filled: #126b60;
+  --mantine-primary-color-filled-hover: #0c564e; --mantine-color-blue-filled: #126b60; --mantine-color-blue-filled-hover: #0c564e;
+  --mantine-color-blue-outline: var(--console-accent);
+  --mantine-color-blue-outline-hover: #e6f3ee;
+  --mantine-radius-default: 6px; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+button, a, select, summary { touch-action: manipulation; }
+button, a, input, select, summary { outline-offset: 4px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #126b60; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+button { white-space: normal; }
+h1, h2, p { margin-block-start: 0; }
+h2 { font-size: 15px; letter-spacing: -.01em; }
+a { color: #126b60; }
+th { text-align: start; }
+td, th { border-block-end: 1px solid #e5ebec; padding: 13px 12px; }
+th { color: #61747b; font-weight: 600; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+summary { cursor: pointer; font-size: 13px; color: #126b60; }
+.mantine-Modal-title { font-weight: 650; }
+.mantine-Modal-body { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }

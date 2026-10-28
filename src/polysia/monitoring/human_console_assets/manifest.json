@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "api": "console/v1",
+  "release": "0.4.0",
+  "source": "486d16d75740e939912fee9d86a1e9176b1c21e258d14b014b76c1854a598277",
+  "files": {
+    "main-a7c386bf6374.js": "a7c386bf6374e3e2f0ff7030d74b0e56f7c0cfbd59a3c50efa36ab54e67e1ee2",
+    "style-DqvLxDsg.css": "ab91e01fa319601a7febed269801044cb3ded781d4e1984bc0535bdde2861e70",
+    "notices.txt": "a20f9c816d1d092278cd132b13837b85b51ae2c7eabd22f7a50ca8bdb27fc80c",
+    "index.html": "17ee9a8ed83f9fc556aec605e00336cdc3721e296dfa2282208569f9a3ea08a9"
+  }
+}

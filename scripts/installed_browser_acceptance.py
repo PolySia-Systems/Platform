@@ -64,23 +64,49 @@ def main() -> None:
                 try:
                     page = context.new_page()
                     page.goto("https://localhost:8443", wait_until="networkidle")
-                    expect(page.locator("#setup-state")).to_contain_text("Installed release:")
-                    expect(page.locator("#control")).to_have_text("NO MEASURABLE RESULT")
-                    page.locator("#report-start").fill("2026-10-01T00:00")
-                    page.locator("#report-end").fill("2026-10-02T00:00")
-                    page.locator("#wallet-filter").fill("retained-input-fixture")
-                    page.wait_for_timeout(21000)
-                    expect(page.locator("#report-start")).to_have_value("2026-10-01T00:00")
-                    expect(page.locator("#report-end")).to_have_value("2026-10-02T00:00")
-                    expect(page.locator("#wallet-filter")).to_have_value("retained-input-fixture")
-                    page.locator('button[data-action="stop"]').focus()
+                    page.get_by_role("button", name="System / Setup", exact=True).click()
+                    expect(
+                        page.get_by_label("Installed release and compatibility", exact=True)
+                    ).to_contain_text("0.4.0")
+                    page.get_by_role("button", name="Evaluate", exact=True).click()
+                    expect(
+                        page.get_by_label("Same-tape Shadow comparison", exact=True)
+                    ).to_contain_text("NO_MEASURABLE_RESULT")
+                    page.get_by_role("button", name="Operate", exact=True).click()
+                    page.locator("#operation").select_option("acquisition.export|acquisition")
+                    page.get_by_label("Optional start (UTC)").fill("2026-10-01T00:00")
+                    page.get_by_label("Optional end (UTC)").fill("2026-10-02T00:00")
+                    # Await an observed automatic refresh, not a fixed sleep.
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/session"), timeout=25000
+                    ):
+                        pass
+                    expect(page.get_by_label("Optional start (UTC)")).to_have_value(
+                        "2026-10-01T00:00"
+                    )
+                    expect(page.get_by_label("Optional end (UTC)")).to_have_value(
+                        "2026-10-02T00:00"
+                    )
+                    page.locator("#operation").select_option("acquisition.stop|acquisition")
+                    page.get_by_role("button", name="Preview operation", exact=True).focus()
                     page.keyboard.press("Enter")
-                    expect(page.locator("#receipt")).to_contain_text("Command")
-                    expect(page.locator("#receipts")).to_contain_text("stop")
-                    page.goto("https://localhost:8443/demo", wait_until="networkidle")
-                    expect(page.locator("#operation")).to_have_text("Offline demonstration")
-                    expect(page.locator('button[data-action="stop"]')).to_be_disabled()
-                    expect(page.locator("#scope")).to_contain_text("OFFLINE_DEMO")
+                    expect(page.get_by_role("dialog")).to_be_visible()
+                    page.get_by_role("button", name="Request exact operation", exact=True).focus()
+                    page.keyboard.press("Enter")
+                    expect(page.get_by_text("acquisition.stop", exact=True).first).to_be_visible()
+                    page.goto("https://localhost:8443/?example=1", wait_until="networkidle")
+                    expect(
+                        page.get_by_text(
+                            "Synthetic example. No financial readiness or commands.", exact=True
+                        )
+                    ).to_be_visible()
+                    page.get_by_role("button", name="Operate", exact=True).click()
+                    expect(
+                        page.get_by_role("button", name="Preview operation", exact=True)
+                    ).to_be_disabled()
+                    expect(page.get_by_label("Session context", exact=True)).to_contain_text(
+                        "SYNTHETIC"
+                    )
                     counts.append({"width": width, "height": height, "journey": "PASS"})
                 finally:
                     context.close()

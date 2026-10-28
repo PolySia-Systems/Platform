@@ -14,7 +14,8 @@ COPY locks/requirements-dev-py314.txt locks/requirements-dev-py314.txt
 RUN python -m pip install --upgrade pip==26.2.1 \
     && python -m pip install --requirement locks/requirements-dev-py314.txt
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md hatch_build.py ./
+COPY frontend/ frontend/
 COPY src/ src/
 RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 

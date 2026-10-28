@@ -145,3 +145,19 @@ def test_installed_runtime_entry_points_select_container_contract(path: str) -> 
 def test_browser_document_asset_is_executable_not_editorial() -> None:
     result = classify_paths(("docs/console/index.html",))
     assert result.python and result.browser
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "frontend/src/App.tsx",
+        "frontend/package-lock.json",
+        "frontend/.node-version",
+        "frontend/vite.config.mjs",
+        "frontend/src/contract.generated.ts",
+        "hatch_build.py",
+        "frontend/tests/producer.json",
+    ],
+)
+def test_frontend_cannot_skip_native_package_browser_container_and_supply_chain(path):
+    assert classify_paths((path,)) == ChangeMap.full()

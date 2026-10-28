@@ -21,7 +21,7 @@ python -m pytest -q tests/integration/test_native_drain_transport.py tests/unit/
 ```
 
 These are offline fixtures, with no economic or capacity acceptance claim.
-An installed server also offers `/demo`, separately labeled and read-only;
+The sole installed Console also offers `/?example=1`, synthetic and read-only;
 its JSON cannot become a canonical financial report. Ordinary Console reads
 use retained data and never acquire provider data.
 
@@ -34,13 +34,36 @@ use retained data and never acquire provider data.
 | Backup and recovery | `deploy/platform_backup.py`, `deployment/platform_recovery.py` | Real encrypted generation, replay identity and STOP; separately held key | `tests/integration/test_continuous_shadow_portfolio.py`, `scripts/backup_destination_acceptance.py` |
 
 Module paths above are relative to `src/polysia/` unless prefixed by `deploy/`.
-Read the relevant path's instructions. For a small status-explanation change,
-edit the centralized `STATUS_TEXT` in `monitoring/console_assets/console.js`,
-update the corresponding browser expectation, then run that browser test and
-`node --check` on the asset. Do not change worker authority states to fit wording.
-For a report contract change, first add a canonical accounting fixture, then
-change the reporting service and only then its Console renderer. Use the PR as
-the resume artifact. Context packets below are optional assistance.
+Read the relevant path's instructions. For a token/layout change, edit
+`frontend/src/global.css` (`--console-*` tokens), `Console.module.css`, or the
+relevant React workspace. English messages live in `frontend/src/messages.ts`.
+Do not edit generated `human_console_assets` or financial services to adjust
+presentation. For a read-only card, reuse a field in the typed contract; if a
+new field is necessary, add the smallest redacted trusted projection first,
+then its Python wire model, generated mapping and UI. Missing data stays UNKNOWN.
+The browser must never query private financial files or providers.
+
+```bash
+python scripts/console_contract.py --check
+python scripts/console_fixture.py --check
+npm ci --ignore-scripts --prefix frontend
+npm test --prefix frontend
+npm run build --prefix frontend
+npm run verify --prefix frontend
+python -m build
+```
+
+After an intentional contract change run the two Python scripts without
+`--check` before building. A token/layout change requires type/build/regeneration,
+shipped CSP, affected desktop/mobile/keyboard/contrast browser checks and package
+custody, plus the repository's frontend-classified final CI gates. A projection
+or control change additionally requires actual producer/gateway/owner regression
+and negative tests, architecture/safety review and applicable full native gates.
+Documentation-only edits use the repository's documentary policy. Derive the
+actual union of gates from the shared classifier; this paragraph grants no skip.
+Production installation does not run Node, npm or a dev server. UI files remain
+in financial package binding, so a cosmetic change cannot authorize hot deployment.
+Use the focused PR as the resume owner; context packets below remain disposable.
 
 ## Required behavior
 

@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import jwt
 import pytest
@@ -50,7 +51,8 @@ def request(
     state: list[Any] = []
     result = app(
         {
-            "PATH_INFO": path,
+            "PATH_INFO": urlsplit(path).path,
+            "QUERY_STRING": urlsplit(path).query,
             "REQUEST_METHOD": method,
             "HTTP_CF_ACCESS_JWT_ASSERTION": token,
             "HTTP_HOST": "platform.example.com",
@@ -91,7 +93,10 @@ def test_stop_path_survives_missing_report_publication(tmp_path: Path) -> None:
     (tmp_path / "publication.json").unlink()
     status, headers, _ = request(app)
     assert status == "200 OK"
-    assert request(app, path="/console.js")[0] == "200 OK"
+    from polysia.monitoring.console_bundle import verify_bundle
+
+    asset = next(name for name in verify_bundle()["files"] if name.endswith(".js"))
+    assert request(app, path="/assets/" + asset)[0] == "200 OK"
     assert request(app, path="/api/report")[0] == "503 Service Unavailable"
     cookie = headers["Set-Cookie"].split(";")[0]
     body = {
@@ -175,8 +180,12 @@ def test_scoped_operations_reuse_access_csrf_and_immutable_preview(tmp_path: Pat
     assert status == "202 Accepted"
     preview = json.loads(raw)
     assert preview["actor"] == "owner-subject" and preview["effect"] == "NOT_REQUESTED"
-    apply = {"preview_id": preview["preview_id"], "expected_revision": 0,
-             "idempotency_key": "scoped-browser-request-001", "csrf": csrf}
+    apply = {
+        "preview_id": preview["preview_id"],
+        "expected_revision": 0,
+        "idempotency_key": "scoped-browser-request-001",
+        "csrf": csrf,
+    }
     status, _, raw = request(
         app, path="/api/operations/apply", method="POST", body=apply, cookie=cookie
     )
@@ -269,17 +278,23 @@ def test_legacy_retained_metadata_does_not_invent_latency_or_break_reports(tmp_p
 def test_demo_is_separate_read_only_and_available_without_financial_publication(tmp_path: Path):
     app = application(tmp_path)
     (tmp_path / "publication.json").unlink()
-    status, _, page = request(app, path="/demo")
+    status, _, page = request(app, path="/?example=1")
     assert status == "200 OK"
-    assert b'name="role" content="reader"' in page
-    assert b'name="dataset-mode" content="demo"' in page
-    status, _, body = request(app, path="/api/demo")
+    assert b"PolySia Console" in page
+    status, _, body = request(app, path="/api/console/v1/snapshot?example=1")
     assert status == "200 OK"
     demo = json.loads(body)
-    assert demo["dataset_role"] == "OFFLINE_DEMO_NOT_PRODUCTION_EVIDENCE"
-    assert "report" not in demo and demo["real_orders"] is False
+    assert demo["context"]["dataset"] == "SYNTHETIC"
+    assert demo["financial"] is None and demo["actions"] == []
+    session = json.loads(request(app, path="/api/console/v1/session?example=1")[2])
+    assert session["role"] == "reader"
     assert request(app, path="/api/report")[0] == "503 Service Unavailable"
-    assert request(app, path="/api/demo", token="unverified")[0] == "403 Forbidden"
+    assert (
+        request(app, path="/api/console/v1/snapshot?example=1", token="unverified")[0]
+        == "403 Forbidden"
+    )
+    for route in ("/h1", "/demo", "/api/demo", "/console.js", "/console.css"):
+        assert request(app, path=route)[0] == "404 Not Found"
 
 
 def test_tampered_published_or_archived_financial_values_are_not_served(tmp_path: Path) -> None:

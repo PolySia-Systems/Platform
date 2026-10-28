@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import html
 import json
 import re
+import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Iterable
@@ -23,6 +23,8 @@ from polysia.application.services.report_integrity import verify_analytical_dige
 from polysia.application.services.shadow_reporting import comparison_csv
 from polysia.control.scoped_operations import Operation
 from polysia.control.service import ControlError, ControlService
+from polysia.monitoring.console_bundle import verify_bundle
+from polysia.monitoring.console_gateway import PREFIX, ConsoleGateway
 from polysia.storage.console_commands import ConsoleCommandStore
 
 MAX_PUBLICATION_BYTES = 8_000_000
@@ -102,6 +104,8 @@ class ConsoleApplication:
         self._host = parsed.netloc
         self._cache_key: tuple[int, int] | None = None
         self._cache: dict[str, Any] = {}
+        self._publication_generation = ""
+        self._gateway = ConsoleGateway(self)
 
     def __call__(self, environ: dict[str, Any], start_response: Any) -> Iterable[bytes]:
         headers = [
@@ -140,7 +144,14 @@ class ConsoleApplication:
             return respond("405 Method Not Allowed", {"reason": "unsupported_method"})
         if method == "POST":
             if (
-                path not in {"/api/commands", "/api/operations/preview", "/api/operations/apply"}
+                path
+                not in {
+                    "/api/commands",
+                    "/api/operations/preview",
+                    "/api/operations/apply",
+                    PREFIX + "/preview",
+                    PREFIX + "/apply",
+                }
                 or role != "operator"
             ):
                 return respond("403 Forbidden", {"reason": "operator_required"})
@@ -166,23 +177,39 @@ class ConsoleApplication:
                     or not any(hmac.compare_digest(csrf, item) for item in (expected, previous))
                 ):
                     return respond("403 Forbidden", {"reason": "csrf_invalid"})
-                if path == "/api/operations/preview":
+                if path in {PREFIX + "/preview", PREFIX + "/apply"}:
+                    receipt = self._gateway.mutate(path, command, subject, role)
+                elif path == "/api/operations/preview":
                     if set(command) - {"operation", "target", "arguments"}:
                         raise ValueError("scoped_preview_fields_invalid")
                     arguments = command.get("arguments", {})
                     if not isinstance(arguments, dict):
                         raise ValueError("scoped_arguments_invalid")
-                    preview = ControlService.preview_scoped(self._commands,
-                        operation=cast(Operation, command["operation"]), target=command["target"],
-                        actor=subject, role=role, allowed_targets=self._scoped_targets,
-                        now=datetime.now(UTC), arguments=tuple(sorted(arguments.items())))
-                    receipt = {"preview_id": preview.fingerprint, **asdict(preview),
-                               "created_at": preview.created_at.isoformat(),
-                               "expires_at": preview.expires_at.isoformat(),
-                               "effect": "NOT_REQUESTED"}
+                    preview = ControlService.preview_scoped(
+                        self._commands,
+                        operation=cast(Operation, command["operation"]),
+                        target=command["target"],
+                        actor=subject,
+                        role=role,
+                        allowed_targets=self._scoped_targets,
+                        now=datetime.now(UTC),
+                        arguments=tuple(sorted(arguments.items())),
+                    )
+                    receipt = {
+                        "preview_id": preview.fingerprint,
+                        **asdict(preview),
+                        "created_at": preview.created_at.isoformat(),
+                        "expires_at": preview.expires_at.isoformat(),
+                        "effect": "NOT_REQUESTED",
+                    }
                 elif path == "/api/operations/apply":
-                    receipt = self._commands.submit_scoped(subject=subject, role=role,
-                        now=datetime.now(UTC), allowed_targets=self._scoped_targets, **command)
+                    receipt = self._commands.submit_scoped(
+                        subject=subject,
+                        role=role,
+                        now=datetime.now(UTC),
+                        allowed_targets=self._scoped_targets,
+                        **command,
+                    )
                 else:
                     receipt = self._commands.submit(subject=subject, **command)
             except sqlite3.DatabaseError:
@@ -196,6 +223,83 @@ class ConsoleApplication:
             except ValueError, TypeError, KeyError, CookieError, json.JSONDecodeError, ControlError:
                 return respond("409 Conflict", {"reason": "command_invalid_or_revision_changed"})
             return respond("202 Accepted", receipt)
+        if isinstance(path, str) and path.startswith(PREFIX + "/"):
+            try:
+                payload = self._gateway.get(
+                    path, str(environ.get("QUERY_STRING", "")), subject, role
+                )
+                if path == PREFIX + "/session":
+                    csrf = self._csrf(subject)
+                    headers.append(
+                        (
+                            "Set-Cookie",
+                            "__Host-polysia-csrf="
+                            + csrf
+                            + "; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600",
+                        )
+                    )
+                return respond("200 OK", payload)
+            except LookupError as error:
+                if str(error) == "cursor_expired":
+                    return respond(
+                        "410 Gone",
+                        {"reason": "cursor_expired", "next_action": "Refresh this list."},
+                    )
+                return respond("404 Not Found", {"reason": "record_or_route_missing"})
+            except sqlite3.DatabaseError:
+                return respond("503 Service Unavailable", {"reason": "command_store_unavailable"})
+            except OSError, ValueError, TypeError:
+                return respond(
+                    "409 Conflict", {"reason": "invalid_or_incompatible_console_request"}
+                )
+        if path == "/" or isinstance(path, str) and path.startswith("/assets/"):
+            try:
+                directory = Path(__file__).with_name("human_console_assets")
+                manifest = verify_bundle(directory)
+                if path == "/":
+                    headers.append(
+                        (
+                            "Set-Cookie",
+                            "__Host-polysia-csrf="
+                            + self._csrf(subject)
+                            + "; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600",
+                        )
+                    )
+                    nonce = secrets.token_urlsafe(24)
+                    headers = [
+                        (
+                            name,
+                            value.replace(
+                                "style-src 'self'", "style-src 'self' 'nonce-" + nonce + "'"
+                            ),
+                        )
+                        for name, value in headers
+                    ]
+                    document = (directory / "index.html").read_text(encoding="utf-8")
+                    return respond(
+                        "200 OK",
+                        document.replace("{{nonce}}", nonce),
+                        media="text/html; charset=utf-8",
+                    )
+                name = path.removeprefix("/assets/")
+                if name not in manifest["files"] or name == "index.html":
+                    return respond("404 Not Found", {"reason": "unknown_asset"})
+                media = {".css": "text/css", ".js": "text/javascript", ".txt": "text/plain"}[
+                    Path(name).suffix
+                ]
+                return respond(
+                    "200 OK", (directory / name).read_text(encoding="utf-8"), media=media
+                )
+            except OSError, ValueError, TypeError, KeyError:
+                return respond(
+                    "503 Service Unavailable",
+                    {
+                        "reason": "console_bundle_incompatible",
+                        "next_action": (
+                            "Use protected CLI / supervisor; restore a complete verified release."
+                        ),
+                    },
+                )
         if path == "/api/commands":
             try:
                 return respond("200 OK", self._commands.status())
@@ -220,41 +324,18 @@ class ConsoleApplication:
                     if path == "/api/supervision"
                     else "publisher-status.json"
                 )
-                if status_file.stat().st_size > 4096:
+                if status_file.is_symlink():
+                    raise ValueError("health_receipt_symlink")
+                with status_file.open("rb") as stream:
+                    health_bytes = stream.read(4097)
+                if len(health_bytes) > 4096:
                     raise ValueError("health_receipt_too_large")
-                return respond("200 OK", json.loads(status_file.read_text(encoding="utf-8")))
+                return respond("200 OK", json.loads(health_bytes))
             except OSError, ValueError:
                 return respond(
                     "503 Service Unavailable",
                     {"status": "UNKNOWN", "reason": "publisher_receipt_missing"},
                 )
-        if path in {"/console.css", "/console.js"}:
-            asset = Path(__file__).with_name("console_assets") / path.removeprefix("/")
-            media = "text/css" if path.endswith("css") else "text/javascript"
-            return respond("200 OK", asset.read_text(encoding="utf-8"), media=media)
-        if path == "/api/demo":
-            demo = Path(__file__).with_name("console_assets") / "demo.json"
-            return respond("200 OK", json.loads(demo.read_text(encoding="utf-8")))
-        if path in {"/", "/demo"}:
-            csrf = self._csrf(subject)
-            headers.append(
-                (
-                    "Set-Cookie",
-                    "__Host-polysia-csrf="
-                    + csrf
-                    + "; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600",
-                )
-            )
-            document = (
-                (Path(__file__).with_name("console_assets") / "index.html")
-                .read_text(
-                    encoding="utf-8",
-                )
-                .replace("{{csrf}}", html.escape(csrf, quote=True))
-                .replace("{{role}}", "reader" if path == "/demo" else role)
-                .replace("{{dataset_mode}}", "demo" if path == "/demo" else "retained")
-            )
-            return respond("200 OK", document, media="text/html; charset=utf-8")
         if isinstance(path, str) and re.fullmatch(r"/reports/[a-f0-9]{64}\.json", path):
             try:
                 archive = self._publication.parent / "reports" / path.rsplit("/", 1)[1]
@@ -317,4 +398,5 @@ class ConsoleApplication:
             if "report" in result:
                 verify_analytical_digest(result["report"])
             self._cache, self._cache_key = result, key
+            self._publication_generation = hashlib.sha256(raw).hexdigest()
         return self._cache

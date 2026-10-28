@@ -47,6 +47,13 @@ polysia = "polysia.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/polysia"]
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/frontend", "/hatch_build.py", "/pyproject.toml", "/README.md"]
+exclude = ["/frontend/node_modules", "/frontend/.build"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

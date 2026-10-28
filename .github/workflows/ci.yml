@@ -89,6 +89,36 @@ jobs:
       - name: Compile
         if: needs.changes.outputs.python == 'true'
         run: python -m compileall -q src tests
+      - uses: actions/setup-node@v7.1.0
+        if: needs.changes.outputs.package == 'true'
+        with:
+          node-version-file: frontend/.node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify canonical frontend contract and reproducible assets
+        if: needs.changes.outputs.package == 'true'
+        run: |
+          npm install --global npm@11.19.1 --ignore-scripts
+          npm ci --ignore-scripts --prefix frontend
+          python scripts/console_contract.py --check
+          python scripts/console_fixture.py --check
+          npm test --prefix frontend
+          npm run build --prefix frontend
+          npm run verify --prefix frontend
+          git diff --exit-code -- frontend/src/contract.generated.ts frontend/tests/producer.json src/polysia/monitoring/human_console_assets
+      - name: JavaScript advisory and SBOM gates
+        if: needs.changes.outputs.package == 'true'
+        working-directory: frontend
+        run: |
+          mkdir -p ../artifacts
+          npm audit --audit-level=low
+          npm sbom --sbom-format cyclonedx > ../artifacts/console-sbom.json
+      - uses: actions/upload-artifact@v7
+        if: needs.changes.outputs.package == 'true'
+        with:
+          name: console-sbom
+          path: artifacts/console-sbom.json
+          if-no-files-found: error
       - name: Ruff
         if: needs.changes.outputs.python == 'true'
         run: python -m ruff check .
@@ -129,7 +159,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -144,8 +174,10 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Compile
         run: python -m compileall -q src tests
+      - name: Operational composition preflight
+        run: python -m pytest -q -x --tb=short tests/integration/test_operational_session.py
       - name: Full Pytest
-        run: python -m pytest -q --durations=25 --junitxml=artifacts/windows-pytest.xml
+        run: python -m pytest -q -x --tb=short --durations=25 --junitxml=artifacts/windows-pytest.xml
       - name: Environment integrity
         run: python -m pip check
       - name: Dependency lock check
@@ -172,6 +204,8 @@ jobs:
       - uses: actions/checkout@v7
       - run: docker build --build-arg POLYSIA_BUILD_COMMIT="$GITHUB_SHA" --tag polysia:ci .
       - run: docker run --rm polysia:ci system health
+      - name: Verify offline installed Console custody
+        run: docker run --rm --network none --entrypoint python polysia:ci -c 'from polysia.monitoring.console_bundle import verify_bundle; print(verify_bundle()["source"])'
       - name: Encryption runtime and round-trip smoke
         shell: bash
         run: |
@@ -247,6 +281,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24.22.1"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install pinned development accessibility engine
+        run: npm ci --ignore-scripts --prefix frontend
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14.8"

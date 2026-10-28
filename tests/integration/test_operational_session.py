@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import socket
-import threading
 from dataclasses import asdict, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -390,18 +389,32 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             }
         ),
     )
-    stop = threading.Event()
-    errors = []
+    def await_supervisor(_seconds: float) -> None:
+        # This proof composes the actual owners with deterministic scheduling.
+        # A polling thread can queue duplicate inspections and race SQLite reads
+        # with its own ACK transaction on slow Windows storage. Complete the
+        # actual inspection at the injected wait boundary; the publisher still
+        # enforces its original real monotonic ACK deadline. Process ownership
+        # and durable STOP have separate acceptance tests.
+        supervisor.inspect()
 
-    def supervise():
-        while not stop.wait(0.005):
-            try:
-                supervisor.inspect()
-            except Exception as error:
-                errors.append(type(error).__name__)
+    from functools import partial
 
-    thread = threading.Thread(target=supervise, daemon=True)
-    thread.start()
+    import polysia.adapters.polymarket.session_composition as composition
+    from polysia.application.services.financial_session import FinancialSessionCoordinator
+
+    monkeypatch.setattr(composition, "CheckpointPublisher",
+                        partial(CheckpointPublisher, wait=await_supervisor))
+    # UTC is frozen for this composition proof. Freeze the coordinator's
+    # monotonic clock too, so slow fixture filesystem work does not simulate
+    # elapsed supervision time. Dedicated expiry tests advance monotonic time
+    # and prove that supervision expiry still blocks submission.
+    monkeypatch.setattr(
+        composition,
+        "FinancialSessionCoordinator",
+        partial(FinancialSessionCoordinator, monotonic=lambda: 0),
+    )
+
     session = None
     try:
         session = await compose_session(
@@ -489,9 +502,6 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
     finally:
         if session is not None:
             await session.close()
-        stop.set()
-        thread.join(timeout=3)
-    assert not errors
 
 
 @pytest.mark.asyncio
