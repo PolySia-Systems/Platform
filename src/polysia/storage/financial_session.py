@@ -2,11 +2,14 @@
 
 Both SQLite files use rollback journals so ATTACH participates in one atomic
 super-journal commit. Restoring the financial file alone cannot refund authority.
-The trusted witness directory must never be restored with financial backups.
+The active trusted witness directory must never be restored with financial
+backups. Isolated witness copies may verify backup integrity; they are never
+installed as active custody or used to reissue consumed authority.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -52,6 +55,8 @@ class FinancialSessionJournal:
         self._lock = ExclusiveWriterLock(self.witness, rejected_message="account_writer_busy")
         self._connection: sqlite3.Connection | None = None
         self._fence: int | None = None
+        self.after_commit: Callable[[SessionRecoveryCheckpoint], None] | None = None
+        self._publication_failed = False
 
     def provision(self, opening: AccountObservation) -> None:
         """Explicit trusted-owner bootstrap; never called by a worker or Console.
@@ -110,6 +115,8 @@ class FinancialSessionJournal:
                     "authority TEXT NOT NULL, sequence INTEGER NOT NULL, state TEXT NOT NULL);"
                     "CREATE TABLE journal(sequence INTEGER PRIMARY KEY, kind TEXT NOT NULL, "
                     "payload TEXT NOT NULL);"
+                    "CREATE TABLE network_evidence(request_id TEXT PRIMARY KEY, "
+                    "body BLOB NOT NULL,sha256 TEXT NOT NULL);"
                     "CREATE TABLE witness.authority(singleton INTEGER PRIMARY KEY "
                     "CHECK(singleton=1), fingerprint TEXT NOT NULL, sequence INTEGER NOT NULL, "
                     "state_digest TEXT NOT NULL, fence INTEGER NOT NULL, opens INTEGER NOT NULL);"
@@ -143,6 +150,10 @@ class FinancialSessionJournal:
             self._connection = connection
             connection.execute("BEGIN IMMEDIATE")
             self._verified_state(connection)
+            if self.authority.version == 2 and connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='network_evidence'"
+            ).fetchone() is None:
+                raise SessionBlocked("composed_financial_schema_missing_no_implicit_migration")
             row = connection.execute("SELECT * FROM witness.authority").fetchone()
             if row["opens"] and self.authority.restart_policy != "RECONCILE":
                 raise SessionBlocked("restart_not_authorized")
@@ -199,7 +210,36 @@ class FinancialSessionJournal:
         row = connection.execute("SELECT * FROM witness.authority").fetchone()
         return SessionRecoveryCheckpoint(row["fingerprint"], row["sequence"], row["state_digest"])
 
+    def retain_response(self, request_id: str, body: bytes) -> None:
+        fingerprint = hashlib.sha256(body).hexdigest()
+
+        def update(state: dict[str, Any]) -> None:
+            connection = self._require_open()
+            existing = connection.execute("SELECT sha256 FROM network_evidence WHERE request_id=?",
+                                          (request_id,)).fetchone()
+            if existing is not None and existing[0] != fingerprint:
+                raise SessionBlocked("conflicting_retained_response")
+            connection.execute("INSERT OR IGNORE INTO network_evidence VALUES(?,?,?)",
+                               (request_id, body, fingerprint))
+            state["wire"][request_id]["evidence_sha256"] = fingerprint
+        self.mutate("RETAINED_NETWORK_EVIDENCE", {"request": request_id, "bytes": len(body),
+                                                 "sha256": fingerprint}, update)
+
+    def read_response(self, request_id: str) -> bytes:
+        state = self.read()
+        row = (
+            self._require_open()
+            .execute("SELECT body,sha256 FROM network_evidence WHERE request_id=?", (request_id,))
+            .fetchone()
+        )
+        if (row is None or hashlib.sha256(row[0]).hexdigest() != row[1]
+                or state["wire"][request_id].get("evidence_sha256") != row[1]):
+            raise SessionBlocked("retained_network_evidence_integrity_failed")
+        return bytes(row[0])
+
     def mutate(self, kind: str, payload: object, change: Callable[[dict[str, Any]], None]) -> None:
+        if self._publication_failed:
+            raise SessionBlocked("checkpoint_publication_failed_requires_cold_recovery")
         connection = self._require_open()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -208,7 +248,24 @@ class FinancialSessionJournal:
             encoded = canonical_json(state)
             # Keep room for incident/reconciliation records before a full disk.
             current_size = sum(p.stat().st_size for p in (self.path, self.witness))
-            if max(current_size, len(encoded.encode()) * 2) > self.authority.max_storage_bytes:
+            low_priority = (
+                kind
+                in {
+                    "REQUEST_RESERVED",
+                    "DECISION_OBSERVED",
+                    "DECISION_PHASE",
+                    "ATTEMPT_AND_RESERVATION",
+                    "WIRE_REQUEST",
+                }
+                and state.get("resource_class") == "ENTRY"
+            )
+            storage_limit = self.authority.max_storage_bytes - (
+                self.authority.protective_storage_reserve if low_priority else 0)
+            allocated_pages = sum(connection.execute(f"PRAGMA {schema}.page_count").fetchone()[0]
+                                  * connection.execute(f"PRAGMA {schema}.page_size").fetchone()[0]
+                                  for schema in ("main", "witness"))
+            if (max(current_size, allocated_pages) * 2 + len(encoded.encode()) * 2
+                    + 65536) > storage_limit:
                 raise SessionBlocked("financial_storage_budget_exhausted")
             sequence = connection.execute("SELECT sequence FROM session").fetchone()[0] + 1
             connection.execute("UPDATE session SET sequence=?,state=?", (sequence, encoded))
@@ -223,6 +280,14 @@ class FinancialSessionJournal:
         except BaseException:
             connection.rollback()
             raise
+        # The financial commit is irreversible here. Publication failure cannot
+        # roll it back, refund authority, or let this worker generate recovery proof.
+        if self.after_commit is not None:
+            try:
+                self.after_commit(self.checkpoint())
+            except BaseException:
+                self._publication_failed = True
+                raise
 
     def _require_open(self) -> sqlite3.Connection:
         if self._connection is None or self._fence is None:

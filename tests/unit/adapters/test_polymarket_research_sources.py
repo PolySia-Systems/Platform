@@ -96,7 +96,7 @@ class FakeTransport:
     ) -> object:
         del purpose
         self.calls.append((base_url, path))
-        return self.payload
+        return _v2(self.payload) if isinstance(self.payload, list) else self.payload
 
 
 class RoutingTransport:
@@ -344,7 +344,7 @@ class RecoveryTransport:
                 retry_at=self._clock() + timedelta(seconds=1),
                 reason="cooldown",
             )
-        return []
+        return _v2([])
 
 
 class AdvancingClock:
@@ -360,6 +360,7 @@ class AdvancingClock:
 
 @pytest.mark.asyncio
 async def test_wallet_poll_source_aliases_and_does_not_emit_addresses() -> None:
+    clock = AdvancingClock()
     transport = FakeTransport(
         [
             {
@@ -376,13 +377,13 @@ async def test_wallet_poll_source_aliases_and_does_not_emit_addresses() -> None:
     )
     source = DataApiWalletPollSource(
         REST_ACTIVITY_CANDIDATE,
-        path="/activity",
+        path="/v2/activity",
         source_id=ACTIVITY_SOURCE_ID,
         aliases={public_wallet_alias(WALLET): WALLET},
         transport=transport,
-        clock=_BoundedClock(),
+        clock=clock,
         monotonic_ns=lambda: 10,
-        sleep=_noop_sleep,
+        sleep=clock.sleep,
         poll_interval_seconds=1,
     )
     events = []
@@ -845,6 +846,7 @@ async def test_wallet_poll_retries_failed_window_before_advancing() -> None:
 
 @pytest.mark.asyncio
 async def test_wallet_poll_source_does_not_emit_pre_run_backlog() -> None:
+    clock = AdvancingClock()
     transport = FakeTransport(
         [
             {
@@ -861,13 +863,13 @@ async def test_wallet_poll_source_does_not_emit_pre_run_backlog() -> None:
     )
     source = DataApiWalletPollSource(
         REST_ACTIVITY_CANDIDATE,
-        path="/activity",
+        path="/v2/activity",
         source_id=ACTIVITY_SOURCE_ID,
         aliases={public_wallet_alias(WALLET): WALLET},
         transport=transport,
-        clock=_BoundedClock(),
+        clock=clock,
         monotonic_ns=lambda: 10,
-        sleep=_noop_sleep,
+        sleep=clock.sleep,
         poll_interval_seconds=1,
     )
 
@@ -894,7 +896,7 @@ async def test_wallet_poll_source_honors_initial_market_warmup() -> None:
 
     source = DataApiWalletPollSource(
         REST_ACTIVITY_CANDIDATE,
-        path="/trades",
+        path="/v2/trades",
         source_id=ACTIVITY_SOURCE_ID,
         aliases={public_wallet_alias(WALLET): WALLET},
         transport=FakeTransport([]),
@@ -1588,7 +1590,7 @@ async def test_wallet_source_uses_recovery_probe_then_resumes_discovery() -> Non
     transport = RecoveryTransport(clock)
     source = DataApiWalletPollSource(
         REST_ACTIVITY_CANDIDATE,
-        path="/trades",
+        path="/v2/trades",
         source_id=ACTIVITY_SOURCE_ID,
         aliases={public_wallet_alias(WALLET): WALLET},
         transport=transport,

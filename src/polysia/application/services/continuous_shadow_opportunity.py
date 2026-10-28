@@ -8,11 +8,12 @@ from datetime import datetime
 
 from polysia.domain.copytrading import LeaderTradeAction, LeaderTradeEvent
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
+from polysia.domain.copytrading.copy_policy import ShadowPositionAction
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 
 
 def opportunity_payload(
-    event: LeaderTradeEvent,
+    event: LeaderTradeEvent | ShadowPositionAction,
     *,
     admission_at: datetime,
     decision_at: datetime,
@@ -59,9 +60,25 @@ def opportunity_payload(
         ]
     encoded_config = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return {
-        "version": "shadow-opportunity-v2",
+        "version": (
+            "shadow-position-opportunity/v1"
+            if isinstance(event, ShadowPositionAction)
+            else "shadow-opportunity-v2"
+        ),
+        "input_kind": "POSITION_TRIGGER"
+        if isinstance(event, ShadowPositionAction)
+        else "LEADER_EVENT",
+        "policy_trigger": event.trigger if isinstance(event, ShadowPositionAction) else None,
+        "source_occurrence_id": getattr(event, "source_occurrence_id", None),
+        "leader_position_before": (
+            None
+            if not isinstance(event, LeaderTradeEvent) or event.leader_position_before is None
+            else str(event.leader_position_before)
+        ),
         "event_id": event.event_id,
         "source_id": event.source_id,
+        "source_schema": getattr(event, "schema_version", "position-policy/v1"),
+        "source_evidence_reference": event.external_evidence_reference,
         "wallet_id": event.leader_id,
         "market_reference": event.market_reference,
         "outcome_reference": event.outcome_reference,
@@ -83,9 +100,7 @@ def opportunity_payload(
         "maximum_quote_age_ms": config["maximum_quote_age_ms"],
         "book_at": None if book is None else book.timestamp.isoformat(),
         "book_hash": None if book is None else book.book_hash,
-        "book_minimum_order_size": (
-            None if book is None else format(book.minimum_order_size, "f")
-        ),
+        "book_minimum_order_size": (None if book is None else format(book.minimum_order_size, "f")),
         "book_tick_size": None if book is None else format(book.tick_size, "f"),
         "book_levels": levels,
         "book_bids": bids,

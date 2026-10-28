@@ -62,6 +62,17 @@ class RuntimeBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionAccountIdentity:
+    account_id: str
+    signer: str
+    funder: str
+    signature_type: int
+    venue: str
+    collateral: str
+    settlement_route: str
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentScope:
     market: str
     token: str
@@ -79,7 +90,8 @@ class SessionAuthorization:
 
     This is an authority *carrier*, not a signature verifier or approval issuer.
     The trusted composition root must verify the owner receipt before provision.
-    No CLI or Console endpoint provisions these contracts.
+    Only the privileged commissioning CLI can provision a verified receipt;
+    Console and worker cannot issue or provision authority.
     """
 
     version: int
@@ -116,9 +128,15 @@ class SessionAuthorization:
     max_source_cost: Decimal
     restart_policy: str
     protective_actions: frozenset[str]
+    protective_attempt_reserve: int = 0
+    protective_turnover_reserve: Decimal = ZERO
+    protective_byte_reserve: int = 0
+    protective_cost_reserve: Decimal = ZERO
+    protective_storage_reserve: int = 0
+    protective_order_reserve: int = 0
 
     def __post_init__(self) -> None:
-        if self.version != 1 or type(self.granted) is not bool:
+        if self.version not in {1, 2} or type(self.granted) is not bool:
             raise SessionBlocked("unsupported_authorization")
         if not all((self.run_id, self.owner_receipt, self.strategy, self.exit_policy)):
             raise SessionBlocked("incomplete_authorization")
@@ -168,10 +186,34 @@ class SessionAuthorization:
             raise SessionBlocked("invalid_restart_policy")
         if not self.protective_actions <= {"CANCEL", "REDUCE"}:
             raise SessionBlocked("unsupported_protective_authority")
+        for reserve, limit in (
+            (self.protective_attempt_reserve, self.max_attempts),
+            (self.protective_byte_reserve, self.max_response_bytes),
+            (self.protective_storage_reserve, self.max_storage_bytes),
+            (self.protective_order_reserve, self.max_concurrent_orders),
+        ):
+            if type(reserve) is not int or not 0 <= reserve < limit:
+                raise SessionBlocked("invalid_protective_headroom")
+        if not ZERO <= decimal_value(self.protective_turnover_reserve) < self.max_turnover:
+            raise SessionBlocked("invalid_protective_turnover_reserve")
+        if decimal_value(self.protective_cost_reserve) > self.max_source_cost:
+            raise SessionBlocked("invalid_protective_cost_reserve")
+        if self.version == 1 and any((
+            self.protective_attempt_reserve, self.protective_turnover_reserve,
+            self.protective_byte_reserve, self.protective_cost_reserve,
+            self.protective_storage_reserve, self.protective_order_reserve,
+        )):
+            raise SessionBlocked("expanded_resource_contract_requires_authorization_v2")
 
     @property
     def fingerprint(self) -> str:
-        return digest(asdict(self))
+        body = asdict(self)
+        if self.version == 1:
+            for name in ("protective_attempt_reserve", "protective_turnover_reserve",
+                         "protective_byte_reserve", "protective_cost_reserve",
+                         "protective_storage_reserve", "protective_order_reserve"):
+                del body[name]
+        return digest(body)
 
     def assert_action(self, binding: RuntimeBinding, now: datetime, action: str) -> None:
         if not self.granted or binding != self.binding:
@@ -288,8 +330,41 @@ class SourceOccurrence:
 
 
 @dataclass(frozen=True, slots=True)
+class PositionTrigger:
+    """Position evidence identity; deliberately has no leader transaction fields."""
+
+    position_id: str
+    policy_digest: str
+    trigger: str
+    wallet: str
+    instrument: InstrumentScope
+    occurred_at: datetime
+    observed_at: datetime
+    ingested_at: datetime
+    source_key: str
+    position_revision: str = "initial"
+    side: OrderSide = "SELL"
+    source: str = "position-policy"
+    schema: str = "position-trigger/v1"
+    complete: bool = True
+    finalized: bool = True
+    leader_price: Decimal | None = None
+
+    @property
+    def identity(self) -> str:
+        if not all((self.position_id, self.policy_digest, self.source_key)) or self.side != "SELL":
+            raise SessionBlocked("invalid_position_trigger_identity")
+        if self.trigger not in {"STOP_LOSS", "MAX_HOLDING", "NET_TAKE_PROFIT"}:
+            raise SessionBlocked("unsupported_position_trigger")
+        # A trigger can be attempted once per position/policy, independent of
+        # repeated quote/timer observations and entry-selection membership.
+        return digest(("position-trigger/v1", self.position_id, self.policy_digest,
+                       self.trigger, self.position_revision))
+
+
+@dataclass(frozen=True, slots=True)
 class SessionOpportunity:
-    event: SourceOccurrence
+    event: SourceOccurrence | PositionTrigger
     strategy: str
     exit_policy: str
     price: Decimal
@@ -307,6 +382,9 @@ class SessionOpportunity:
     exit_trigger: str | None = None
     cohort_digest: str | None = None
     qualification_evidence_id: str | None = None
+    policy_digest: str | None = None
+    leader_position_before: Decimal | None = None
+    leader_reduced_shares: Decimal | None = None
 
     @property
     def evidence_digest(self) -> str:
@@ -315,6 +393,14 @@ class SessionOpportunity:
     def validate(self, authority: SessionAuthorization, *, now: datetime) -> Decimal:
         event = self.event
         _ = event.identity
+        if self.policy_digest is not None and self.policy_digest != authority.binding.policy:
+            raise SessionBlocked("policy_not_bound_to_run_authority")
+        position_trigger = isinstance(event, PositionTrigger)
+        if isinstance(event, PositionTrigger) and (
+            self.policy_digest != event.policy_digest or self.exit_trigger != event.trigger
+            or event.policy_digest != authority.binding.policy
+        ):
+            raise SessionBlocked("position_trigger_policy_binding_mismatch")
         if event.side == "BUY" and not (self.cohort_digest and self.qualification_evidence_id):
             raise SessionBlocked("frozen_cohort_qualification_required")
         if event.wallet not in authority.wallets or event.instrument not in authority.instruments:
@@ -365,7 +451,8 @@ class SessionOpportunity:
             self.exit_trigger == "MAX_HOLDING"
             and authority.exit_policy == "leader-reduction-or-max-hold/v1"
         )
-        if event.side == "SELL" and self.leader_reduction is not True and not holding_exit:
+        if (event.side == "SELL" and self.leader_reduction is not True
+                and not holding_exit and not position_trigger):
             raise SessionBlocked("exit_policy_requires_reduction_evidence")
         return edge
 
@@ -403,6 +490,28 @@ class AccountObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservedRedemption:
+    event_id: str
+    account: str
+    collateral: str
+    removed: tuple[tuple[str, Decimal], ...]
+    confirmed_cash: Decimal
+    occurred_at: datetime
+    evidence_digest: str
+
+    def __post_init__(self) -> None:
+        if not all((self.event_id, self.account, self.collateral, self.evidence_digest)):
+            raise SessionBlocked("redemption_observation_identity_required")
+        decimal_value(self.confirmed_cash)
+        utc(self.occurred_at)
+        if not self.removed or len(dict(self.removed)) != len(self.removed):
+            raise SessionBlocked("redemption_position_identity_required")
+        for _, quantity in self.removed:
+            if decimal_value(quantity) <= 0:
+                raise SessionBlocked("invalid_observed_redemption_quantity")
+
+
+@dataclass(frozen=True, slots=True)
 class ConfirmedSessionFill:
     fill_id: str
     intent_id: str
@@ -413,6 +522,8 @@ class ConfirmedSessionFill:
     shares: Decimal
     fee: Decimal
     confirmed_at: datetime
+    gross_notional: Decimal | None = None
+    chain_order: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         if not all((self.fill_id, self.intent_id, self.order_id, self.token)):
@@ -422,6 +533,13 @@ class ConfirmedSessionFill:
         if self.side not in {"BUY", "SELL"} or not 0 < self.price <= 1 or self.shares <= 0:
             raise SessionBlocked("invalid_confirmed_fill")
         utc(self.confirmed_at)
+        if self.chain_order is not None and (len(self.chain_order) != 2 or
+            any(type(value) is not int or value < 0 for value in self.chain_order)):
+            raise SessionBlocked("invalid_confirmed_fill_ordering")
+        if self.gross_notional is not None:
+            decimal_value(self.gross_notional)
+            if abs(self.gross_notional - self.price * self.shares) > Decimal("0.000001"):
+                raise SessionBlocked("confirmed_fill_notional_conflict")
 
 
 @dataclass(frozen=True, slots=True)

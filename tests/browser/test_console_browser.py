@@ -23,6 +23,116 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_setup_policy_and_scoped_control_tasks(console_fixture: Any) -> None:
+    from playwright.sync_api import expect, sync_playwright
+
+    from polysia.control.service import ControlService
+    from polysia.domain.financial_session import SessionBlocked
+
+    origin, token, commands, _ = console_fixture
+    with sync_playwright() as runtime:
+        browser = runtime.chromium.launch(**({"channel": "chrome"} if os.name == "nt" else {}))
+        context = browser.new_context(ignore_https_errors=True,
+            extra_http_headers={"Cf-Access-Jwt-Assertion": token("fixture-owner")})
+        retained = context.request.get(origin + "/api/report").json()
+        now = datetime.now(UTC)
+        retained.update(
+            {
+                "capabilities": {
+                    "catalog": [
+                        {
+                            "identity": "backup",
+                            "obtain": "Enable separate financial recovery",
+                            "validate": "Verify isolated restore",
+                        }
+                    ],
+                    "capabilities": [
+                        {
+                            "capability": "new_entries",
+                            "status": "BLOCKED",
+                            "required": ["backup"],
+                            "requirements": [
+                                {
+                                    "identity": "backup",
+                                    "state": "MISSING",
+                                    "evidence": {
+                                        "reason": "Financial backup is unprotected",
+                                        "next_action": "Verify isolated restore",
+                                        "expires_at": now.isoformat(),
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "active_account": {"identity": "fixture-account", "status": "UNKNOWN"},
+                "copy_policy": {
+                    "effective": {
+                        "version": "fixture-fixed-v1",
+                        "sizing": "FIXED_DEBIT",
+                        "exit_preset": "HYBRID",
+                        "reentry": False,
+                    },
+                    "staged": None,
+                    "digest": "fixture-policy",
+                },
+                "capacity": {
+                    "allocation": "FIXED",
+                    "actual_requests": 12,
+                    "measured_response_bytes": 4000,
+                    "queue_depth": 1,
+                    "queue_limit": 2,
+                    "external_shared_egress_utilization": None,
+                },
+                "backup": {"mode": "UNPROTECTED", "independent_restore": "UNKNOWN"},
+            }
+        )
+        page = context.new_page()
+        page.route("**/api/report", lambda route: route.fulfill(json=retained))
+        page.goto(origin)
+        timings = {}
+        start = time.perf_counter()
+        page.get_by_role("link", name="Readiness & Setup").click()
+        expect(page.locator("#capability-rows")).to_contain_text("Financial backup is unprotected")
+        expect(page.locator("#capability-rows")).to_contain_text("Verify isolated restore")
+        expect(page.locator("#backup-readiness")).to_contain_text("UNPROTECTED")
+        timings["explain_blocker"] = time.perf_counter() - start
+        start = time.perf_counter()
+        page.get_by_role("link", name="Policy & Shadow Lab").click()
+        expect(page.locator("#policy-summary")).to_contain_text("FIXED_DEBIT")
+        expect(page.locator("#policy-summary")).to_contain_text("Re-entry disabled")
+        expect(page.locator("#capacity-summary")).to_contain_text("1 / 2")
+        timings["explain_policy_and_capacity"] = time.perf_counter() - start
+        start = time.perf_counter()
+        page.locator("#scoped-target").select_option("fixture-lab")
+        page.locator("#scoped-operation").select_option("shadow.drain")
+        page.locator("#scoped-preview-button").click()
+        expect(page.locator("#scoped-preview")).to_contain_text("Effect: not requested")
+        page.locator("#scoped-apply-button").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#scoped-preview")).to_contain_text("REQUESTED")
+        pending = commands.pending_scoped(targets=frozenset({"fixture-lab"}),
+                                          operations=frozenset({"shadow.drain"}))
+        assert len(pending) == 1
+        def unavailable(_preview):
+            raise SessionBlocked("fixture_owner_unavailable")
+        ControlService.execute_scoped(commands, idempotency_key=pending[0], now=datetime.now(UTC),
+                                      execute=unavailable)
+        page.reload()
+        expect(page.locator("#scoped-receipts")).to_contain_text("FAILED")
+        timings["preview_request_and_explain_failed_receipt"] = time.perf_counter() - start
+        expect(page.locator("#capability-rows")).to_contain_text("Financial backup is unprotected")
+        expect(page.locator("#policy-summary")).to_contain_text("FIXED_DEBIT")
+        output = Path("output/playwright")
+        output.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(output / "e2-operator-controls.png"), full_page=True)
+        (output / "e2-operator-task-times.json").write_text(json.dumps({"task_seconds": timings,
+            "samples_per_task": 1, "provider_calls": 0, "human_acceptance": "NOT_OBSERVED",
+            "proposed_target_seconds": 60}), encoding="utf-8")
+        assert all(duration < 60 for duration in timings.values())
+        browser.close()
+
+
 @pytest.fixture
 def console_fixture(tmp_path: Path) -> Any:
     from cryptography import x509
@@ -144,6 +254,7 @@ def console_fixture(tmp_path: Path) -> Any:
             verify=verifier,
             commands=commands,
             csrf_secret=b"test-fixture-only" * 3,
+            scoped_targets=frozenset({"fixture-lab", "fixture-session:stop"}),
         )
     )
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -437,7 +548,7 @@ def test_discovery_pagination_and_four_financial_operator_tasks(
         expect(page.locator("#wallet-page-status")).to_contain_text(
             "1–50 of 1000 matching / 1000 available discovery records"
         )
-        expect(page.locator("#wallet-page-status")).to_contain_text("Live subscriptions: 3")
+        expect(page.locator("#wallet-page-status")).to_contain_text("Active bounded monitors: 3")
         assert page.locator("#wallets tr").count() == 50
         expect(page.get_by_role("button", name="Previous discovery page")).to_be_disabled()
         page.get_by_role("button", name="Next discovery page").focus()

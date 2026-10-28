@@ -37,10 +37,11 @@ financial session or economic result; automated engineering/browser acceptance
 is distinct from human/public-domain acceptance and new economic observation.
 ## Truth ownership
 
-Engineering addition, 2026-10-25: [bounded financial-session requirements](../03-requirements/continuous-financial-session.md)
-describe a tested library and source/Console extensions under review. Its
+Engineering addition, 2026-10-26: [bounded financial-session requirements](../03-requirements/continuous-financial-session.md)
+describe a default-disabled connected session, immutable policies, bounded
+Shadow Lab and scoped Console/CLI controls under review in draft PR #230. Its
 [ADR-0023](../04-architecture/adrs/ADR-0023-bounded-financial-session.md) is Proposed;
-continuous Live composition, protected integration, deployment, run authority,
+operational acceptance of the composition, protected integration, deployment, run authority,
 human acceptance and observed economics are separate gates. This note changes
 no historical host receipt and does not claim an active financial session.
 

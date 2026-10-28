@@ -12,6 +12,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypedDict
 
+from pydantic import TypeAdapter
+
 from polysia.application.ports.candidate_intelligence import (
     CandidatePipelineBusyError,
     CandidatePipelineLeaseLostError,
@@ -42,6 +44,7 @@ from polysia.domain.copytrading.continuous_shadow_experiments import (
     RecordedShadowFill,
     walk_forward_policy_report,
 )
+from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
 from polysia.storage.continuous_shadow_invariants import (
     ACCOUNTING_BLOCKED,
@@ -745,6 +748,31 @@ class ContinuousShadowRepository:
         assert updated is not None
         return _experiment(updated)
 
+    def resume_experiment(self, experiment_id: str, *, resumed_at: datetime) -> None:
+        resumed_at = _utc(resumed_at)
+        if not self.invariant_report(experiment_id).accounting_passed:
+            raise ContinuousShadowStoreError("Shadow accounting must reconcile before resume")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM continuous_shadow_experiments "
+                                     "WHERE experiment_id=?", (experiment_id,)).fetchone()
+            if row is None:
+                raise ContinuousShadowStoreError("Shadow experiment unavailable")
+            experiment = _experiment(row)
+            config = experiment.config
+            if (config.copy_policy is None
+                    or experiment.lifecycle is not ContinuousShadowLifecycle.DRAINING
+                    or not 0 <= (resumed_at - experiment.started_at).total_seconds()
+                    < config.period_duration_seconds):
+                raise ContinuousShadowStoreError("Explicit bounded Lab resume is not eligible")
+            count = connection.execute("SELECT COUNT(*) FROM continuous_shadow_event_journal e "
+                "JOIN continuous_shadow_poll_runs p ON p.poll_run_id=e.first_poll_run_id "
+                "WHERE p.experiment_id=?", (experiment_id,)).fetchone()[0]
+            if count >= config.period_max_events:
+                raise ContinuousShadowStoreError("Shadow event budget exhausted")
+            connection.execute("UPDATE continuous_shadow_experiments SET lifecycle='RUNNING' "
+                               "WHERE experiment_id=?", (experiment_id,))
+
     def retained_candidates(
         self,
         experiment_id: str,
@@ -854,6 +882,30 @@ class ContinuousShadowRepository:
         finally:
             connection.close()
         return None if row is None else _datetime(str(row[0]))
+
+    def policy_history(self, experiment_id: str) -> dict[tuple[str, str, str], datetime]:
+        connection = self._connect(read_only=True)
+        try:
+            rows = connection.execute(
+                "SELECT portfolio_id,wallet_id,outcome_reference,created_at,quantity_delta "
+                "FROM continuous_shadow_ledger WHERE experiment_id=? "
+                "AND wallet_id IS NOT NULL AND outcome_reference IS NOT NULL "
+                "ORDER BY created_at,rowid",
+                (experiment_id,),
+            ).fetchall()
+            balances: dict[tuple[str, str, str], Decimal] = {}
+            opened: dict[tuple[str, str, str], datetime] = {}
+            for row in rows:
+                key = (str(row[0]), str(row[1]), str(row[2]))
+                before, delta = balances.get(key, _ZERO), Decimal(row[4])
+                if delta > 0 and before == 0:
+                    opened[key] = _datetime(str(row[3]))
+                balances[key] = before + delta
+                if balances[key] < 0:
+                    raise ContinuousShadowStoreError("CopyPolicy ownership history oversold")
+            return opened
+        finally:
+            connection.close()
 
     def seen_event_ids(self, event_ids: tuple[str, ...]) -> set[str]:
         if not event_ids:
@@ -3985,11 +4037,16 @@ def _experiment(row: sqlite3.Row) -> ContinuousShadowExperiment:
     )
 
 
+def _copy_policy(value: object) -> CopyPolicy | None:
+    return None if value is None else TypeAdapter(CopyPolicy).validate_python(value)
+
+
 def _config(value: object) -> ContinuousShadowConfig:
     if not isinstance(value, dict):
         raise ContinuousShadowStoreError("Continuous Shadow config is invalid.")
     try:
         return ContinuousShadowConfig(
+            copy_policy=_copy_policy(value.get("copy_policy")),
             wallet_bankroll=Decimal(str(value["wallet_bankroll"])),
             follower_bankroll=Decimal(str(value["follower_bankroll"])),
             maximum_event_notional=Decimal(str(value["maximum_event_notional"])),

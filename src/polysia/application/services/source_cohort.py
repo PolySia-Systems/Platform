@@ -85,6 +85,24 @@ class SharedCohortSelection:
     def to_dict(self) -> dict[str, Any]:
         return json.loads(_json(asdict(self)))
 
+    def require_integrity(self) -> None:
+        if self.digest != _digest(asdict(replace(self, digest=""))):
+            raise ValueError("frozen cohort digest mismatch")
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> SharedCohortSelection:
+        from pydantic import TypeAdapter
+
+        prepared = dict(value)
+        policy = prepared.get("selection_policy")
+        if isinstance(policy, dict) and isinstance(policy.get("freshness"), dict):
+            policy = dict(policy)
+            policy["freshness"] = timedelta(**policy["freshness"])
+            prepared["selection_policy"] = policy
+        result = TypeAdapter(cls).validate_python(prepared, extra="forbid")
+        result.require_integrity()
+        return result
+
     def to_console_dict(self) -> dict[str, Any]:
         """Small sanitized publication view, distinct from protected evidence.
 

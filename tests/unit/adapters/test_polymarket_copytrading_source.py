@@ -118,25 +118,17 @@ class FakeTransport:
             return deepcopy(self.trades[offset : offset + limit])
         if path == "/activity":
             return deepcopy(self.trades[:4])
-        if path == "/positions":
-            return [
-                {
-                    "asset": "111111",
-                    "conditionId": (
-                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    ),
-                    "size": 0.25,
-                },
-                {
-                    "asset": "222222",
-                    "conditionId": (
-                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    ),
-                    "size": 2,
-                },
+        if path == "/v2/positions":
+            rows = [] if params.get("status") == "REDEEMABLE_LOST" else [
+                {"token_id": "111111", "condition_id": "0x" + "a" * 64,
+                 "current_size": "0.25", "status": "OPEN"},
+                {"token_id": "222222", "condition_id": "0x" + "a" * 64,
+                 "current_size": "2", "status": "OPEN"},
             ]
-        if path == "/closed-positions":
-            return [{"totalBought": 5}]
+            if params.get("status") == "CLOSED":
+                rows = [{"token_id": "333333", "condition_id": "0x" + "a" * 64,
+                         "current_size": "0", "status": "CLOSED"}]
+            return {"data": rows, "pagination": {"has_more": False, "next_cursor": None}}
         raise AssertionError(f"unexpected path: {path}")
 
 
@@ -159,21 +151,16 @@ class _DeepPositionTransport(FakeTransport):
         *,
         purpose: LeaderReadPurpose = LeaderReadPurpose.BASELINE,
     ) -> Any:
-        if base_url == DATA_API_BASE_URL and path == "/positions":
+        if (base_url == DATA_API_BASE_URL and path == "/v2/positions"
+                and params.get("status") == "OPEN"):
             del purpose
             self.calls.append((base_url, path, dict(params)))
-            page_number = int(params.get("offset", 0)) // 500
-            count = 500 if page_number < self.full_pages else 1
-            return [
-                {
-                    "asset": "111111",
-                    "conditionId": (
-                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    ),
-                    "size": 0.25,
-                }
-                for _ in range(count)
-            ]
+            page_number = int(str(params.get("cursor", "page:0")).split(":")[1])
+            more = page_number < self.full_pages
+            return {"data": [{"token_id": "111111", "condition_id": "0x" + "a" * 64,
+                              "current_size": "0.25", "status": "OPEN"}],
+                    "pagination": {"has_more": more,
+                                   "next_cursor": f"page:{page_number+1}" if more else None}}
         return await super().get_json(base_url, path, params, purpose=purpose)
 
 
@@ -531,7 +518,7 @@ async def test_complete_position_baseline_and_verified_market_metadata_are_sanit
 
 
 @pytest.mark.asyncio
-async def test_position_baseline_uses_the_official_offset_range(
+async def test_position_baseline_preserves_cursor_and_status_anchor(
     trades: list[dict[str, Any]],
     event: list[dict[str, Any]],
 ) -> None:
@@ -544,20 +531,17 @@ async def test_position_baseline_uses_the_official_offset_range(
 
     baseline = await source.read_inventory("leader-001")
 
-    position_calls = [call for call in transport.calls if call[1] == "/positions"]
-    assert [call[2]["offset"] for call in position_calls] == [
-        0,
-        500,
-        1000,
-        1500,
-        2000,
-        2500,
+    position_calls = [call for call in transport.calls if call[2].get("status") == "OPEN"]
+    assert [call[2].get("cursor") for call in position_calls] == [
+        None, "page:1", "page:2", "page:3", "page:4", "page:5"
     ]
+    assert all(call[2]["filter_amount"] == 0 and call[2]["include_archived"] is True
+               and "offset" not in call[2] for call in position_calls)
     assert baseline.positions
 
 
 @pytest.mark.asyncio
-async def test_position_baseline_fails_closed_at_the_official_maximum_offset(
+async def test_position_baseline_fails_closed_at_the_page_budget(
     trades: list[dict[str, Any]],
     event: list[dict[str, Any]],
 ) -> None:
@@ -571,9 +555,9 @@ async def test_position_baseline_fails_closed_at_the_official_maximum_offset(
     with pytest.raises(PolymarketCopyTradingSourceError, match="bounded pagination limit"):
         await source.read_inventory("leader-001")
 
-    position_calls = [call for call in transport.calls if call[1] == "/positions"]
-    assert len(position_calls) == 21
-    assert position_calls[-1][2]["offset"] == 10_000
+    position_calls = [call for call in transport.calls if call[1] == "/v2/positions"]
+    assert len(position_calls) == 20
+    assert position_calls[-1][2]["cursor"] == "page:19"
 
 
 @pytest.mark.asyncio

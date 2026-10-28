@@ -59,6 +59,9 @@ canonical_test_command = "python -m pytest -q"
 type_check_scope = "src"
 
 [python.dependency_imports]
+cryptography = "cryptography"
+eth_account = "eth-account"
+httpx = "httpx"
 polymarket = "polymarket-client"
 pydantic = "pydantic"
 pydantic_settings = "pydantic-settings"

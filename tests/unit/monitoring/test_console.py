@@ -12,7 +12,9 @@ from polysia.monitoring.console import AccessVerifier, ConsoleApplication
 from polysia.storage.console_commands import ConsoleCommandStore
 
 
-def application(tmp_path: Path, *, role: str = "operator") -> ConsoleApplication:
+def application(
+    tmp_path: Path, *, role: str = "operator", targets: frozenset[str] = frozenset()
+) -> ConsoleApplication:
     tmp_path.mkdir(parents=True, exist_ok=True)
     publication = tmp_path / "publication.json"
     publication.write_text(json.dumps({"status": "STOPPED", "published_at": "2026-10-16"}))
@@ -30,6 +32,7 @@ def application(tmp_path: Path, *, role: str = "operator") -> ConsoleApplication
         verify=verify,
         commands=commands,
         csrf_secret=b"x" * 32,
+        scoped_targets=targets,
     )
 
 
@@ -135,6 +138,60 @@ def test_csrf_roles_revision_and_idempotency_fail_closed(tmp_path: Path) -> None
     )
     reader = application(tmp_path / "reader", role="reader")
     assert request(reader, path="/api/commands", method="POST", body=body)[0] == "403 Forbidden"
+
+
+def test_scoped_operations_reuse_access_csrf_and_immutable_preview(tmp_path: Path) -> None:
+    app = application(tmp_path, targets=frozenset({"exact-experiment"}))
+    _, headers, _ = request(app)
+    cookie = headers["Set-Cookie"].split(";")[0]
+    csrf = cookie.split("=", 1)[1]
+    body = {"operation": "shadow.drain", "target": "exact-experiment", "csrf": csrf}
+    assert (
+        request(app, path="/api/operations/preview", method="POST", body=body)[0] == "403 Forbidden"
+    )
+    assert (
+        request(
+            app,
+            path="/api/operations/preview",
+            method="POST",
+            body={**body, "target": "other"},
+            cookie=cookie,
+        )[0]
+        == "409 Conflict"
+    )
+    assert (
+        request(
+            app,
+            path="/api/operations/preview",
+            method="POST",
+            body={**body, "actor": "self-approved"},
+            cookie=cookie,
+        )[0]
+        == "409 Conflict"
+    )
+    status, _, raw = request(
+        app, path="/api/operations/preview", method="POST", body=body, cookie=cookie
+    )
+    assert status == "202 Accepted"
+    preview = json.loads(raw)
+    assert preview["actor"] == "owner-subject" and preview["effect"] == "NOT_REQUESTED"
+    apply = {"preview_id": preview["preview_id"], "expected_revision": 0,
+             "idempotency_key": "scoped-browser-request-001", "csrf": csrf}
+    status, _, raw = request(
+        app, path="/api/operations/apply", method="POST", body=apply, cookie=cookie
+    )
+    assert status == "202 Accepted" and json.loads(raw)["effect"] == "NOT_OBSERVED"
+    assert (
+        request(app, path="/api/operations/apply", method="POST", body=apply, cookie=cookie)[0]
+        == "202 Accepted"
+    )
+    reader = application(
+        tmp_path / "scoped-reader", role="reader", targets=frozenset({"exact-experiment"})
+    )
+    assert (
+        request(reader, path="/api/operations/preview", method="POST", body=body)[0]
+        == "403 Forbidden"
+    )
 
 
 def test_signed_tokens_require_correct_issuer_audience_expiry_and_role(

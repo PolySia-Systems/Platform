@@ -12,6 +12,7 @@ from polysia.application.ports.copytrading import LeaderReadPurpose
 DATA_API_BASE_URL = "https://data-api.polymarket.com"
 DATA_API_V2_TRADES_PATH = "/v2/trades"
 DATA_API_V2_ACTIVITY_PATH = "/v2/activity"
+DATA_API_V2_POSITIONS_PATH = "/v2/positions"
 
 
 class DataApiV2Transport(Protocol):
@@ -48,11 +49,14 @@ def data_api_v2_rows(payload: object) -> list[dict[str, Any]]:
         "token_id": "asset",
         "transaction_hash": "transactionHash",
         "usdc_size": "usdcSize",
+        "current_size": "size",
     }
     for row in data:
         adapted = dict(row)
         for current, legacy in aliases.items():
             if current in row:
+                if legacy in row and str(row[legacy]) != str(row[current]):
+                    raise ValueError("conflicting Data API field aliases")
                 adapted[legacy] = row[current]
         rows.append(adapted)
     return rows
@@ -77,8 +81,12 @@ async def fetch_data_api_v2_window(
     frozen filters. Completion says nothing about upstream publication delay.
     """
 
-    if path not in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
+    if path not in {
+        DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH, DATA_API_V2_POSITIONS_PATH
+    }:
         raise ValueError("unsupported Data API v2 feed")
+    if "offset" in params or "cursor" in params:
+        raise ValueError("legacy offset or external cursor checkpoint requires explicit migration")
     if max_pages <= 0 or max_requests <= 0 or max_elapsed_seconds <= 0:
         raise ValueError("Data API v2 walk budgets must be positive")
     deadline = monotonic() + max_elapsed_seconds
@@ -100,10 +108,10 @@ async def fetch_data_api_v2_window(
             request_params["cursor"] = cursor
         request_count += 1
         try:
-            payload = await asyncio.wait_for(
-                transport.get_json(DATA_API_BASE_URL, path, request_params, purpose=purpose),
-                timeout=remaining,
-            )
+            async with asyncio.timeout(remaining):
+                payload = await transport.get_json(
+                    DATA_API_BASE_URL, path, request_params, purpose=purpose
+                )
         except TimeoutError as error:
             raise IncompleteWalletWindowError("time_budget_exhausted") from error
         if monotonic() >= deadline:

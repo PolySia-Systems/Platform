@@ -163,14 +163,6 @@ def _source_wallet_eligible(event: CanonicalResearchEvent, alias: str) -> bool:
     )
 
 
-def _wallet_rows(payload: object, *, path: str) -> list[dict[str, Any]]:
-    if path in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
-        return data_api_v2_rows(payload)
-    if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
-        raise TypeError("wallet source response is not a list of objects")
-    return payload
-
-
 def unique_wallet_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Count the same trade identity once across page boundaries."""
 
@@ -230,7 +222,11 @@ class DataApiWalletPollSource:
         if not 1 <= request_timeout_seconds <= 60:
             raise ValueError("request_timeout_seconds must be within [1, 60]")
         self.candidate = candidate
-        self._path = path
+        migrated_path = {"/trades": DATA_API_V2_TRADES_PATH,
+                         "/activity": DATA_API_V2_ACTIVITY_PATH}.get(path, path)
+        if migrated_path not in {DATA_API_V2_TRADES_PATH, DATA_API_V2_ACTIVITY_PATH}:
+            raise ValueError("unsupported wallet source route")
+        self._path = migrated_path
         self._source_id = source_id
         self._aliases = dict(aliases)
         self._transport = transport or UrllibJsonGetTransport()
@@ -351,44 +347,35 @@ class DataApiWalletPollSource:
                     if window_start > window_end:
                         raise ValueError("clock_before_completed_boundary")
                     params = self._params(wallet, start=window_start, end=window_end)
-                    if self._path.startswith("/v2/"):
-                        def capture_page(
-                            page_rows: list[dict[str, Any]],
-                            *,
-                            page_alias: str = alias,
-                            page_wallet: str = wallet,
-                        ) -> None:
-                            if self._clock() >= deadline:
-                                raise IncompleteWalletWindowError("time_budget_exhausted")
-                            stats = self._wallet_diagnostics[page_alias]
-                            stats["response_pages"] = int(stats["response_pages"]) + 1
-                            stats["parsed_rows"] = int(stats["parsed_rows"]) + len(page_rows)
-                            self._capture_first_seen(
-                                page_rows, alias=page_alias, wallet=page_wallet, run_id=run_id
-                            )
-
-                        remaining = (deadline - self._clock()).total_seconds()
-                        if remaining <= 0:
+                    def capture_page(
+                        page_rows: list[dict[str, Any]],
+                        *,
+                        page_alias: str = alias,
+                        page_wallet: str = wallet,
+                    ) -> None:
+                        if self._clock() >= deadline:
                             raise IncompleteWalletWindowError("time_budget_exhausted")
-                        rows = await fetch_data_api_v2_window(
-                            self._transport,
-                            self._path,
-                            params,
-                            purpose=purpose,
-                            max_pages=self._max_pages,
-                            max_requests=self._max_requests,
-                            max_elapsed_seconds=min(self._request_timeout_seconds, remaining),
-                            deadline_monotonic=hard_deadline,
-                            on_page=capture_page,
-                        )
-                    else:
-                        payload = await self._transport.get_json(
-                            DATA_API_BASE_URL, self._path, params, purpose=purpose
-                        )
-                        rows = _wallet_rows(payload, path=self._path)
-                        stats = self._wallet_diagnostics[alias]
+                        stats = self._wallet_diagnostics[page_alias]
                         stats["response_pages"] = int(stats["response_pages"]) + 1
-                        stats["parsed_rows"] = int(stats["parsed_rows"]) + len(rows)
+                        stats["parsed_rows"] = int(stats["parsed_rows"]) + len(page_rows)
+                        self._capture_first_seen(
+                            page_rows, alias=page_alias, wallet=page_wallet, run_id=run_id
+                        )
+
+                    remaining = (deadline - self._clock()).total_seconds()
+                    if remaining <= 0:
+                        raise IncompleteWalletWindowError("time_budget_exhausted")
+                    rows = await fetch_data_api_v2_window(
+                        self._transport,
+                        self._path,
+                        params,
+                        purpose=purpose,
+                        max_pages=self._max_pages,
+                        max_requests=self._max_requests,
+                        max_elapsed_seconds=min(self._request_timeout_seconds, remaining),
+                        deadline_monotonic=hard_deadline,
+                        on_page=capture_page,
+                    )
                     batch.append((alias, wallet, rows))
             except (
                 PolymarketCopyTradingSourceError,
@@ -611,15 +598,12 @@ class DataApiWalletPollSource:
             "start": int(start.timestamp()),
             "end": int(end.timestamp()),
         }
-        is_v2 = self._path.startswith("/v2/")
-        if not is_v2:
-            params["offset"] = 0
         if self._path.endswith("/activity"):
             params["type"] = "TRADE"
-            params["sort_by" if is_v2 else "sortBy"] = "TIMESTAMP"
-            params["sort_direction" if is_v2 else "sortDirection"] = "ASC"
+            params["sort_by"] = "TIMESTAMP"
+            params["sort_direction"] = "ASC"
         else:
-            params["taker_only" if is_v2 else "takerOnly"] = False
+            params["taker_only"] = False
         return params
 
 

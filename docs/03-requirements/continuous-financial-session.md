@@ -1,6 +1,7 @@
 # Bounded financial session and operator evidence
 
-Status: CURRENT engineering library; TARGET continuous operational composition.
+Status (2026-10-26): CURRENT default-disabled engineering composition and operator
+controls under review in PR #230; TARGET commissioned financial operation.
 Live authorization: absent. Architecture decision: [ADR-0023 is Proposed](../04-architecture/adrs/ADR-0023-bounded-financial-session.md).
 
 ## Required contracts and implementation
@@ -19,7 +20,7 @@ Live authorization: absent. Architecture decision: [ADR-0023 is Proposed](../04-
 | Evidence | Existing latency-intelligence recorder receives monotonic decision/Risk/account/submit/ACK/fill/finality durations. Source UTC age has an explicit unverified-clock flag; absent/restarted spans stay missing/censored. Financial persistence is mandatory; optional telemetry may degrade. |
 | Human View | Existing protected Console: overview/authority/incidents; searchable paginated discovery; actual order/health timeline; economics/source value. 1,000 available discovery rows are not 1,000 subscriptions. UNKNOWN and stale publication remain explicit. |
 
-The new library defaults to DATA_ONLY. Historical Tiny Live CLI registrations,
+The new composition defaults to DATA_ONLY. Historical Tiny Live CLI registrations,
 caps, source-score policy, replay contracts and research worker behavior remain
 unchanged. Test-only fake authority is not operational configuration.
 
@@ -81,7 +82,57 @@ retained qualification/exclusion and 100/500/1,000 offline discovery records.
 loading/empty/stale/error cases on desktop/mobile. Automated fixture acceptance
 does not establish actual human comprehension within 60 seconds.
 
-Operational activation is TARGET. No account/provider acquisition, deployed
+Operational activation remains TARGET. The concrete entry point is
+`polysia ops session`; non-Live construction returns before any signer, financial
+store, account reader or network is constructed. No account/provider acquisition, deployed
 performance, sustained supervision coverage, real order or economic result is
 claimed. The active PR owns exact commands/results and remaining engineering
 findings. See [operating and deployment prerequisites](../10-operations/continuous-financial-session.md).
+
+
+## E2 connected contracts (CURRENT engineering)
+
+| Acceptance | Implemented owners and constraint |
+|---|---|
+| A1 | Adapter `position_inventory` and V2 public readers walk bounded cursor envelopes; legacy offsets reject. OPEN and REDEEMABLE_LOST/CLOSED views deduplicate exact condition/token pairs. Public inventory is not an exact account balance. |
+| A2 | `deployment/financial_session_runtime`, adapter `session_composition`, `session_account`, `session_network`, `security/session_authority`, and `deployment/session_supervision` connect the existing coordinator, Risk and LiveBroker. Ed25519 owner receipts bind release/code/config/policy/account/host/run/scope. Custody consumes receipts and starts STOP. No issuer exists in worker/web. |
+| A3 | V2 rows discover transactions; finalized canonical CTF Exchange V2 receipts prove wallet occurrences by transaction plus actual block log index. Retained Shadow quotes produce causal follower samples, cost/delay/depth metrics and an experimental bounded forward-price estimate. Missing estimates remain unknown. |
+| A4 | `financial_allocation` projects account/token/leader/policy ownership from confirmed fills and actual redemption cash in the existing financial owner. Pending quantities reserve ownership. PositionTrigger is separate from leader events. Unexplained transfers, unsupported settlement and contradictory finality drain entries. |
+| B1 | Immutable CopyPolicy supports FIXED_DEBIT/CAPITAL_PROPORTIONAL and MIRROR/NET_TAKE_PROFIT/HYBRID. Stop/time parameters require HYBRID; reentry defaults off. Two-decimal share quantum matches the pinned SDK. Exact signed economics and exchange are checked before submission. |
+| B2 | `deployment/shadow_lab` uses existing ContinuousShadow stores, lifecycle, leases, event application and one acquisition allowance. At most four slots/templates; separate virtual capital. Same-tape policy comparison is stateful, never a summed return. |
+| B3 | `monitoring/capabilities` and `operational_session` distinguish evidence, configuration and authorization, including expiry, scope and next action. Independent supervision publication is separate from worker health. |
+| B4 | Existing ControlService/ConsoleCommandStore handle typed scoped previews, revisions, expiry, targets, native/gateway roles, idempotency and terminal receipts. Browser/CLI cannot issue financial authority. Legacy Shadow commands retain their meaning. |
+| B5 | One durable request/byte/cost owner confines actual SDK/RPC HTTP traffic. Entry admission reserves requests/bytes/cost/attempts/turnover/storage for protection. Optional source work sheds within the frozen envelope. Local deduplicated incidents and fake notification receipts require separate delivery authority. |
+
+The composed route is deliberately limited to chain 137, standard legacy CTF
+Exchange V2, six-decimal pUSD/CTF, EOA signer=funder, signature type 0, and the
+pinned SDK's exact contract addresses. Negative risk, V3 token namespaces,
+proxy/Safe/deposit wallets, builders and nonempty baseline migration reject.
+Actual account completeness depends on a qualified all-or-error historical RPC
+provider, complete bounded authenticated orders/trades, canonical finalized
+headers, cash and all token balances. Large accounts that exceed any bound
+remain blocked; empty public inventory never establishes completeness.
+
+Ownership uses deterministic pooled average cost and proportional remaining
+fees, with residual cost assigned to the last sorted owner. Chronological fills
+include chain block/log ordering at equal timestamps. Redemption is actual
+confirmed token removal plus cash movement, not permission to redeem. A
+redemption at or before the last fill timestamp remains quarantined rather
+than guessing within-block cash order. Dust stays owned and visible. Policy
+trigger precedence is stop, holding time, net take-profit, then evidenced
+proportional leader reduction. Depth is rounded down before Risk; a trigger is
+an attempted eligible exit, never a guaranteed price. Existing holdings retain
+the original policy and exit monitoring after entry exclusion.
+
+The qualification estimator's independent bounded-sample/stationarity assumptions
+are experimental and require later calibration. Provider ranks never become
+probabilities. Selection samples precede availability/evaluation; the operational
+root recomputes evidence from the bound sample artifact. No real acquisition,
+qualified Live cohort or economic result was produced by this engineering.
+
+Version-1 financial journals/receipts keep their old identity. Version-2 journals
+add bounded raw network evidence and protective reserves; no implicit migration
+or reinterpretation is permitted. New optional Shadow policy fields preserve
+legacy consumers; scoped commands use additive tables. Changing a Live binding
+requires a new separately authorized run/receipt; staging does not alter active
+holdings. See the runbook for custody, qualification and rollback.

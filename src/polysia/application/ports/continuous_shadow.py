@@ -15,6 +15,7 @@ from polysia.domain.copytrading.continuous_shadow import (
     ContinuousShadowConfig,
     ContinuousShadowLifecycle,
 )
+from polysia.domain.copytrading.copy_policy import ShadowPositionAction
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
 
@@ -209,7 +210,7 @@ class ContinuousPositionMark:
 
 @dataclass(frozen=True, slots=True)
 class ContinuousPollCompletion:
-    events: tuple[tuple[LeaderTradeEvent, tuple[str, ...]], ...]
+    events: tuple[tuple[LeaderTradeEvent | ShadowPositionAction, tuple[str, ...]], ...]
     evaluations: tuple[ContinuousEvaluationRecord, ...]
     portfolios: tuple[ContinuousPortfolio, ...]
     attributions: tuple[FollowerAttribution, ...]

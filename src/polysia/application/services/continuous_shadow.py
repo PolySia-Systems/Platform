@@ -79,12 +79,14 @@ from polysia.domain.copytrading.continuous_shadow import (
     verified_settlement_prices,
     walk_order_book,
 )
+from polysia.domain.copytrading.copy_policy import ShadowPositionAction
 from polysia.domain.copytrading.wallet_capacity import (
     WalletCapacityError,
     capacity_status,
     require_operational_capacity,
     workload_digest,
 )
+from polysia.domain.financial_session import SessionBlocked, digest
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.domain.wallet_intelligence import CandidatePipelineLease
 
@@ -705,13 +707,17 @@ class ContinuousShadowService:
             source = self._source_factory(
                 {candidate.wallet_id: candidate.address for candidate in candidates}
             )
+            scoped_policy = self._config.copy_policy is not None
+            def scope_event(identity: str) -> str:
+                return digest((experiment.experiment_id, identity)) if scoped_policy else identity
+
             pending_observer = getattr(source, "set_pending_observer", None)
             if callable(pending_observer):
-                pending_observer(
-                    lambda event_ids, observed_at: self._store.capture_pending_observations(
-                        poll_run_id, event_ids, observed_at=observed_at
-                    )
-                )
+                def capture(event_ids: tuple[str, ...], observed_at: datetime) -> None:
+                    self._store.capture_pending_observations(
+                        poll_run_id, tuple(scope_event(identity) for identity in event_ids),
+                        observed_at=observed_at)
+                pending_observer(capture)
             with self._latency_span(
                 "source",
                 "source_fetch",
@@ -727,6 +733,15 @@ class ContinuousShadowService:
                         window_end=window_end,
                     ),
                     timeout=60.0,
+                )
+            if scoped_policy:
+                raw_events = tuple(
+                    replace(
+                        event,
+                        event_id=scope_event(event.event_id),
+                        source_occurrence_id=event.event_id,
+                    )
+                    for event in raw_events
                 )
             if callable(pending_observer):
                 first_observed = self._store.pending_observed_times(
@@ -796,6 +811,13 @@ class ContinuousShadowService:
                     markets,
                     evaluated_at=evaluated_at,
                 )
+            history_loader = getattr(self._store, "policy_history", None)
+            policy_history = (
+                history_loader(experiment.experiment_id)
+                if self._config.copy_policy is not None and callable(history_loader)
+                else {}
+            )
+            position_actions: list[ShadowPositionAction] = []
             evaluations: list[ContinuousEvaluationRecord] = []
             consumed_by_scope: dict[tuple[str, str], dict[Decimal, Decimal]] = {}
             current_by_wallet = {item.wallet_id: item for item in current_candidates}
@@ -822,6 +844,14 @@ class ContinuousShadowService:
                         ) or follower_accepts_pool(portfolio.kind, pool_class):
                             targets.append(portfolio)
                     for portfolio in targets:
+                        owner_key = (
+                            portfolio.portfolio_id,
+                            event.leader_id,
+                            event.market_reference,
+                            event.outcome_reference,
+                        )
+                        previous_owned = attributions.get(owner_key)
+                        owner_was_flat = previous_owned is None or previous_owned.quantity == 0
                         evaluation, entry = apply_shadow_event(
                             self._config,
                             portfolio,
@@ -834,10 +864,42 @@ class ContinuousShadowService:
                             attributions=attributions,
                             consumed_by_scope=consumed_by_scope,
                             evaluated_at=evaluated_at,
+                            policy_context_verified=callable(history_loader),
+                            entered_before=(
+                                portfolio.portfolio_id,
+                                event.leader_id,
+                                event.outcome_reference,
+                            )
+                            in policy_history,
+                            policy_opened_at=policy_history.get(
+                                (portfolio.portfolio_id, event.leader_id, event.outcome_reference)
+                            ),
+                            leader_position_before=event.leader_position_before,
                         )
                         evaluations.append(evaluation)
                         if entry is not None:
                             ledger.append(entry)
+                            if event.trade_action is LeaderTradeAction.BUY and owner_was_flat:
+                                policy_history[
+                                    (
+                                        portfolio.portfolio_id,
+                                        event.leader_id,
+                                        event.outcome_reference,
+                                    )
+                                ] = evaluated_at
+            if self._config.copy_policy is not None and callable(history_loader):
+                position_actions = self._apply_position_policies(
+                    experiment,
+                    portfolios,
+                    attributions,
+                    policy_history,
+                    markets,
+                    books,
+                    consumed_by_scope,
+                    evaluations,
+                    ledger,
+                    evaluated_at,
+                )
             with self._latency_span("application", "marking", parent_span_id=root_span_id):
                 new_marks = _mark_positions(
                     portfolios,
@@ -856,9 +918,12 @@ class ContinuousShadowService:
                 item.wallet_id: item.pools
                 for item in _merge_candidates(current_candidates, retained)
             }
+            all_admitted: tuple[LeaderTradeEvent | ShadowPositionAction, ...] = (
+                *new_events, *position_actions)
             completion = ContinuousPollCompletion(
                 events=tuple(
-                    (event, pools_by_wallet[event.leader_id]) for event in new_events
+                    (event, pools_by_wallet[event.leader_id])
+                    for event in all_admitted
                 ),
                 evaluations=tuple(evaluations),
                 portfolios=tuple(_freeze_portfolio(item) for item in portfolios.values()),
@@ -887,7 +952,8 @@ class ContinuousShadowService:
                 opportunities=tuple(
                     opportunity_payload(
                         event,
-                        admission_at=admission_completed_at,
+                        admission_at=(evaluated_at if isinstance(event, ShadowPositionAction)
+                                      else admission_completed_at),
                         decision_at=evaluated_at,
                         selection_digest=selection.digest,
                         config=self._config.to_dict(),
@@ -897,7 +963,7 @@ class ContinuousShadowService:
                         lifecycle=experiment.lifecycle,
                         exposure_increase_allowed=selection_fresh,
                     )
-                    for event in new_events
+                    for event in all_admitted
                 ),
             )
             stage = FAILURE_STAGE_PERSIST
@@ -1225,6 +1291,54 @@ class ContinuousShadowService:
             raise ContinuousShadowError("Continuous Shadow experiment is not running.")
         return experiment
 
+    def _apply_position_policies(
+        self, experiment: ContinuousShadowExperiment, portfolios: dict[str, _MutablePortfolio],
+        attributions: dict[tuple[str, str, str, str], _MutableAttribution],
+        history: dict[tuple[str, str, str], datetime], markets: dict[str, MarketDetails | None],
+        books: dict[str, MarketOrderBookSnapshot | None],
+        consumed: dict[tuple[str, str], dict[Decimal, Decimal]],
+        evaluations: list[ContinuousEvaluationRecord], ledger: list[ContinuousLedgerRecord],
+        now: datetime,
+    ) -> list[ShadowPositionAction]:
+        policy = self._config.copy_policy
+        assert policy is not None
+        actions = []
+        for key, owned in list(attributions.items()):
+            if owned.quantity <= ZERO:
+                continue
+            portfolio = portfolios[key[0]]
+            book, market = books.get(key[3]), markets.get(key[2])
+            opened = history.get((key[0], key[1], key[3]))
+            if book is None or book.best_bid is None or opened is None:
+                continue
+            fee = calculate_verified_taker_fee(market, price=book.best_bid.price, size=Decimal(1))
+            position = portfolio.positions.get((key[2], key[3]))
+            if fee.amount is None or position is None:
+                continue
+            trigger, shares = policy.exit_decision(
+                held=owned.quantity, reserved_sell=ZERO, cost_basis=owned.cost_basis,
+                bid=book.best_bid.price, exit_fee_per_share=fee.amount,
+                entry_fees=position.entry_fees * owned.quantity / position.quantity,
+                opened_at=opened, now=now, leader_before=None, leader_reduction=None,
+                share_quantum=policy.quantity_quantum)
+            if not shares:
+                continue
+            event = ShadowPositionAction(digest((experiment.experiment_id, key, opened)),
+                policy.fingerprint, trigger, key[1], key[2], key[3], book.best_bid.price,
+                shares, now, now, position_revision=digest((owned.quantity, owned.cost_basis)))
+            if self._store.seen_event_ids((event.event_id,)):
+                continue
+            evaluation, entry = apply_shadow_event(self._config, portfolio, event,
+                pool_class=owned.pool_class, lifecycle=experiment.lifecycle,
+                exposure_increase_allowed=False, market=market, book=book,
+                attributions=attributions, consumed_by_scope=consumed, evaluated_at=now,
+                policy_context_verified=True, position_triggered=True, policy_opened_at=opened)
+            actions.append(event)
+            evaluations.append(evaluation)
+            if entry is not None:
+                ledger.append(entry)
+        return actions
+
     def _now(self) -> datetime:
         value = self._clock()
         if value.tzinfo is None or value.utcoffset() != timedelta(0):
@@ -1236,7 +1350,7 @@ class ContinuousShadowService:
 def apply_shadow_event(
     config: ContinuousShadowConfig,
     portfolio: _MutablePortfolio,
-    event: LeaderTradeEvent,
+    event: LeaderTradeEvent | ShadowPositionAction,
     *,
     pool_class: str,
     lifecycle: ContinuousShadowLifecycle,
@@ -1246,6 +1360,11 @@ def apply_shadow_event(
     attributions: dict[tuple[str, str, str, str], _MutableAttribution],
     consumed_by_scope: dict[tuple[str, str], dict[Decimal, Decimal]],
     evaluated_at: datetime,
+    leader_position_before: Decimal | None = None,
+    policy_context_verified: bool = False,
+    entered_before: bool = False,
+    position_triggered: bool = False,
+    policy_opened_at: datetime | None = None,
 ) -> tuple[ContinuousEvaluationRecord, ContinuousLedgerRecord | None]:
     """Apply the production Shadow financial policy to one recorded opportunity."""
     api_lag = _milliseconds(event.observed_at - event.executed_at)
@@ -1291,6 +1410,9 @@ def apply_shadow_event(
             None,
         )
 
+    policy = config.copy_policy if portfolio.kind in FOLLOWER_KINDS else None
+    if policy is not None and not policy_context_verified:
+        return evidence(ContinuousEvaluationStatus.UNKNOWN, "policy_position_history_unverified")
     if total_delay > config.maximum_forward_delay_ms:
         return evidence(ContinuousEvaluationStatus.UNKNOWN, "source_and_signal_delay_exceeded")
     if event.trade_action is LeaderTradeAction.BUY and not exposure_increase_allowed:
@@ -1334,6 +1456,31 @@ def apply_shadow_event(
                 ZERO if attribution is None else attribution.quantity,
             )
         requested_size = min(event.executed_size, available_position)
+        if policy is not None:
+            assert book.best_bid is not None
+            exit_fee = calculate_verified_taker_fee(
+                market, price=book.best_bid.price, size=Decimal(1)
+            )
+            if exit_fee.amount is None or position is None:
+                return evidence(
+                    ContinuousEvaluationStatus.UNKNOWN, "policy_exit_fee_or_position_unknown"
+                )
+            try:
+                trigger, requested_size = policy.exit_decision(
+                    held=available_position, reserved_sell=ZERO,
+                    cost_basis=ZERO if attribution is None else attribution.cost_basis,
+                    bid=book.best_bid.price, exit_fee_per_share=exit_fee.amount,
+                    entry_fees=position.entry_fees * available_position / position.quantity,
+                    opened_at=policy_opened_at or evaluated_at, now=evaluated_at,
+                    leader_before=None if position_triggered else leader_position_before,
+                    leader_reduction=None if position_triggered else event.executed_size,
+                    share_quantum=policy.quantity_quantum)
+            except SessionBlocked:
+                return evidence(
+                    ContinuousEvaluationStatus.UNKNOWN, "leader_baseline_or_policy_input_unknown"
+                )
+            if trigger == "HOLD":
+                return evidence(ContinuousEvaluationStatus.REJECTED, "policy_exit_not_triggered")
         if requested_size <= ZERO:
             return evidence(
                 ContinuousEvaluationStatus.UNKNOWN,
@@ -1394,6 +1541,27 @@ def apply_shadow_event(
                 "synthetic_capital_limit_reached",
             )
         requested_size = min(event.executed_size, maximum_notional / top)
+        if policy is not None:
+            size_fee = calculate_verified_taker_fee(market, price=top, size=Decimal(1))
+            if size_fee.amount is None:
+                return evidence(ContinuousEvaluationStatus.UNKNOWN, "policy_entry_fee_unknown")
+            requested_size = min(
+                requested_size,
+                policy.entry_size(
+                    cash=portfolio.cash,
+                    reserved_debit=ZERO,
+                    price=top,
+                    fee_per_share=size_fee.amount,
+                    share_quantum=policy.quantity_quantum,
+                    minimum_shares=book.minimum_order_size,
+                    depth=sum((level.size for level in book.asks), ZERO),
+                    entered_before=entered_before,
+                ),
+            )
+            if requested_size <= ZERO:
+                return evidence(
+                    ContinuousEvaluationStatus.REJECTED, "policy_size_or_reentry_denied"
+                )
     scope = (portfolio.portfolio_id, event.outcome_reference)
     consumed = consumed_by_scope.setdefault(scope, {})
     walk = walk_order_book(

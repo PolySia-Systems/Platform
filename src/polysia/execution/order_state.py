@@ -73,6 +73,16 @@ class PaperFill:
     size: Decimal
     created_at: datetime
     fee: Decimal = Decimal("0")
+    gross_notional: Decimal | None = None
+
+    @property
+    def notional(self) -> Decimal:
+        if self.gross_notional is None:
+            return self.price * self.size
+        if (not self.gross_notional.is_finite() or self.gross_notional < 0
+                or abs(self.gross_notional - self.price * self.size) > Decimal("0.000001")):
+            raise ValueError("confirmed gross notional conflicts with price/quantity")
+        return self.gross_notional
 
     def to_dict(self) -> dict[str, object]:
         return {

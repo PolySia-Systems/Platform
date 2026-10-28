@@ -10,15 +10,19 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import asdict
+from datetime import UTC, datetime
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import jwt
 
 from polysia.application.services.report_integrity import verify_analytical_digest
 from polysia.application.services.shadow_reporting import comparison_csv
+from polysia.control.scoped_operations import Operation
+from polysia.control.service import ControlError, ControlService
 from polysia.storage.console_commands import ConsoleCommandStore
 
 MAX_PUBLICATION_BYTES = 8_000_000
@@ -72,6 +76,7 @@ class ConsoleApplication:
         commands: ConsoleCommandStore,
         csrf_secret: bytes,
         identity_header: str = "HTTP_CF_ACCESS_JWT_ASSERTION",
+        scoped_targets: frozenset[str] = frozenset(),
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -90,6 +95,7 @@ class ConsoleApplication:
             raise ValueError("HTTPS origin and protected CSRF secret are required")
         self._publication, self._origin, self._verify = publication, origin, verify
         self._commands, self._csrf_secret = commands, csrf_secret
+        self._scoped_targets = scoped_targets
         if identity_header not in {"HTTP_CF_ACCESS_JWT_ASSERTION", "HTTP_X_POLYSIA_USER"}:
             raise ValueError("unsupported identity boundary")
         self._identity_header = identity_header
@@ -133,7 +139,10 @@ class ConsoleApplication:
         if method not in {"GET", "POST"}:
             return respond("405 Method Not Allowed", {"reason": "unsupported_method"})
         if method == "POST":
-            if path != "/api/commands" or role != "operator":
+            if (
+                path not in {"/api/commands", "/api/operations/preview", "/api/operations/apply"}
+                or role != "operator"
+            ):
                 return respond("403 Forbidden", {"reason": "operator_required"})
             if environ.get("HTTP_ORIGIN") != self._origin:
                 return respond("403 Forbidden", {"reason": "origin_invalid"})
@@ -157,7 +166,25 @@ class ConsoleApplication:
                     or not any(hmac.compare_digest(csrf, item) for item in (expected, previous))
                 ):
                     return respond("403 Forbidden", {"reason": "csrf_invalid"})
-                receipt = self._commands.submit(subject=subject, **command)
+                if path == "/api/operations/preview":
+                    if set(command) - {"operation", "target", "arguments"}:
+                        raise ValueError("scoped_preview_fields_invalid")
+                    arguments = command.get("arguments", {})
+                    if not isinstance(arguments, dict):
+                        raise ValueError("scoped_arguments_invalid")
+                    preview = ControlService.preview_scoped(self._commands,
+                        operation=cast(Operation, command["operation"]), target=command["target"],
+                        actor=subject, role=role, allowed_targets=self._scoped_targets,
+                        now=datetime.now(UTC), arguments=tuple(sorted(arguments.items())))
+                    receipt = {"preview_id": preview.fingerprint, **asdict(preview),
+                               "created_at": preview.created_at.isoformat(),
+                               "expires_at": preview.expires_at.isoformat(),
+                               "effect": "NOT_REQUESTED"}
+                elif path == "/api/operations/apply":
+                    receipt = self._commands.submit_scoped(subject=subject, role=role,
+                        now=datetime.now(UTC), allowed_targets=self._scoped_targets, **command)
+                else:
+                    receipt = self._commands.submit(subject=subject, **command)
             except sqlite3.DatabaseError:
                 return respond(
                     "503 Service Unavailable",
@@ -166,7 +193,7 @@ class ConsoleApplication:
                         "next_action": "inspect durable receipts before retrying",
                     },
                 )
-            except ValueError, TypeError, KeyError, CookieError, json.JSONDecodeError:
+            except ValueError, TypeError, KeyError, CookieError, json.JSONDecodeError, ControlError:
                 return respond("409 Conflict", {"reason": "command_invalid_or_revision_changed"})
             return respond("202 Accepted", receipt)
         if path == "/api/commands":
@@ -174,9 +201,25 @@ class ConsoleApplication:
                 return respond("200 OK", self._commands.status())
             except sqlite3.DatabaseError:
                 return respond("503 Service Unavailable", {"reason": "command_store_unavailable"})
-        if path == "/api/health":
+        if path == "/api/operations":
             try:
-                status_file = self._publication.parent / "publisher-status.json"
+                return respond(
+                    "200 OK",
+                    {
+                        "targets": sorted(self._scoped_targets),
+                        "receipts": self._commands.scoped_status(),
+                        "financial_authority_issuance": "DISABLED",
+                    },
+                )
+            except sqlite3.DatabaseError:
+                return respond("503 Service Unavailable", {"reason": "command_store_unavailable"})
+        if path in {"/api/health", "/api/supervision"}:
+            try:
+                status_file = self._publication.parent / (
+                    "supervisor-status.json"
+                    if path == "/api/supervision"
+                    else "publisher-status.json"
+                )
                 if status_file.stat().st_size > 4096:
                     raise ValueError("health_receipt_too_large")
                 return respond("200 OK", json.loads(status_file.read_text(encoding="utf-8")))

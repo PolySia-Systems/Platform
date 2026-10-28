@@ -92,7 +92,7 @@ function wallets() {
     body.append(tr);
   });
   if (!filtered.length) tableEmpty(body, 3, rows.length ? "No discovery records match this search." : "No retained discovery records are available.");
-  text("wallet-page-status", `${filtered.length ? first + 1 : 0}–${Math.min(first + WALLET_PAGE_SIZE, filtered.length)} of ${filtered.length} matching / ${rows.length} available discovery records · Page ${walletPage + 1} of ${pageCount} · Live subscriptions: ${readable(publication.selection?.monitored_count)}.`);
+  text("wallet-page-status", `${filtered.length ? first + 1 : 0}–${Math.min(first + WALLET_PAGE_SIZE, filtered.length)} of ${filtered.length} matching / ${rows.length} available discovery records · Page ${walletPage + 1} of ${pageCount} · Active bounded monitors: ${readable(publication.selection?.monitored_count)}.`);
   document.getElementById("wallet-previous").disabled = walletPage === 0;
   document.getElementById("wallet-next").disabled = walletPage + 1 >= pageCount;
 }
@@ -151,6 +151,7 @@ function sessionView() {
 }
 async function loadOnce() {
   const signal = AbortSignal.timeout(10000);
+  await loadScopedControls(signal);
   try { const commandResponse = IS_DEMO ? null : await fetch("/api/commands", {signal, cache:"no-store", credentials:"same-origin"});
     if (IS_DEMO) { text("receipt", "Demo is read-only. Commands use retained evidence only."); }
     else {
@@ -215,7 +216,8 @@ async function loadOnce() {
     const reasons = document.getElementById("reasons"); reasons.replaceChildren();
     [...(analytical.reasons || []), ...exclusionRows, ...(report.limitations || []), ...(publication.alerts || [])].forEach(value => { const item = document.createElement("li"); item.textContent = value; reasons.append(item); });
     text("diagnostics", JSON.stringify({source:publication.diagnostics || {status:"UNKNOWN"},recovery:publication.backup_health || {status:"UNKNOWN"}}, null, 2));
-    sessionView();
+    sessionView(); operatorViews();
+
     const walletKey = JSON.stringify(walletRecords());
     if (walletKey !== renderedWallets) { wallets(); renderedWallets = walletKey; }
   } catch (error) {
@@ -258,4 +260,85 @@ if (IS_DEMO) {
   document.querySelector('a[href="/api/report"]').href = "/api/demo";
   const comparison = document.querySelector('a[href="/download/comparison.csv"]');
   comparison.removeAttribute("href"); comparison.setAttribute("aria-disabled", "true");
+}
+
+let scopedPreview = null;
+function operatorViews() {
+  const projection = publication.capabilities || {}, body = document.getElementById("capability-rows");
+  body.replaceChildren();
+  rowsOrEmpty(projection.capabilities).forEach(original => {
+    const row = {...original, requirements: rowsOrEmpty(original.requirements).map(item => {
+      const expiry = Date.parse(item.evidence?.expires_at || "");
+      return item.state === "VERIFIED" && (!Number.isFinite(expiry) || expiry <= Date.now()) ? {...item, state:"EXPIRED"} : item;
+    })};
+    if (row.status !== "DISABLED" && row.requirements.some(item => rowsOrEmpty(row.required).includes(item.identity) && item.state !== "VERIFIED")) row.status = "BLOCKED";
+
+    const blockers = rowsOrEmpty(row.requirements).filter(item => item.state !== "VERIFIED").map(item => `${item.identity}: ${item.state} · ${item.evidence?.reason || "Evidence missing"} · ${item.evidence?.next_action || "Inspect Setup requirements"}`);
+    tableRow(body, [row.capability, row.status, blockers.join("; ") || "All required evidence is current"]);
+  });
+  if (!body.children.length) tableEmpty(body, 3, "Readiness UNKNOWN: no operation-specific evidence has been published.");
+  const requirements = document.getElementById("setup-requirements"); requirements.replaceChildren();
+  rowsOrEmpty(projection.catalog).forEach(item => {
+    const line = document.createElement("p"); line.textContent = `${item.identity}: ${item.obtain}. Validate: ${item.validate}.`; requirements.append(line);
+  });
+  const account = publication.active_account || {};
+  text("active-account", `Active account: ${readable(account.identity)} · Verification: ${readable(account.status)} · Observed: ${readable(account.observed_at)}. Revocation or identity change blocks old run authority.`);
+  const effective = publication.copy_policy?.effective, staged = publication.copy_policy?.staged;
+  text("policy-summary", effective ? `Effective policy ${effective.version} · ${effective.sizing} · Exit preset ${effective.exit_preset} · Re-entry ${effective.reentry ? "enabled within frozen scope" : "disabled"} · Digest ${readable(publication.copy_policy.digest)}. A stop attempts an eligible exit; it does not guarantee a price.` : "Effective policy UNKNOWN. No policy can grant financial authority.");
+  text("policy-staged", staged ? `Staged policy ${staged.version}; current positions retain their original policy.` : "No future policy is staged. Existing positions retain their frozen policy.");
+  text("shadow-lab-summary", rowsOrEmpty(publication.shadow_lab?.experiments).map(item => `${item.target}: ${item.phase} · Policy ${item.policy_digest}`).join("; ") || "No retained Lab experiments. Independent virtual returns are not one portfolio.");
+  const backup = publication.backup || {};
+  text("backup-readiness", `Financial recovery mode: ${readable(backup.mode)}. Last verified: ${readable(backup.last_verified_at)}. Independent restore: ${readable(backup.independent_restore)}. Missing or stale protection blocks financial readiness.`);
+  const capacity = publication.capacity || {};
+  text("capacity-summary", `Allocation: ${readable(capacity.allocation)} · Actual requests: ${readable(capacity.actual_requests)} · Measured bytes: ${readable(capacity.measured_response_bytes)} · Queue: ${readable(capacity.queue_depth)} / ${readable(capacity.queue_limit)} · Shared egress utilization: ${readable(capacity.external_shared_egress_utilization)}. Synthetic probes do not establish production capacity.`);
+  const incidents = rowsOrEmpty(publication.incidents);
+  text("incident-summary", incidents.length ? incidents.map(item => `${item.kind}: ${item.reason} · ${item.next_action} · Delivery ${item.delivery_state}`).join("; ") : "No actionable incident is published. No notification delivery is implied.");
+}
+async function loadScopedControls(signal) {
+  if (IS_DEMO) return;
+  try {
+    const response = await fetch("/api/operations", {signal, cache:"no-store", credentials:"same-origin"});
+    if (!response.ok) throw new Error("Scoped operations unavailable");
+    const data = await response.json(), select = document.getElementById("scoped-target"), previous = select.value;
+    select.replaceChildren();
+    rowsOrEmpty(data.targets).forEach(target => { const option = document.createElement("option"); option.value = target; option.textContent = target; select.append(option); });
+    if (rowsOrEmpty(data.targets).includes(previous)) select.value = previous;
+    document.getElementById("scoped-preview-button").disabled = !select.value || document.querySelector('meta[name="role"]').content !== "operator";
+    const list = document.getElementById("scoped-receipts"); list.replaceChildren();
+    rowsOrEmpty(data.receipts).forEach(item => { const li = document.createElement("li"); li.textContent = `${item.target} revision ${item.revision}: ${item.status} · ${detailsText(item.result)}`; list.append(li); });
+  } catch { document.getElementById("scoped-preview-button").disabled = true; text("scoped-preview", "Scoped operation service unavailable; retained financial evidence remains visible."); }
+}
+async function scopedRequest(path, body) {
+  const csrf = document.querySelector('meta[name="csrf"]').content;
+  const response = await fetch(path, {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify({...body, csrf}), signal:AbortSignal.timeout(10000)});
+  if (!response.ok) throw new Error(`Operation blocked (${response.status}); refresh and preview again.`);
+  return response.json();
+}
+document.getElementById("scoped-preview-button").addEventListener("click", async () => {
+  const operation = document.getElementById("scoped-operation").value, target = document.getElementById("scoped-target").value, argument = document.getElementById("scoped-argument").value.trim();
+  const key = {"shadow.clone":"source", "shadow.compare":"other", "shadow.create":"policy_digest", "policy.stage":"policy_digest"}[operation];
+  try { scopedPreview = await scopedRequest("/api/operations/preview", {operation, target, arguments:key ? {[key]:argument} : {}});
+    text("scoped-preview", `Preview ${scopedPreview.operation} on ${scopedPreview.target} at revision ${scopedPreview.expected_revision}. Expires ${scopedPreview.expires_at}. Effect: not requested.`); document.getElementById("scoped-apply-button").disabled = false;
+  } catch (error) { scopedPreview = null; text("scoped-preview", error.message); }
+});
+["scoped-target", "scoped-operation", "scoped-argument"].forEach(id => document.getElementById(id).addEventListener("input", () => { scopedPreview = null; document.getElementById("scoped-apply-button").disabled = true; }));
+document.getElementById("scoped-apply-button").addEventListener("click", async () => {
+  if (!scopedPreview) return;
+  document.getElementById("scoped-apply-button").disabled = true;
+  try { const receipt = await scopedRequest("/api/operations/apply", {preview_id:scopedPreview.preview_id, expected_revision:scopedPreview.expected_revision, idempotency_key:crypto.randomUUID()}); text("scoped-preview", `Requested revision ${receipt.revision}: ${receipt.status}. Effect ${receipt.effect || "inspect execution receipt"}.`); scopedPreview = null; await load(); }
+  catch (error) { text("scoped-preview", error.message); scopedPreview = null; }
+});
+
+async function loadSupervision(signal) {
+  if (IS_DEMO) return;
+  try {
+    const response = await fetch("/api/supervision", {signal, cache:"no-store", credentials:"same-origin"});
+    if (!response.ok) throw new Error("Independent supervision UNKNOWN");
+    const value = await response.json();
+    const current = Date.parse(value.expires_at) > Date.now();
+    text("independent-supervision", `Independent supervision: ${current ? value.status : "EXPIRED"}. ${readable(value.reason)}. ${readable(value.next_action)}. This observation takes precedence over a retained worker view.`);
+    if (publication.version === "operational-session-publication/v1" && (!current || value.status !== "SUPERVISED")) text("session-status", `Financial actions BLOCKED by independent supervision: ${current ? value.status : "EXPIRED"}. Retained order and economics evidence remains below.`);
+  } catch { text("independent-supervision", "Independent supervision UNKNOWN; financial readiness is not established by a retained publication.");
+    if (publication.version === "operational-session-publication/v1") text("session-status", "Financial readiness BLOCKED: independent supervision UNKNOWN. Retained financial evidence follows.");
+  }
 }

@@ -23,6 +23,7 @@ from polysia.adapters.polymarket.data_api_v2 import (
     IncompleteWalletWindowError,
     fetch_data_api_v2_window,
 )
+from polysia.adapters.polymarket.position_inventory import public_position_inventory
 from polysia.adapters.polymarket.request_scheduling import (
     EndpointRequestScheduler,
 )
@@ -50,7 +51,6 @@ DATA_API_BASE_URL = "https://data-api.polymarket.com"
 GAMMA_API_BASE_URL = "https://gamma-api.polymarket.com"
 CLOB_API_BASE_URL = "https://clob.polymarket.com"
 POSITION_PAGE_SIZE = 500
-POSITION_MAX_OFFSET = 10_000
 SOURCE_ID = "polymarket:data-api"
 
 Clock = Callable[[], datetime]
@@ -455,35 +455,14 @@ class PolymarketCopyTradingSource:
                 },
                 purpose=LeaderReadPurpose.BASELINE,
             ),
-            self._transport.get_json(
-                DATA_API_BASE_URL,
-                "/positions",
-                {
-                    "user": wallet,
-                    "sizeThreshold": 0,
-                    "limit": page_limit,
-                    "offset": 0,
-                },
-                purpose=LeaderReadPurpose.BASELINE,
-            ),
-            self._transport.get_json(
-                DATA_API_BASE_URL,
-                "/closed-positions",
-                {
-                    "user": wallet,
-                    "limit": min(page_limit, 50),
-                    "offset": 0,
-                    "sortBy": "TIMESTAMP",
-                    "sortDirection": "DESC",
-                },
-                purpose=LeaderReadPurpose.BASELINE,
-            ),
+            public_position_inventory(self._transport, wallet, limit=page_limit),
+            public_position_inventory(self._transport, wallet, closed=True, limit=page_limit),
         )
         all_rows = all_trades
         taker_rows = taker_trades
         activity_rows = activity
-        position_rows = _require_object_list(positions, source="/positions")
-        closed_rows = _require_object_list(closed, source="/closed-positions")
+        position_rows = positions
+        closed_rows = closed
         visible_sizes = [
             _positive_decimal(row.get("size"), name="position size")
             for row in position_rows
@@ -500,40 +479,28 @@ class PolymarketCopyTradingSource:
         )
 
     async def read_inventory(self, leader_id: str) -> LeaderInventorySnapshot:
-        """Read a complete sizeThreshold=0 public position baseline."""
+        """Read available V2 inventory including dust, archives and settled losers.
+
+        Inactive upstream markets remain a coverage limitation, not zero holdings."""
 
         wallet = self._leader_wallet(leader_id)
         positions: dict[tuple[str, str], Decimal] = {}
-        page_size = POSITION_PAGE_SIZE
-        maximum_pages = POSITION_MAX_OFFSET // page_size + 1
-        for page_number in range(maximum_pages):
-            payload = await self._transport.get_json(
-                DATA_API_BASE_URL,
-                "/positions",
-                {
-                    "user": wallet,
-                    "sizeThreshold": 0,
-                    "limit": page_size,
-                    "offset": page_number * page_size,
-                },
-                purpose=LeaderReadPurpose.BASELINE,
+        try:
+            rows = await public_position_inventory(
+                self._transport, wallet, limit=POSITION_PAGE_SIZE
             )
-            rows = _require_object_list(payload, source="/positions")
             for row in rows:
                 condition_id = _required_string(row, "conditionId")
                 token_id = _required_string(row, "asset")
                 if _CONDITION_PATTERN.fullmatch(condition_id) is None:
-                    raise PolymarketCopyTradingSourceError(
-                        "Position baseline contained an invalid market reference."
-                    )
-                size = _non_negative_decimal(row.get("size"), name="position size")
-                positions[(condition_id, token_id)] = size
-            if len(rows) < page_size:
-                break
-        else:
+                    raise ValueError("invalid market reference")
+                positions[(condition_id, token_id)] = _non_negative_decimal(
+                    row.get("size"), name="position size"
+                )
+        except (ValueError, TypeError) as error:
             raise PolymarketCopyTradingSourceError(
-                "Position baseline exceeded the bounded pagination limit."
-            )
+                "Position baseline incomplete: bounded pagination limit or invalid evidence."
+            ) from error
 
         observed_at = self._utc_now()
         evidence = [

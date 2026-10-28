@@ -50,6 +50,7 @@ EXPECTED_COMMANDS = {
         "prospective-run",
     },
     "ops": {
+        "session",
         "acceptance-audit",
         "acquisition-policy",
         "shadow-report",
@@ -70,7 +71,7 @@ EXPECTED_COMMANDS = {
         "release-manifest",
         "tiny-live-monitor",
     },
-    "control": {"apply", "history", "plan", "status"},
+    "control": {"apply", "history", "plan", "status", "scoped-preview", "scoped-apply"},
     "wallet-intelligence": {
         "intake",
         "local",

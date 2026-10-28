@@ -5,8 +5,8 @@ import json
 import re
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Protocol
+from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol
 from uuid import uuid4
 
 from polysia.control.models import (
@@ -23,6 +23,7 @@ from polysia.control.models import (
     RuntimeObservation,
     StrategyControlKey,
 )
+from polysia.control.scoped_operations import Operation, ScopedPreview
 
 Clock = Callable[[], datetime]
 IdentifierFactory = Callable[[], str]
@@ -104,6 +105,44 @@ class ControlService:
         self._supported_targets = frozenset(target.scope for target in supported_targets)
         self._clock = clock
         self._identifier_factory = identifier_factory
+
+    @staticmethod
+    def preview_scoped(
+        store: Any, *, operation: Operation, target: str, actor: str, role: str,
+        allowed_targets: frozenset[str], now: datetime,
+        arguments: tuple[tuple[str, str], ...] = (),
+    ) -> ScopedPreview:
+        if role != "operator" or target not in allowed_targets:
+            raise ControlValidationError("scoped role or target denied")
+        if any(name in {"source", "other"} and value not in allowed_targets
+               for name, value in arguments):
+            raise ControlValidationError("related scoped resource denied")
+        preview = ScopedPreview(operation, target, store.scoped_revision(target), actor,
+                                now, now + timedelta(minutes=2), arguments)
+        store.save_scoped_preview(preview)
+        return preview
+
+    @staticmethod
+    def execute_scoped(
+        store: Any, *, idempotency_key: str, now: datetime,
+        execute: Callable[[ScopedPreview], dict[str, Any]],
+    ) -> dict[str, Any]:
+        from pydantic import TypeAdapter
+
+        claimed = store.claim_scoped(idempotency_key, now=now)
+        if claimed is None:
+            return {"status": "NOT_CLAIMED", "effect": "NOT_REPEATED"}
+        try:
+            preview = TypeAdapter(ScopedPreview).validate_python(claimed)
+            result = execute(preview)
+            if result.get("effect") != "OBSERVED":
+                raise ControlValidationError("operation returned no observed effect")
+        except Exception as error:
+            result = {"effect": "UNKNOWN_OR_FAILED", "reason": type(error).__name__}
+            store.finish_scoped(idempotency_key, status="FAILED", result=result)
+            return result
+        store.finish_scoped(idempotency_key, status="APPLIED", result=result)
+        return result
 
     def plan(self, command: ControlPlanCommand) -> ControlPlan:
         key = command.key
