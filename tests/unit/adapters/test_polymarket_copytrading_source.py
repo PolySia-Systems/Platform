@@ -373,6 +373,45 @@ async def test_accepts_verified_non_btc_market_without_title_heuristics(
 
 
 @pytest.mark.asyncio
+async def test_unlaunched_sibling_does_not_block_exact_requested_market(
+    trades: list[dict[str, Any]], event: list[dict[str, Any]],
+) -> None:
+    target = deepcopy(trades[1])
+    metadata = deepcopy(event)
+    sibling = deepcopy(metadata[0]["markets"][0])
+    sibling["conditionId"] = "0x" + "b" * 64
+    sibling["eventStartTime"] = None
+    sibling["startDate"] = None
+    metadata[0]["markets"].append(sibling)
+    transport = FakeTransport([target], metadata)
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET}, transport=transport, clock=lambda: OBSERVED_AT,
+        market_scope=PolymarketMarketScope.ALL_VERIFIED,
+    )
+    page = await source.read_page("leader-001", start_at=START_AT, end_at=END_AT)
+    assert len(page.events) == 1 and page.rejected_count == 0
+    # The sibling remains inadmissible when it becomes the actual target.
+    transport.trades = [{**target, "conditionId": sibling["conditionId"]}]
+    second = await source.read_page("leader-001", start_at=START_AT, end_at=END_AT)
+    assert second.events == () and second.rejected_count == 1
+
+
+@pytest.mark.asyncio
+async def test_requested_market_missing_dates_still_blocks_admission(
+    trades: list[dict[str, Any]], event: list[dict[str, Any]],
+) -> None:
+    metadata = deepcopy(event)
+    metadata[0]["markets"][0]["eventStartTime"] = None
+    metadata[0]["markets"][0]["startDate"] = None
+    source = PolymarketCopyTradingSource(
+        {"leader-001": WALLET}, transport=FakeTransport(trades[:1], metadata),
+        clock=lambda: OBSERVED_AT, market_scope=PolymarketMarketScope.ALL_VERIFIED,
+    )
+    page = await source.read_page("leader-001", start_at=START_AT, end_at=END_AT)
+    assert page.events == () and page.rejected_count == 1
+
+
+@pytest.mark.asyncio
 async def test_legacy_default_scope_does_not_accept_non_btc_markets(
     trades: list[dict[str, Any]],
     event: list[dict[str, Any]],

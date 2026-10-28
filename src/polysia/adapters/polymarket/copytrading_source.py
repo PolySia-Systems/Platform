@@ -269,7 +269,9 @@ class PolymarketCopyTradingSource:
         self._max_pages = max_pages
         self._max_requests = max_requests
         self._max_elapsed_seconds = max_elapsed_seconds
-        self._market_cache: dict[str, dict[str, _VerifiedMarket]] = {}
+        self._market_cache: dict[
+            tuple[str, frozenset[str] | None], dict[str, _VerifiedMarket]
+        ] = {}
         self._market_by_condition: dict[str, _VerifiedMarket] = {}
         self._pending_observer: Callable[[tuple[str, ...], datetime], None] | None = None
 
@@ -580,8 +582,10 @@ class PolymarketCopyTradingSource:
         slug: str,
         *,
         purpose: LeaderReadPurpose,
+        conditions: frozenset[str] | None = None,
     ) -> dict[str, _VerifiedMarket]:
-        cached = self._market_cache.get(slug)
+        cache_key = (slug, conditions)
+        cached = self._market_cache.get(cache_key)
         if cached is not None:
             return cached
         payload = await self._transport.get_json(
@@ -597,10 +601,18 @@ class PolymarketCopyTradingSource:
         if not markets:
             raise PolymarketCopyTradingSourceError("Market event contained no markets.")
         verified_by_condition: dict[str, _VerifiedMarket] = {}
+        seen_conditions: set[str] = set()
         for raw_market in markets:
             condition_id = _required_string(raw_market, "conditionId")
             if _CONDITION_PATTERN.fullmatch(condition_id) is None:
                 raise ValueError("invalid condition ID")
+            if condition_id in seen_conditions:
+                raise ValueError("duplicate condition ID in event metadata")
+            seen_conditions.add(condition_id)
+            # An event can include unlaunched sibling markets with no dates.
+            # Only exact conditions observed in this source window need admission.
+            if conditions is not None and condition_id not in conditions:
+                continue
             outcomes = _string_list(raw_market.get("outcomes"), name="outcomes")
             token_ids = _string_list(raw_market.get("clobTokenIds"), name="clobTokenIds")
             if not outcomes or len(token_ids) != len(outcomes):
@@ -633,7 +645,7 @@ class PolymarketCopyTradingSource:
             )
             verified_by_condition[condition_id] = verified
             self._market_by_condition[condition_id] = verified
-        self._market_cache[slug] = verified_by_condition
+        self._market_cache[cache_key] = verified_by_condition
         return verified_by_condition
 
     async def _verified_markets(
@@ -650,6 +662,10 @@ class PolymarketCopyTradingSource:
                     return slug, await self._verified_event_markets(
                         slug,
                         purpose=purpose,
+                        conditions=frozenset(
+                            condition for candidate_slug, condition in market_keys
+                            if candidate_slug == slug
+                        ),
                     )
             except (TypeError, ValueError, PolymarketCopyTradingSourceError):
                 return slug, None
