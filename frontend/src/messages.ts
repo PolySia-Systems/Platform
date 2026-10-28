@@ -39,6 +39,8 @@ export const m = {
   history: 'Your durable command receipts', recover: 'Recover exact receipt', retry: 'Resend identical request',
   uncertain: 'Response lost. Execution may have occurred. Recover the exact receipt before any retry.',
   notFound: 'No durable receipt found. The same request may be resent only while its original preview and identity remain valid.',
+  historyLookupEmpty: 'No receipt was found for this history lookup. This does not resolve an active request.',
+  inspectedReceipt: 'Inspected historical receipt',
   unresolved: 'Effect unresolved. FAILED does not prove non-execution. Reconcile with the protected owner.',
   requested: 'Request acceptance and the owner’s observed effect are separate. Inspect a durable receipt for the outcome.',
   key: 'Request identity', receiptKey: 'Exact request identity', lookup: 'Look up receipt',

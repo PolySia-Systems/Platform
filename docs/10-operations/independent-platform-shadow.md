@@ -312,6 +312,12 @@ There is no automatic resend or login replay. Reload uses authenticated durable
 history/exact lookup beyond recent windows. Readers and current target policy
 still constrain disclosure. Report downloads use only validated retained digests.
 
+History inspection is separate from recovery of the active request. Looking up
+another known, absent or unresolved receipt cannot release that request or replace
+its identity. Recovery uses current authorized receipt access after an identity or
+CSRF refresh; an expired preview does not authorize a resend. Late replies from an
+older lookup, intent or authorization generation are discarded.
+
 The UI serializes unresolved intent. For an immediate emergency while a request
 is unresolved, identity is unavailable, bundle integrity fails or the command
 store is unavailable, use the independent protected route:
@@ -329,6 +335,10 @@ fails closed. Acknowledgement/health cannot clear durable STOP or consumed limit
 
 Evaluate separates fixed cohort/capital/window/policy and independent virtual
 returns from actual fills, provider/infrastructure costs and evidence limits.
+Actual trading economics uses the same financial/account, scope, mode and
+reconciliation qualification and earliest expiry as Overview. Retained historical
+amounts may remain visible with that qualification; a fresh publication cannot
+renew them. Independent replay, latency and source evidence retain their own validity.
 No observations means NO_MEASURABLE_RESULT; no retained series means no chart.
 Source-removal replay is counterfactual. Goldsky remains DEFERRED. System / Setup
 separates configured, verified and authorized prerequisites, exact account

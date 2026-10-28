@@ -7,7 +7,13 @@ from math import isfinite
 from typing import Any
 
 from polysia.monitoring.capabilities import CAPABILITIES
-from polysia.monitoring.console_contract import EvidenceSection, EvidenceTable, Fact, Workspace
+from polysia.monitoring.console_contract import (
+    Component,
+    EvidenceSection,
+    EvidenceTable,
+    Fact,
+    Workspace,
+)
 from polysia.monitoring.console_projection import ConsoleReadModel, component
 
 
@@ -85,16 +91,21 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
         tables: list[EvidenceTable] | None = None,
         *,
         dated: Any = None,
+        validity: Component | None = None,
     ) -> None:
         source = obj(evidence)
-        meta = component(
-            "publication",
-            obj(dated) or source or None,
-            now=now,
-            generation=model.generation,
-            scope=model.scope,
+        meta = (
+            validity
+            if validity is not None
+            else component(
+                "publication",
+                obj(dated) or source or None,
+                now=now,
+                generation=model.generation,
+                scope=model.scope,
+            )
         )
-        if source and meta.state == "INCOMPATIBLE":
+        if validity is None and source and meta.state == "INCOMPATIBLE":
             # A publication cutoff qualifies undated subviews; it never renews them.
             meta = component(
                 "publication", raw, now=now, generation=model.generation, scope=model.scope
@@ -233,7 +244,9 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
             "Exact retained values; no browser totals. Provider and infrastructure "
             "costs are separate. "
             "Actual fill prices already contain spread/slippage; do not charge it twice.",
-            dated=financial,
+            # Reuse account/scope/mode/reconciliation qualification and its
+            # earliest deadline; a publication alone cannot renew economics.
+            validity=model.financial(now)[1],
         )
         source = obj(raw.get("selection"))
         add(

@@ -54,6 +54,13 @@ export default function App() {
   const [commandState, setCommandState] = useState<'idle' | 'previewing' | 'preview' | 'sending' | 'uncertain' | 'absent' | 'recorded'>('idle');
   const [commandError, setCommandError] = useState('');
   const [lookupKey, setLookupKey] = useState('');
+  const [inspectedReceipt, setInspectedReceipt] = useState<Receipt | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const activeIntent = useRef<Intent | null>(null);
+  const recoverySequence = useRef(0);
+  const historySequence = useRef(0);
+  const recoveryRequest = useRef<AbortController | null>(null);
+  const historyRequest = useRef<AbortController | null>(null);
   const epoch = useRef(0);
   const active = useRef(true);
   const currentIdentity = useRef('');
@@ -62,9 +69,13 @@ export default function App() {
   const [rtl, setRtl] = useState(new URLSearchParams(location.search).get('locale') === 'fa-IR');
   const validIdentity = session !== null && !authFailure && clock < Date.parse(session.valid_until);
   const now = () => anchor.current.server + performance.now() - anchor.current.mono;
+  const rememberIntent = (value: Intent | null) => { activeIntent.current = value; setIntent(value); };
 
   const invalidate = useCallback(() => {
     epoch.current += 1; setPreview(null);
+    recoverySequence.current += 1; recoveryRequest.current?.abort();
+    historySequence.current += 1; historyRequest.current?.abort();
+    setInspectedReceipt(null); setLookupError('');
     // An ambiguous request identity stays visible for exact recovery, never replayed.
     setCommandState(previous => previous === 'sending' ? 'uncertain'
       : previous === 'uncertain' || previous === 'absent' ? previous : 'idle');
@@ -128,6 +139,7 @@ export default function App() {
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('pageshow', visibility);
     return () => { active.current = false; clearInterval(interval); clearInterval(tick);
+      recoveryRequest.current?.abort(); historyRequest.current?.abort();
       document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pageshow', visibility); };
   }, [invalidate, refresh]);
   useEffect(() => { if (session && !validIdentity) invalidate(); }, [validIdentity, session, invalidate]);
@@ -142,7 +154,7 @@ export default function App() {
       && Date.parse(arguments_.start) < Date.parse(arguments_.end)));
   const changeAction = (value: string) => { if (['sending', 'uncertain', 'absent'].includes(commandState)) return;
     invalidate(); selectedAction.current = actions.find(a => a.operation + '|' + a.target === value) ?? null;
-    setChosen(value); setArguments({}); setIntent(null); setReceipt(null); setCommandError(''); };
+    setChosen(value); setArguments({}); rememberIntent(null); setReceipt(null); setCommandError(''); };
   const makePreview = async () => {
     if (!action || !validIdentity || !session) return;
     selectedAction.current = action;
@@ -152,7 +164,7 @@ export default function App() {
       const value = await post<Preview>('/preview', 'Preview', { operation: action.operation,
         target: action.target, context: action.context, identity: session.identity, arguments: arguments_ }, session.csrf);
       if (version !== epoch.current || value.identity !== currentIdentity.current || Date.parse(value.expires_at) <= now()) return;
-      setPreview(value); setIntent({ preview_id: value.preview_id, expected_revision: value.expected_revision,
+      setPreview(value); rememberIntent({ preview_id: value.preview_id, expected_revision: value.expected_revision,
         idempotency_key: crypto.randomUUID(), context: value.context, identity: value.identity });
       setCommandState('preview');
     } catch (error) { if (version === epoch.current) { setCommandError(errorText(error)); setCommandState('idle');
@@ -173,13 +185,47 @@ export default function App() {
     }
   };
   const recover = async (key: string) => {
-    if (!key || !validIdentity) return;
+    const captured = activeIntent.current;
+    if (!key || !validIdentity || !session || captured?.idempotency_key !== key) return;
+    const version = ++recoverySequence.current;
+    recoveryRequest.current?.abort();
+    const controller = new AbortController(); recoveryRequest.current = controller;
+    const authentication = authEpoch.current, identity = currentIdentity.current, context = epoch.current;
+    // Receipt reads use current authorization, not the original preview's expired identity.
+    const current = () => active.current && version === recoverySequence.current
+      && authentication === authEpoch.current && identity === currentIdentity.current
+      && context === epoch.current && activeIntent.current === captured
+      && now() < Date.parse(session.valid_until);
     try {
-      const value = await read<Receipts>('/receipts?key=' + encodeURIComponent(key), 'Receipts');
-      const found = value.items[0];
+      const value = await read<Receipts>('/receipts?key=' + encodeURIComponent(key), 'Receipts',
+        AbortSignal.any([controller.signal, AbortSignal.timeout(4000)]));
+      if (!current()) return;
+      const found = value.items.find(row => row.idempotency_key === key);
+      if (!found && value.items.length) throw Error('incompatible_contract');
       if (found) { setReceipt(found); setPreview(null); setCommandState(found.effect === 'UNKNOWN' ? 'uncertain' : 'recorded'); setCommandError(found.effect === 'UNKNOWN' ? m.unresolved : ''); }
       else { setCommandState('absent'); setCommandError(m.notFound); }
-    } catch (error) { setCommandError(errorText(error)); if (error instanceof ApiError && error.status === 403) identityFailure(); }
+    } catch (error) { if (current() && !controller.signal.aborted) { setCommandError(errorText(error));
+      if (error instanceof ApiError && error.status === 403) identityFailure(); } }
+  };
+  const inspectReceipt = async (key: string) => {
+    if (!key || !validIdentity || !session) return;
+    const version = ++historySequence.current;
+    historyRequest.current?.abort();
+    const controller = new AbortController(); historyRequest.current = controller;
+    const authentication = authEpoch.current, identity = currentIdentity.current, context = epoch.current;
+    const current = () => active.current && version === historySequence.current
+      && authentication === authEpoch.current && identity === currentIdentity.current
+      && context === epoch.current && now() < Date.parse(session.valid_until);
+    setInspectedReceipt(null); setLookupError('');
+    try {
+      const value = await read<Receipts>('/receipts?key=' + encodeURIComponent(key), 'Receipts',
+        AbortSignal.any([controller.signal, AbortSignal.timeout(4000)]));
+      if (!current()) return;
+      const found = value.items.find(row => row.idempotency_key === key);
+      if (!found && value.items.length) throw Error('incompatible_contract');
+      setInspectedReceipt(found ?? null); setLookupError(found ? '' : m.historyLookupEmpty);
+    } catch (error) { if (current() && !controller.signal.aborted) { setLookupError(errorText(error));
+      if (error instanceof ApiError && error.status === 403) identityFailure(); } }
   };
   const componentState = (item: Component) => item.valid_until && clock >= Date.parse(item.valid_until) ? 'STALE' : item.state;
   const financialMeta = snapshot?.components.find(c => c.name === 'financial');
@@ -291,13 +337,22 @@ export default function App() {
           </section>
           <section className={s.panel}><h2>{m.history}</h2><p className={s.muted}>{m.requested}</p>
             {historyError && <p role="alert">{historyError}</p>}
-            <form className={s.searchForm} onSubmit={e => { e.preventDefault(); void recover(lookupKey); }}>
-              <label className={s.label}>{m.receiptKey}<input className={s.input} value={lookupKey} maxLength={80} onChange={e => setLookupKey(e.target.value)} /></label>
+            <form className={s.searchForm} onSubmit={e => { e.preventDefault(); void inspectReceipt(lookupKey); }}>
+              <label className={s.label}>{m.receiptKey}<input className={s.input} value={lookupKey} maxLength={80} onChange={e => {
+                historySequence.current += 1; historyRequest.current?.abort(); setInspectedReceipt(null); setLookupError(''); setLookupKey(e.target.value);
+              }} /></label>
               <Button type="submit" disabled={!validIdentity || !lookupKey}>{m.lookup}</Button></form>
+            {lookupError && <p role="status">{lookupError}</p>}
+            {inspectedReceipt && <div role="region" aria-label={m.inspectedReceipt}><ReceiptView receipt={inspectedReceipt} /></div>}
             {history?.items.map(row => <ReceiptView key={row.idempotency_key} receipt={row} />)}
             {history?.next_cursor && <Button onClick={async () => {
+              const authentication = authEpoch.current, identity = currentIdentity.current, version = epoch.current;
+              const current = () => active.current && authentication === authEpoch.current
+                && identity === currentIdentity.current && version === epoch.current && session !== null
+                && now() < Date.parse(session.valid_until);
               try { const value = await read<Receipts>('/receipts?cursor=' + encodeURIComponent(historyCursor || history.next_cursor!), 'Receipts');
-                setHistory(value); setHistoryCursor(value.next_cursor ?? ''); } catch (error) { setHistoryError(m.historyUnavailable); if (error instanceof ApiError && error.status === 403) identityFailure(); }
+                if (current()) { setHistory(value); setHistoryCursor(value.next_cursor ?? ''); }
+              } catch (error) { if (current()) { setHistoryError(m.historyUnavailable); if (error instanceof ApiError && error.status === 403) identityFailure(); } }
             }}>{m.next}</Button>}
           </section>
           <EvidenceWorkspace key={workspaceRefresh} panel="operate" generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />
@@ -311,7 +366,7 @@ export default function App() {
           {rtl && <span lang="fa" dir="rtl">{m.persianFixture}</span>}</footer>
       </main>
     </div>
-    <Modal opened={preview !== null && commandState === 'preview'} onClose={() => { invalidate(); setIntent(null); }}
+    <Modal opened={preview !== null && commandState === 'preview'} onClose={() => { invalidate(); rememberIntent(null); }}
       title={m.previewTitle} centered returnFocus transitionProps={{ duration: 0 }} closeButtonProps={{ 'aria-label': m.close }}>
       {preview && <><p>{preview.impact}</p><dl className={s.facts}><dt>{m.actor}</dt><dd>{identifier(preview.actor)}</dd>
         <dt>{m.target}</dt><dd>{identifier(preview.operation)} · {identifier(preview.target)}</dd><dt>{m.revision}</dt><dd>{preview.expected_revision}</dd>
