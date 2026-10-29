@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,7 @@ from polysia.adapters.polymarket.copytrading_source import (
     PolymarketMarketScope,
 )
 from polysia.application.ports.continuous_shadow import (
+    ContinuousPollOutcome,
     ContinuousSelectionSnapshot,
     ContinuousSelectionUnavailableError,
 )
@@ -31,6 +33,32 @@ from polysia.storage.continuous_shadow import (
     ContinuousShadowRepository,
 )
 from polysia.storage.latency_telemetry import LatencyTelemetryStore
+from polysia.storage.metadata_identity_cache import MetadataIdentityCache
+
+
+class NativeShadowService(ContinuousShadowService):
+    """Own observational persistence for every native poll, including cancellation."""
+
+    async def poll(self, source_id: str) -> ContinuousPollOutcome:
+        try:
+            return await super().poll(source_id)
+        finally:
+            recorder = self.latency_recorder
+            if recorder is not None:
+                try:
+                    recorder.flush()
+                    # Publish after flush, so drops and write failures remain visible
+                    # even when the optional telemetry database is unavailable.
+                    health = recorder.health()
+                    path = recorder.store.path.with_suffix(".health.json") if isinstance(
+                        recorder, LatencyRecorder
+                    ) else None
+                    if path is not None:
+                        temporary = path.with_suffix(".partial")
+                        temporary.write_text(json.dumps(health, sort_keys=True), encoding="utf-8")
+                        temporary.replace(path)
+                except Exception:
+                    logging.getLogger(__name__).warning("native_telemetry_publication_failed")
 
 
 class NativeSnapshotPort:
@@ -106,13 +134,14 @@ def native_shadow_service(
         period_max_storage_bytes=67_108_864,
     )
     telemetry = LatencyTelemetryStore(database.with_name("native-latency.sqlite3"))
-    telemetry.initialize()
-    return ContinuousShadowService(
+    identity_cache = MetadataIdentityCache(database.with_name("metadata-identity.sqlite3"))
+    return NativeShadowService(
         ContinuousShadowRepository(database), port, ContinuousShadowLeaseRepository(database),
         lambda leaders: PolymarketCopyTradingSource(
             leaders, transport=transport, clock=clock,
             market_scope=PolymarketMarketScope.ALL_VERIFIED,
             max_pages=4, max_requests=4, max_elapsed_seconds=30,
+            identity_cache=identity_cache,
         ),
         BoundedMarketAdapter(transport), config=config, concurrency=1,
         maximum_pages_per_wallet=4, maximum_selection_age=timedelta(hours=4),

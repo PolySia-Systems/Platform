@@ -40,6 +40,7 @@ from polysia.domain.copytrading import (
     LeaderTradeEvent,
     deduplicate_leader_trade_events,
 )
+from polysia.storage.metadata_identity_cache import MetadataIdentityCache
 
 _WALLET_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _CONDITION_PATTERN = re.compile(r"^0x[a-fA-F0-9]{64}$")
@@ -257,6 +258,7 @@ class PolymarketCopyTradingSource:
         max_pages: int = 20,
         max_requests: int = 20,
         max_elapsed_seconds: int = 30,
+        identity_cache: MetadataIdentityCache | None = None,
     ) -> None:
         if not 1 <= max_pages <= max_requests <= 100:
             raise ValueError("Data API cursor page/request budgets are invalid")
@@ -266,6 +268,8 @@ class PolymarketCopyTradingSource:
         self._transport = transport or UrllibJsonGetTransport()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._market_scope = market_scope
+        self._identity_cache = identity_cache
+        self._metadata_lock = asyncio.Lock()
         self._max_pages = max_pages
         self._max_requests = max_requests
         self._max_elapsed_seconds = max_elapsed_seconds
@@ -541,8 +545,16 @@ class PolymarketCopyTradingSource:
     def request_telemetry(self) -> dict[str, object]:
         reader = getattr(self._transport, "request_telemetry", None)
         if callable(reader):
-            return dict(reader())
+            return {**dict(reader()), "metadata_identity_cache": (
+                dict(self._identity_cache.counts)
+                if self._identity_cache else {"status": "disabled"}
+            )}
         return {}
+
+    def bind_request_context(self, *, poll_run_id: str, experiment_id: str) -> None:
+        binder = getattr(self._transport, "bind_request_context", None)
+        if callable(binder):
+            binder(poll_run_id=poll_run_id, experiment_id=experiment_id)
 
     def trades_circuit(self) -> dict[str, object]:
         reader = getattr(self._transport, "trades_circuit", None)
@@ -588,6 +600,8 @@ class PolymarketCopyTradingSource:
         cached = self._market_cache.get(cache_key)
         if cached is not None:
             return cached
+        if self._identity_cache is not None and conditions:
+            return await self._exact_identity_markets(slug, conditions, purpose=purpose)
         payload = await self._transport.get_json(
             GAMMA_API_BASE_URL,
             "/events",
@@ -647,6 +661,72 @@ class PolymarketCopyTradingSource:
             self._market_by_condition[condition_id] = verified
         self._market_cache[cache_key] = verified_by_condition
         return verified_by_condition
+
+    async def _exact_identity_markets(
+        self, slug: str, conditions: frozenset[str], *, purpose: LeaderReadPurpose,
+    ) -> dict[str, _VerifiedMarket]:
+        """Exact identity only. Status, fees, resolution and books stay uncached."""
+        assert self._identity_cache is not None
+        verified: dict[str, _VerifiedMarket] = {}
+        # At most five wallet readers share this source. Serialize equivalent
+        # metadata work so a waiter rechecks the cache after the first read.
+        async with self._metadata_lock:
+            for condition in sorted(conditions):
+                scope = f"{GAMMA_API_BASE_URL}|{slug}|{condition}"
+                raw = self._identity_cache.get(scope, now=self._utc_now())
+                if raw is not None:
+                    try:
+                        self._identity_value(slug, condition, raw)
+                    except (ValueError, TypeError, KeyError):
+                        self._identity_cache.evict(scope)
+                        raw = None
+                if raw is None:
+                    payload = await self._transport.get_json(
+                        GAMMA_API_BASE_URL, "/markets",
+                        {"condition_ids": condition, "closed": "any", "limit": 2},
+                        purpose=purpose,
+                    )
+                    rows = _require_object_list(payload, source="/markets")
+                    if len(rows) != 1 or rows[0].get("conditionId") != condition:
+                        raise ValueError("exact requested market missing or ambiguous")
+                    market = rows[0]
+                    events = _require_object_list(market.get("events"), source="market events")
+                    if sum(event.get("slug") == slug for event in events) != 1:
+                        raise ValueError("exact requested event linkage unverified")
+                    raw = {key: market.get(key) for key in (
+                        "conditionId", "outcomes", "clobTokenIds", "eventStartTime",
+                        "startDate", "endDate",
+                    )}
+                    # All fields below are revalidated on cache reads too.
+                    self._identity_value(slug, condition, raw)
+                    self._identity_cache.put(scope, raw, observed_at=self._utc_now())
+                item = self._identity_value(slug, condition, raw)
+                verified[condition] = item
+                self._market_by_condition[condition] = item
+        return verified
+
+    @staticmethod
+    def _identity_value(slug: str, condition: str, raw: Mapping[str, Any]) -> _VerifiedMarket:
+        if raw.get("conditionId") != condition or _CONDITION_PATTERN.fullmatch(condition) is None:
+            raise ValueError("cached condition mismatch")
+        outcomes = _string_list(raw.get("outcomes"), name="outcomes")
+        tokens = _string_list(raw.get("clobTokenIds"), name="clobTokenIds")
+        if (not outcomes or len(tokens) != len(outcomes) or len(set(tokens)) != len(tokens)
+                or len(set(outcomes)) != len(outcomes)):
+            raise ValueError("exact market identity is inconsistent")
+        start = _parse_utc_datetime(raw.get("eventStartTime") or raw.get("startDate"), name="start")
+        end = _parse_utc_datetime(raw.get("endDate"), name="end")
+        if end <= start:
+            raise ValueError("exact market dates are inconsistent")
+        match = _BTC_15M_SLUG_PATTERN.fullmatch(slug)
+        if match is not None:
+            expected = datetime.fromtimestamp(int(match.group("start")), tz=UTC)
+            if (outcomes != ["Up", "Down"] or abs((start - expected).total_seconds()) > 1
+                    or abs((end - expected - timedelta(minutes=15)).total_seconds()) > 1):
+                raise ValueError("exact BTC market semantics mismatch")
+        return _VerifiedMarket(
+            slug, condition, dict(zip(tokens, outcomes, strict=True)), start, end,
+        )
 
     async def _verified_markets(
         self,

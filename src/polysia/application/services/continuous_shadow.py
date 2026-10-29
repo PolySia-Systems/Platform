@@ -707,6 +707,9 @@ class ContinuousShadowService:
             source = self._source_factory(
                 {candidate.wallet_id: candidate.address for candidate in candidates}
             )
+            binder = getattr(source, "bind_request_context", None)
+            if callable(binder):
+                binder(poll_run_id=poll_run_id, experiment_id=experiment.experiment_id)
             scoped_policy = self._config.copy_policy is not None
             def scope_event(identity: str) -> str:
                 return digest((experiment.experiment_id, identity)) if scoped_policy else identity
@@ -982,6 +985,8 @@ class ContinuousShadowService:
                     poll_run_id,
                     failed_at=self._now(),
                     error_code=classified.persistence_code,
+                    request_telemetry=_safe_mapping(source, "request_telemetry")
+                    if source is not None else {},
                 )
             except Exception as persist_error:
                 persist_classified = classify_continuous_shadow_failure(

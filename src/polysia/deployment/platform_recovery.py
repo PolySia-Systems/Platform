@@ -90,19 +90,27 @@ def create_encrypted_backup(
         stage = Path(temporary)
         records: list[RecoveryDatabaseRecord] = []
         sources: dict[str, Path] = {}
+        observational_errors: list[str] = []
         report = None
         for role, source in (
             ("authority", Path(value["authority"])),
             ("commands", Path(value["commands"])),
             ("financial", database),
+            ("latency", database.with_name("native-latency.sqlite3")),
         ):
             if not source.is_file():
-                if role == "financial" or role == "authority" and unconfigured:
+                if role in {"financial", "latency"} or role == "authority" and unconfigured:
                     continue
                 raise ValueError("required recovery database missing")
-            snapshot = backup_sqlite_database(
-                source, stage, keep=1, prefix=role + "-", minimum_free_bytes=8_589_934_592
-            )
+            try:
+                snapshot = backup_sqlite_database(
+                    source, stage, keep=1, prefix=role + "-", minimum_free_bytes=9_663_676_416,
+                )
+            except (OSError, ValueError, sqlite3.Error):
+                if role != "latency":
+                    raise
+                observational_errors.append("native_latency_snapshot_unavailable")
+                continue  # Optional diagnostics must not prevent authoritative recovery.
             sources[snapshot.backup_path.name] = snapshot.backup_path
             records.append(
                 RecoveryDatabaseRecord(
@@ -156,6 +164,13 @@ def create_encrypted_backup(
         cohort = Path(value["cohort"])
         if cohort.is_file():
             extras["cohort.json"] = cohort
+        if value.get("campaign"):
+            extras["campaign-plan.json"] = Path(value["campaign"])
+        for name in ("nonlive-campaign-status.json", "nonlive-campaign-controls.json",
+                     "native-latency.health.json"):
+            candidate = database.with_name(name)
+            if candidate.is_file():
+                extras[name] = candidate
         for name, source in extras.items():
             if source.is_symlink():
                 raise ValueError("recovery assets cannot contain symlinks")
@@ -209,6 +224,7 @@ def create_encrypted_backup(
             "analytical_digest": None if report is None else report["analytical_digest"],
             "restore_acquisition": "DISABLED_UNTIL_AUTHORITY_RECONCILIATION",
             "installation_state": "UNCONFIGURED" if unconfigured else "CONFIGURED",
+            "observational_errors": observational_errors,
         }
         (bundle / "platform-recovery.json").write_text(json.dumps(metadata, sort_keys=True))
         encrypted = output.with_suffix(output.suffix + ".partial")
@@ -243,6 +259,7 @@ def create_encrypted_backup(
         "sha256": sha256_file(output),
         "size_bytes": output.stat().st_size,
         "created_at": now.isoformat(),
+        "observational_errors": observational_errors,
     }
 
 
@@ -348,6 +365,9 @@ def extract_and_verify_recovery(
             raise ValueError("recovered report identity mismatch")
         shutil.copy2(source, report_archive / name.removeprefix("report-"))
     for record in bundle.databases:
+        if record.role == "latency":
+            shutil.copy2(destination / record.filename, destination / "native-latency.sqlite3")
+            continue
         safe_config["database" if record.role == "financial" else record.role] = str(
             destination / record.filename,
         )
@@ -357,6 +377,8 @@ def extract_and_verify_recovery(
         status=str(destination / "restored-status.json"),
         publication=str(destination / "restored-publication.json"),
     )
+    if (destination / "campaign-plan.json").is_file():
+        safe_config["campaign"] = str(destination / "campaign-plan.json")
     if not any(record.role == "financial" for record in bundle.databases):
         safe_config["database"] = str(destination / "financial.sqlite3")
     if not any(record.role == "authority" for record in bundle.databases):

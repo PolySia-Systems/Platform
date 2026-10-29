@@ -28,6 +28,7 @@ from polysia.cli_commands.platform_discovery import load_policy
 from polysia.cli_support.native_lifecycle import native_lifecycle_poll
 from polysia.cli_support.wallet_intelligence_workflow import workflow_lock
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
+from polysia.monitoring.nonlive_campaign import supervise_campaign
 from polysia.monitoring.platform_diagnostics import retained_diagnostics
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 from polysia.storage.console_commands import ConsoleCommandStore
@@ -200,6 +201,11 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     )
                     continue
             commands.finish(revision, status="APPLIED")
+        campaign = supervise_campaign(
+            value, database=database, authority=authority, now=datetime.now(UTC),
+        ) if not recovery_fenced else None
+        if campaign is not None:
+            result["campaign"] = campaign
         if authority.status()["stopped"]:
             result["reason"] = (
                 "recovery_authority_reconciliation_required"
@@ -301,10 +307,12 @@ def worker_tick(config: Path) -> dict[str, Any]:
                 cause: BaseException | None = error
                 reason = getattr(error, "error_code", type(error).__name__)
                 provider_retry = 0
+                admission_retry = None
                 while cause is not None:
                     if isinstance(cause, AcquisitionBlockedError):
                         reason = str(cause)
                         provider_retry = cause.retry_after_seconds or 0
+                        admission_retry = cause.retry_at
                         break
                     cause = cause.__cause__
                 result.update(
@@ -322,11 +330,19 @@ def worker_tick(config: Path) -> dict[str, Any]:
                         )
                     result["status"] = "DRAINING"
                 elif reason in {"request_window_exhausted", "byte_window_exhausted"}:
+                    now = datetime.now(UTC)
+                    eligible = admission_retry or authority.window_retry_at(now=now)
+                    # A settled threaded read can free headroom sooner. Recheck at
+                    # most once per configured cadence; reserve still owns admission.
+                    recheck = now + timedelta(seconds=policy.cadence_seconds)
                     result.update(
-                        status="WAITING_AUTHORIZATION_WINDOW",
-                        retry_at=(
-                            datetime.now(UTC) + timedelta(seconds=policy.window_seconds)
-                        ).isoformat(),
+                        status="WAITING_AUTHORIZATION_WINDOW" if eligible else "TERMINAL",
+                        earliest_feasible_admission=(
+                            None if eligible is None else eligible.isoformat()
+                        ),
+                        retry_at=min(eligible, recheck).isoformat() if eligible else None,
+                        next_action="Recheck durable admission; no I/O before reservation."
+                        if eligible else "No feasible admission before expiry; retain evidence.",
                     )
                 elif reason.startswith("provider_http_") and reason not in {
                     "provider_http_429",
@@ -482,6 +498,7 @@ def _publish_retained(value: dict[str, Any]) -> None:
         result["diagnostics"] = retained_diagnostics(
             Path(value["authority"]),
             result["diagnostic"].get("discovery", {}),
+            database=database,
         )
         result["backup_health"] = {}
         for role in ("backup", "restore"):

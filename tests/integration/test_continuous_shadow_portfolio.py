@@ -2898,9 +2898,11 @@ async def test_verified_restore_allows_processing_after_accounting_block(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("telemetry_corrupt", [False, True])
 async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    telemetry_corrupt: bool,
 ) -> None:
     import subprocess
     import sys
@@ -2935,6 +2937,19 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     authority.stop()
     commands = ConsoleCommandStore(tmp_path / "commands.sqlite3")
     commands.initialize()
+    from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
+    from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
+    from polysia.storage.latency_telemetry import LatencyTelemetryStore
+
+    telemetry = LatencyTelemetryStore(
+        _shadow_database(database).with_name("native-latency.sqlite3"),
+    )
+    recorder = LatencyRecorder(telemetry, load_runtime_identity(venue_id="polymarket"))
+    with recorder.span(component="source", operation="source_fetch"):
+        pass
+    recorder.flush()
+    if telemetry_corrupt:
+        telemetry.path.write_bytes(b"invalid optional telemetry fixture")
     from polysia.application.services.shadow_reporting import ShadowReportingService
 
     archived = ShadowReportingService(_shadow_database(database)).report(
@@ -3009,6 +3024,7 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
         output=target,
     )
     assert result["size_bytes"] > 0
+    assert bool(result["observational_errors"]) is telemetry_corrupt
     restored = tmp_path / "isolated"
     receipt = recovery.extract_and_verify_recovery(
         target, restored, trusted_release_manifest=release
@@ -3030,6 +3046,12 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     assert receipts[1]["result"]["download"] == download
     assert commands.status()["receipts"][0]["status"] == "APPLIED"
     assert Path(safe["database"]).parent == restored
+    if telemetry_corrupt:
+        assert not (restored / "native-latency.sqlite3").exists()
+    else:
+        with sqlite3.connect(restored / "native-latency.sqlite3") as recovered_telemetry:
+            count = recovered_telemetry.execute("SELECT COUNT(*) FROM latency_spans").fetchone()[0]
+            assert count == 1
     recovered_authority = AcquisitionAuthority(Path(safe["authority"]), policy())
     assert recovered_authority.status()["stopped"] is True
     assert recovered_authority.status()["requests_charged"] == 1

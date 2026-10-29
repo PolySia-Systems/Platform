@@ -100,6 +100,53 @@ same exact release. A retained fence is not cleared by an install/update. Rollba
 restores compatible configuration and leaves a stopped, inspectable worker; it
 does not downgrade a database or erase newer observations. Open inventory,
 pending observations and active persistent sessions refuse code activation.
+The explicitly authorized N1 native release transition is the bounded exception
+for schema v9 virtual sessions. Stop supervision and persist acquisition STOP,
+checkpoint the databases/configuration, and prove the candidate against a copy
+of the retained non-flat session before invoking it:
+
+```bash
+python -m polysia.deployment.native_session_transition --database /state/financial.sqlite3 --authority /state/authority.sqlite3 --admission /state/candidate-admission.json --expected-source OLD_EXACT_SHA --target-source NEW_EXACT_SHA --authorization-reference OWNER_RUN_REFERENCE
+```
+
+Use the verified candidate package in an isolated container with the existing
+worker mounts and limits. This command changes only the source/admission binding,
+records old/new configuration digests and preserves economic rows, positions,
+watermarks, pending observations and historical opportunity identities. An
+interrupted sidecar publication is recovered by the identical command; the
+worker remains STOPPED on mismatch. The shipped installer validates this exact
+journal before accepting non-flat activation. Historical configurations remain
+reportable. Older code cannot read a transitioned session's mixed bindings;
+rollback requires its consistent pre-transition checkpoint and reconciliation,
+never an automatic downgrade over newer observations.
+
+The acquisition owner's separately authorized finite campaign uses
+`AcquisitionAuthority.grant_finite_campaign`, not `transition_policy` renewal.
+The durable grant binds historical consumption and additional allowance,
+preserves uncertain reservations and STOP, and cannot renew itself. Reserve
+checks both cumulative and additional charges under the authoritative lock.
+Rolling retry timestamps account for inclusive boundaries; cadence-bounded
+rechecks allow a settled smaller response to release headroom. Expiry and
+lifetime exhaustion remain terminal authority conditions.
+
+Native polls flush fail-open latency telemetry on success, failure and
+cancellation. Bounded request receipts retain purpose and poll/experiment/source
+identifiers. The existing Console shows recent indexed request coverage,
+monotonic stages, telemetry errors/drops and acquisition retry/expiry. Provider
+publication latency remains UNKNOWN. The disposable identity cache is scoped to
+provider/event/condition and verification version, expires after three hours,
+and retains at most 512 entries of 4 KiB (2 MiB payload bound). Hits preserve
+observation time. Status, fees, risk, resolution and books require current reads.
+Do not interpret cache identity as financial authority or trimmed JSON as wire savings.
+
+When a frozen `nonlive-campaign/v1` plan is configured, the existing worker
+scheduler independently checks useful poll flow, the two-window canary, protected
+control/recovery receipts and projected remaining cost. Only an accepted canary
+starts the real 48-hour observation window. Missing evidence, excessive gaps or
+expiry persist a local failure and acquisition STOP. Completion stops new reads,
+retains virtual inventory, and requires final evidence review. App follow-ups
+inspect this server-owned evidence; a model turn ending does not qualify the run.
+
 `preflight` reports that refusal with a nonzero exit. `stage` downloads and
 verifies the exact archive/scripts and image metadata without loading a Docker
 image or changing active configuration, units or data. Its durable staging
