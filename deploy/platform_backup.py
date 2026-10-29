@@ -12,12 +12,17 @@ import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from runpy import run_path
 from typing import Any
 
 if __package__:
     from .platform_bootstrap import campaign_mounts as _campaign_mounts
 else:
-    from platform_bootstrap import campaign_mounts as _campaign_mounts
+    # Administrative loading can originate from a different release directory.
+    # Bind the helper to this verified job's sibling, not sys.path's old release.
+    _campaign_mounts = run_path(str(Path(__file__).with_name("platform_bootstrap.py")))[
+        "campaign_mounts"
+    ]
 
 MAX_GENERATION = 536_870_912
 NAME = re.compile(r"platform-\d{8}T\d{6}Z\.tar\.age")

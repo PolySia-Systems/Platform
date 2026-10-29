@@ -28,6 +28,19 @@ def test_backup_mounts_campaign_without_exposing_other_configuration(tmp_path, m
         backup.campaign_mounts({"campaign": "/config/nonlive-campaign.json"})
 
 
+def test_standalone_backup_loads_its_own_release_helper(tmp_path, monkeypatch):
+    from runpy import run_path
+
+    for name in ("platform_bootstrap.py", "platform_backup.py"):
+        (tmp_path / name).write_bytes((Path("deploy") / name).read_bytes())
+    monkeypatch.chdir(tmp_path)
+    job = run_path(str(tmp_path / "platform_backup.py"))
+    assert job["campaign_mounts"]({}) == []
+    assert job["_campaign_mounts"].__globals__["__file__"] == str(
+        tmp_path / "platform_bootstrap.py",
+    )
+
+
 def test_backup_disk_pressure_refuses_before_snapshot_without_using_host_disk(
     tmp_path,
     monkeypatch,
