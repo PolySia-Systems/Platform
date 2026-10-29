@@ -223,7 +223,10 @@ async def test_transition_preserves_nonflat_ledger_and_historical_opportunity_bi
 
 
 @pytest.mark.asyncio
-async def test_exact_identity_cache_restarts_coalesces_and_never_renews_observation(tmp_path):
+@pytest.mark.parametrize("readers", [1, 5])
+async def test_exact_identity_cache_restarts_coalesces_and_never_renews_observation(
+    tmp_path, readers,
+):
     condition = "0x" + "1" * 64
     calls = []
 
@@ -258,8 +261,9 @@ async def test_exact_identity_cache_restarts_coalesces_and_never_renews_observat
         )
 
     src = source(NOW)
-    one, two = await asyncio.gather(load(src), load(src))
-    assert one == two and len(calls) == 1
+    results = await asyncio.gather(*(load(src) for _ in range(readers)))
+    one = results[0]
+    assert all(result == one for result in results) and len(calls) == 1
     assert calls[0] == ("/markets", {"condition_ids": condition, "closed": "any", "limit": 2})
     assert await load(source(NOW + timedelta(hours=2))) == one
     assert len(calls) == 1

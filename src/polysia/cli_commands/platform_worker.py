@@ -498,6 +498,7 @@ def _publish_retained(value: dict[str, Any]) -> None:
         result["diagnostics"] = retained_diagnostics(
             Path(value["authority"]),
             result["diagnostic"].get("discovery", {}),
+            database=database,
         )
         result["backup_health"] = {}
         for role in ("backup", "restore"):

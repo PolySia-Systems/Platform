@@ -13,9 +13,20 @@ from pathlib import Path
 from typing import Any
 
 
-def retained_diagnostics(authority: Path, discovery: dict[str, Any]) -> dict[str, Any]:
+def retained_diagnostics(
+    authority: Path, discovery: dict[str, Any], *, database: Path | None = None,
+) -> dict[str, Any]:
     try:
-        return _retained_diagnostics(authority, discovery)
+        result = _retained_diagnostics(authority, discovery)
+        if database is not None and database.is_file():
+            uri = database.resolve().as_uri() + "?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True)) as connection:
+                row = connection.execute(
+                    "SELECT request_telemetry_json FROM continuous_shadow_poll_runs "
+                    "ORDER BY started_at DESC LIMIT 1"
+                ).fetchone()
+            result["latest_poll_requests"] = json.loads(row[0]) if row else {}
+        return result
     except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
         return {"status": "UNAVAILABLE", "diagnostic_errors": 1, "provider_calls": 0}
 
@@ -42,8 +53,14 @@ def _retained_diagnostics(authority: Path, discovery: dict[str, Any]) -> dict[st
             total = connection.execute(
                 "SELECT COUNT(*) FROM requests WHERE observed_at>=?", (window.isoformat(),),
             ).fetchone()[0]
+            attributed = connection.execute(
+                "SELECT COUNT(*) FROM requests WHERE observed_at>=? "
+                "AND poll_run_id IS NOT NULL AND experiment_id IS NOT NULL",
+                (window.isoformat(),),
+            ).fetchone()[0]
     else:
         total = len(files)
+        attributed = None
     for path in ([] if indexed else nlargest(1000, files, key=lambda p: p.stat().st_mtime_ns)):
         if path.is_symlink() or path.stat().st_size > 65_536:
             continue
@@ -89,6 +106,8 @@ def _retained_diagnostics(authority: Path, discovery: dict[str, Any]) -> dict[st
         "metadata_sample_limit": 1000,
         "metadata_truncated": total > 1000,
         "metadata_total_in_window": total,
+        "request_attribution": {"correlated": attributed, "observed": total,
+                                "meaning": "poll/experiment bindings; preparation may be unbound"},
         "metadata_sampled": min(1000, len(records)),
         "metadata_window_start": window.isoformat() if indexed else None,
         "metadata_window_end": datetime.now(UTC).isoformat() if indexed else None,

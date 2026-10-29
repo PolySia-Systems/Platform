@@ -405,7 +405,12 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
             "metadata_total_in_window metadata_sampled metadata_truncated "
             "telemetry_health.dropped_measurements telemetry_health.telemetry_errors "
             "telemetry_health.last_successful_flush host_free_disk_bytes "
-            "latency.largest_measured_stage latency.meaning",
+            "latency.largest_measured_stage latency.meaning request_attribution.correlated "
+            "request_attribution.observed latest_poll_requests.diagnostic_errors "
+            "latest_poll_requests.metadata_identity_cache.hits "
+            "latest_poll_requests.metadata_identity_cache.misses "
+            "latest_poll_requests.metadata_identity_cache.invalid "
+            "latest_poll_requests.metadata_identity_cache.errors",
             "DATA_ONLY host operation is separate from UNKNOWN financial account mode. "
             "Receipt durations use a monotonic clock. Event age includes provider, polling "
             "and durable pending wait; provider-only publication latency remains UNKNOWN.",
