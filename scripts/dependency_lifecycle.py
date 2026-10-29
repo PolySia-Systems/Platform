@@ -398,32 +398,59 @@ def health() -> dict:
         for r in meaningful[:12]
     }
     result = maintenance_health(runs, jobs, datetime.now(UTC))
-    publications = api("actions/workflows/dependency-publish.yml/runs?per_page=100")[
+    publications = api("actions/workflows/dependency-publish.yml/runs?per_page=20")[
         "workflow_runs"
     ]
     relevant = []
-    for run in publications:
+
+    def meaningful_publication(run: dict) -> bool:
         jobs = api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs")["jobs"]
-        if any(
-            job["name"] in {"publish", "merge"}
+        return any(
+            job["name"] in {"publish", "merge", "report"}
             and (
                 job.get("conclusion") == "failure"
                 or any(
                     step["name"] in {"Publish validated dependency proposal",
+                                     "Publish scheduled proposal through approved App",
                                      "Confirm dependency integration and cleanup"}
                     and step.get("conclusion") == "success"
                     for step in job.get("steps", [])
                 )
             )
             for job in jobs
-        ):
+        )
+
+    for run in publications:
+        if meaningful_publication(run):
             relevant.append(run)
             break
+    if not relevant and len(publications) >= 20:
+        # Routine CI callbacks must not crowd out the publisher paired with the
+        # latest scan. Query that bounded time interval and newer failures rather
+        # than walking an unbounded callback history or declaring false health.
+        candidates = api(
+            "actions/workflows/dependency-publish.yml/runs?status=failure&per_page=10"
+        )["workflow_runs"]
+        latest = max(meaningful, key=lambda item: item["created_at"], default=None)
+        if latest is not None:
+            began = datetime.fromisoformat(latest["created_at"].replace("Z", "+00:00"))
+            interval = began.strftime("%Y-%m-%dT%H:%M:%SZ") + ".." + (
+                began + timedelta(hours=1)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            candidates += api(
+                "actions/workflows/dependency-publish.yml/runs?created="
+                + interval + "&per_page=100"
+            )["workflow_runs"]
+        by_id = {run["id"]: run for run in candidates}
+        for run in sorted(by_id.values(), key=lambda item: item["created_at"], reverse=True):
+            if meaningful_publication(run):
+                relevant.append(run)
+                break
     if relevant and relevant[0]["conclusion"] == "failure":
         result["outcome"] = "action_required"
         result["publication"] = "failed"
         result["publication_run"] = relevant[0]["html_url"]
-    elif not relevant and len(publications) >= 100:
+    elif not relevant and len(publications) >= 20:
         result["outcome"] = "action_required"
         result["publication"] = "UNKNOWN: meaningful history exceeds bounded coverage"
     return result

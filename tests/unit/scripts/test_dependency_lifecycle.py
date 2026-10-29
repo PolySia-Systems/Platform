@@ -811,6 +811,43 @@ def test_confirmed_cleanup_recovery_supersedes_prior_failure(monkeypatch):
     assert lifecycle.health()["outcome"] == "healthy"
 
 
+@pytest.mark.parametrize("newer_failure", [False, True])
+def test_scan_linked_scheduled_publication_survives_callback_pressure(monkeypatch, newer_failure):
+    scan = dict(id=10, run_attempt=1, event="schedule", head_branch="main",
+                created_at="2026-10-26T11:33:30Z")
+    published = dict(id=88, run_attempt=1, conclusion="success",
+                     created_at="2026-10-26T11:34:20Z")
+    failure = dict(id=99, run_attempt=1, conclusion="failure", html_url="https://example/failed",
+                   created_at="2026-10-27T00:00:00Z" if newer_failure else "2026-10-24T00:00:00Z")
+
+    def api(path):
+        if "dependency-automation.yml/runs" in path:
+            return {"workflow_runs": [scan]}
+        if "dependency-publish.yml/runs?status=failure" in path:
+            return {"workflow_runs": [failure]}
+        if "dependency-publish.yml/runs?created=" in path:
+            assert "2026-10-26T11:33:30Z..2026-10-26T12:33:30Z" in path
+            return {"workflow_runs": [published]}
+        if "dependency-publish.yml/runs" in path:
+            return {"workflow_runs": [dict(id=n, run_attempt=1, conclusion="success")
+                                       for n in range(20)]}
+        if "actions/runs/88/" in path:
+            return {"jobs": [dict(name="publish", conclusion="success", steps=[dict(
+                name="Publish scheduled proposal through approved App", conclusion="success",
+            )])]}
+        if "actions/runs/99/" in path:
+            assert newer_failure, "older failure must not replace verified later success"
+            return {"jobs": [dict(name="publish", conclusion="failure")]}
+        if "/jobs" in path:
+            return {"jobs": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(publication, "api", api)
+    monkeypatch.setattr(lifecycle, "maintenance_health", lambda *a: dict(outcome="healthy"))
+    result = lifecycle.health()
+    assert result["outcome"] == ("action_required" if newer_failure else "healthy")
+
+
 def test_backlog_distinguishes_latest_major_from_eligible_patch(monkeypatch, tmp_path):
     import hashlib
 
