@@ -2613,7 +2613,8 @@ class ContinuousShadowRepository:
         encoded_config = json.dumps(configured, sort_keys=True, separators=(",", ":"))
         expected_config_digest = hashlib.sha256(encoded_config.encode()).hexdigest()
         valid_configs = {expected_config_digest: configured}
-        with closing(sqlite3.connect(self._path.resolve().as_uri() + "?mode=ro", uri=True)) as history:
+        history_uri = self._path.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(history_uri, uri=True)) as history:
             if history.execute(
                 "SELECT 1 FROM sqlite_master WHERE name='continuous_shadow_release_transitions'"
             ).fetchone():
