@@ -3050,7 +3050,8 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
         assert not (restored / "native-latency.sqlite3").exists()
     else:
         with sqlite3.connect(restored / "native-latency.sqlite3") as recovered_telemetry:
-            assert recovered_telemetry.execute("SELECT COUNT(*) FROM latency_spans").fetchone()[0] == 1
+            count = recovered_telemetry.execute("SELECT COUNT(*) FROM latency_spans").fetchone()[0]
+            assert count == 1
     recovered_authority = AcquisitionAuthority(Path(safe["authority"]), policy())
     assert recovered_authority.status()["stopped"] is True
     assert recovered_authority.status()["requests_charged"] == 1
