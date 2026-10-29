@@ -10,6 +10,24 @@ from deploy.platform_bootstrap import container_command, service_text, verify_ar
 from scripts.release_manifest import manifest
 
 
+def test_backup_mounts_campaign_without_exposing_other_configuration(tmp_path, monkeypatch):
+    from deploy import platform_backup as backup
+
+    monkeypatch.setattr(backup, "CONFIG_ROOT", tmp_path)
+    plan = tmp_path / "nonlive-campaign.json"
+    plan.write_text('{"contract":"nonlive-campaign/v1"}')
+    assert backup.campaign_mounts({}) == []
+    assert backup.campaign_mounts({"campaign": "/config/nonlive-campaign.json"}) == [
+        "--volume", f"{plan}:/config/nonlive-campaign.json:ro",
+    ]
+    for path in ("/etc/shadow", "/config/../worker.json", "/config", "/config/missing.json", 1):
+        with pytest.raises(ValueError):
+            backup.campaign_mounts({"campaign": path})
+    plan.write_bytes(b"x" * 16_385)
+    with pytest.raises(ValueError, match="bound"):
+        backup.campaign_mounts({"campaign": "/config/nonlive-campaign.json"})
+
+
 def test_backup_disk_pressure_refuses_before_snapshot_without_using_host_disk(
     tmp_path,
     monkeypatch,

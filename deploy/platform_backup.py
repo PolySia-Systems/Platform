@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import time
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 MAX_GENERATION = 536_870_912
@@ -97,6 +97,23 @@ def backup(value: dict[str, Any]) -> dict[str, Any]:
         )
 
 
+def campaign_mounts(worker: dict[str, Any]) -> list[str]:
+    """Expose only the frozen plan, retaining the backup container's narrow mounts."""
+    configured = worker.get("campaign")
+    if configured is None:
+        return []
+    if not isinstance(configured, str):
+        raise ValueError("invalid campaign plan path")
+    path = PurePosixPath(configured)
+    if (path.parent != PurePosixPath("/config")
+            or re.fullmatch(r"[a-zA-Z0-9_.-]+\.json", path.name) is None):
+        raise ValueError("campaign plan must be a dedicated configuration JSON file")
+    source = CONFIG_ROOT / path.name
+    if source.is_symlink() or not source.is_file() or source.stat().st_size > 16_384:
+        raise ValueError("campaign plan missing, linked or outside its bound")
+    return ["--volume", f"{source}:{path}:ro"]
+
+
 def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
     mode = value.get("mode", "sftp")
     if mode not in {"local", "sftp"}:
@@ -129,6 +146,7 @@ def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
     )
     if (CONFIG_ROOT / "manifest.json").is_file():
         args += ["--volume", f"{CONFIG_ROOT}/manifest.json:/config/manifest.json:ro"]
+    args += campaign_mounts(json.loads((CONFIG_ROOT / "worker.json").read_bytes()))
     args += ["--name", "polysia-platform-backup-stage"]
     receipt = json.loads(
         run(
