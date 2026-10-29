@@ -11,8 +11,18 @@ import shutil
 import subprocess
 import time
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+from runpy import run_path
 from typing import Any
+
+if __package__:
+    from .platform_bootstrap import campaign_mounts as _campaign_mounts
+else:
+    # Administrative loading can originate from a different release directory.
+    # Bind the helper to this verified job's sibling, not sys.path's old release.
+    _campaign_mounts = run_path(str(Path(__file__).with_name("platform_bootstrap.py")))[
+        "campaign_mounts"
+    ]
 
 MAX_GENERATION = 536_870_912
 NAME = re.compile(r"platform-\d{8}T\d{6}Z\.tar\.age")
@@ -99,19 +109,7 @@ def backup(value: dict[str, Any]) -> dict[str, Any]:
 
 def campaign_mounts(worker: dict[str, Any]) -> list[str]:
     """Expose only the frozen plan, retaining the backup container's narrow mounts."""
-    configured = worker.get("campaign")
-    if configured is None:
-        return []
-    if not isinstance(configured, str):
-        raise ValueError("invalid campaign plan path")
-    path = PurePosixPath(configured)
-    if (path.parent != PurePosixPath("/config")
-            or re.fullmatch(r"[a-zA-Z0-9_.-]+\.json", path.name) is None):
-        raise ValueError("campaign plan must be a dedicated configuration JSON file")
-    source = CONFIG_ROOT / path.name
-    if source.is_symlink() or not source.is_file() or source.stat().st_size > 16_384:
-        raise ValueError("campaign plan missing, linked or outside its bound")
-    return ["--volume", f"{source}:{path}:ro"]
+    return _campaign_mounts(worker, config_root=CONFIG_ROOT)
 
 
 def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:

@@ -28,6 +28,19 @@ def test_backup_mounts_campaign_without_exposing_other_configuration(tmp_path, m
         backup.campaign_mounts({"campaign": "/config/nonlive-campaign.json"})
 
 
+def test_standalone_backup_loads_its_own_release_helper(tmp_path, monkeypatch):
+    from runpy import run_path
+
+    for name in ("platform_bootstrap.py", "platform_backup.py"):
+        (tmp_path / name).write_bytes((Path("deploy") / name).read_bytes())
+    monkeypatch.chdir(tmp_path)
+    job = run_path(str(tmp_path / "platform_backup.py"))
+    assert job["campaign_mounts"]({}) == []
+    assert job["_campaign_mounts"].__globals__["__file__"] == str(
+        tmp_path / "platform_bootstrap.py",
+    )
+
+
 def test_backup_disk_pressure_refuses_before_snapshot_without_using_host_disk(
     tmp_path,
     monkeypatch,
@@ -48,6 +61,27 @@ def test_backup_disk_pressure_refuses_before_snapshot_without_using_host_disk(
     monkeypatch.setattr(backup, "run", never_run)
     with pytest.raises(OSError, match="free-disk reserve"):
         backup._backup_generation({"mode": "local", "output": str(tmp_path / "backup-out")})
+
+
+@pytest.mark.parametrize("role", ["worker", "publisher"])
+def test_campaign_plan_reaches_scheduled_processes_as_read_only(tmp_path, monkeypatch, role):
+    from deploy import platform_bootstrap as core
+
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    worker = tmp_path / "worker.json"
+    worker.write_text(json.dumps({"campaign": "/config/nonlive-campaign.json"}))
+    plan = tmp_path / "nonlive-campaign.json"
+    plan.write_text('{"contract":"nonlive-campaign/v1"}')
+    image = "sha256:" + "a" * 64
+    args = core.container_command(image, role=role, hostname="host")
+    assert f"{plan}:/config/nonlive-campaign.json:ro" in args
+    assert f"{tmp_path}:/config:ro" not in args
+    assert f"{plan}:/config/nonlive-campaign.json:ro" not in core.container_command(
+        image, role="web", hostname="host",
+    )
+    plan.unlink()
+    with pytest.raises(ValueError, match="missing"):
+        core.container_command(image, role=role, hostname="host")
 
 
 def test_verified_artifact_rejects_changed_archive_or_moving_ref(tmp_path: Path) -> None:
