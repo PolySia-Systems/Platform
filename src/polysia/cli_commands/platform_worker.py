@@ -203,7 +203,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
             commands.finish(revision, status="APPLIED")
         campaign = supervise_campaign(
             value, database=database, authority=authority, now=datetime.now(UTC),
-        )
+        ) if not recovery_fenced else None
         if campaign is not None:
             result["campaign"] = campaign
         if authority.status()["stopped"]:

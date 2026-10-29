@@ -134,6 +134,10 @@ def campaign_check(
             elapsed = max(1, int((now - start).total_seconds()))
             if not isinstance(charges, dict):
                 reason = "separate_campaign_accounting_missing"
+            elif charges.get("first_attempt_at") is None or now < datetime.fromisoformat(
+                charges["first_attempt_at"],
+            ) + timedelta(seconds=2 * authority.policy.window_seconds):
+                result["reason"] = "await_two_actual_acquisition_window_boundaries"
             elif (
                 charges["requests_charged"] * plan["observation_seconds"]
                 > (charges["requests_remaining"] - authority.policy.closure_request_reserve)
@@ -186,6 +190,10 @@ def supervise_campaign(
         previous = json.loads(state.read_text()) if state.exists() else {}
         controls_path = database.with_name("nonlive-campaign-controls.json")
         controls = json.loads(controls_path.read_text()) if controls_path.exists() else {}
+        if any(controls.get(key) != plan.get(key) for key in (
+            "campaign_id", "release_commit", "policy_digest", "cohort_digest",
+        )):
+            controls = {}  # A prior release/campaign's controls cannot commission this one.
         result = campaign_check(
             plan, previous, database=database, authority=authority, now=now, controls=controls
         )

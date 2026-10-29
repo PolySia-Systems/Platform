@@ -384,11 +384,12 @@ class AcquisitionAuthority:
                     "FROM finite_campaign_grants"
                 ).fetchone()
                 if grant:
-                    new_count, new_bytes = connection.execute(
-                        "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0) "
-                        "FROM reservations WHERE rowid>?", (grant[0],),
+                    new_count, new_bytes, first_attempt = connection.execute(
+                        "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0),"
+                        "MIN(attempted_at) FROM reservations WHERE rowid>?", (grant[0],),
                     ).fetchone()
                     campaign = {"requests_charged": new_count, "bytes_charged": new_bytes,
+                                "first_attempt_at": first_attempt,
                                 "requests_remaining": grant[1] - new_count,
                                 "bytes_remaining": grant[2] - new_bytes}
         return {

@@ -59,6 +59,13 @@ including canonical report validation and the actual installer preflight.
 Downgrade over transitioned/newer data is unsupported: use a consistent compatible
 checkpoint and reconcile. Disposable caches may be rebuilt.
 
+The encrypted recovery inventory includes the optional native telemetry snapshot
+and frozen campaign evidence. A diagnostic snapshot failure is reported without
+preventing authoritative database recovery. Recovery stays fenced and does not
+evaluate itself as an active campaign. The existing 480 MiB recovery payload cap
+is retained, and SQLite copying preserves the stricter 9 GiB free-disk floor.
+The new allowance must fit these storage bounds as well as provider limits.
+
 ## Operational gates
 
 ENGINEERING: candidate validation in progress. INTEGRATION and DEPLOYMENT: pending

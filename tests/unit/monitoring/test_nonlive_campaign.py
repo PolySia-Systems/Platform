@@ -8,7 +8,7 @@ import pytest
 
 from polysia.monitoring.nonlive_campaign import campaign_check, supervise_campaign
 from polysia.storage.acquisition_authority import AcquisitionAuthority
-from tests.unit.storage.test_acquisition_authority import NOW, policy
+from tests.unit.storage.test_acquisition_authority import ENDPOINT, NOW, policy
 
 
 @pytest.fixture
@@ -32,6 +32,7 @@ def campaign(tmp_path):
         authorization_reference="owner-finite-test",
     )
     authority.resume(now=NOW, host="host")
+    authority.reserve(ENDPOINT, now=NOW, host="host")
     plan = {
         "contract": "nonlive-campaign/v1",
         "campaign_id": "test",
