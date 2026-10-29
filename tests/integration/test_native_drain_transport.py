@@ -41,6 +41,7 @@ def real_drain(tmp_path, monkeypatch):
             "feesEnabled": False,
             "startDate": NOW.isoformat(),
             "endDate": (NOW + timedelta(days=1)).isoformat(),
+            "events": [{"id": "fixture-event", "slug": "native-fixture"}],
         }
 
     def read(transport, base, path, params):
@@ -66,7 +67,7 @@ def real_drain(tmp_path, monkeypatch):
         elif path == "/events":
             payload = [{"slug": "native-fixture", "markets": [market()]}]
         elif path == "/markets":
-            payload = [market()] if params["closed"] == state["closed"] else []
+            payload = [market()] if params["closed"] in ("any", state["closed"]) else []
         elif path == "/book":
             payload = {
                 "market": condition,

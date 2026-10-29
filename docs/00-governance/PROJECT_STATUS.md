@@ -21,6 +21,15 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
+N1 work, 2026-10-29: the retained native public-data/Shadow session is preserved
+through a journaled release/admission transition; telemetry persistence, bounded
+identity reuse and rolling-budget scheduling have focused regression coverage.
+The finite campaign and real 48-hour observation remain separate operational
+gates. See the [dated N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md)
+for candidate/integrated/deployed identities and the eventual observation verdict.
+This paragraph is not a statement that an acquisition timer is presently useful
+or that qualification has completed. DATA_ONLY and Live-disabled defaults remain.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in

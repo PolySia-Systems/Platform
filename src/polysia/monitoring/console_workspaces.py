@@ -138,7 +138,10 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
             "Bounded Shadow Lab",
             lab,
             "virtual_capital financial_authority published_at",
-            "Create or clone a registered slot, then preview its exact lifecycle operation. "
+            "Create/Clone/Compare/Archive are NOT_COMMISSIONED when no slots and policy "
+            "templates are registered by the acquisition owner. The retained operational "
+            "session is CLI-owned and is not a Lab slot. "
+            "Preview the exact lifecycle operation for a registered slot. "
             "Each experiment has independent virtual capital; returns must not be summed.",
             [
                 table(
@@ -156,9 +159,12 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
         add(
             "Acquisition authority",
             raw,
-            "status next_action authority_window.expires_at "
+            "status reason last_success next_due_at retry_at earliest_feasible_admission "
+            "next_action authority_window.expires_at "
             "authority_window.maximum_requests authority_window.maximum_bytes "
-            "authority.requests_charged authority.bytes_charged",
+            "authority.requests_charged authority.bytes_charged authority.uncertain_requests "
+            "authority.requests_remaining authority.bytes_remaining campaign.phase "
+            "campaign.observation_started_at campaign.observation_ends_at campaign.final_review",
             "STOP acquisition halts source work; it does not stop a financial worker "
             "or settle positions. "
             "Financial drain blocks entries while permitted protection continues. "
@@ -391,6 +397,23 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
                     "stage p50_ns p95_ns p99_ns sample_count missing_count censored_count",
                 )
             ],
+        )
+        add(
+            "Non-Live acquisition evidence",
+            raw.get("diagnostics"),
+            "metadata_coverage metadata_window_start metadata_window_end "
+            "metadata_total_in_window metadata_sampled metadata_truncated "
+            "telemetry_health.dropped_measurements telemetry_health.telemetry_errors "
+            "telemetry_health.last_successful_flush host_free_disk_bytes "
+            "latency.largest_measured_stage latency.meaning",
+            "DATA_ONLY host operation is separate from UNKNOWN financial account mode. "
+            "Receipt durations use a monotonic clock. Event age includes provider, polling "
+            "and durable pending wait; provider-only publication latency remains UNKNOWN.",
+            [table("Accounted public responses", [dict(endpoint=key, **obj(item))
+                for key, item in obj(obj(raw.get("diagnostics")).get("endpoint_receipts")).items()],
+                "endpoint observed_requests known_bytes failures latency_p95_ms "
+                "latency_sample_count unknown_latency_count")],
+            dated=raw,
         )
         backup = obj(raw.get("backup"))
         health = obj(raw.get("backup_health"))

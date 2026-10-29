@@ -96,7 +96,7 @@ class LatencyRecorder:
         status = SpanStatus.OK.value
         try:
             yield span_id
-        except Exception:
+        except BaseException:
             status = SpanStatus.ERROR.value
             raise
         finally:

@@ -513,6 +513,7 @@ class ContinuousShadowStorePort(Protocol):
         *,
         failed_at: datetime,
         error_code: str,
+        request_telemetry: dict[str, object] | None = None,
     ) -> None: ...
 
     def invariant_report(self, experiment_id: str) -> ShadowInvariantView: ...

@@ -6,7 +6,7 @@ import os
 import re
 import sqlite3
 import uuid
-from contextlib import suppress
+from contextlib import closing, suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -1561,6 +1561,7 @@ class ContinuousShadowRepository:
         *,
         failed_at: datetime,
         error_code: str,
+        request_telemetry: dict[str, object] | None = None,
     ) -> None:
         connection = self._connect()
         try:
@@ -1570,8 +1571,10 @@ class ContinuousShadowRepository:
             ).fetchone()
             connection.execute(
                 "UPDATE continuous_shadow_poll_runs SET status = 'failed', failed_at = ?, "
-                "last_error_code = ? WHERE poll_run_id = ? AND status = 'running'",
-                (_iso(_utc(failed_at)), _safe_error_code(error_code), poll_run_id),
+                "last_error_code = ?,request_telemetry_json=? "
+                "WHERE poll_run_id = ? AND status = 'running'",
+                (_iso(_utc(failed_at)), _safe_error_code(error_code),
+                 json.dumps(request_telemetry or {}, sort_keys=True), poll_run_id),
             )
             if row is not None:
                 connection.execute(
@@ -2609,6 +2612,23 @@ class ContinuousShadowRepository:
         configured = json.loads(str(experiment["config_json"]))
         encoded_config = json.dumps(configured, sort_keys=True, separators=(",", ":"))
         expected_config_digest = hashlib.sha256(encoded_config.encode()).hexdigest()
+        valid_configs = {expected_config_digest: configured}
+        with closing(sqlite3.connect(self._path.resolve().as_uri() + "?mode=ro", uri=True)) as history:
+            if history.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='continuous_shadow_release_transitions'"
+            ).fetchone():
+                for old_raw, old_digest in history.execute(
+                    "SELECT old_config,old_digest FROM continuous_shadow_release_transitions "
+                    "WHERE experiment_id=?", (experiment_id,),
+                ):
+                    old = json.loads(old_raw)
+                    if hashlib.sha256(json.dumps(
+                        old, sort_keys=True, separators=(",", ":"),
+                    ).encode()).hexdigest() != old_digest:
+                        raise ContinuousShadowStoreError(
+                            "Release transition config digest mismatch.",
+                        )
+                    valid_configs[old_digest] = old
         for row in rows:
             encoded = str(row["evidence_json"])
             if hashlib.sha256(encoded.encode()).hexdigest() != row["evidence_digest"]:
@@ -2616,9 +2636,10 @@ class ContinuousShadowRepository:
             payload = json.loads(encoded)
             if not isinstance(payload, dict) or payload.get("event_id") != row["event_id"]:
                 raise ContinuousShadowStoreError("Shadow opportunity identity mismatch.")
-            if payload.get("config_digest") != expected_config_digest:
+            bound_config = valid_configs.get(str(payload.get("config_digest")))
+            if bound_config is None:
                 raise ContinuousShadowStoreError("Shadow opportunity config digest mismatch.")
-            if payload.get("code_sha") != configured.get("code_sha"):
+            if payload.get("code_sha") != bound_config.get("code_sha"):
                 raise ContinuousShadowStoreError("Shadow opportunity code identity mismatch.")
             if payload.get("selection_digest") != row["selection_snapshot_digest"]:
                 raise ContinuousShadowStoreError("Shadow opportunity selection digest mismatch.")

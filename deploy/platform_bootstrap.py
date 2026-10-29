@@ -273,6 +273,18 @@ def activation_preflight(commit: str) -> None:
         ):
             config_value = json.loads(config_json)
             if config_value.get("runtime_version") == "continuous-shadow-native-research-v2":
+                if config_value.get("code_sha") == commit and connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='continuous_shadow_release_transitions'"
+                ).fetchone():
+                    transition = connection.execute(
+                        "SELECT new_config,new_digest FROM continuous_shadow_release_transitions "
+                        "WHERE target_source=? AND experiment_id=?", (commit, experiment),
+                    ).fetchone()
+                    canonical = json.dumps(config_value, sort_keys=True, separators=(",", ":"))
+                    if (transition and json.loads(transition[0]) == config_value
+                            and hashlib.sha256(canonical.encode()).hexdigest() == transition[1]):
+                        # Explicit audited transition preserves non-flat virtual inventory.
+                        continue
                 raise ValueError(
                     "active pinned continuous session requires controlled finalization"
                 )
