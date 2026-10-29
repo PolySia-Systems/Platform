@@ -1,5 +1,8 @@
 # Evidence Index
 
+- [`console-d2-readiness-2026-10-28.md`](console-d2-readiness-2026-10-28.md)
+  records the D2 read-only installation refresh, operator acceptance card,
+  inactive run specification and consolidated remaining owner gates.
 - [`console-d1-deployment-2026-10-28.md`](console-d1-deployment-2026-10-28.md)
   records protected Console integration, exact private artifacts, Helsinki
   DATA_ONLY activation, independent Nuremberg recovery and bounded commissioning.
