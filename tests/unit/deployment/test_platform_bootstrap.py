@@ -50,6 +50,27 @@ def test_backup_disk_pressure_refuses_before_snapshot_without_using_host_disk(
         backup._backup_generation({"mode": "local", "output": str(tmp_path / "backup-out")})
 
 
+@pytest.mark.parametrize("role", ["worker", "publisher"])
+def test_campaign_plan_reaches_scheduled_processes_as_read_only(tmp_path, monkeypatch, role):
+    from deploy import platform_bootstrap as core
+
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    worker = tmp_path / "worker.json"
+    worker.write_text(json.dumps({"campaign": "/config/nonlive-campaign.json"}))
+    plan = tmp_path / "nonlive-campaign.json"
+    plan.write_text('{"contract":"nonlive-campaign/v1"}')
+    image = "sha256:" + "a" * 64
+    args = core.container_command(image, role=role, hostname="host")
+    assert f"{plan}:/config/nonlive-campaign.json:ro" in args
+    assert f"{tmp_path}:/config:ro" not in args
+    assert f"{plan}:/config/nonlive-campaign.json:ro" not in core.container_command(
+        image, role="web", hostname="host",
+    )
+    plan.unlink()
+    with pytest.raises(ValueError, match="missing"):
+        core.container_command(image, role=role, hostname="host")
+
+
 def test_verified_artifact_rejects_changed_archive_or_moving_ref(tmp_path: Path) -> None:
     image = tmp_path / "polysia-image.tar.gz"
     image.write_bytes(b"hosted artifact")
