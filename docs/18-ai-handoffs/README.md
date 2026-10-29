@@ -1,5 +1,8 @@
 # Evidence Index
 
+- [`nonlive-operational-qualification-2026-10-29.md`](nonlive-operational-qualification-2026-10-29.md)
+  records actual public-data acquisition, bounded persistent Shadow operation,
+  exact corrective artifacts, protected controls, recovery and capacity limits.
 - [`console-d2-readiness-2026-10-28.md`](console-d2-readiness-2026-10-28.md)
   records the D2 read-only installation refresh, operator acceptance card,
   inactive run specification and consolidated remaining owner gates.
