@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from polysia.domain.copytrading import LeaderTradeAction
 from polysia.domain.copytrading.continuous_shadow import (
     calculate_verified_taker_fee,
@@ -18,6 +20,57 @@ from polysia.domain.market import (
 )
 
 NOW = datetime(2026, 8, 25, 12, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        "continuous-shadow-native-research-v1",
+        "continuous-shadow-native-research-v2",
+    ],
+)
+@pytest.mark.parametrize("count", [1, 3, 4, 5, 10])
+def test_native_research_uses_its_declared_cohort_bound(runtime: str, count: int) -> None:
+    from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+
+    config = ContinuousShadowConfig(
+        runtime_version=runtime,
+        wallet_count=count,
+        code_sha="a" * 40,
+        selection_policy="native-recent-activity-v1",
+        selection_observed_at=NOW,
+        selection_preflight_digest="b" * 64,
+    )
+    assert config.wallet_count == count
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        "continuous-shadow-native-research-v1",
+        "continuous-shadow-native-research-v2",
+    ],
+)
+@pytest.mark.parametrize("count", [0, 11])
+def test_native_research_rejects_cohorts_outside_its_bound(runtime: str, count: int) -> None:
+    from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+
+    with pytest.raises(ValueError, match="native research requires"):
+        ContinuousShadowConfig(
+            runtime_version=runtime,
+            wallet_count=count,
+            code_sha="a" * 40,
+            selection_policy="native-recent-activity-v1",
+            selection_observed_at=NOW,
+            selection_preflight_digest="b" * 64,
+        )
+
+
+def test_legacy_shadow_keeps_the_three_wallet_bound() -> None:
+    from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+
+    with pytest.raises(ValueError, match="validated bound of three"):
+        ContinuousShadowConfig(wallet_count=4)
 
 
 def _book() -> MarketOrderBookSnapshot:

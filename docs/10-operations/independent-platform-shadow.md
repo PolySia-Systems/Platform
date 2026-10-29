@@ -211,6 +211,22 @@ all lifetime charges and STOP. It cannot raise ceilings or reduce reserves. It i
 not an automatic campaign renewal. Continuous native operation additionally needs
 nonempty diagnostic/resource admission for the matching code and cohort.
 
+An explicitly owner-authorized new public read route can be added with the
+repeatable `ops acquisition-policy --authorize-new-endpoint HTTPS_PATH` option.
+Every added endpoint must be listed exactly; ordinary continuation still rejects
+scope expansion. The same allowance database retains all lifetime and window
+charges, uncertainty and STOP. This option cannot increase numeric ceilings,
+extend duration, reduce reserves, change host or enable financial actions.
+Retain the old/new policy and exact owner approval reference before applying.
+The native source's verified event mapping also needs the exact public Gamma
+`/events` route in its manifest; `/markets` alone does not cover that read.
+
+PolyCop accepts the reviewed original row shape or its exact four-field profile
+extension (`name`, `pseudonym`, `profile_image`, `profile_updated_at`). Profile
+strings are bounded and their digest is retained, while names/URLs remain outside
+economic metrics. Unknown fields, invalid types, incomplete pages and changing
+page guards still fail closed. No profile image URL is fetched.
+
 Persistent native composition uses `continuous-shadow-native-research-v2` for a
 new admitted financial session. Admission includes UTC `expires_at`, matching
 code/original cohort, nonempty persisted simulations and resource approval. Every
