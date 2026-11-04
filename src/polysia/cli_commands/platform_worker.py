@@ -373,23 +373,30 @@ def worker_tick(config: Path) -> dict[str, Any]:
                         authority.stop()
                         result["status"] = "BLOCKED"
                 elif reason in {
+                    "native_cohort_no_recent_activity",
                     "native_cohort_revalidation_insufficient",
                     "native_cohort_revalidation_incomplete",
                 }:
-                    failures = int(prior.get("transient_failures", 0)) + 1
+                    quiet = reason == "native_cohort_no_recent_activity"
+                    failures = int(prior.get("transient_failures", 0)) + int(not quiet)
                     result.update(
                         status="WAITING_SOURCE_EVIDENCE",
                         transient_failures=failures,
                         retry_at=result["next_due_at"],
                         next_action="Await complete fresh evidence for this cohort.",
                     )
-                    if failures >= 3:
+                    if failures >= 3 and not quiet:
                         authority.stop()
                         result["status"] = "BLOCKED"
                 else:
                     authority.stop()
                     if reason.startswith("native_") or reason == "authority_not_current":
                         result["status"] = "BLOCKED"
+                if (result["status"] == "BLOCKED" and campaign is not None
+                        and campaign.get("phase") == "PREPARING"):
+                    campaign.update(phase="FAILED", reason="readiness_source_fault:" + reason,
+                                    failed_at=datetime.now(UTC).isoformat())
+                    atomic_json(database.with_name("nonlive-campaign-status.json"), campaign)
         result["authority"] = authority.status()
         atomic_json(Path(value["status"]), result)
         return result

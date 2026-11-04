@@ -400,3 +400,39 @@ permissible repair/restart needs an explicit retained reason, the same immutable
 identities/criteria and enough remaining original authority. At expiry, verify
 acquisition stopped and review all actual evidence again. This record is a
 blocked operational handoff, not completed qualification.
+
+## Owner-requested bounded readiness repair, 4 November 2026
+
+The owner requested immediate engineering with server-owned real waits and the
+existing automatic follow-up. The repair separates bounded PREPARING from useful
+acceptance: the earlier campaign started its poll-gap clock before cohort
+revalidation could produce any admitted poll. A valid empty response is retained
+as adverse source-availability evidence; it is not a provider fault or a pass.
+
+The candidate adds an explicit, idempotent, STOP-only repair command
+`python -m polysia.deployment.nonlive_campaign_repair --config PATH`. This command
+requires a root-owned `campaign_repair` definition in the worker configuration,
+bound to the exact original plan bytes, prior failed status bytes, reason,
+authorization reference, same cohort/policy and installed source/image/config.
+It preserves the prior status and accounting in a bounded recovery receipt.
+It cannot grant, resume, reset consumption or replace an existing repair attempt.
+Use the supported retained-session source transition for a tested repair release;
+never replay the consumed initial-grant helpers.
+
+PREPARING receives no qualification credit. A real fresh successful poll, fresh
+evaluations, current native telemetry/process observations and attempt-bound
+control/recovery evidence must precede the prospective two-window canary.
+The unchanged 48-hour useful observation follows that canary. Readiness stops if
+less than both required periods plus a 30-minute margin remain before the
+original expiry. All preparation I/O consumes the original finite allowance.
+Complete quiet revalidation never refreshes selection timestamps: still-valid
+evidence retains its original age; the existing four-hour selection limit holds.
+Incomplete/provider failures retain fault handling and STOP controls. The frozen
+300-second source window and 900-second useful-observation gap are unchanged.
+
+This candidate is engineering work pending protected CI/integration and exact
+artifact commissioning. It does not change the last verified fenced host state
+or claim useful observation. No new grant, relaxed acceptance, financial
+authority or Live activation is authorized. The existing heartbeat must resume
+the concrete PR/CI work, then inspect protected current receipts; it must not
+poll through the real canary or observation in an active model turn.

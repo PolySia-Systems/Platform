@@ -49,27 +49,29 @@ class NativeShadowService(ContinuousShadowService):
         try:
             return await super().poll(source_id)
         finally:
-            recorder = self.latency_recorder
-            if recorder is not None:
-                try:
-                    recorder.flush()
-                    # Publish after flush, so drops and write failures remain visible
-                    # even when the optional telemetry database is unavailable.
-                    health = recorder.health()
-                    path = recorder.store.path.with_suffix(".health.json") if isinstance(
-                        recorder, LatencyRecorder
-                    ) else None
-                    if path is not None:
-                        health.update(_capacity_health(
-                            path, capacity, telemetry_fault=bool(
-                                health["telemetry_errors"] or health["dropped_measurements"]
-                            ),
-                        ))
-                        temporary = path.with_suffix(".partial")
-                        temporary.write_text(json.dumps(health, sort_keys=True), encoding="utf-8")
-                        temporary.replace(path)
-                except Exception:
-                    logging.getLogger(__name__).warning("native_telemetry_publication_failed")
+            publish_native_health(self.latency_recorder, capacity, stage="poll")
+
+
+def publish_native_health(recorder: Any, capacity: ProcessCapacity | None, *, stage: str) -> None:
+    """Publish optional diagnostics for both qualification and admitted polls."""
+    if recorder is None:
+        return
+    try:
+        recorder.flush()
+        health = recorder.health()
+        path = recorder.store.path.with_suffix(".health.json") if isinstance(
+            recorder, LatencyRecorder
+        ) else None
+        if path is not None:
+            health["native_stage"] = stage
+            health.update(_capacity_health(path, capacity, telemetry_fault=bool(
+                health["telemetry_errors"] or health["dropped_measurements"],
+            )))
+            temporary = path.with_suffix(".partial")
+            temporary.write_text(json.dumps(health, sort_keys=True), encoding="utf-8")
+            temporary.replace(path)
+    except Exception:
+        logging.getLogger(__name__).warning("native_telemetry_publication_failed")
 
 
 def _capacity_health(

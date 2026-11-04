@@ -167,7 +167,7 @@ def create_encrypted_backup(
         if value.get("campaign"):
             extras["campaign-plan.json"] = Path(value["campaign"])
         for name in ("nonlive-campaign-status.json", "nonlive-campaign-controls.json",
-                     "native-latency.health.json"):
+                     "native-latency.health.json", "nonlive-campaign-repair-receipt.json"):
             candidate = database.with_name(name)
             if candidate.is_file():
                 extras[name] = candidate

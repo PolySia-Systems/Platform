@@ -292,3 +292,24 @@ def test_overlapping_tick_does_not_replace_owner_checkpoint(installed_worker, ca
     assert json.loads(capsys.readouterr().out)["status"] == "WAITING_WORKER"
     assert status.read_text() == checkpoint
     assert authority.status()["requests_charged"] == 0
+
+
+def test_complete_quiet_source_wait_does_not_spend_fault_strikes(installed_worker, monkeypatch):
+    from polysia.storage.acquisition_authority import AcquisitionBlockedError
+
+    config, value, clock, authority, _ = installed_worker
+    value["acquisition_enabled"] = True
+    config.write_text(json.dumps(value))
+    Path(value["cohort"]).write_text(json.dumps({"discovery": {}}))
+
+    async def quiet(*args, **kwargs):
+        raise AcquisitionBlockedError("native_cohort_no_recent_activity")
+
+    monkeypatch.setattr(worker, "native_lifecycle_poll", quiet)
+    for index in range(4):
+        clock.value = NOW + timedelta(seconds=300 * index)
+        result = worker.worker_tick(config)
+        assert result["status"] == "WAITING_SOURCE_EVIDENCE"
+        assert result["transient_failures"] == 0
+    assert authority.status()["stopped"] is False
+    assert authority.status()["requests_charged"] == 0

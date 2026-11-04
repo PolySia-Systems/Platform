@@ -51,6 +51,13 @@ or renewed. The required real canary, 48-hour observation and final review remai
 outstanding. Current controls, receipts and all eight verdicts are in the same
 [N1 handoff](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
 
+N1 repair candidate, 2026-11-04: owner-requested engineering separates bounded
+readiness from useful acceptance under the single consumed finite grant. The
+original plan, cohort, consumption, expiry and numerical acceptance criteria are
+preserved. Protected CI, exact artifact commissioning and the real observation
+remain outstanding; candidate code is not a change in current host state. See
+the same dated operational record for the explicit repair receipt and gates.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in
