@@ -492,3 +492,20 @@ def test_authoritative_empty_selection_and_nonfinancial_metrics_do_not_relax_mon
         if section["title"] == "Actual trading economics"
     )
     assert next(fact for fact in economics["facts"] if fact["label"] == "fees")["value"] is None
+
+
+def test_system_view_preserves_native_fault_after_current_counters_recover(tmp_path):
+    app, _, _ = prepared(tmp_path)
+    path = tmp_path / "publication.json"
+    raw = json.loads(path.read_text())
+    raw["diagnostics"] = {"telemetry_health": {
+        "telemetry_errors": 0, "dropped_measurements": 0,
+        "native_telemetry_fault_observed": True, "native_telemetry_history_gap": False,
+    }}
+    path.write_text(json.dumps(raw))
+    system = call(app, PREFIX + "/workspace?panel=system")[2]
+    evidence = next(s for s in system["sections"] if s["title"] == "Non-Live acquisition evidence")
+    values = {fact["label"]: fact["value"] for fact in evidence["facts"]}
+    assert values["telemetry health / telemetry errors"] == "0"
+    assert values["telemetry health / native telemetry fault observed"] == "YES"
+    assert values["telemetry health / native telemetry history gap"] == "NO"

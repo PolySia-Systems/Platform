@@ -30,6 +30,15 @@ for candidate/integrated/deployed identities and the eventual observation verdic
 This paragraph is not a statement that an acquisition timer is presently useful
 or that qualification has completed. DATA_ONLY and Live-disabled defaults remain.
 
+N1 resumption, 2026-11-04: protected host reads confirmed no finite grant or real
+observation had started; the retained predecessor remains STOPped and fenced.
+Mount fixes integrated through #241/#242, and current predecessor encrypted
+recovery was independently refreshed with its timer restored. Final review added
+retained native telemetry-fault evidence across healthy oneshot restarts. Exact
+corrected-source CI, installation and the real canary/48-hour observation remain
+operational gates in the same [N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
+Idle time does not satisfy qualification; financial authority remains absent.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in

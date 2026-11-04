@@ -145,6 +145,15 @@ These measure polling processes, not whole-host or container peak consumption.
 Unavailable probes remain UNKNOWN; corrupt history records a coverage gap.
 Release changes begin a new summary. Optional observation failures preserve the
 original poll result, and these counters confer no acquisition authority.
+The sidecar's `native_telemetry_fault_observed` latch preserves an earlier
+error/drop across later healthy processes, including resource-probe failures.
+`native_telemetry_history_gap` identifies unreadable/corrupt retained history.
+Current zero error counters do not clear the retained fault indicator.
+
+The host backup job mounts only the configured frozen campaign JSON as a
+separate read-only file, alongside worker and manifest configuration. A missing,
+symlinked, oversized or noncanonical plan path fails backup explicitly; unrelated
+private configuration is not added to that container mount.
 
 When a frozen `nonlive-campaign/v1` plan is configured, the existing worker
 scheduler independently checks useful poll flow, the two-window canary, protected
@@ -594,15 +603,17 @@ explicit FAILED receipts with their prior result retained, on a separate restore
 command-store copy. The verified original snapshot remains unchanged. Recovered
 exports are independent frozen results, not permission to query a provider.
 
-The protected secondary directory `/etc/polysia-platform-recovery/console`
-retains web configuration, unit templates, the dedicated runtime token and
-independent CSRF. Credential files are root-only; the directory is mode 0700,
-outside the upload identity. The administrative API token is not retained there.
-Refresh these inputs through verified administrative SSH whenever primary
-equivalents change. Both hosts retain the independently hash-verified connector.
-Secondary units are templates only; the connector stays inactive.
+The D1 record describes a protected secondary Console template inventory at
+`/etc/polysia-platform-recovery/console`. The N1 inspection did not find that
+inventory commissioned, so automatic Console recovery is NOT_COMMISSIONED.
+Do not infer it from verified analytical-data recovery. Commissioning requires
+current verified web configuration/unit templates, dedicated runtime credentials,
+independent CSRF and the hash-verified connector through administrative SSH.
+Keep credential files root-only in a mode-0700 directory outside the upload
+identity; do not retain the administrative API token there. Keep secondary
+units inactive until the failover checks below are complete.
 
-The frontend isolated startup receipt uses the same image, network none,
+The historical D1 frontend isolated startup receipt used the same image, network none,
 128 MiB/0.25 CPU, independent CSRF and no financial-store mount. It supplements
 complete financial recovery; it does not replace replay or measured RPO/RTO.
 For manual failover, first fence the primary and reconcile newest authority with

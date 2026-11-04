@@ -60,7 +60,11 @@ class NativeShadowService(ContinuousShadowService):
                         recorder, LatencyRecorder
                     ) else None
                     if path is not None:
-                        health.update(_capacity_health(path, capacity))
+                        health.update(_capacity_health(
+                            path, capacity, telemetry_fault=bool(
+                                health["telemetry_errors"] or health["dropped_measurements"]
+                            ),
+                        ))
                         temporary = path.with_suffix(".partial")
                         temporary.write_text(json.dumps(health, sort_keys=True), encoding="utf-8")
                         temporary.replace(path)
@@ -68,7 +72,9 @@ class NativeShadowService(ContinuousShadowService):
                     logging.getLogger(__name__).warning("native_telemetry_publication_failed")
 
 
-def _capacity_health(path: Path, observer: ProcessCapacity | None) -> dict[str, Any]:
+def _capacity_health(
+    path: Path, observer: ProcessCapacity | None, *, telemetry_fault: bool = False,
+) -> dict[str, Any]:
     """Retain bounded process totals across oneshot restarts, outside economic state."""
     previous: dict[str, Any] = {}
     history_gap = False
@@ -100,6 +106,14 @@ def _capacity_health(path: Path, observer: ProcessCapacity | None) -> dict[str, 
     except ValueError:
         old = {}
         history_gap = True
+    retained_fault = {
+        "native_telemetry_fault_observed": telemetry_fault or previous.get(
+            "native_telemetry_fault_observed",
+        ) is True,
+        "native_telemetry_history_gap": history_gap or previous.get(
+            "native_telemetry_history_gap",
+        ) is True,
+    }
     try:
         if observer is None:
             raise ValueError("process observer unavailable")
@@ -138,10 +152,11 @@ def _capacity_health(path: Path, observer: ProcessCapacity | None) -> dict[str, 
                 old.get("minimum_free_disk_bytes", free), free,
             ),
         }
-        return {"process_capacity": sample, "process_capacity_summary": summary,
+        return {**retained_fault, "process_capacity": sample, "process_capacity_summary": summary,
                 "process_capacity_errors": errors}
     except Exception:
-        return {"process_capacity": {"status": "UNKNOWN", "reason": "probe_failed"},
+        return {**retained_fault,
+                "process_capacity": {"status": "UNKNOWN", "reason": "probe_failed"},
                 "process_capacity_summary": old, "process_capacity_errors": errors + 1}
 
 
