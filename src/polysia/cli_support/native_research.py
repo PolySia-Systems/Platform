@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,6 +28,7 @@ from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
 from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
 from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
+from polysia.monitoring.process_capacity import ProcessCapacity
 from polysia.storage.acquisition_authority import AcquisitionAuthority
 from polysia.storage.continuous_shadow import (
     ContinuousShadowLeaseRepository,
@@ -41,6 +43,10 @@ class NativeShadowService(ContinuousShadowService):
 
     async def poll(self, source_id: str) -> ContinuousPollOutcome:
         try:
+            capacity = ProcessCapacity()
+        except Exception:
+            capacity = None
+        try:
             return await super().poll(source_id)
         finally:
             recorder = self.latency_recorder
@@ -54,11 +60,89 @@ class NativeShadowService(ContinuousShadowService):
                         recorder, LatencyRecorder
                     ) else None
                     if path is not None:
+                        health.update(_capacity_health(path, capacity))
                         temporary = path.with_suffix(".partial")
                         temporary.write_text(json.dumps(health, sort_keys=True), encoding="utf-8")
                         temporary.replace(path)
                 except Exception:
                     logging.getLogger(__name__).warning("native_telemetry_publication_failed")
+
+
+def _capacity_health(path: Path, observer: ProcessCapacity | None) -> dict[str, Any]:
+    """Retain bounded process totals across oneshot restarts, outside economic state."""
+    previous: dict[str, Any] = {}
+    history_gap = False
+    errors = 0
+    try:
+        if path.exists():
+            if path.is_symlink() or path.stat().st_size > 4096:
+                raise ValueError("invalid optional process observation")
+            previous = dict(json.loads(path.read_text(encoding="utf-8")))
+            errors = int(previous.get("process_capacity_errors", 0))
+            if errors < 0:
+                raise ValueError("invalid optional process error count")
+    except (OSError, ValueError, TypeError):
+        previous = {}
+        errors = 0
+        history_gap = True
+    release = load_runtime_identity().deploy_sha
+    old = previous.get("process_capacity_summary", {})
+    if not isinstance(old, dict) or old.get("release_commit") != release:
+        old = {}
+    try:
+        for key, value in old.items():
+            if key in ("release_commit", "first_observed_at", "last_observed_at", "history_gap"):
+                continue
+            if value is not None and (
+                not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0
+            ):
+                raise ValueError("invalid optional process history")
+    except ValueError:
+        old = {}
+        history_gap = True
+    try:
+        if observer is None:
+            raise ValueError("process observer unavailable")
+        sample = observer.observation(path.parent)
+        stamp = datetime.now(UTC).isoformat()
+        elapsed = sample["sample_seconds"]
+        cpu = sample["process_cpu_percent_one_core"]
+        rss = sample["peak_process_rss_bytes"]
+        free = sample["disk_free_bytes"]
+        if (not isinstance(elapsed, (int, float))
+                or cpu is not None and not isinstance(cpu, (int, float))
+                or rss is not None and not isinstance(rss, int)
+                or not isinstance(free, int)):
+            raise ValueError("invalid optional process sample")
+        if any(value is not None and (not math.isfinite(value) or value < 0)
+               for value in (elapsed, cpu, rss, free)):
+            raise ValueError("invalid optional process sample")
+        summary = {
+            "release_commit": release,
+            "samples": int(old.get("samples", 0)) + 1,
+            "first_observed_at": old.get("first_observed_at", stamp),
+            "last_observed_at": stamp,
+            "history_gap": history_gap or old.get("history_gap", False),
+            "sample_seconds_total": old.get("sample_seconds_total", 0) + elapsed,
+            "cpu_seconds_total": old.get("cpu_seconds_total", 0) + (
+                0 if cpu is None else float(cpu) * elapsed / 100
+            ),
+            "cpu_samples": int(old.get("cpu_samples", 0)) + int(cpu is not None),
+            "maximum_cpu_percent_one_core": max(
+                old.get("maximum_cpu_percent_one_core") or 0, cpu or 0,
+            ) if cpu is not None else old.get("maximum_cpu_percent_one_core"),
+            "maximum_peak_process_rss_bytes": max(
+                old.get("maximum_peak_process_rss_bytes") or 0, rss or 0,
+            ) if rss is not None else old.get("maximum_peak_process_rss_bytes"),
+            "minimum_free_disk_bytes": min(
+                old.get("minimum_free_disk_bytes", free), free,
+            ),
+        }
+        return {"process_capacity": sample, "process_capacity_summary": summary,
+                "process_capacity_errors": errors}
+    except Exception:
+        return {"process_capacity": {"status": "UNKNOWN", "reason": "probe_failed"},
+                "process_capacity_summary": old, "process_capacity_errors": errors + 1}
 
 
 class NativeSnapshotPort:

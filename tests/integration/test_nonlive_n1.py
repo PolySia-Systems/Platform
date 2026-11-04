@@ -98,6 +98,65 @@ async def test_native_buffer_loss_is_visible_without_changing_results(native_run
     assert health["dropped_measurements"] > 0
 
 
+@pytest.mark.asyncio
+async def test_native_process_observations_survive_restart_and_fail_open(
+    native_runtime, monkeypatch,
+):
+    from polysia.cli_support import native_research
+
+    calls = 0
+
+    class Observer:
+        def observation(self, root):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("optional fixture probe failure")
+            return {"sample_seconds": 2, "process_cpu_percent_one_core": 10,
+                    "peak_process_rss_bytes": calls * 1000, "disk_free_bytes": 9000 - calls}
+
+    monkeypatch.setattr(native_research, "ProcessCapacity", Observer)
+    root, clock, scenario, *_ = native_runtime
+    await tick(native_runtime)
+    clock.value += timedelta(minutes=2)
+    await tick(native_runtime)
+    health = json.loads((root / "native-latency.health.json").read_text())
+    summary = health["process_capacity_summary"]
+    assert summary["samples"] == 2
+    assert summary["maximum_peak_process_rss_bytes"] == 2000
+    assert summary["maximum_cpu_percent_one_core"] == 10
+    assert summary["cpu_seconds_total"] == pytest.approx(0.4)
+    assert summary["sample_seconds_total"] == 4
+    assert summary["minimum_free_disk_bytes"] == 8998
+    assert summary["history_gap"] is False
+    assert (root / "native-latency.health.json").stat().st_size <= 4096
+    scenario.fail = True
+    clock.value += timedelta(minutes=2)
+    with pytest.raises(Exception, match="poll failed safely"):
+        await tick(native_runtime)
+    health = json.loads((root / "native-latency.health.json").read_text())
+    assert health["process_capacity"]["status"] == "UNKNOWN"
+    assert health["process_capacity_errors"] == 1
+    assert health["process_capacity_summary"] == summary
+
+
+def test_corrupt_optional_capacity_history_does_not_hide_current_health(tmp_path):
+    from polysia.cli_support.native_research import _capacity_health
+
+    path = tmp_path / "native-latency.health.json"
+    path.write_text(json.dumps({"process_capacity_errors": "corrupt"}))
+
+    class Observer:
+        def observation(self, root):
+            return {"sample_seconds": 2, "process_cpu_percent_one_core": 10,
+                    "peak_process_rss_bytes": 1000, "disk_free_bytes": 9000}
+
+    health = _capacity_health(path, Observer())
+    assert health["process_capacity_summary"]["samples"] == 1
+    assert health["process_capacity_summary"]["history_gap"] is True
+    assert health["process_capacity_errors"] == 0
+
+
 def test_exact_rolling_retry_respects_inclusive_boundary_and_settlement(tmp_path):
     bounded = replace(
         policy(),

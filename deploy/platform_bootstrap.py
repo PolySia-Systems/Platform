@@ -62,6 +62,23 @@ def verify_artifact(directory: Path, *, commit: str) -> dict[str, Any]:
     return manifest
 
 
+def campaign_mounts(worker: dict[str, Any], *, config_root: Path | None = None) -> list[str]:
+    """Expose only the configured bounded plan to its existing process owners."""
+    configured = worker.get("campaign")
+    if configured is None:
+        return []
+    if not isinstance(configured, str):
+        raise ValueError("invalid campaign plan path")
+    path = PurePosixPath(configured)
+    if (path.parent != PurePosixPath("/config")
+            or re.fullmatch(r"[a-zA-Z0-9_.-]+\.json", path.name) is None):
+        raise ValueError("campaign plan must be a dedicated configuration JSON file")
+    source = (CONFIG_ROOT if config_root is None else config_root) / path.name
+    if source.is_symlink() or not source.is_file() or source.stat().st_size > 16_384:
+        raise ValueError("campaign plan missing, linked or outside its bound")
+    return ["--volume", f"{source}:{path}:ro"]
+
+
 def container_command(
     image: str,
     *,
@@ -130,6 +147,11 @@ def container_command(
         ]
         if configured:
             args += ["--volume", f"{config_root}/manifest.json:/config/manifest.json:ro"]
+            worker_path = CONFIG_ROOT / "worker.json"
+            if worker_path.exists():
+                if worker_path.is_symlink() or worker_path.stat().st_size > 16_384:
+                    raise ValueError("worker configuration linked or outside its bound")
+                args += campaign_mounts(json.loads(worker_path.read_text()))
     args += [
         "--volume",
         f"{state_root}/publication:/publication:{'ro' if role == 'web' else 'rw'}",

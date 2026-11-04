@@ -139,6 +139,13 @@ and retains at most 512 entries of 4 KiB (2 MiB payload bound). Hits preserve
 observation time. Status, fees, risk, resolution and books require current reads.
 Do not interpret cache identity as financial authority or trimmed JSON as wire savings.
 
+The bounded `native-latency.health.json` also retains process CPU sample totals,
+peak process RSS and minimum free disk across oneshot polls of the same release.
+These measure polling processes, not whole-host or container peak consumption.
+Unavailable probes remain UNKNOWN; corrupt history records a coverage gap.
+Release changes begin a new summary. Optional observation failures preserve the
+original poll result, and these counters confer no acquisition authority.
+
 When a frozen `nonlive-campaign/v1` plan is configured, the existing worker
 scheduler independently checks useful poll flow, the two-window canary, protected
 control/recovery receipts and projected remaining cost. Only an accepted canary
