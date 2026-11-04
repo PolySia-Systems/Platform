@@ -30,7 +30,7 @@ for candidate/integrated/deployed identities and the eventual observation verdic
 This paragraph is not a statement that an acquisition timer is presently useful
 or that qualification has completed. DATA_ONLY and Live-disabled defaults remain.
 
-N1 resumption, 2026-11-04: protected host reads confirmed no finite grant or real
+N1 resumption, 2026-11-04 09:12 UTC: protected host reads confirmed no finite grant or real
 observation had started; the retained predecessor remains STOPped and fenced.
 Mount fixes integrated through #241/#242, and current predecessor encrypted
 recovery was independently refreshed with its timer restored. Final review added
@@ -38,6 +38,18 @@ retained native telemetry-fault evidence across healthy oneshot restarts. Exact
 corrected-source CI, installation and the real canary/48-hour observation remain
 operational gates in the same [N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
 Idle time does not satisfy qualification; financial authority remains absent.
+
+N1 installed state, 2026-11-04 10:48 UTC: exact release
+`b051940aa5ce707c927b627e66a7da9cd85fdce5` passed native CI and the supported
+retained-state installation. Its encrypted generation was independently restored
+with acquisition false and network none. The single finite grant was issued, but
+the retained cohort returned a complete empty five-minute activity window.
+Qualification is **OBSERVATION_BLOCKED**: the campaign failed its useful-flow
+gate, durable STOP and the OS fence are retained, and useful observation is zero
+hours. Consumption grew by one request / 85 response bytes; no grant was reset
+or renewed. The required real canary, 48-hour observation and final review remain
+outstanding. Current controls, receipts and all eight verdicts are in the same
+[N1 handoff](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
 
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
