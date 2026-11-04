@@ -65,6 +65,7 @@ async def test_native_optional_storage_failure_preserves_success_and_original_ex
     def unavailable(*_args, **_kwargs):
         raise sqlite3.OperationalError("fixture unavailable")
 
+    initialize = LatencyTelemetryStore.initialize
     monkeypatch.setattr(LatencyTelemetryStore, "initialize", unavailable)
     first = await tick(native_runtime)
     assert first.experiment.lifecycle.value == "RUNNING"
@@ -72,6 +73,7 @@ async def test_native_optional_storage_failure_preserves_success_and_original_ex
     health = json.loads((root / "native-latency.health.json").read_text())
     assert health["telemetry_errors"] > 0
     assert health["dropped_measurements"] > 0
+    assert health["native_telemetry_fault_observed"] is True
     scenario.fail = True
     clock.value += timedelta(minutes=2)
     with pytest.raises(Exception, match="poll failed safely") as caught:
@@ -80,6 +82,21 @@ async def test_native_optional_storage_failure_preserves_success_and_original_ex
     while cause.__cause__ is not None:
         cause = cause.__cause__
     assert "safe source failure" in str(cause)
+    # A new process can recover its optional database without erasing the adverse
+    # observation. A failed resource probe must not erase that latch either.
+    monkeypatch.setattr(LatencyTelemetryStore, "initialize", initialize)
+    scenario.fail = False
+    clock.value += timedelta(minutes=2)
+    await tick(native_runtime)
+    health = json.loads((root / "native-latency.health.json").read_text())
+    assert health["telemetry_errors"] == 0
+    assert health["native_telemetry_fault_observed"] is True
+    assert health["native_telemetry_history_gap"] is False
+    from polysia.cli_support.native_research import _capacity_health
+
+    assert _capacity_health(root / "native-latency.health.json", None)[
+        "native_telemetry_fault_observed"
+    ] is True
 
 
 @pytest.mark.asyncio

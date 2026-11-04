@@ -404,6 +404,8 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
             "metadata_coverage metadata_window_start metadata_window_end "
             "metadata_total_in_window metadata_sampled metadata_truncated "
             "telemetry_health.dropped_measurements telemetry_health.telemetry_errors "
+            "telemetry_health.native_telemetry_fault_observed "
+            "telemetry_health.native_telemetry_history_gap "
             "telemetry_health.last_successful_flush host_free_disk_bytes "
             "latency.largest_measured_stage latency.meaning request_attribution.correlated "
             "request_attribution.observed latest_poll_requests.diagnostic_errors "
