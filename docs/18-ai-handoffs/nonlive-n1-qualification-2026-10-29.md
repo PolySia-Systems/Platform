@@ -436,3 +436,106 @@ or claim useful observation. No new grant, relaxed acceptance, financial
 authority or Live activation is authorized. The existing heartbeat must resume
 the concrete PR/CI work, then inspect protected current receipts; it must not
 poll through the real canary or observation in an active model turn.
+
+## Readiness repair installation, 4 November 2026 13:19 UTC
+
+PR #251 passed all required checks in run `41829429646`, including Windows and
+CI Gate, and merged through normal protections as
+`783954f9c9fb1ffef3905c2536f503df71f3f43b`. Exact-main run `41832421155` then
+passed quality, Windows, browser, container, installation and CI Gate. Its
+classifier skipped supply-chain; full parent run `41809429506` passed those gates
+with identical dependency/build inputs. Local full pytest also completed:
+2,009 passed, 33 skipped in 486.33 seconds. Earlier local fixture/setup failures
+were corrected and are not represented as passing invocations.
+
+Artifact `13322459418` ZIP SHA-256
+`9c56daf9a7779b405f87be1c71732e072ca65d39f6025c4a05fb963e3d8cacbb`
+was downloaded directly on both pinned hosts without transferring an account
+token. All 334 first-party files matched Git. Image
+`sha256:12dff8e3cae85e8e9e8dcecb0ac1d73271ee4dc30ade92a83c423482b724639d`
+and package digest
+`5308d9ef5c9a67311785e575b5587460d07f22b7f4fee68708cd1231ce7c10c3`
+were verified independently on both hosts. Archive SHA-256 is
+`8c3f978077bde2384b901034989e04d1a644c5b2c066824d47da7e994cad1468`.
+
+An isolated retained-copy proof exercised the installed repair command twice,
+kept the existing finite grant/accounting and every economic row, and retained
+the original failure. It proved PREPARING/idempotency, STOP fault detection,
+nonliquidating drain, historical report integrity and 40 retained metadata
+comparisons with network none. A helper placeholder substitution failed before
+remote execution; that preparation failure was corrected before the proof ran.
+
+The supported journaled transition and shipped installer then installed this
+source on Helsinki with durable STOP and the OS fence retained. The original
+plan bytes, admission expiry, cohort, financial experiment, consumption and
+private credential bytes were preserved. Repair attempt
+`a93866a41fff3006f6282bcc538cb2fc61656be610517a63577d39c1d423dab6`
+records `owner-n1-readiness-20261104` and the premature-flow-clock repair reason.
+The original failed status/accounting remains in its receipt and the protected
+`readiness-original-checkpoint`. No new grant was created.
+
+Exact encrypted recovery of the installed repair passed on both hosts:
+`platform-20261104T132007Z.tar.age`, 147,246,376 bytes, SHA-256
+`fbaa638653885c3d1ef25bdc0750b5f01c29fd748b92df46ecc9724a59a0b063`.
+Independent restore was STOPPED, acquisition false, network none, with measured
+RPO 65.197 seconds / RTO 47.986 seconds and the same nonempty analytical digest.
+These receipts establish recovery of this generation, not useful observation
+or financial recovery. Actual control commissioning and server readiness remain
+separate gates. DATA_ONLY / Live-disabled / no financial authority still apply.
+
+## Server readiness commissioned, 4 November 2026 13:26 UTC
+
+Attempt-specific private TLS controls passed: STOP with zero new source I/O,
+REQUESTED_NOT_OBSERVED, one durable revision for a duplicate, receipt recovery
+after a lost reply, stale-preview denial, wrong-target denial, resume and a new
+worker process retaining its due slot. STOP/resume revisions were 12/13. One
+complete quiet revalidation charged 85 bytes; restart was WAITING_RETRY, with no
+useful poll admitted. The pre-existing transient-failure count of one was
+preserved; complete quiet did not add fault strikes. Both STOP fences were
+restored after the controlled test.
+
+A second exact encrypted generation captured that spent authority and telemetry
+before scheduler commissioning: `platform-20261104T132358Z.tar.age`, 147,256,616
+bytes, SHA-256
+`1e1b7a9732739197fb72a67711109174f1cfdf739de9429ad70dd3c04a6d09b4`.
+Independent STOPPED/network-none/acquisition-false restore passed with RPO 65.912
+seconds and RTO 46.848 seconds. The current attempt's control proof binds the
+actual control receipt hash, this recovery filename/hash, source, original
+campaign/policy/cohort and attempt ID. It is not inherited from the older release.
+
+At 13:26:13 UTC the existing worker scheduler was commissioned for bounded
+**PREPARING**, under the same consumed grant. This is readiness operation,
+not CANARY or OBSERVATION_RUNNING. The first tick returned
+WAITING_SOURCE_EVIDENCE / native_cohort_no_recent_activity. Current acquisition
+is enabled within the frozen public-data limits; the OS fence was archived only
+after actual proofs, and the worker timer is active. The native worker
+independently enforces STOP, expiry, budgets, real faults and the latest viable
+canary start (19:56:02 UTC with its margin). Neither consumed grant helper was
+replayed. Preparation cannot qualify from idle time or empty activity.
+
+The 13:26:55 UTC receipt confirmed 213 cumulative requests / 66,657,764 accounted
+response bytes, uncertainty zero; campaign usage is 3 requests / 255 bytes,
+leaving 44,997 requests / 251,657,985 bytes. All 148 events / 296 evaluations /
+22 ledger entries and nine virtual positions remain. Native qualification
+telemetry is now persisted: zero errors/drops, two process samples, peak RSS
+128,004,096 bytes, peak observed CPU 35.229% of one core and free disk at least
+23,370,416,128 bytes. These are short prequalification samples; operational
+cache savings, sustained capacity and useful poll latency remain unmeasured.
+
+The real canary anchor is still absent: successful useful polls and fresh
+evaluations are zero. The requested two-hour report must follow an actual future
+canary_started_at, not installation, PREPARING or this chat's time. Only its
+accepted two real windows may start the unchanged 48 useful real hours. The
+existing automatic follow-up remains active; no model polling loop owns this
+operation. Financial authority and Live remain NOT_AUTHORIZED / NOT_PERFORMED.
+
+| Verdict | Dated readiness assessment |
+|---|---|
+| ENGINEERING | PASS for integrated and installed repair; useful real workload validation remains pending. |
+| CONSOLE_CONTROL | PASS for actual bounded readiness STOP/resume/restart/negative controls; useful-flow acceptance remains separate. |
+| INTEGRATION | PASS at exact-main source and CI above. |
+| DEPLOYMENT | PASS with independent exact encrypted recovery; current phase is PREPARING. |
+| SUSTAINED_NONLIVE | PENDING / NOT_YET_QUALIFIED: zero useful observation hours; real canary, 48 hours and final review outstanding. |
+| REPOSITORY_CLEANUP | Assessed earlier items complete; #208/unique local work retained; this operational report awaits protected integration. |
+| HUMAN_ACCEPTANCE | BLOCKED: actual human acceptance absent. |
+| PRE_LIVE_READINESS | BLOCKED by the independent account/custody/ADR/envelope/recovery/human gates; no financial action performed. |

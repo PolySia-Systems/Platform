@@ -58,6 +58,24 @@ preserved. Protected CI, exact artifact commissioning and the real observation
 remain outstanding; candidate code is not a change in current host state. See
 the same dated operational record for the explicit repair receipt and gates.
 
+N1 repair installation, 2026-11-04 13:19 UTC: PR #251 and exact-main CI passed;
+release `783954f9c9fb1ffef3905c2536f503df71f3f43b` was installed through the
+supported retained-session transition with STOP and the OS fence preserved.
+An isolated installed-copy repair proof and exact independent encrypted recovery
+passed. The original single grant, plan, expiry, cohort, accounting and adverse
+evidence remain. PREPARING earns no observation credit; actual controls, real
+canary and 48-hour useful observation remain separate operational gates in the
+same [N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
+
+N1 server readiness, 2026-11-04 13:26 UTC: actual attempt-bound private controls,
+fresh native qualification telemetry/process observations and independent exact
+encrypted recovery passed. The existing scheduler now owns bounded PREPARING
+under the original single grant; the retained cohort still returns complete
+quiet activity. Useful canary/observation time is zero. The unchanged two real
+windows and 48 useful hours remain mandatory, with an automatic follow-up and
+the original finite expiry. This dated readiness receipt is not completed
+qualification; consult protected current host evidence and the same N1 record.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in
