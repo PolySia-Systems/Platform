@@ -539,3 +539,84 @@ operation. Financial authority and Live remain NOT_AUTHORIZED / NOT_PERFORMED.
 | REPOSITORY_CLEANUP | Assessed earlier items complete; #208/unique local work retained; this operational report awaits protected integration. |
 | HUMAN_ACCEPTANCE | BLOCKED: actual human acceptance absent. |
 | PRE_LIVE_READINESS | BLOCKED by the independent account/custody/ADR/envelope/recovery/human gates; no financial action performed. |
+
+## Terminal failed-attempt review, 4 November 2026 22:27 UTC
+
+**SUSTAINED_NONLIVE: NOT_QUALIFIED.** The server independently persisted FAILED /
+`insufficient_remaining_real_observation_authority` at
+`2026-11-04T19:56:10.700827+00:00`, before another acquisition request. The last
+source response was at 19:55:11.706253 UTC. No canary_started_at or
+observation_started_at exists: neither two accepted real rolling windows nor
+the required 48 useful real hours was achieved. The requested two-hour pass
+report cannot be issued. PREPARING and idle wall-clock time receive zero credit.
+
+This is the terminal review of a failed finite attempt, not successful
+qualification or a waiver of its required real period. With the original grant,
+unchanged criteria and remaining time, completion is no longer possible. No
+further restart, replacement cohort, new grant, expiry extension or acceptance
+relaxation was performed or is authorized by this closeout. The unused allowance
+is retained, not refunded or converted into qualification.
+
+The 22:24 UTC protected read verified acquisition already durably STOPped by the
+server with unchanged accounting since its last request. The administrative
+closeout then restored the OS restart fence and stopped the acquisition timer;
+no acquisition container remains. This added a STOP receipt, not source I/O.
+The exact failed phase/reason, original failed attempt, repair receipt, immutable
+plan and policy, all consumed accounting and virtual inventory remain preserved.
+
+Measured retained evidence was reviewed without making another provider request:
+
+| Measure | Actual result and limit |
+|---|---|
+| Cumulative authority | 454 requests / 66,678,249 accounted response bytes; uncertainty zero; exactly one finite grant. |
+| Finite campaign consumption | 244 requests / 20,740 response bytes, including the original 1 request / 85 bytes; 44,756 requests / 251,637,500 bytes remain unspent. |
+| Repair consumption | 243 requests / 20,655 bytes, all complete empty responses, first at 13:23:06.460944 UTC and last at 19:55:11.706253 UTC. |
+| Evidence coverage | All 244 response hashes and frozen user/TRADE/300-second filters verified. Repair windows cover 23,825 seconds in union with no uncovered gaps; maximum request-end spacing 184 seconds. This describes provider responses, not independently proven absence of on-chain activity. |
+| HTTP latency | 244 samples; nearest-rank p50 212 ms / p95 274 ms / p99 327 ms, mean 220.852 ms, range 134–614 ms. |
+| Native qualification latency | 243 cohort_revalidation spans, all ok; p50 235.441 ms / p95 297.803 ms / p99 348.748 ms, mean 246.203 ms, range 156.975–635.122 ms. |
+| Native correlation/health | 243/243 repaired qualification calls instrumented; zero admitted poll correlations because no admitted polls occurred. Zero telemetry errors/drops, no retained history-gap/fault flag. The first original-release attempt had no native span. |
+| Process observations | 243 samples; 19.204 process CPU seconds across 62.694 sampled wall seconds, observed peak CPU 40.675% of one core, peak RSS 128,077,824 bytes, minimum sampled free disk 23,338,639,360 bytes. These are short qualification-call samples, not whole-host or sustained-load measurements. |
+| Useful workload | Zero admitted polls, fresh evaluations, accepted canary windows and useful observation hours. Existing 148 events / 296 evaluations / 22 ledger entries and nine virtual positions preserved. |
+| Operational cache/cost | Optimized-path cache savings, useful end-to-end latency and sustained throughput NOT_EXERCISED. The measured incremental public-data payload is 20,740 bytes; monetary provider/hosting cost was not measured. No new paid provider or infrastructure was introduced. |
+
+The response envelope and request contract were cross-checked against the
+[official account activity documentation](https://docs.polymarket.com/api-reference/feeds/list-account-activity).
+No request/filter defect was established. The cause of empty responses beyond
+the API boundary (wallet inactivity versus provider publication/indexing delay)
+remains unproven. Historical activity cannot establish present availability.
+The retained failure counter of one was not reset; valid empty responses did
+not accumulate new fault strikes or manufacture eligibility.
+
+After STOP/fencing, exact final spent-state recovery passed again:
+
+| Receipt | Result |
+|---|---|
+| Generation | `platform-20261104T222519Z.tar.age`, 148,516,440 bytes |
+| Ciphertext SHA-256 | `891ee15a4bee14be9bba70dbb2900ce128c5edc4a37117dfd3b09e2cb54f743f` |
+| Primary | ENCRYPTED_UPLOADED, same installed source, no observational snapshot errors |
+| Independent recovery | VERIFIED_ISOLATED_RESTORE, same filename/source/hash, network none, acquisition false, STOPPED |
+| RPO / RTO | 67.229 / 48.150 seconds, configured objectives met |
+| Analytical digest | `4b4e5dc8cee13dad8d02f8d6b1644dd4323d7ae30b90fe5b79037e7ebb26df84` |
+
+The protected failed-readiness-review receipt preserves measured evidence.
+The runtime's final_review=REQUIRED field is an automatic request for operator
+review; this dated closeout records that review externally without rewriting
+the adverse campaign state. Original expiry remains 6 November 22:26:02.810673
+UTC; STOP and the OS fence prevent further operation independently of expiry.
+
+| Required verdict | Terminal failed-attempt assessment |
+|---|---|
+| ENGINEERING | PASS: integrated tested repair, exact installed-copy accounting/idempotency proof and native fault detection; real useful performance remains unqualified. |
+| CONSOLE_CONTROL | PASS for actual private-TLS STOP/resume/restart/negative controls on bounded readiness; no claim of a successful useful canary. |
+| INTEGRATION | PASS: protected PR #251 and exact-main CI. |
+| DEPLOYMENT | PASS: exact source installed, final spent-state independently recovered, acquisition STOPped and OS-fenced. |
+| SUSTAINED_NONLIVE | NOT_QUALIFIED: no accepted real canary and no required 48-hour useful observation. |
+| REPOSITORY_CLEANUP | PASS for assessed items; own integrated branches preserved then retired, #208 and unique dependency-review work retained; closeout uses normal protections. |
+| HUMAN_ACCEPTANCE | BLOCKED / NOT_PERFORMED: actual human acceptance absent. |
+| PRE_LIVE_READINESS | BLOCKED / LIVE_NOT_AUTHORIZED / NOT_PERFORMED: independent financial, custody, account, ADR, envelope, recovery and human gates unresolved. |
+
+This failed-attempt review closes its operational work with an honest negative
+qualification verdict. It does not claim that the original successful
+qualification objective was achieved. Once this closeout is protected and the
+final STOP/recovery/accounting receipts are checked, its follow-up may end;
+unattended acquisition must remain fenced. No external alert was sent.

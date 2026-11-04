@@ -76,6 +76,20 @@ windows and 48 useful hours remain mandatory, with an automatic follow-up and
 the original finite expiry. This dated readiness receipt is not completed
 qualification; consult protected current host evidence and the same N1 record.
 
+N1 terminal attempt, 2026-11-04 22:27 UTC: **SUSTAINED_NONLIVE NOT_QUALIFIED**.
+The server independently STOPped at 19:56:10 UTC when insufficient original
+authority time remained; all 244 finite-campaign responses were complete empty
+activity windows. No accepted canary or useful observation period occurred.
+The final measured review preserves 454 cumulative requests / 66,678,249 bytes,
+zero uncertainty, the single grant and all virtual inventory. Acquisition is
+durably STOPped, the OS restart fence restored and the worker timer inactive.
+Exact final encrypted spent-state recovery passed independently. Engineering,
+controls, integration and deployment evidence remain valid within their scope;
+human acceptance and Pre-Live remain blocked. The same
+[N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md) contains all
+eight verdicts, measurements and limitations. The required real period was not
+achieved or waived; successful qualification remains unmet.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in
