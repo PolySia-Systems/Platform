@@ -163,6 +163,16 @@ expiry persist a local failure and acquisition STOP. Completion stops new reads,
 retains virtual inventory, and requires final evidence review. App follow-ups
 inspect this server-owned evidence; a model turn ending does not qualify the run.
 
+If commissioning receives complete empty activity for the frozen retained cohort,
+retain that exclusion and the original timestamps. It cannot establish fresh
+eligibility or useful observation. Preserve STOP/fencing and the failed campaign
+receipt; do not substitute another wallet, older activity or relaxed criteria.
+An APPLIED resume receipt describes dispatch; an independent campaign safety
+gate may immediately retain STOP before I/O. Verify actual worker/authority state
+before calling the path running. Any permissible acceptance restart requires an
+explicit preserved reason and enough of the same finite authority; it cannot
+reset consumption or create another grant.
+
 `preflight` reports that refusal with a nonzero exit. `stage` downloads and
 verifies the exact archive/scripts and image metadata without loading a Docker
 image or changing active configuration, units or data. Its durable staging
@@ -564,7 +574,9 @@ No new alert recipient is guessed: actionable failures remain in Console/journal
 
 ## Bounded encrypted recovery
 
-Nuremberg's dedicated 4-GiB filesystem is `/srv/polysia-platform-backups`.
+Nuremberg's dedicated 4-GiB backup allocation is `/srv/polysia-platform-backups`;
+the underlying host filesystem is shared. Measure that directory's actual use
+against its allocation as well as checking host free space.
 Its SFTP identity can reach only that chroot. The recovery private key is root-only
 on Nuremberg, outside the upload account and all archives. Helsinki has only the
 public age recipient and its separate upload key. SSH host identity is pinned

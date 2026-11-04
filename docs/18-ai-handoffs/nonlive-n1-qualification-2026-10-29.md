@@ -66,7 +66,7 @@ evaluate itself as an active campaign. The existing 480 MiB recovery payload cap
 is retained, and SQLite copying preserves the stricter 9 GiB free-disk floor.
 The new allowance must fit these storage bounds as well as provider limits.
 
-## Operational gates
+## Initial operational gates — superseded by the dated receipts below
 
 ENGINEERING: candidate validation in progress. INTEGRATION and DEPLOYMENT: pending
 exact final-source CI and immutable installation. SUSTAINED_NONLIVE: pending real
@@ -259,3 +259,144 @@ control mutations merely for this card during observation.
 
 These missing gates do not block independent authorized public-data work.
 LIVE_NOT_AUTHORIZED / NOT_PERFORMED remains the financial verdict.
+
+## Installed finite attempt — 2026-11-04, acquisition stopped
+
+**OBSERVATION_BLOCKED. Qualification is not complete.** The server never passed
+the two-window canary and has collected **zero hours** of useful observation.
+The mandatory real 48-hour period and final evidence review remain outstanding.
+Do not describe this state as OBSERVATION_RUNNING.
+
+The corrected release integrated through
+[#249](https://github.com/PolySia-Systems/Platform/pull/249) at
+`b051940aa5ce707c927b627e66a7da9cd85fdce5`.
+[Exact-main CI 41812018960](https://github.com/PolySia-Systems/Platform/actions/runs/41812018960)
+passed quality/full tests, Windows, browser, container, installed-package and
+CI Gate checks. Supply-chain was skipped by the change classifier; comprehensive
+[parent CI 41809429506](https://github.com/PolySia-Systems/Platform/actions/runs/41809429506)
+passed strict OSV/SBOM gates with identical dependency inputs. Its superseded
+automatic push run was cancelled; that run is not recorded as passed.
+
+Both hosts verified the exact CI artifact `13311494736`, ZIP SHA-256
+`44aa3b9e13175f663bcd5247bad8eaea539046181709be07fbf30514950a2bc9`.
+The installed image is
+`sha256:cc6cc42f73acbd47ea912efafe2594143579728caecf6a3184f523e41253fa45`;
+archive SHA-256 `0be71067e06afc10de48fb7b8cdd0e5587cf8334d00f292964e026e266d7ebe3`;
+first-party package digest
+`c1af74e0c122e32d4cce5ad1d41ffbd74af06ce0d92b937335b625ad4127d4a0`.
+All 333 installed first-party files matched the integrated Git bytes. The
+retained non-flat copy passed transition, historical report, isolated drain,
+autonomous stalled-flow STOP and actual installer/mount preflight checks.
+The supported primary installation completed at 10:28:15 UTC, preserving
+credential bytes, the unrelated 3x-ui service and all economic rows.
+
+Exactly one finite grant was issued. Its frozen start is
+`2026-11-04T10:28:52.481150+00:00`, expiry
+`2026-11-06T22:26:02.810673+00:00`, cohort digest
+`df10f8304eee1cf2983097d997d70c3f76a7d1d1bfb79a92e9593ab7fd36ad09`,
+policy digest `faaaaa2c67c1604e858f1574b569901ea5339ef615c710514b2eb8058461bb16`,
+configuration digest `0a4f4577443d38c6aa59cd2f56369ea30dcf18633fc244078390203ea65ab417`.
+Frozen plan SHA-256 is
+`4f46710daa78d78d1647132842f347ceba356dcd3c4d7b95cc2890288b7f1d92`.
+The additional ceiling is 45,000 attempts / 251,658,240 response bytes;
+cumulative ceilings preserve the old 210 attempts / 66,657,509 bytes.
+Rolling caps remain 900 requests / 64 MiB per hour, response cap 4 MiB,
+timeout 15 seconds, cadence 60 seconds, container 512 MiB / 0.5 CPU and
+free-disk floor 9 GiB. Closure reserves remain 60 requests / 8 MiB.
+No grant renewal, consumption reset or acceptance restart occurred.
+
+At 10:29:05 UTC the retained cohort's required 300-second activity window
+returned a complete empty v2 page: `data: []`, `has_more: false`, no next cursor.
+The [current official contract](https://data-api.polymarket.com/v2/openapi.json)
+specifies epoch-second bounds and recognizes an empty page as a valid result.
+The worker correctly reported `native_cohort_revalidation_insufficient`.
+This establishes insufficient current qualification evidence for that cohort;
+it does not establish a provider outage or a decoder defect. No replacement
+wallet, older activity, invented quote or looser criterion was substituted.
+
+Protected administrative STOP followed, retaining the operating-system fence.
+The actual installed supervisor subsequently persisted `FAILED` /
+`useful_poll_flow_stalled` at 10:37:41 UTC. Actual private-TLS controls then proved
+pending-versus-observed semantics, one durable duplicate revision, lost-reply
+recovery, stale/wrong-target denial, STOP with zero source I/O and restart with
+unchanged consumption. Resume dispatch was APPLIED, and the independent failed
+campaign immediately retained STOP before source I/O. **Resume dispatch did not
+produce a running data path.** Actual-session drain remains proved on the retained
+installed copy only; the original session and its nine positions remain preserved.
+
+## Measured coverage and recovery — 2026-11-04
+
+The 10:48:15 UTC read-only receipt verified one grant, 211 total attempts,
+66,657,594 total accounted response bytes, zero uncertain reservations,
+durable STOP, the restart fence, no acquisition container and no pending commands.
+Additional campaign consumption is **one request / 85 bytes**, with 44,999
+requests / 251,658,155 bytes unspent. The single HTTP duration was 188 ms;
+percentile claims are unsupported. There were no new successful research polls,
+fresh evaluations or unique admitted events. Cost per useful event is undefined.
+Request diagnostics cover 1/1 requests with duration; 0/1 has a poll correlation
+because the read was cohort qualification before a poll existed.
+
+Native spans/measurements remain zero and the native health sidecar/cache are
+absent for this attempt. Operational cache savings, stage latency, CPU/RSS and
+sustained throughput are therefore UNKNOWN / NOT_EXERCISED. Retained evidence
+still proves 40 comparable broad/narrow response pairs and the offline contracts;
+those results do not substitute for live optimized-path measurements. The actual
+financial journal remains 148 events / 296 evaluations / 22 ledger entries with
+nine open virtual positions. Long-gap live catch-up was not reached. Host free
+disk was 23,848,271,872 bytes (22.21 GiB), above the unchanged floor.
+
+The first new backup failed because the private artifact downloader's mode-0600
+files were preserved by installation and were unreadable by the backup identity.
+Only hash-verified non-secret release assets were normalized to the existing
+mode-0644 convention; private configuration, ZIP and download-directory protection
+were retained. Code/archive hashes were unchanged. The downloader was corrected
+for future verified assets and cache reuse. The failed receipt is retained.
+
+Exact current encrypted recovery then passed:
+
+| Receipt | Measured result |
+|---|---|
+| Generation | `platform-20261104T104358Z.tar.age`, 147,195,160 bytes |
+| Ciphertext SHA-256 | `db4afb134544602a5f532bf533ec5d2ecfec6da616eccc1dec398b1a884ec262` |
+| Primary | ENCRYPTED_UPLOADED, no observational snapshot errors |
+| Independent restore | VERIFIED_ISOLATED_RESTORE, same source/filename/hash, network none, acquisition false, STOPPED |
+| RPO / RTO | 64.851 / 47.471 seconds; configured objectives met |
+| Analytical digest | `4b4e5dc8cee13dad8d02f8d6b1644dd4323d7ae30b90fe5b79037e7ebb26df84` |
+| Vault files | 441,237,894 bytes within the existing 4-GiB allocation; the underlying host filesystem is shared |
+
+The fixed predecessor rollback was hash-verified again. Restoring it must still
+reconcile the newest spent authority; it cannot refund this finite attempt.
+Primary publisher/backup/recovery-status timers and secondary restore.timer are
+active. The acquisition worker timer is inactive and both STOP fences remain.
+No all-true canary control-proof file was fabricated from these partial controls.
+
+## Current verdicts and remaining work
+
+| Verdict | Dated assessment |
+|---|---|
+| ENGINEERING | PASS for integrated tested changes; real optimized-path performance remains unmeasured. |
+| CONSOLE_CONTROL | PARTIAL: protected dispatch/denial/STOP/restart proven; useful running/resume blocked by current cohort evidence. |
+| INTEGRATION | PASS through normal protections at the exact release above. |
+| DEPLOYMENT | PASS, installed and independently recovered while acquisition is fenced. |
+| SUSTAINED_NONLIVE | BLOCKED / NOT_QUALIFIED: canary FAILED, useful observation 0 hours; mandatory 48 hours and final review remain outstanding. |
+| REPOSITORY_CLEANUP | PASS for assessed items; #208 remains maintainer-owned, and unique local dependency-review work is retained. |
+| HUMAN_ACCEPTANCE | BLOCKED: actual human feedback absent. |
+| PRE_LIVE_READINESS | BLOCKED by the independent account/custody/ADR/envelope/recovery/human gates above. |
+
+#207 and #232 closed after current meaningful native evidence checks passed.
+The first local Windows-health invocation failed on the local cp1252 decoder;
+the same existing check passed with `python -X utf8`, then closed #232. That local
+tooling failure is separate from passing native Windows CI. #208 is the sole
+remaining open Issue. All assessed proposal branches are removed after their
+exact commits were integrated or preserved. The local
+`codex/dependency-runtime-review` worktree retains unique rejected work and is
+not force-deleted. Documentation-report branches are temporary until protected merge.
+
+The existing heartbeat remains active for meaningful state changes, expiry and
+required final review, with silence for unchanged fenced failure. It must read
+current protected receipts and must never replay the initial-grant helper or
+renew the grant. No observation window may be declared from idle time. Any
+permissible repair/restart needs an explicit retained reason, the same immutable
+identities/criteria and enough remaining original authority. At expiry, verify
+acquisition stopped and review all actual evidence again. This record is a
+blocked operational handoff, not completed qualification.
