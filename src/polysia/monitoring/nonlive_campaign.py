@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -11,6 +12,72 @@ from pathlib import Path
 from typing import Any
 
 from polysia.storage.acquisition_authority import AcquisitionAuthority
+
+READINESS_MARGIN_SECONDS = 1800
+REPAIR_RECEIPT = "nonlive-campaign-repair-receipt.json"
+
+
+def configuration_digest(value: dict[str, Any]) -> str:
+    """Bind a root-owned repair definition without a self-referential hash."""
+    bound = dict(value)
+    if isinstance(value.get("campaign_repair"), dict):
+        bound["campaign_repair"] = {
+            key: item for key, item in value["campaign_repair"].items()
+            if key != "configuration_digest"
+        }
+    return hashlib.sha256(json.dumps(
+        bound, sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+
+
+def effective_plan(value: dict[str, Any], raw: bytes) -> dict[str, Any]:
+    """Keep the original plan immutable; admit only an explicitly bound repair."""
+    plan = json.loads(raw)
+    repair = value.get("campaign_repair")
+    digest = configuration_digest(value)
+    if repair is not None:
+        if (not isinstance(repair, dict)
+                or repair.get("contract") != "nonlive-campaign-repair/v1"
+                or repair.get("original_plan_sha256") != hashlib.sha256(raw).hexdigest()
+                or repair.get("configuration_digest") != digest
+                or repair.get("release_commit") != value["release_commit"]
+                or repair.get("policy_digest") != plan["policy_digest"]
+                or repair.get("cohort_digest") != plan["cohort_digest"]
+                or not re.fullmatch(r"[0-9a-f]{64}", repair.get("previous_status_sha256", ""))
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", repair.get("image", ""))
+                or not 8 <= len(repair.get("authorization_reference", "")) <= 128
+                or not 20 <= len(repair.get("reason", "")) <= 1024):
+            raise ValueError("campaign repair definition mismatch")
+        attempt = hashlib.sha256(json.dumps(
+            repair, sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        plan = {**plan, "release_commit": repair["release_commit"],
+                "image": repair["image"], "configuration_digest": digest,
+                "repair_attempt_id": attempt}
+    if (plan.get("release_commit") != value["release_commit"]
+            or plan.get("cohort_digest") != value["admission"]["cohort_digest"]
+            or plan.get("configuration_digest") != digest):
+        raise ValueError("campaign installed artifact/configuration/cohort binding mismatch")
+    return plan
+
+
+def validate_repair_receipt(
+    receipt: dict[str, Any], value: dict[str, Any], plan: dict[str, Any],
+) -> None:
+    repair = value["campaign_repair"]
+    retained = receipt["prior_status_raw"]
+    if (receipt.get("contract") != "nonlive-campaign-repair-receipt/v1"
+            or receipt.get("attempt_id") != plan["repair_attempt_id"]
+            or receipt.get("original_plan_sha256") != repair["original_plan_sha256"]
+            or receipt.get("prior_status_sha256") != repair["previous_status_sha256"]
+            or hashlib.sha256(retained.encode()).hexdigest() != repair["previous_status_sha256"]
+            or json.loads(retained) != receipt["prior_status"]
+            or receipt["prior_status"].get("phase") != "FAILED"
+            or receipt.get("reason") != repair["reason"]
+            or receipt.get("authorization_reference") != repair["authorization_reference"]
+            or receipt.get("financial_authority") is not False
+            or receipt["authority_before"].get("stopped") is not True):
+        raise ValueError("campaign repair receipt binding mismatch")
 
 
 def campaign_check(
@@ -59,8 +126,21 @@ def campaign_check(
         }
     if now < start:
         return {**result, "reason": "campaign_not_started"}
+    repairing = "repair_attempt_id" in plan
+    if repairing and result.get("attempt_id") != plan["repair_attempt_id"]:
+        raise ValueError("audited campaign repair initialization required")
+    preparing = repairing and result["phase"] == "PREPARING"
     observation_start = result.get("observation_started_at")
-    cutoff = observation_start or plan["starts_at"]
+    canary_start = result.get("canary_started_at") if repairing else None
+    if repairing and not preparing:
+        if canary_start is None:
+            raise ValueError("campaign repair canary anchor missing")
+        canary_end = datetime.fromisoformat(canary_start) + timedelta(
+            seconds=2 * authority.policy.window_seconds,
+        )
+    cutoff = observation_start or canary_start or result.get(
+        "attempt_started_at", plan["starts_at"],
+    )
     with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
         polls = connection.execute(
             "SELECT started_at,completed_at,status,new_event_count "
@@ -100,6 +180,49 @@ def campaign_check(
         last_useful_observation=fresh[1],
         maximum_poll_gap_seconds=maximum_gap,
     )
+    if preparing:
+        needed = 2 * authority.policy.window_seconds + plan["observation_seconds"]
+        if now + timedelta(seconds=needed + READINESS_MARGIN_SECONDS) >= end:
+            return {**result, "phase": "FAILED", "failed_at": now.isoformat(),
+                    "reason": "insufficient_remaining_real_observation_authority"}
+        required = ("stop_zero_io", "resume", "restart", "recovery", "protected_controls")
+        health_path = database.with_name("native-latency.health.json")
+        health: dict[str, Any] = {}
+        try:
+            if health_path.is_symlink() or health_path.stat().st_size > 4096:
+                raise ValueError("invalid native readiness health")
+            health = json.loads(health_path.read_bytes())
+            stamp = datetime.fromisoformat(health["last_successful_flush"])
+            telemetry_ready = (
+                stamp.utcoffset() == timedelta(0) and timedelta(0) <= now - stamp
+                <= timedelta(seconds=plan["maximum_input_age_seconds"])
+                and health.get("telemetry_errors") == 0
+                and health.get("dropped_measurements") == 0
+                and health.get("process_capacity_summary", {}).get("release_commit")
+                == plan["release_commit"]
+                and health.get("process_capacity_summary", {}).get("samples", 0) > 0
+                and health.get("process_capacity", {}).get("sample_seconds", 0) > 0
+                and health.get("process_capacity", {}).get("peak_process_rss_bytes") is not None
+                and health.get("process_capacity", {}).get("process_cpu_percent_one_core")
+                is not None
+            )
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            telemetry_ready = False
+        if (successes and timedelta(0) <= now - latest
+                <= timedelta(seconds=plan["maximum_poll_gap_seconds"])
+                and fresh[0] >= plan["minimum_fresh_evaluations"] and fresh[1] is not None
+                and timedelta(0) <= now - datetime.fromisoformat(fresh[1])
+                <= timedelta(seconds=plan["maximum_input_age_seconds"])
+                and all(controls.get(key) is True for key in required)
+                and telemetry_ready):
+            charges = authority.status().get("campaign")
+            if not isinstance(charges, dict):
+                raise ValueError("repair requires existing finite campaign accounting")
+            return {**result, "phase": "CANARY", "canary_started_at": now.isoformat(),
+                    "canary_requests_baseline": charges["requests_charged"],
+                    "canary_bytes_baseline": charges["bytes_charged"],
+                    "reason": "readiness_verified_real_canary_started"}
+        return {**result, "reason": "await_qualified_input_controls_and_telemetry"}
     reason = None
     if now - latest > timedelta(seconds=plan["maximum_poll_gap_seconds"]):
         reason = "useful_poll_flow_stalled"
@@ -131,7 +254,15 @@ def campaign_check(
             reason = "insufficient_remaining_real_observation_authority"
         else:
             charges = authority.status().get("campaign")
-            elapsed = max(1, int((now - start).total_seconds()))
+            anchor = datetime.fromisoformat(canary_start) if canary_start else start
+            elapsed = max(1, int((now - anchor).total_seconds()))
+            used_requests = 0 if not isinstance(charges, dict) else charges["requests_charged"]
+            used_bytes = 0 if not isinstance(charges, dict) else charges["bytes_charged"]
+            if repairing and isinstance(charges, dict):
+                used_requests -= result["canary_requests_baseline"]
+                used_bytes -= result["canary_bytes_baseline"]
+                if used_requests < 0 or used_bytes < 0:
+                    raise ValueError("campaign accounting regressed")
             if not isinstance(charges, dict):
                 reason = "separate_campaign_accounting_missing"
             elif charges.get("first_attempt_at") is None or now < datetime.fromisoformat(
@@ -139,10 +270,10 @@ def campaign_check(
             ) + timedelta(seconds=2 * authority.policy.window_seconds):
                 result["reason"] = "await_two_actual_acquisition_window_boundaries"
             elif (
-                charges["requests_charged"] * plan["observation_seconds"]
+                used_requests * plan["observation_seconds"]
                 > (charges["requests_remaining"] - authority.policy.closure_request_reserve)
                 * elapsed
-                or charges["bytes_charged"] * plan["observation_seconds"]
+                or used_bytes * plan["observation_seconds"]
                 > (charges["bytes_remaining"] - authority.policy.closure_byte_reserve) * elapsed
             ):
                 reason = "measured_workload_cannot_fit_remaining_allowance"
@@ -179,25 +310,29 @@ def supervise_campaign(
     try:
         if plan_path.is_symlink() or plan_path.stat().st_size > 16_384:
             raise ValueError("invalid campaign plan")
-        plan = json.loads(plan_path.read_text())
-        configuration_digest = hashlib.sha256(json.dumps(
-            value, sort_keys=True, separators=(",", ":"),
-        ).encode()).hexdigest()
-        if (plan.get("release_commit") != value["release_commit"]
-                or plan.get("cohort_digest") != value["admission"]["cohort_digest"]
-                or plan.get("configuration_digest") != configuration_digest):
-            raise ValueError("campaign installed artifact/configuration/cohort binding mismatch")
+        plan = effective_plan(value, plan_path.read_bytes())
         previous = json.loads(state.read_text()) if state.exists() else {}
+        if "repair_attempt_id" in plan:
+            receipt_path = database.with_name(REPAIR_RECEIPT)
+            if receipt_path.is_symlink() or receipt_path.stat().st_size > 16_384:
+                raise ValueError("campaign repair receipt unavailable")
+            receipt = json.loads(receipt_path.read_bytes())
+            validate_repair_receipt(receipt, value, plan)
+            if (receipt.get("attempt_id") != plan["repair_attempt_id"]
+                    or previous.get("attempt_id") != receipt["attempt_id"]):
+                raise ValueError("campaign repair audit mismatch")
         controls_path = database.with_name("nonlive-campaign-controls.json")
         controls = json.loads(controls_path.read_text()) if controls_path.exists() else {}
-        if any(controls.get(key) != plan.get(key) for key in (
-            "campaign_id", "release_commit", "policy_digest", "cohort_digest",
-        )):
+        keys = ("campaign_id", "release_commit", "policy_digest", "cohort_digest")
+        if any(controls.get(key) != plan.get(key) for key in keys) or (
+            "repair_attempt_id" in plan
+            and controls.get("attempt_id") != plan["repair_attempt_id"]
+        ):
             controls = {}  # A prior release/campaign's controls cannot commission this one.
         result = campaign_check(
             plan, previous, database=database, authority=authority, now=now, controls=controls
         )
-    except OSError, ValueError, KeyError, TypeError, sqlite3.Error:
+    except OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error:
         result = {
             "phase": "FAILED",
             "reason": "campaign_evidence_unavailable",

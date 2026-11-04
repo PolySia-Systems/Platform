@@ -155,6 +155,19 @@ separate read-only file, alongside worker and manifest configuration. A missing,
 symlinked, oversized or noncanonical plan path fails backup explicitly; unrelated
 private configuration is not added to that container mount.
 
+An owner-authorized repair may embed `campaign_repair` in the root-owned worker
+configuration, binding the original plan SHA-256, exact failed-status SHA-256,
+explicit reason/reference, retained policy/cohort and tested installed artifact.
+Run `python -m polysia.deployment.nonlive_campaign_repair --config PATH` only under
+STOP with no pending control commands. This does not issue a grant or resume.
+The fixed repair receipt preserves the original failed status/accounting and is
+included in encrypted recovery. Repeating the command cannot reset the attempt.
+PREPARING is bounded by the original expiry minus two rolling windows, 48 hours
+and a 30-minute margin. It earns no useful observation credit. Bind the five
+actual control proofs to the derived attempt ID as well as the release/policy/
+cohort. Fresh useful data and current native telemetry/resources must precede
+the new canary anchor; the original numerical criteria remain in force.
+
 When a frozen `nonlive-campaign/v1` plan is configured, the existing worker
 scheduler independently checks useful poll flow, the two-window canary, protected
 control/recovery receipts and projected remaining cost. Only an accepted canary

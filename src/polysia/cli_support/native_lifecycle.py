@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,10 +15,18 @@ from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
 from polysia.adapters.polymarket.data_api_v2 import IncompleteWalletWindowError
 from polysia.adapters.polymarket.native_discovery import revalidate_native_cohort
 from polysia.application.ports.continuous_shadow import ContinuousPollOutcome
-from polysia.cli_support.native_research import NativeSnapshotPort, native_shadow_service
+from polysia.cli_support.native_research import (
+    NativeSnapshotPort,
+    native_shadow_service,
+    publish_native_health,
+)
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
+from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
+from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
+from polysia.monitoring.process_capacity import ProcessCapacity
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
+from polysia.storage.latency_telemetry import LatencyTelemetryStore
 
 
 def validate_native_admission(
@@ -122,30 +131,56 @@ async def native_lifecycle_poll(
     # the service still requires complete source and current market evidence to close.
     if age >= timedelta(hours=3) and not close_only:
         transport = BoundedPublicTransport(authority)
+        recorder = None
+        capacity = None
         try:
-            refreshed = await revalidate_native_cohort(
-                discovery,
-                transport,
-                BoundedMarketAdapter(transport),
-                clock=clock,
+            recorder = LatencyRecorder(
+                LatencyTelemetryStore(database.with_name("native-latency.sqlite3")),
+                load_runtime_identity(venue_id="polymarket"),
             )
+            recorder.begin_trace(operation="cohort_revalidation")
+            recorder.bind_poll(poll_run_id=None, experiment_id=(
+                None if active is None else active.experiment_id
+            ))
+            capacity = ProcessCapacity()
+        except Exception:
+            pass  # Optional instrumentation cannot grant or block economic work.
+        try:
+            with recorder.span(component="native", operation="cohort_revalidation") if (
+                recorder is not None
+            ) else nullcontext():
+                candidate = await revalidate_native_cohort(
+                    discovery, transport, BoundedMarketAdapter(transport), clock=clock,
+                )
+            invalid = [c for c in candidate["candidates"]
+                       if c["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH"]
+            quiet = bool(invalid) and all(
+                c.get("state") == "NO_COMPLETE_ACTIVITY"
+                and c.get("complete_activity_rows") == 0 for c in invalid
+            )
+            if quiet:
+                if age >= timedelta(hours=4):
+                    raise AcquisitionBlockedError("native_cohort_no_recent_activity")
+                # Existing evidence still has its ORIGINAL observation time. It
+                # never becomes a refreshed selection; the four-hour bound holds.
+            elif invalid:
+                raise AcquisitionBlockedError("native_cohort_revalidation_insufficient")
+            else:
+                refreshed = candidate
+                payload = {
+                    "code_sha": code_sha, "original_cohort_digest": discovery["digest"],
+                    "discovery": refreshed,
+                }
+                refresh_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = refresh_path.with_suffix(".partial")
+                temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+                temporary.replace(refresh_path)
         except IncompleteWalletWindowError as error:
             raise AcquisitionBlockedError("native_cohort_revalidation_incomplete") from error
         except (TypeError, ValueError) as error:
             raise AcquisitionBlockedError("native_cohort_revalidation_invalid") from error
-        if any(
-            c["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH" for c in refreshed["candidates"]
-        ):
-            raise AcquisitionBlockedError("native_cohort_revalidation_insufficient")
-        payload = {
-            "code_sha": code_sha,
-            "original_cohort_digest": discovery["digest"],
-            "discovery": refreshed,
-        }
-        refresh_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = refresh_path.with_suffix(".partial")
-        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-        temporary.replace(refresh_path)
+        finally:
+            publish_native_health(recorder, capacity, stage="cohort_revalidation")
     service = native_shadow_service(
         database,
         discovery,

@@ -381,6 +381,34 @@ async def test_expired_or_incomplete_evidence_never_advances_financial_state(
         assert calls == []
 
 
+@pytest.mark.asyncio
+async def test_complete_quiet_revalidation_keeps_original_age_and_publishes_diagnostics(
+    native_runtime,
+):
+    root, clock, _, authority, _, _, calls, faults = native_runtime
+    original = await tick(native_runtime)
+    faults["stale"] = True  # Complete empty response, not an incomplete pagination failure.
+    clock.value = NOW + timedelta(hours=3, minutes=1)
+    outcome = await tick(native_runtime)
+    assert outcome.experiment.experiment_id == original.experiment.experiment_id
+    assert not (root / "refresh.json").exists()
+    assert len(calls) == 1
+    clock.value = NOW + timedelta(hours=4, minutes=1)
+    before = ContinuousShadowRepository(root / "financial.sqlite3").results(
+        original.experiment.experiment_id, limit=10,
+    )
+    with pytest.raises(AcquisitionBlockedError, match="native_cohort_no_recent_activity"):
+        await tick(native_runtime)
+    assert not (root / "refresh.json").exists()
+    health = json.loads((root / "native-latency.health.json").read_text())
+    assert health["native_stage"] == "cohort_revalidation"
+    assert health["last_successful_flush"]
+    assert authority.status()["requests_charged"] == 2
+    assert ContinuousShadowRepository(root / "financial.sqlite3").results(
+        original.experiment.experiment_id, limit=10,
+    ) == before
+
+
 def test_real_worker_composition_obeys_cadence_across_restarts(
     native_runtime, monkeypatch: pytest.MonkeyPatch,
 ):
