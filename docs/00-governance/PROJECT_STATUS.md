@@ -90,6 +90,20 @@ human acceptance and Pre-Live remain blocked. The same
 eight verdicts, measurements and limitations. The required real period was not
 achieved or waived; successful qualification remains unmet.
 
+N1-F bounded diagnostic, 2026-11-05 09:08 UTC: **DIAGNOSTIC COMPLETE;
+READY_FOR_SUSTAINED_TRIAL BLOCKED**. The original wallet's paired public windows
+were complete empty; a separate control produced four matching activity/trade
+occurrences, all normalized identically through the installed adapter and its
+identity-cache modes. Current control eligibility could not be established:
+the captured market had closed/book HTTP 404, then its final current window was
+empty. No prospective native experiment or virtual fill was claimed. Separate
+diagnostic usage is 18 attempts / 4,626,777 accounted bytes, including one full
+failed-response reservation; both scopes are STOPped. Original 454-request
+accounting, nine positions, failure and OS fence are unchanged. No executable
+defect or deployment change was demonstrated. The
+[N1-F evidence and nine verdicts](../18-ai-handoffs/nonlive-n1-functional-diagnostic-2026-11-05.md)
+record the precise current-input gate; no new sustained run is active.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in
