@@ -206,3 +206,25 @@ def test_stock_worker_wires_health_tick_and_admission_without_research_simulatio
     with sqlite3.connect(authority.path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM technical_health_ticks").fetchone()[0] == 1
     assert result["authority"]["requests_charged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_provider_envelope_is_distinct_from_local_processing_fault(
+    native_runtime, monkeypatch,
+):
+    from polysia.adapters.polymarket.data_api_v2 import MalformedWalletWindowError
+
+    runtime = health_runtime(native_runtime)
+    async def malformed(*args, **kwargs):
+        raise MalformedWalletWindowError("fixture malformed received envelope")
+    monkeypatch.setattr(native_lifecycle, "revalidate_native_watch", malformed)
+    await tick(runtime)
+    receipt = json.loads((runtime[0] / "refresh.json").read_bytes())
+    assert receipt["outcome"] == "SOURCE_INVALID"
+    assert receipt["eligibility"] is None
+    runtime[1].value += timedelta(hours=3)
+    async def broken(*args, **kwargs):
+        raise TypeError("fixture local programming fault")
+    monkeypatch.setattr(native_lifecycle, "revalidate_native_watch", broken)
+    with pytest.raises(AcquisitionBlockedError, match="revalidation_processing_fault"):
+        await tick(runtime)

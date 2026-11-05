@@ -30,16 +30,20 @@ class IncompleteWalletWindowError(ValueError):
     """The bounded cursor walk cannot establish complete available-page coverage."""
 
 
+class MalformedWalletWindowError(TypeError):
+    """A received public feed envelope is malformed, distinct from a local type fault."""
+
+
 def data_api_v2_rows(payload: object) -> list[dict[str, Any]]:
     """Require the official envelope and adapt snake-case rows at the boundary."""
 
     if not isinstance(payload, Mapping):
-        raise TypeError("Data API v2 response is not an object")
+        raise MalformedWalletWindowError("Data API v2 response is not an object")
     if "data" not in payload or payload["data"] is None:
-        raise TypeError("Data API v2 feed data is missing")
+        raise MalformedWalletWindowError("Data API v2 feed data is missing")
     data = payload["data"]
     if not isinstance(data, list) or any(not isinstance(row, Mapping) for row in data):
-        raise TypeError("Data API v2 data is not a list of objects")
+        raise MalformedWalletWindowError("Data API v2 data is not a list of objects")
     rows: list[dict[str, Any]] = []
     aliases = {
         "condition_id": "conditionId",

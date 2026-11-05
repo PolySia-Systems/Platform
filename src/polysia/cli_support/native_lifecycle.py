@@ -12,7 +12,10 @@ from typing import Any
 
 from polysia.adapters.polymarket.bounded_market import BoundedMarketAdapter
 from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport
-from polysia.adapters.polymarket.data_api_v2 import IncompleteWalletWindowError
+from polysia.adapters.polymarket.data_api_v2 import (
+    IncompleteWalletWindowError,
+    MalformedWalletWindowError,
+)
 from polysia.adapters.polymarket.native_discovery import (
     revalidate_native_cohort,
     revalidate_native_watch,
@@ -270,6 +273,11 @@ async def native_lifecycle_poll(
                 retain_health("SOURCE_INCOMPLETE", type(error).__name__)
             else:
                 raise AcquisitionBlockedError("native_cohort_revalidation_incomplete") from error
+        except MalformedWalletWindowError as error:
+            if health:
+                retain_health("SOURCE_INVALID", type(error).__name__)
+            else:
+                raise AcquisitionBlockedError("native_cohort_revalidation_invalid") from error
         except (TypeError, ValueError) as error:
             if health:
                 if isinstance(error, TypeError):
