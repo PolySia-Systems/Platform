@@ -92,6 +92,34 @@ async def tick(runtime):
     )
 
 
+@pytest.mark.asyncio
+async def test_explicit_native_limits_persist_and_cannot_change_live(native_runtime):
+    from polysia.domain.copytrading.native_run_limits import NativeRunLimits
+
+    root, _, _, _, _, admission, _, _ = native_runtime
+    admission["run_limits"] = NativeRunLimits(20_000, 100_663_296).to_dict()
+    first = await tick(native_runtime)
+    assert first.experiment.config.period_max_events == 20_000
+    assert first.experiment.config.period_max_storage_bytes == 100_663_296
+    store = ContinuousShadowRepository(root / "financial.sqlite3")
+    assert store.active_experiment("polymarket-native").config == first.experiment.config
+    from polysia.monitoring.nonlive_campaign import _period_capacity
+
+    bound = {"period_capacity": admission["run_limits"]}
+    assert _period_capacity(root / "financial.sqlite3", bound) == store.period_usage(
+        first.experiment.experiment_id,
+    )
+    with pytest.raises(ValueError, match="persisted native period capacity mismatch"):
+        _period_capacity(root / "financial.sqlite3", {
+            "period_capacity": NativeRunLimits().to_dict(),
+        })
+    admission["run_limits"] = NativeRunLimits(30_000, 134_217_728).to_dict()
+    with pytest.raises(
+        AcquisitionBlockedError, match="active_financial_session_requires_pinned_release",
+    ):
+        await tick(native_runtime)
+
+
 async def _draining_inventory(runtime, monkeypatch, *, limit="requests"):
     """Real portfolio composition; only the provider I/O is deterministic."""
     from polysia.adapters.polymarket.bounded_transport import BoundedPublicTransport

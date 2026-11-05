@@ -11,7 +11,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from polysia.domain.copytrading.native_run_limits import NativeRunLimits
 from polysia.storage.acquisition_authority import AcquisitionAuthority
+from polysia.storage.continuous_shadow import ContinuousShadowRepository
 
 READINESS_MARGIN_SECONDS = 1800
 REPAIR_RECEIPT = "nonlive-campaign-repair-receipt.json"
@@ -58,7 +60,82 @@ def effective_plan(value: dict[str, Any], raw: bytes) -> dict[str, Any]:
             or plan.get("cohort_digest") != value["admission"]["cohort_digest"]
             or plan.get("configuration_digest") != digest):
         raise ValueError("campaign installed artifact/configuration/cohort binding mismatch")
+    if plan.get("contract") == "nonlive-campaign/v2" and (
+        plan.get("period_capacity") != NativeRunLimits.from_admission(value["admission"]).to_dict()
+    ):
+        raise ValueError("campaign period capacity binding mismatch")
     return plan
+
+
+def _period_capacity(database: Path, plan: dict[str, Any]) -> tuple[int, int]:
+    limits = NativeRunLimits.from_admission({"run_limits": plan["period_capacity"]})
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
+        rows = connection.execute(
+            "SELECT experiment_id,config_json FROM continuous_shadow_experiments "
+            "WHERE source_id='polymarket-native' AND lifecycle IN ('RUNNING','DRAINING')"
+        ).fetchall()
+    if len(rows) != 1:
+        raise ValueError("one active native period required for capacity proof")
+    config = json.loads(rows[0][1])
+    if (config["period_max_events"] != limits.period_max_events
+            or config["period_max_storage_bytes"] != limits.period_max_storage_bytes):
+        raise ValueError("persisted native period capacity mismatch")
+    return ContinuousShadowRepository(database).period_usage(rows[0][0])
+
+
+def _capacity_projection(
+    result: dict[str, Any], plan: dict[str, Any], *, database: Path,
+    authority: AcquisitionAuthority, now: datetime, canary_end: datetime,
+) -> str | None:
+    """Forecast remaining actual authority and period capacity with 25% headroom."""
+    start = datetime.fromisoformat(result["canary_started_at"])
+    if now < start:
+        raise ValueError("campaign clock regressed before useful canary anchor")
+    elapsed = max(1, int((now - start).total_seconds()))
+    events, storage = _period_capacity(database, plan)
+    peak = max(storage, result.get("period_storage_peak_bytes", 0))
+    result.update(
+        period_events=events, period_storage_bytes=storage, period_storage_peak_bytes=peak,
+    )
+    if elapsed < 900:
+        return None  # Tiny startup samples are not a sustained capacity model.
+    if result.get("observation_started_at"):
+        remaining = max(0, int((datetime.fromisoformat(result["observation_started_at"])
+            + timedelta(seconds=plan["observation_seconds"]) - now).total_seconds()))
+    else:
+        remaining = plan["observation_seconds"] + max(0, int((canary_end - now).total_seconds()))
+
+    def forecast(current: int, baseline: int) -> int:
+        if current < baseline:
+            raise ValueError("campaign capacity or accounting regressed")
+        growth = current - baseline
+        return current + (growth * remaining * 5 + elapsed * 4 - 1) // (elapsed * 4)
+
+    projected_events = forecast(events, result["canary_event_baseline"])
+    projected_storage = forecast(peak, result["canary_storage_baseline_bytes"])
+    accounting = authority.status()
+    if accounting["uncertain_requests"]:
+        return "campaign_acquisition_accounting_uncertain"
+    charges = accounting["campaign"]
+    if not isinstance(charges, dict):
+        raise ValueError("finite campaign accounting required")
+    projected_requests = forecast(charges["requests_charged"], result["canary_requests_baseline"])
+    projected_bytes = forecast(charges["bytes_charged"], result["canary_bytes_baseline"])
+    result["capacity_projection"] = {"headroom_ratio": "1.25", "elapsed_seconds": elapsed,
+        "remaining_seconds": remaining, "total_events": projected_events,
+        "period_storage_bytes": projected_storage, "campaign_requests": projected_requests,
+        "campaign_response_bytes": projected_bytes}
+    limits = NativeRunLimits.from_admission({"run_limits": plan["period_capacity"]})
+    if projected_events >= limits.period_max_events:
+        return "measured_event_growth_cannot_fit_period_limit"
+    if projected_storage >= limits.period_max_storage_bytes:
+        return "measured_storage_growth_cannot_fit_period_limit"
+    if (projected_requests > charges["requests_charged"] + charges["requests_remaining"]
+            - authority.policy.closure_request_reserve
+            or projected_bytes > charges["bytes_charged"] + charges["bytes_remaining"]
+            - authority.policy.closure_byte_reserve):
+        return "measured_workload_cannot_fit_remaining_allowance"
+    return None
 
 
 def validate_repair_receipt(
@@ -93,7 +170,7 @@ def campaign_check(
     end = datetime.fromisoformat(plan["expires_at"])
     canary_end = datetime.fromisoformat(plan["canary_not_before"])
     if (
-        plan.get("contract") != "nonlive-campaign/v1"
+        plan.get("contract") not in {"nonlive-campaign/v1", "nonlive-campaign/v2"}
         or now.utcoffset() != timedelta(0)
         or start.utcoffset() != timedelta(0)
         or end.utcoffset() != timedelta(0)
@@ -108,11 +185,17 @@ def campaign_check(
         or not 60 <= plan["maximum_input_age_seconds"] <= 300
     ):
         raise ValueError("campaign plan outside explicit finite contract")
+    fresh_campaign = plan["contract"] == "nonlive-campaign/v2"
+    if fresh_campaign:
+        NativeRunLimits.from_admission({"run_limits": plan["period_capacity"]})
+        if (plan.get("maximum_useful_observation_gap_seconds") != 900
+                or previous and previous.get("campaign_id") != plan["campaign_id"]):
+            raise ValueError("fresh campaign criteria or retained identity mismatch")
     result = {
         **previous,
         "campaign_id": plan["campaign_id"],
         "checked_at": now.isoformat(),
-        "phase": previous.get("phase", "CANARY"),
+        "phase": previous.get("phase", "PREPARING" if fresh_campaign else "CANARY"),
         "final_review": "REQUIRED",
         "financial_authority": False,
     }
@@ -129,10 +212,11 @@ def campaign_check(
     repairing = "repair_attempt_id" in plan
     if repairing and result.get("attempt_id") != plan["repair_attempt_id"]:
         raise ValueError("audited campaign repair initialization required")
-    preparing = repairing and result["phase"] == "PREPARING"
+    anchored = repairing or fresh_campaign
+    preparing = anchored and result["phase"] == "PREPARING"
     observation_start = result.get("observation_started_at")
-    canary_start = result.get("canary_started_at") if repairing else None
-    if repairing and not preparing:
+    canary_start = result.get("canary_started_at") if anchored else None
+    if anchored and not preparing:
         if canary_start is None:
             raise ValueError("campaign repair canary anchor missing")
         canary_end = datetime.fromisoformat(canary_start) + timedelta(
@@ -218,20 +302,31 @@ def campaign_check(
             charges = authority.status().get("campaign")
             if not isinstance(charges, dict):
                 raise ValueError("repair requires existing finite campaign accounting")
-            return {**result, "phase": "CANARY", "canary_started_at": now.isoformat(),
+            capacity = {}
+            if fresh_campaign:
+                events, storage = _period_capacity(database, plan)
+                capacity = {"canary_event_baseline": events,
+                            "canary_storage_baseline_bytes": storage,
+                            "period_storage_peak_bytes": storage}
+            return {**result, **capacity, "phase": "CANARY", "canary_started_at": now.isoformat(),
                     "canary_requests_baseline": charges["requests_charged"],
                     "canary_bytes_baseline": charges["bytes_charged"],
                     "reason": "readiness_verified_real_canary_started"}
         return {**result, "reason": "await_qualified_input_controls_and_telemetry"}
+    capacity_reason = _capacity_projection(
+        result, plan, database=database, authority=authority, now=now, canary_end=canary_end,
+    ) if fresh_campaign else None
     reason = None
     if now - latest > timedelta(seconds=plan["maximum_poll_gap_seconds"]):
         reason = "useful_poll_flow_stalled"
     elif maximum_gap > plan["maximum_poll_gap_seconds"]:
         reason = "observation_poll_gap_exceeded"
-    elif observation_start and now - datetime.fromisoformat(
-        fresh[1] or observation_start,
+    elif (observation_start or fresh_campaign) and now - datetime.fromisoformat(
+        str(fresh[1] or observation_start or canary_start),
     ) > timedelta(seconds=plan.get("maximum_useful_observation_gap_seconds", 900)):
         reason = "fresh_input_flow_stalled_or_cohort_quiet"
+    elif capacity_reason:
+        reason = capacity_reason
     elif observation_start and now >= datetime.fromisoformat(observation_start) + timedelta(
         seconds=plan["observation_seconds"],
     ):
@@ -258,7 +353,7 @@ def campaign_check(
             elapsed = max(1, int((now - anchor).total_seconds()))
             used_requests = 0 if not isinstance(charges, dict) else charges["requests_charged"]
             used_bytes = 0 if not isinstance(charges, dict) else charges["bytes_charged"]
-            if repairing and isinstance(charges, dict):
+            if anchored and isinstance(charges, dict):
                 used_requests -= result["canary_requests_baseline"]
                 used_bytes -= result["canary_bytes_baseline"]
                 if used_requests < 0 or used_bytes < 0:
@@ -323,7 +418,11 @@ def supervise_campaign(
                 raise ValueError("campaign repair audit mismatch")
         controls_path = database.with_name("nonlive-campaign-controls.json")
         controls = json.loads(controls_path.read_text()) if controls_path.exists() else {}
-        keys = ("campaign_id", "release_commit", "policy_digest", "cohort_digest")
+        keys: tuple[str, ...] = (
+            "campaign_id", "release_commit", "policy_digest", "cohort_digest",
+        )
+        if plan.get("contract") == "nonlive-campaign/v2":
+            keys += ("configuration_digest", "image")
         if any(controls.get(key) != plan.get(key) for key in keys) or (
             "repair_attempt_id" in plan
             and controls.get("attempt_id") != plan["repair_attempt_id"]
