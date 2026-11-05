@@ -136,6 +136,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
             "policy_digest": policy.digest,
             "last_attempt": datetime.now(UTC).isoformat(),
             "real_orders": False,
+            "acquisition_purpose": policy.purpose,
             "authority_window": {
                 "starts_at": policy.starts_at.isoformat(),
                 "expires_at": policy.expires_at.isoformat(),
@@ -204,6 +205,9 @@ def worker_tick(config: Path) -> dict[str, Any]:
         campaign = supervise_campaign(
             value, database=database, authority=authority, now=datetime.now(UTC),
         ) if not recovery_fenced else None
+        if policy.purpose == "TECHNICAL_HEALTH_V1" and campaign is None and not recovery_fenced:
+            authority.stop()
+            raise AcquisitionBlockedError("native_health_requires_bound_campaign")
         if campaign is not None:
             result["campaign"] = campaign
         if authority.status()["stopped"]:
@@ -315,6 +319,8 @@ def worker_tick(config: Path) -> dict[str, Any]:
                         admission_retry = cause.retry_at
                         break
                     cause = cause.__cause__
+                if policy.purpose == "TECHNICAL_HEALTH_V1" and reason == "source_unavailable":
+                    reason = "native_health_source_unavailable"
                 result.update(
                     status="FAILED",
                     reason=reason,
@@ -355,6 +361,7 @@ def worker_tick(config: Path) -> dict[str, Any]:
                     result["status"] = "BLOCKED"
                 elif reason in {
                     "provider_transport_failed",
+                    "native_health_source_unavailable",
                     "provider_http_429",
                     "provider_http_500",
                     "provider_http_502",
@@ -398,6 +405,23 @@ def worker_tick(config: Path) -> dict[str, Any]:
                                     failed_at=datetime.now(UTC).isoformat())
                     atomic_json(database.with_name("nonlive-campaign-status.json"), campaign)
         result["authority"] = authority.status()
+        if policy.purpose == "TECHNICAL_HEALTH_V1" and not recovery_fenced:
+            from polysia.cli_support.native_research import native_observation_status
+            from polysia.monitoring.technical_health import record_tick
+
+            try:
+                result["observation"] = native_observation_status(value, now=datetime.now(UTC))
+                record_tick(authority_path, result, now=datetime.now(UTC))
+                campaign = supervise_campaign(
+                    value, database=database, authority=authority, now=datetime.now(UTC),
+                )
+                result["campaign"] = campaign
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.DatabaseError):
+                authority.stop()
+                result.update(status="BLOCKED", reason="health_durable_tick_evidence_failed")
+            if authority.status()["stopped"]:
+                result["status"] = "STOPPED"
+            result["authority"] = authority.status()
         atomic_json(Path(value["status"]), result)
         return result
 

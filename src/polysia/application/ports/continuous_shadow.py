@@ -24,6 +24,13 @@ class ContinuousSelectionUnavailableError(RuntimeError):
     """Current read-only Stage 3 snapshot could not be obtained safely."""
 
 
+@runtime_checkable
+class ContinuousEntryEligibilityPort(Protocol):
+    """Entry qualification may expire while fixed-identity observation continues."""
+
+    def exposure_increase_allowed(self, wallet_id: str, *, at: datetime) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuousSelectionSnapshot:
     """Immutable Stage 3 provenance and protected candidates consumed by Stage 4B."""

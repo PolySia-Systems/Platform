@@ -25,7 +25,10 @@ def rows(value: Any) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
-NON_FINANCIAL_METRICS = frozenset({"age_seconds", "p50_ns", "p95_ns", "p99_ns"})
+NON_FINANCIAL_METRICS = frozenset({
+    "age_seconds", "p50_ns", "p95_ns", "p99_ns",
+    "campaign.maximum_progress_gap_seconds", "campaign.maximum_tick_gap_seconds",
+})
 
 
 def text(value: Any, *, metric: bool = False) -> str | None:
@@ -123,6 +126,22 @@ def workspace(model: ConsoleReadModel, panel: str, now: datetime) -> Workspace:
 
     financial = obj(raw.get("financial_session"))
     if panel == "operate":
+        if raw.get("acquisition_purpose") == "TECHNICAL_HEALTH_V1":
+            add(
+                "Technical health and entry eligibility",
+                raw,
+                "acquisition_purpose campaign.phase campaign.observed_seconds "
+                "campaign.poll_coverage_percent campaign.complete_zero_new_event_polls "
+                "campaign.failed_polls campaign.maximum_progress_gap_seconds "
+                "observation.permission observation.eligibility_check "
+                "observation.eligibility_checked_at observation.eligibility_detail",
+                "Healthy quiet counts only with actual completed scheduled reads. "
+                "Observation permission does not authorize entry or Live trading. "
+                "Stale eligibility blocks new exposure; missing marks remain partial.",
+                [table("Current watched identities", obj(raw.get("observation")).get("wallets"),
+                       "wallet_id entry")],
+                dated={"observed_at": raw.get("last_attempt")},
+            )
         policy = obj(raw.get("copy_policy"))
         add(
             "Effective and staged policy",

@@ -29,6 +29,11 @@ class AcquisitionAuthority:
         self.policy = policy
 
     @property
+    def path(self) -> Path:
+        """The single-writer authority store, including its finite health journal."""
+        return self._path
+
+    @property
     def evidence_root(self) -> Path:
         return self._path.parent / "evidence"
 
@@ -76,6 +81,10 @@ class AcquisitionAuthority:
             row = connection.execute("SELECT policy_digest, stopped FROM authority").fetchone()
             if row is None or row[0] != self.policy.digest or row[1]:
                 raise AcquisitionBlockedError("authority_stopped_or_mismatched")
+            if self.policy.purpose == "TECHNICAL_HEALTH_V1" and connection.execute(
+                "SELECT 1 FROM reservations WHERE actual_bytes IS NULL LIMIT 1"
+            ).fetchone():
+                raise AcquisitionBlockedError("native_health_shared_accounting_uncertain")
             latest = connection.execute("SELECT MAX(attempted_at) FROM reservations").fetchone()[0]
             if latest and datetime.fromisoformat(latest) > now:
                 raise AcquisitionBlockedError("acquisition_clock_regressed")
@@ -212,6 +221,8 @@ class AcquisitionAuthority:
             raise AcquisitionBlockedError("explicit_authority_reference_required")
         if replacement.host != self.policy.host or replacement.policy_id == self.policy.policy_id:
             raise AcquisitionBlockedError("replacement_identity_invalid")
+        if replacement.purpose != self.policy.purpose:
+            raise AcquisitionBlockedError("replacement_cannot_change_purpose")
         additions = set(replacement.endpoints) - set(self.policy.endpoints)
         if additions and additions != set(authorized_new_endpoints):
             raise AcquisitionBlockedError("replacement_cannot_expand_endpoints")
@@ -224,8 +235,10 @@ class AcquisitionAuthority:
             raise AcquisitionBlockedError("replacement_cannot_shorten_rate_window")
         # These are evidence-retention promises, not expendable request ceilings.
         # Changing either direction needs a separately reviewed storage policy.
-        if (replacement.retention_days != self.policy.retention_days
-                or replacement.backup_generations != self.policy.backup_generations):
+        if (
+            replacement.retention_days != self.policy.retention_days
+            or replacement.backup_generations != self.policy.backup_generations
+        ):
             raise AcquisitionBlockedError("replacement_retention_contract_changed")
         ceilings = (
             "timeout_seconds",
@@ -277,8 +290,13 @@ class AcquisitionAuthority:
         return AcquisitionAuthority(self._path, replacement)
 
     def grant_finite_campaign(
-        self, replacement: AcquisitionPolicy, *, now: datetime,
-        authorization_reference: str, additional_requests: int, additional_bytes: int,
+        self,
+        replacement: AcquisitionPolicy,
+        *,
+        now: datetime,
+        authorization_reference: str,
+        additional_requests: int,
+        additional_bytes: int,
     ) -> AcquisitionAuthority:
         """Explicit new nonfinancial grant, separate from restrictive continuation.
 
@@ -297,46 +315,61 @@ class AcquisitionAuthority:
             "https://clob.polymarket.com/book",
             "https://polycop.fun/api/leaderboard",
         }
-        if (now.tzinfo is None or now.utcoffset() != timedelta(0)
-                or not 8 <= len(authorization_reference) <= 128
-                or replacement.policy_id == self.policy.policy_id
-                or replacement.host != self.policy.host
-                or not now <= replacement.starts_at < replacement.expires_at
-                or replacement.expires_at - replacement.starts_at > timedelta(hours=72)
-                or type(additional_requests) is not int or not 1 <= additional_requests <= 50_000
-                or type(additional_bytes) is not int or not 1 <= additional_bytes <= 4_294_967_296
-                or not set(replacement.endpoints) <= allowed
-                or replacement.maximum_response_bytes > min(
-                    self.policy.maximum_response_bytes, 4_194_304,
-                )
-                or replacement.timeout_seconds > self.policy.timeout_seconds
-                or replacement.cadence_seconds < max(60, self.policy.cadence_seconds)
-                or replacement.window_seconds != 3600
-                or replacement.window_maximum_requests > 1000
-                or replacement.window_maximum_bytes > 134_217_728
-                or replacement.cohort_limit > min(5, self.policy.cohort_limit)
-                or replacement.memory_max_bytes > min(536_870_912, self.policy.memory_max_bytes)
-                or replacement.cpu_quota_percent > min(50, self.policy.cpu_quota_percent)
-                or replacement.minimum_free_disk_bytes < max(
-                    9_663_676_416, self.policy.minimum_free_disk_bytes,
-                )
-                or replacement.closure_request_reserve < self.policy.closure_request_reserve
-                or replacement.closure_byte_reserve < self.policy.closure_byte_reserve
-                or replacement.retention_days != self.policy.retention_days
-                or replacement.backup_generations != self.policy.backup_generations):
+        health = replacement.purpose == "TECHNICAL_HEALTH_V1"
+        if health:
+            allowed = {e for e in allowed if "polycop.fun" not in e}
+        if (
+            now.tzinfo is None
+            or now.utcoffset() != timedelta(0)
+            or not 8 <= len(authorization_reference) <= 128
+            or replacement.policy_id == self.policy.policy_id
+            or replacement.host != self.policy.host
+            or not now <= replacement.starts_at < replacement.expires_at
+            or replacement.expires_at - replacement.starts_at > timedelta(hours=72)
+            or type(additional_requests) is not int
+            or not 1 <= additional_requests <= (220_000 if health else 50_000)
+            or type(additional_bytes) is not int
+            or not 1 <= additional_bytes <= 4_294_967_296
+            or not set(replacement.endpoints) <= allowed
+            or replacement.maximum_response_bytes
+            > min(
+                self.policy.maximum_response_bytes,
+                4_194_304,
+            )
+            or replacement.timeout_seconds > min(self.policy.timeout_seconds, 15 if health else 30)
+            or replacement.cadence_seconds < max(60, self.policy.cadence_seconds)
+            or replacement.window_seconds != 3600
+            or replacement.window_maximum_requests > (4320 if health else 1000)
+            or replacement.window_maximum_bytes > (67_108_864 if health else 134_217_728)
+            or replacement.cohort_limit > min(3 if health else 5, self.policy.cohort_limit)
+            or replacement.memory_max_bytes > min(536_870_912, self.policy.memory_max_bytes)
+            or replacement.cpu_quota_percent > min(50, self.policy.cpu_quota_percent)
+            or replacement.minimum_free_disk_bytes
+            < max(
+                9_663_676_416,
+                self.policy.minimum_free_disk_bytes,
+            )
+            or replacement.closure_request_reserve < self.policy.closure_request_reserve
+            or replacement.closure_byte_reserve < self.policy.closure_byte_reserve
+            or replacement.retention_days != self.policy.retention_days
+            or replacement.backup_generations != self.policy.backup_generations
+        ):
             raise AcquisitionBlockedError("finite_campaign_outside_explicit_envelope")
         with closing(sqlite3.connect(self._path, timeout=1)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             if connection.execute("SELECT policy_digest,stopped FROM authority").fetchone() != (
-                self.policy.digest, 1,
+                self.policy.digest,
+                1,
             ):
                 raise AcquisitionBlockedError("finite_campaign_requires_matching_STOP")
             count, charged = connection.execute(
                 "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0) "
                 "FROM reservations"
             ).fetchone()
-            if (replacement.maximum_requests != count + additional_requests
-                    or replacement.maximum_bytes != charged + additional_bytes):
+            if (
+                replacement.maximum_requests != count + additional_requests
+                or replacement.maximum_bytes != charged + additional_bytes
+            ):
                 raise AcquisitionBlockedError("finite_campaign_cumulative_limits_mismatch")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS finite_campaign_grants ("
@@ -352,16 +385,25 @@ class AcquisitionAuthority:
             baseline = connection.execute(
                 "SELECT COALESCE(MAX(rowid),0) FROM reservations",
             ).fetchone()[0]
-            connection.execute("INSERT INTO finite_campaign_grants VALUES(?,?,?,?,?,?,?,?,?,?,?)", (
-                authorization_reference, self.policy.digest, replacement.digest, now.isoformat(),
-                count, charged, additional_requests, additional_bytes,
-                json.dumps(self.policy.to_dict(), sort_keys=True),
-                json.dumps(replacement.to_dict(), sort_keys=True),
-                baseline,
-            ))
-            connection.execute("UPDATE authority SET policy_digest=? WHERE singleton=1", (
-                replacement.digest,
-            ))
+            connection.execute(
+                "INSERT INTO finite_campaign_grants VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    authorization_reference,
+                    self.policy.digest,
+                    replacement.digest,
+                    now.isoformat(),
+                    count,
+                    charged,
+                    additional_requests,
+                    additional_bytes,
+                    json.dumps(self.policy.to_dict(), sort_keys=True),
+                    json.dumps(replacement.to_dict(), sort_keys=True),
+                    baseline,
+                ),
+            )
+            connection.execute(
+                "UPDATE authority SET policy_digest=? WHERE singleton=1", (replacement.digest,)
+            )
         return AcquisitionAuthority(self._path, replacement)
 
     def status(self) -> dict[str, object]:

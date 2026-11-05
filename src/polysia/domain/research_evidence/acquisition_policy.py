@@ -32,8 +32,11 @@ class AcquisitionPolicy:
     window_maximum_bytes: int = 16_777_216
     closure_request_reserve: int = 0
     closure_byte_reserve: int = 0
+    purpose: str = "PUBLIC_RESEARCH"
 
     def __post_init__(self) -> None:
+        if self.purpose not in {"PUBLIC_RESEARCH", "TECHNICAL_HEALTH_V1"}:
+            raise ValueError("unsupported acquisition purpose")
         if not self.policy_id or not self.host or not self.endpoints:
             raise ValueError("policy identity, host and endpoints are required")
         for value in (self.starts_at, self.expires_at):
@@ -45,20 +48,31 @@ class AcquisitionPolicy:
         if self.expires_at <= self.starts_at:
             raise ValueError("policy expiry must follow start")
         limits = (
-            self.maximum_requests, self.maximum_bytes, self.maximum_response_bytes,
-            self.timeout_seconds, self.minimum_free_disk_bytes, self.cohort_limit,
-            self.cadence_seconds, self.retention_days, self.backup_generations,
-            self.memory_max_bytes, self.cpu_quota_percent,
-            self.window_seconds, self.window_maximum_requests, self.window_maximum_bytes,
+            self.maximum_requests,
+            self.maximum_bytes,
+            self.maximum_response_bytes,
+            self.timeout_seconds,
+            self.minimum_free_disk_bytes,
+            self.cohort_limit,
+            self.cadence_seconds,
+            self.retention_days,
+            self.backup_generations,
+            self.memory_max_bytes,
+            self.cpu_quota_percent,
+            self.window_seconds,
+            self.window_maximum_requests,
+            self.window_maximum_bytes,
         )
         if any(type(value) is not int or value <= 0 for value in limits):
             raise ValueError("all policy limits must be positive integers")
         if self.maximum_response_bytes > self.maximum_bytes or self.backup_generations < 2:
             raise ValueError("invalid byte reserve or backup generations")
-        if (type(self.closure_request_reserve) is not int
-                or type(self.closure_byte_reserve) is not int
-                or not 0 <= self.closure_request_reserve < self.maximum_requests
-                or not 0 <= self.closure_byte_reserve < self.maximum_bytes):
+        if (
+            type(self.closure_request_reserve) is not int
+            or type(self.closure_byte_reserve) is not int
+            or not 0 <= self.closure_request_reserve < self.maximum_requests
+            or not 0 <= self.closure_byte_reserve < self.maximum_bytes
+        ):
             raise ValueError("closure reserves must fit inside total authority")
         if self.timeout_seconds > 30 or self.cpu_quota_percent > 100:
             raise ValueError("policy exceeds conservative process ceilings")
@@ -66,14 +80,22 @@ class AcquisitionPolicy:
             raise ValueError("duplicate endpoint")
         for endpoint in self.endpoints:
             parsed = urlsplit(endpoint)
-            if (parsed.scheme != "https" or not parsed.hostname or parsed.query
-                    or parsed.fragment or parsed.username or parsed.password):
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.query
+                or parsed.fragment
+                or parsed.username
+                or parsed.password
+            ):
                 raise ValueError("policy endpoints must be exact public HTTPS paths")
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)
         result["starts_at"] = self.starts_at.isoformat()
         result["expires_at"] = self.expires_at.isoformat()
+        if self.purpose == "PUBLIC_RESEARCH":
+            result.pop("purpose")  # Preserve every legacy policy digest and spent grant.
         return result
 
     @property
