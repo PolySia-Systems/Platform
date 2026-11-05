@@ -21,13 +21,19 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
-N2 engineering, 2026-11-05: owner authorized a separately accounted finite
-public-data/Shadow campaign and fresh simulated application state. The candidate
-adds explicit bounded native-period capacity and fresh campaign readiness with
-real canary anchoring and measured feasibility checks. Current protected reads
-still show the predecessor STOPped and restart-fenced; no N2 acquisition or
-useful period has started. Installation, actual CONTINUOUS commissioning,
-two real rolling windows and 48 useful hours remain required. See the single
+N2 final review, 2026-11-05 18:37 UTC: **ATTEMPT CLOSED; SUSTAINED_NONLIVE
+NOT_QUALIFIED**. #256 and exact-main CI passed; runtime
+`086a7d7b362ca7d04911b7ee2c3e8613e1a2717b` was installed with verified old
+simulated state quarantined. None of five bounded candidates met the frozen
+activity/recency profile; no cohort, actual CONTINUOUS smoke, canary or 48-hour
+period was established. One new grant spent six requests/429,332 bytes with zero
+uncertainty. Actual private STOP-only controls and exact independent encrypted
+spent-state recovery passed; historical state, private access and unrelated
+services remain preserved. Acquisition is durably STOPped and restart-fenced,
+the worker timer disabled and task units retired; normal publisher/backup/fenced
+recovery timers remain enabled. No grant or criterion was changed to obtain a
+pass, and `ENGINEERING_COMPLETE` is not declared without real commissioning.
+All nine verdicts, measured limitations and the terminal receipts are in the single
 [N2 record](../18-ai-handoffs/nonlive-n2-qualification-2026-11-05.md).
 
 N1 work, 2026-10-29: the retained native public-data/Shadow session is preserved
