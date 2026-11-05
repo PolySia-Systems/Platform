@@ -189,12 +189,15 @@ def health_check(
            or row.get("policy_digest") != policy.digest for row in history):
         return fail("health_tick_identity_mismatch")
     events, storage = ContinuousShadowRepository(database).period_usage(experiment.experiment_id)
+    peak_storage = max(storage, result.get("period_storage_peak_bytes", 0),
+                       result["baseline_storage_bytes"])
     result.update(observed_seconds=elapsed, successful_polls=len(completed),
                   failed_polls=len(relevant) - len(completed),
                   complete_zero_new_event_polls=sum(p[3] == 0 for p in completed),
                   expected_poll_slots=expected, poll_coverage_percent=coverage,
                   maximum_progress_gap_seconds=gap, period_events=events,
                   period_storage_bytes=storage, native_telemetry=native,
+                  period_storage_peak_bytes=peak_storage,
                   durable_ticks=len(ticks), maximum_tick_gap_seconds=tick_gap,
                   retry_ticks=sum(row.get("status") == "WAITING_RETRY" for row in history),
                   failed_worker_ticks=sum(row.get("status") in {"FAILED", "BLOCKED"}
@@ -219,7 +222,7 @@ def health_check(
         result["capacity_forecast"] = {
             "kind": "ADVISORY_LINEAR_STARTUP_INCLUSIVE",
             "period_events": forecast(events, result["baseline_events"]),
-            "period_storage_bytes": forecast(storage, result["baseline_storage_bytes"]),
+            "period_storage_bytes": forecast(peak_storage, result["baseline_storage_bytes"]),
             "campaign_requests": forecast(
                 charges["requests_charged"], result["baseline_requests"],
             ),

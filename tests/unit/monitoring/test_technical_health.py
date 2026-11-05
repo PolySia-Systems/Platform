@@ -133,3 +133,16 @@ def test_uncertainty_stop_expiry_and_legacy_contract_are_not_bypassed(run):
     plan["purpose"] = "PUBLIC_RESEARCH"
     with pytest.raises(ValueError, match="purpose"):
         check(run, {}, NOW)
+
+
+def test_sqlite_checkpoint_shrinkage_is_not_consumption_regression(run, monkeypatch):
+    samples(run, NOW, 1)
+    running = check(run, {}, NOW)
+    samples(run, NOW + timedelta(minutes=1), 16)
+    monkeypatch.setattr(health.ContinuousShadowRepository, "period_usage",
+                        lambda self, experiment: (0, 500000))
+    current = check(run, running, NOW + timedelta(minutes=16))
+    assert current["phase"] == "HEALTH_OBSERVATION_RUNNING"
+    assert current["period_storage_bytes"] == 500000
+    assert current["period_storage_peak_bytes"] == 1000000
+    assert current["capacity_forecast"]["period_storage_bytes"] == 1000000
