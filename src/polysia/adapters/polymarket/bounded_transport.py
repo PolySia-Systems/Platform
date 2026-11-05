@@ -11,10 +11,10 @@ import socket
 import sqlite3
 import time
 from collections.abc import Mapping
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import UTC, datetime
 from decimal import Decimal
-from threading import local
+from threading import Lock, local
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -40,6 +40,7 @@ class BoundedPublicTransport:
         self._closure = closure
         self._context: dict[str, str] = {}
         self._request_local = local()
+        self._health_read_lock = Lock()
         # The existing read-only RPC receipt owner also calls _retain directly.
         # Such reads have no native poll correlation, rather than an invented one.
         self._request_local.purpose = LeaderReadPurpose.BASELINE.value
@@ -68,9 +69,15 @@ class BoundedPublicTransport:
         self, base_url: str, path: str, params: Mapping[str, str | int | bool],
         purpose: LeaderReadPurpose,
     ) -> Any:
-        self._request_local.purpose = purpose.value
-        self._request_local.context = dict(self._context)
-        return self._read(base_url, path, params)
+        # Native metadata readers may fan out internally. Serial health reads
+        # let each reservation settle before admitting another and preserve the
+        # distinction between active I/O and a lost/uncertain prior request.
+        with self._health_read_lock if self.authority.policy.purpose == (
+            "TECHNICAL_HEALTH_V1"
+        ) else nullcontext():
+            self._request_local.purpose = purpose.value
+            self._request_local.context = dict(self._context)
+            return self._read(base_url, path, params)
 
     def _read(self, base_url: str, path: str, params: Mapping[str, str | int | bool]) -> Any:
         endpoint = base_url + path
@@ -93,9 +100,31 @@ class BoundedPublicTransport:
                 raw = reply.read(policy.maximum_response_bytes + 1)
                 trace_id = reply.headers.get("x-trace-id")
         except HTTPError as error:
-            self._retain_failure(request_id, endpoint, f"provider_http_{error.code}", started)
-            # Failure bodies/in-flight costs remain fully reserved. Do not
-            # retry geographic/auth/rate-limit failures or print provider URLs.
+            raw_error = None
+            if policy.purpose == "TECHNICAL_HEALTH_V1":
+                try:
+                    body = error.read(policy.maximum_response_bytes + 1)
+                    length = error.headers.get("Content-Length") if error.headers else None
+                    if len(body) <= policy.maximum_response_bytes and (
+                        length is None or length.isdigit() and int(length) == len(body)
+                    ):
+                        raw_error = body
+                except OSError, TimeoutError:
+                    pass  # An unreadable body remains an uncertain full reservation.
+                finally:
+                    error.close()
+            self._retain_failure(
+                request_id,
+                endpoint,
+                f"provider_http_{error.code}",
+                started,
+                raw=raw_error,
+                params=params,
+            )
+            # Only a fully retained bounded health-purpose error body can settle.
+            # Unknown/in-flight costs retain their full reservation across restart.
+            if policy.purpose == "TECHNICAL_HEALTH_V1" and error.code in {401, 403, 451}:
+                self.authority.stop()
             retry = error.headers.get("Retry-After", "") if error.headers else ""
             if retry and (not retry.isdigit() or len(retry) > 5 or int(retry) > 86_400):
                 raise AcquisitionBlockedError("provider_retry_after_unsupported") from None
@@ -103,8 +132,10 @@ class BoundedPublicTransport:
             raise AcquisitionBlockedError(
                 f"provider_http_{error.code}", retry_after_seconds=retry_seconds,
             ) from None
-        except (URLError, TimeoutError, OSError):
+        except URLError, TimeoutError, OSError:
             self._retain_failure(request_id, endpoint, "provider_transport_failed", started)
+            if policy.purpose == "TECHNICAL_HEALTH_V1":
+                self.authority.stop()
             raise AcquisitionBlockedError("provider_transport_failed") from None
         if len(raw) > policy.maximum_response_bytes:
             self._retain_failure(request_id, endpoint, "response_size_outside_reservation", started)
@@ -123,9 +154,15 @@ class BoundedPublicTransport:
             raise AcquisitionBlockedError("provider_invalid_json") from None
 
     def _retain(
-        self, request_id: str, *, endpoint: str, params: Mapping[str, str | int | bool],
-        raw: bytes, trace_id: str | None,
+        self,
+        request_id: str,
+        *,
+        endpoint: str,
+        params: Mapping[str, str | int | bool],
+        raw: bytes,
+        trace_id: str | None,
         latency_ms: int,
+        response_status: str = "COMPLETE",
     ) -> None:
         root = self.authority.evidence_root
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -136,34 +173,81 @@ class BoundedPublicTransport:
             temporary.chmod(0o600)
         temporary.replace(target)
         metadata = root / (request_id + ".metadata.json")
-        metadata.write_text(json.dumps({
-            "request_id": request_id, "purpose": self._request_local.purpose,
-            **self._request_local.context,
-            "endpoint": endpoint, "params": dict(params),
-            "observed_at": datetime.now(UTC).isoformat(), "bytes": len(raw),
-            "sha256": hashlib.sha256(raw).hexdigest(), "trace_id": trace_id,
-            "latency_ms": latency_ms,
-        }, sort_keys=True), encoding="utf-8")
+        metadata.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "purpose": self._request_local.purpose,
+                    **self._request_local.context,
+                    "endpoint": endpoint,
+                    "params": dict(params),
+                    "observed_at": datetime.now(UTC).isoformat(),
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "trace_id": trace_id,
+                    "latency_ms": latency_ms,
+                    **(
+                        {"response_status": response_status}
+                        if response_status != "COMPLETE"
+                        else {}
+                    ),
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         if os.name != "nt":
             metadata.chmod(0o600)
-        self._observe(request_id, endpoint, latency_ms, len(raw), "COMPLETE")
+        self._observe(request_id, endpoint, latency_ms, len(raw), response_status)
 
-    def _retain_failure(self, request_id: str, endpoint: str, reason: str, started: int) -> None:
+    def _retain_failure(
+        self,
+        request_id: str,
+        endpoint: str,
+        reason: str,
+        started: int,
+        *,
+        raw: bytes | None = None,
+        params: Mapping[str, str | int | bool] | None = None,
+    ) -> None:
         self._counts["failed"] += 1
         latency_ms = (time.monotonic_ns() - started) // 1_000_000
-        self._observe(request_id, endpoint, latency_ms, None, reason)
+        if raw is None:
+            self._observe(request_id, endpoint, latency_ms, None, reason)
         root = self.authority.evidence_root
         try:
             root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if raw is not None:
+                self._retain(
+                    request_id,
+                    endpoint=endpoint,
+                    params=params or {},
+                    raw=raw,
+                    trace_id=None,
+                    latency_ms=latency_ms,
+                    response_status=reason,
+                )
+                self.authority.settle(request_id, response_bytes=len(raw))
+                self._counts["response_bytes"] += len(raw)
             target = root / (request_id + ".failure.json")
-            target.write_text(json.dumps({
-                "request_id": request_id, "purpose": self._request_local.purpose,
-                **self._request_local.context,
-                "endpoint": endpoint, "reason": reason,
-                "observed_at": datetime.now(UTC).isoformat(),
-                "latency_ms": (time.monotonic_ns() - started) // 1_000_000,
-                "response_bytes": "UNKNOWN_FULL_RESERVATION_CHARGED",
-            }, sort_keys=True), encoding="utf-8")
+            target.write_text(
+                json.dumps(
+                    {
+                        "request_id": request_id,
+                        "purpose": self._request_local.purpose,
+                        **self._request_local.context,
+                        "endpoint": endpoint,
+                        "reason": reason,
+                        "observed_at": datetime.now(UTC).isoformat(),
+                        "latency_ms": (time.monotonic_ns() - started) // 1_000_000,
+                        "response_bytes": len(raw)
+                        if raw is not None
+                        else "UNKNOWN_FULL_RESERVATION_CHARGED",
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
             if os.name != "nt":
                 target.chmod(0o600)
         except OSError:

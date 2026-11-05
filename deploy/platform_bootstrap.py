@@ -294,7 +294,10 @@ def activation_preflight(commit: str) -> None:
             "WHERE lifecycle!='FINALIZED'",
         ):
             config_value = json.loads(config_json)
-            if config_value.get("runtime_version") == "continuous-shadow-native-research-v2":
+            if config_value.get("runtime_version") in {
+                "continuous-shadow-native-research-v2",
+                "continuous-shadow-native-health-v1",
+            }:
                 if config_value.get("code_sha") == commit and connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE name='continuous_shadow_release_transitions'"
                 ).fetchone():

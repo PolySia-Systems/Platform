@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.copytrading.models import LeaderTradeAction
+from polysia.domain.copytrading.native_health import RUNTIME as NATIVE_HEALTH_RUNTIME
 from polysia.domain.copytrading.wallet_capacity import require_software_count
 from polysia.domain.market import MarketDetails, MarketOrderBookSnapshot
 from polysia.domain.market.settlement import verified_settlement_prices
@@ -130,10 +131,15 @@ class ContinuousShadowConfig:
         if not 60 <= self.negative_cache_ttl_seconds <= 86_400:
             raise ValueError("negative_cache_ttl_seconds must be within [60, 86400]")
         integer_fields = (
-            self.poll_interval_seconds, self.maximum_pages_per_wallet,
-            self.source_page_size, self.source_max_pages, self.source_max_requests,
-            self.source_timeout_seconds, self.maximum_selection_age_hours,
-            self.period_duration_seconds, self.period_max_events,
+            self.poll_interval_seconds,
+            self.maximum_pages_per_wallet,
+            self.source_page_size,
+            self.source_max_pages,
+            self.source_max_requests,
+            self.source_timeout_seconds,
+            self.maximum_selection_age_hours,
+            self.period_duration_seconds,
+            self.period_max_events,
             self.period_max_storage_bytes,
         )
         if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_fields):
@@ -163,7 +169,10 @@ class ContinuousShadowConfig:
             ):
                 raise ValueError("legacy Shadow runtime cannot acquire new period limits")
         else:
-            persistent_native = self.runtime_version == "continuous-shadow-native-research-v2"
+            persistent_native = self.runtime_version in {
+                "continuous-shadow-native-research-v2",
+                NATIVE_HEALTH_RUNTIME,
+            }
             if not (persistent_native and self.period_duration_seconds == 0) and not (
                 3_600 <= self.period_duration_seconds <= 86_400
             ):
@@ -171,32 +180,45 @@ class ContinuousShadowConfig:
             if not 1 <= self.period_max_events <= 100_000:
                 raise ValueError("period_max_events must be within [1, 100000]")
             if not 10_000_000 <= self.period_max_storage_bytes <= 10_737_418_240:
-                raise ValueError(
-                    "period_max_storage_bytes must be within [10000000, 10737418240]"
-                )
+                raise ValueError("period_max_storage_bytes must be within [10000000, 10737418240]")
         if self.code_sha is not None and (
             len(self.code_sha) != 40
             or any(char not in "0123456789abcdef" for char in self.code_sha)
         ):
             raise ValueError("code_sha must be a lowercase 40-character Git SHA")
         if self.runtime_version not in {
-            "continuous-shadow-runtime-v1", "continuous-shadow-runtime-v2",
+            "continuous-shadow-runtime-v1",
+            "continuous-shadow-runtime-v2",
             "continuous-shadow-native-research-v1",
             "continuous-shadow-native-research-v2",
+            NATIVE_HEALTH_RUNTIME,
             "continuous-shadow-runtime-legacy-v0",
         }:
             raise ValueError("continuous Shadow runtime version is unsupported")
+        if self.runtime_version == NATIVE_HEALTH_RUNTIME and (
+            self.wallet_count is None or self.wallet_count > 3
+        ):
+            raise ValueError("native health permits at most three watched identities")
         if self.runtime_version in {
-            "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
+            "continuous-shadow-native-research-v1",
+            "continuous-shadow-native-research-v2",
+            NATIVE_HEALTH_RUNTIME,
         } and (
-                    self.code_sha is None or self.wallet_count is None
-                    or not 1 <= self.wallet_count <= 10
-                    or self.selection_policy != "native-recent-activity-v1"
-                    or self.selection_observed_at is None
-                    or self.selection_observed_at.utcoffset() != timedelta(0)
-                    or self.selection_preflight_digest is None
-                    or len(self.selection_preflight_digest) != 64
-                    or any(c not in "0123456789abcdef" for c in self.selection_preflight_digest)):
+            self.code_sha is None
+            or self.wallet_count is None
+            or not 1 <= self.wallet_count <= 10
+            or self.selection_policy
+            != (
+                "native-observation-watch-v1"
+                if self.runtime_version == NATIVE_HEALTH_RUNTIME
+                else "native-recent-activity-v1"
+            )
+            or self.selection_observed_at is None
+            or self.selection_observed_at.utcoffset() != timedelta(0)
+            or self.selection_preflight_digest is None
+            or len(self.selection_preflight_digest) != 64
+            or any(c not in "0123456789abcdef" for c in self.selection_preflight_digest)
+        ):
             raise ValueError("native research requires exact frozen profile and code identity")
         if self.runtime_version == "continuous-shadow-runtime-v2":
             if self.wallet_count is None:
@@ -205,7 +227,8 @@ class ContinuousShadowConfig:
             if self.code_sha is None:
                 raise ValueError("v2 Shadow runtime requires code_sha")
             if self.selection_policy not in {
-                "shadow-alpha-ranked-v2", "shadow-alpha-active-v2",
+                "shadow-alpha-ranked-v2",
+                "shadow-alpha-active-v2",
             }:
                 raise ValueError("v2 Shadow selection policy is unsupported")
             if self.selection_policy == "shadow-alpha-active-v2":
@@ -215,8 +238,7 @@ class ContinuousShadowConfig:
                     self.selection_preflight_digest is None
                     or len(self.selection_preflight_digest) != 64
                     or any(
-                        char not in "0123456789abcdef"
-                        for char in self.selection_preflight_digest
+                        char not in "0123456789abcdef" for char in self.selection_preflight_digest
                     )
                 ):
                     raise ValueError("active Shadow selection requires a preflight digest")
@@ -226,14 +248,20 @@ class ContinuousShadowConfig:
                 ):
                     raise ValueError("active Shadow preflight time must be UTC")
                 if any(
-                    not isinstance(key, str) or not key
-                    or isinstance(value, bool) or not isinstance(value, int) or value < 0
+                    not isinstance(key, str)
+                    or not key
+                    or isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or value < 0
                     for key, value in self.selection_activity_counts.items()
                 ):
                     raise ValueError("active Shadow activity counts are invalid")
         elif (
-            self.runtime_version not in {
-                "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
+            self.runtime_version
+            not in {
+                "continuous-shadow-native-research-v1",
+                "continuous-shadow-native-research-v2",
+                NATIVE_HEALTH_RUNTIME,
             }
             and self.wallet_count is not None
             and not 1 <= self.wallet_count <= 3
@@ -244,6 +272,8 @@ class ContinuousShadowConfig:
                 raise ValueError("continuous Shadow versions must not be empty")
         if self.copy_policy is not None and self.policy_version != self.copy_policy.version:
             raise ValueError("CopyPolicy version must match the frozen Shadow policy version")
+        if self.runtime_version == NATIVE_HEALTH_RUNTIME and self.copy_policy is not None:
+            raise ValueError("native health retains the standard native financial policy")
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -251,16 +281,10 @@ class ContinuousShadowConfig:
             "code_sha": self.code_sha,
             "cost_model_version": self.cost_model_version,
             "follower_bankroll": format(self.follower_bankroll, "f"),
-            "follower_maximum_exposure": format(
-                self.follower_maximum_exposure, "f"
-            ),
-            "follower_maximum_market_exposure": format(
-                self.follower_maximum_market_exposure, "f"
-            ),
+            "follower_maximum_exposure": format(self.follower_maximum_exposure, "f"),
+            "follower_maximum_market_exposure": format(self.follower_maximum_market_exposure, "f"),
             "follower_maximum_positions": self.follower_maximum_positions,
-            "follower_maximum_wallet_exposure": format(
-                self.follower_maximum_wallet_exposure, "f"
-            ),
+            "follower_maximum_wallet_exposure": format(self.follower_maximum_wallet_exposure, "f"),
             "initial_lookback_minutes": self.initial_lookback_minutes,
             "maximum_event_notional": format(self.maximum_event_notional, "f"),
             "maximum_forward_delay_ms": self.maximum_forward_delay_ms,
@@ -289,24 +313,30 @@ class ContinuousShadowConfig:
             "wallet_maximum_exposure": format(self.wallet_maximum_exposure, "f"),
         }
         if self.runtime_version in {
-            "continuous-shadow-runtime-v2", "continuous-shadow-native-research-v1",
+            "continuous-shadow-runtime-v2",
+            "continuous-shadow-native-research-v1",
             "continuous-shadow-native-research-v2",
+            NATIVE_HEALTH_RUNTIME,
         }:
-            payload.update({
-                "selection_policy": self.selection_policy,
-                "selection_activity_counts": self.selection_activity_counts,
-                "selection_observed_at": (
-                    None if self.selection_observed_at is None
-                    else self.selection_observed_at.isoformat()
-                ),
-                "selection_preflight_digest": self.selection_preflight_digest,
-                "capacity_evidence": self.capacity_evidence,
-            })
+            payload.update(
+                {
+                    "selection_policy": self.selection_policy,
+                    "selection_activity_counts": self.selection_activity_counts,
+                    "selection_observed_at": (
+                        None
+                        if self.selection_observed_at is None
+                        else self.selection_observed_at.isoformat()
+                    ),
+                    "selection_preflight_digest": self.selection_preflight_digest,
+                    "capacity_evidence": self.capacity_evidence,
+                }
+            )
         if self.copy_policy is not None:
             import json
             from dataclasses import asdict
 
             from polysia.domain.financial_session import canonical_json
+
             payload["copy_policy"] = json.loads(canonical_json(asdict(self.copy_policy)))
         return payload
 

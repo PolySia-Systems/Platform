@@ -324,6 +324,88 @@ Successful receipts are cached in `cohort-revalidation.json` beside authority
 Retries are finite and charged; incomplete or insufficient evidence cannot advance
 financial watermarks or replace a cohort. No admission carries across releases.
 
+### Versioned native technical-health purpose
+
+The separately authorized N3 purpose is `TECHNICAL_HEALTH_V1`, with runtime
+`continuous-shadow-native-health-v1`. It does not reinterpret N1/N2 economic-flow
+campaigns or confer financial authority. The same persistent native service,
+single-writer worker, Risk/Decimal evaluation, journal, ledger and reporting run.
+Legacy policy digests and admission rules remain unchanged; purpose cannot change
+through a restrictive policy transition, and an existing finite grant cannot renew.
+
+`cli_support.native_research.observation_watch` freezes one to three normalized
+public identities with SHA256 references to retained public identity evidence.
+The `native-observation-watch/v1` candidates say `IDENTITY_VERIFIED` and
+`OBSERVATION_ONLY`, never fabricated current eligibility or prior simulations.
+The root-owned `native-health-admission/v1` requires purpose, CONTINUOUS mode,
+installed code SHA, watch digest, current policy digest, UTC expiry, actual resource
+approval, explicit `financial_authority=false` and supported `run_limits`.
+It rejects `persisted_simulations`. The worker requires a bound health campaign;
+the factory rejects cross-purpose research/health composition.
+
+The first due slot and subsequent three-hour revalidations check the same public
+identities with complete activity and market/fee/book evidence. Quiet or unqualified
+checks retain the original eligibility timestamp. Only genuinely qualified current
+evidence can replace it; entry expires after four hours and is checked per wallet
+and per action. Expired eligibility blocks exposure increase while observation and
+permitted close-only work continue. Closed markets, unavailable optional books,
+incomplete marks and rejected decisions do not alone stop unrelated observation.
+Incomplete source walks cannot advance the financial completeness watermark.
+Source-incomplete/invalid revalidation is reported separately from healthy empty.
+Local processing faults, geographic/auth restrictions and shared accounting
+uncertainty remain containment conditions.
+
+For this purpose only, a fully retained bounded HTTP error body with consistent
+declared length settles its actual response bytes; status/reason and raw evidence
+remain adverse receipts. Unreadable, truncated or oversized bodies retain the full
+uncertain reservation. No further health request is admitted on shared uncertainty.
+Legacy transport accounting remains conservative and unchanged.
+
+The `nonlive-technical-health/v1` plan binds the exact installed release/image,
+configuration digest, purpose/policy, immutable watch and period capacity. Freeze
+`monitoring.technical_health.ACCEPTANCE` in the plan before acquisition: 48 real
+hours **including** two initial real one-hour budget windows; at least 95% completed
+scheduled polls; maximum 900-second complete-poll gap; maximum 180-second durable
+worker-tick gap; at most the existing three consecutive provider failures before
+STOP. Every actual worker attempt is retained in bounded `technical_health_ticks`
+inside the authority database, copied by existing SQLite recovery. It never earns
+wall-clock credit without real completed polls, fresh native telemetry and bound
+actual STOP/resume/restart/protected-control/recovery proofs. No trade/evaluation,
+profit or perfect-mark frequency is required. Zero-new-event polls can include
+duplicates and must not be described as proven empty provider pages.
+
+Freeze `scheduled_poll_slot_seconds` from the commissioned timer and measured
+startup latency before collection (manifest cadence through cadence plus at most
+60 seconds of scheduling allowance). Poll coverage uses that fixed slot; raw
+counts and actual gaps remain visible. Do not revise its denominator after seeing
+results. A scoped timer override may use 61-second monotonic activations for a
+60-second manifest cadence, avoiding calendar jitter skipping every other slot;
+retain the override as run-owned configuration and remove it at final closure.
+
+The server records coverage, failures/retries, gaps, native telemetry/resources,
+period growth and request/byte accounting. Early growth forecasts are advisory;
+an unresolved forecast that reaches 90% of actual capacity stops before the hard
+ceiling. A changed purpose/configuration or significant unobserved gap cannot be
+silently joined into a pass. Preserve the failed interval and require an explicitly
+justified compatible observation decision within the original finite allowance.
+No automatic wallet churn, cap increase, period reset or virtual liquidation occurs.
+
+Use the stock minute worker scheduler with the frozen 60–180-second acquisition
+cadence, OS memory/CPU limits, disk reserve and finite authority. Expiry, critical
+fault or `OBSERVATION_COMPLETE_REVIEW_REQUIRED` durably STOP acquisition. Keep the
+Console/publisher/recovery usable for review; STOP never claims positions settled.
+The Console Operate workspace distinguishes technical health, observation permission,
+source revalidation and each wallet's current entry eligibility. Balances and partial
+marks still come from the shared reporting engine.
+
+Before leaving a run unattended, prove the installed worker/Console path and actual
+control binding, preserve the exact pending review UTC time, and verify server
+supervision independently of a model session. App scheduling is a convenience,
+never the safety owner. Report engineering, installed runtime, health soak,
+accounting, real event coverage, Console/controls and source/mark coverage separately;
+captured replay is branch evidence, never current execution or 48-hour credit.
+`LIVE_NOT_AUTHORIZED / NOT_PERFORMED` always applies.
+
 An already DRAINING session does not revalidate entry eligibility or spend its
 closure reserve on cohort rediscovery. It retains the admitted identities and
 uses the existing complete-source/current-market close-only path. Stale cohort

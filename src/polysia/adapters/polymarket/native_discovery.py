@@ -18,7 +18,9 @@ from polysia.adapters.polymarket.data_api_v2 import (
     data_api_v2_rows,
     fetch_data_api_v2_window,
 )
+from polysia.domain.copytrading.native_health import WATCH_PROFILE
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
+from polysia.storage.acquisition_authority import AcquisitionBlockedError
 
 PROFILE_VERSION = "native-recent-activity/v1"
 
@@ -264,10 +266,43 @@ async def verify_native_eligibility(
 
 
 async def revalidate_native_cohort(
-    discovery: dict[str, Any], transport: DataApiV2Transport,
-    market_adapter: BoundedMarketAdapter, *, clock: Callable[[], datetime],
+    discovery: dict[str, Any],
+    transport: DataApiV2Transport,
+    market_adapter: BoundedMarketAdapter,
+    *,
+    clock: Callable[[], datetime],
 ) -> dict[str, Any]:
     """Revalidate only admitted identities; never discover or admit replacements."""
+    return await _revalidate_fixed_wallets(discovery, transport, market_adapter, clock=clock)
+
+
+async def revalidate_native_watch(
+    discovery: dict[str, Any],
+    transport: DataApiV2Transport,
+    market_adapter: BoundedMarketAdapter,
+    *,
+    clock: Callable[[], datetime],
+) -> dict[str, Any]:
+    """Check actual entry evidence without misrepresenting watch permission as eligibility."""
+    if discovery.get("profile") != WATCH_PROFILE:
+        raise ValueError("native health watch purpose mismatch")
+    return await _revalidate_fixed_wallets(
+        discovery,
+        transport,
+        market_adapter,
+        clock=clock,
+        watched=True,
+    )
+
+
+async def _revalidate_fixed_wallets(
+    discovery: dict[str, Any],
+    transport: DataApiV2Transport,
+    market_adapter: BoundedMarketAdapter,
+    *,
+    clock: Callable[[], datetime],
+    watched: bool = False,
+) -> dict[str, Any]:
     cutoff = clock()
     if cutoff.utcoffset() != timedelta(0):
         raise ValueError("cutoff must be UTC")
@@ -279,7 +314,7 @@ async def revalidate_native_cohort(
     lower = cutoff - original_window
     candidates = []
     for original in discovery["candidates"]:
-        if original["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH":
+        if not watched and original["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH":
             continue
         rows = await fetch_data_api_v2_window(
             transport, DATA_API_V2_ACTIVITY_PATH,
@@ -310,15 +345,42 @@ async def revalidate_native_cohort(
             "outcome_reference": latest.get("asset") if latest else None,
         })
     result = {
-        "profile": PROFILE_VERSION, "source": "polymarket-native",
-        "coverage": "COMPLETE_FIXED_ADMITTED_WALLET_ACTIVITY",
-        "seed_coverage": "NOT_RESAMPLED_FIXED_ADMITTED_COHORT",
+        "profile": PROFILE_VERSION,
+        "source": "polymarket-native",
+        "coverage": "COMPLETE_FIXED_WATCH_ACTIVITY"
+        if watched
+        else "COMPLETE_FIXED_ADMITTED_WALLET_ACTIVITY",
+        "seed_coverage": "NOT_RESAMPLED_FIXED_WATCH"
+        if watched
+        else "NOT_RESAMPLED_FIXED_ADMITTED_COHORT",
         "original_cohort_digest": discovery["digest"],
-        "cutoff": cutoff.isoformat(), "window_start": lower.isoformat(),
-        "candidates": candidates, "unique_wallets": len(candidates),
+        "cutoff": cutoff.isoformat(),
+        "window_start": lower.isoformat(),
+        "candidates": candidates,
+        "unique_wallets": len(candidates),
         "source_rows": sum(row["complete_activity_rows"] for row in candidates),
     }
-    await verify_native_eligibility(result, market_adapter, clock=clock)
+    if watched:
+        for candidate in candidates:
+            try:
+                await verify_native_eligibility(
+                    {"candidates": [candidate]}, market_adapter, clock=clock
+                )
+            except AcquisitionBlockedError as error:
+                if str(error) not in {
+                    "provider_http_404",
+                    "provider_http_500",
+                    "provider_http_502",
+                    "provider_http_503",
+                    "provider_http_504",
+                }:
+                    raise
+                candidate.update(
+                    execution_eligibility="UNKNOWN_OPTIONAL_MARKET_UNAVAILABLE",
+                    exclusions=[str(error)],
+                )
+    else:
+        await verify_native_eligibility(result, market_adapter, clock=clock)
     result["frozen_at"] = clock().isoformat()
     raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
     return {**result, "digest": hashlib.sha256(raw.encode()).hexdigest()}

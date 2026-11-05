@@ -60,7 +60,7 @@ def effective_plan(value: dict[str, Any], raw: bytes) -> dict[str, Any]:
             or plan.get("cohort_digest") != value["admission"]["cohort_digest"]
             or plan.get("configuration_digest") != digest):
         raise ValueError("campaign installed artifact/configuration/cohort binding mismatch")
-    if plan.get("contract") == "nonlive-campaign/v2" and (
+    if plan.get("contract") in {"nonlive-campaign/v2", "nonlive-technical-health/v1"} and (
         plan.get("period_capacity") != NativeRunLimits.from_admission(value["admission"]).to_dict()
     ):
         raise ValueError("campaign period capacity binding mismatch")
@@ -421,14 +421,17 @@ def supervise_campaign(
         keys: tuple[str, ...] = (
             "campaign_id", "release_commit", "policy_digest", "cohort_digest",
         )
-        if plan.get("contract") == "nonlive-campaign/v2":
+        if plan.get("contract") in {"nonlive-campaign/v2", "nonlive-technical-health/v1"}:
             keys += ("configuration_digest", "image")
         if any(controls.get(key) != plan.get(key) for key in keys) or (
             "repair_attempt_id" in plan
             and controls.get("attempt_id") != plan["repair_attempt_id"]
         ):
             controls = {}  # A prior release/campaign's controls cannot commission this one.
-        result = campaign_check(
+        from polysia.monitoring.technical_health import CONTRACT, health_check
+
+        check = health_check if plan.get("contract") == CONTRACT else campaign_check
+        result = check(
             plan, previous, database=database, authority=authority, now=now, controls=controls
         )
     except OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error:

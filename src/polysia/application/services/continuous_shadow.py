@@ -17,6 +17,7 @@ from polysia.application.ports.candidate_intelligence import (
 from polysia.application.ports.continuous_shadow import (
     BatchOrderBookReadPort,
     ContinuousCandidatePort,
+    ContinuousEntryEligibilityPort,
     ContinuousEvaluationRecord,
     ContinuousLedgerRecord,
     ContinuousMarketReadPort,
@@ -80,6 +81,12 @@ from polysia.domain.copytrading.continuous_shadow import (
     walk_order_book,
 )
 from polysia.domain.copytrading.copy_policy import ShadowPositionAction
+from polysia.domain.copytrading.native_health import (
+    RUNTIME as HEALTH_RUNTIME,
+)
+from polysia.domain.copytrading.native_health import (
+    validate_health_admission,
+)
 from polysia.domain.copytrading.wallet_capacity import (
     WalletCapacityError,
     capacity_status,
@@ -428,6 +435,16 @@ class ContinuousShadowService:
 
     def _current_selection(self, source_id: str) -> ContinuousSelectionSnapshot:
         snapshot = self._candidate_port.current_snapshot(source_id)
+        if self._config.runtime_version == HEALTH_RUNTIME:
+            if (
+                snapshot.policy_id != "native-observation-watch"
+                or snapshot.policy_version != "v1"
+                or snapshot.source_snapshot_id != self._config.selection_preflight_digest
+                or len(snapshot.candidates) != self._config.wallet_count
+                or any(c.pools != ("NATIVE_OBSERVATION",) for c in snapshot.candidates)
+            ):
+                raise ContinuousSelectionUnavailableError("native health watch identity mismatch")
+            return snapshot
         if self._config.runtime_version in {
             "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
         }:
@@ -488,6 +505,20 @@ class ContinuousShadowService:
         )
 
     def _require_new_period_capacity(self, *, close_only: bool = False) -> None:
+        if self._config.runtime_version == HEALTH_RUNTIME:
+            try:
+                validate_health_admission(
+                    self._config.capacity_evidence or {},
+                    code_sha=self._config.code_sha,
+                    watch_digest=self._config.selection_preflight_digest,
+                    now=self._now(),
+                )
+                if not isinstance(self._candidate_port, ContinuousEntryEligibilityPort):
+                    raise ValueError("native health requires an independent entry eligibility port")
+                self._current_selection("polymarket-native")
+            except ValueError as error:
+                raise ContinuousShadowError(str(error)) from error
+            return
         if self._config.runtime_version in {
             "continuous-shadow-native-research-v1", "continuous-shadow-native-research-v2",
         }:
@@ -581,7 +612,7 @@ class ContinuousShadowService:
                 "Continuous Shadow runtime config differs from the versioned experiment."
             )
         self._guard_accounting(experiment)
-        if self._config.runtime_version == "continuous-shadow-native-research-v2":
+        if self._config.runtime_version in {"continuous-shadow-native-research-v2", HEALTH_RUNTIME}:
             self._require_new_period_capacity(
                 close_only=experiment.lifecycle is ContinuousShadowLifecycle.DRAINING,
             )
@@ -680,6 +711,16 @@ class ContinuousShadowService:
             and selection.published_at <= window_end
             and window_end - selection.published_at <= self._maximum_selection_age
         )
+        if self._config.runtime_version == HEALTH_RUNTIME:
+            assert isinstance(self._candidate_port, ContinuousEntryEligibilityPort)
+            selection_fresh = (
+                experiment.lifecycle is ContinuousShadowLifecycle.RUNNING
+                and source_selection_available
+                and any(
+                    self._candidate_port.exposure_increase_allowed(c.wallet_id, at=window_end)
+                    for c in candidates
+                )
+            )
         with self._latency_span("application", "db_read", parent_span_id=root_span_id):
             watermark = self._store.watermark(experiment.experiment_id)
         if watermark is None:
@@ -711,6 +752,7 @@ class ContinuousShadowService:
             if callable(binder):
                 binder(poll_run_id=poll_run_id, experiment_id=experiment.experiment_id)
             scoped_policy = self._config.copy_policy is not None
+
             def scope_event(identity: str) -> str:
                 return digest((experiment.experiment_id, identity)) if scoped_policy else identity
 
@@ -861,7 +903,17 @@ class ContinuousShadowService:
                             event,
                             pool_class=pool_class,
                             lifecycle=experiment.lifecycle,
-                            exposure_increase_allowed=selection_fresh,
+                            exposure_increase_allowed=selection_fresh
+                            and (
+                                self._config.runtime_version != HEALTH_RUNTIME
+                                or (
+                                    isinstance(self._candidate_port, ContinuousEntryEligibilityPort)
+                                    and self._candidate_port.exposure_increase_allowed(
+                                        event.leader_id,
+                                        at=window_end,
+                                    )
+                                )
+                            ),
                             market=markets.get(event.market_reference),
                             book=books.get(event.outcome_reference),
                             attributions=attributions,
@@ -1349,7 +1401,6 @@ class ContinuousShadowService:
         if value.tzinfo is None or value.utcoffset() != timedelta(0):
             raise ValueError("clock must return timezone-aware UTC")
         return value
-
 
 
 def apply_shadow_event(

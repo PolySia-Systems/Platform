@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,6 +26,15 @@ from polysia.application.ports.continuous_shadow import (
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.application.services.continuous_shadow import ContinuousShadowService
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+from polysia.domain.copytrading.native_health import (
+    PURPOSE as HEALTH_PURPOSE,
+)
+from polysia.domain.copytrading.native_health import (
+    RUNTIME as HEALTH_RUNTIME,
+)
+from polysia.domain.copytrading.native_health import (
+    WATCH_PROFILE,
+)
 from polysia.domain.copytrading.native_run_limits import NativeRunLimits
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
 from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
@@ -164,31 +174,87 @@ def _capacity_health(
 
 
 class NativeSnapshotPort:
-    def __init__(self, discovery: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        discovery: dict[str, Any],
+        *,
+        eligibility: dict[str, Any] | None = None,
+    ) -> None:
         unsigned = {key: value for key, value in discovery.items() if key != "digest"}
-        digest = hashlib.sha256(json.dumps(
-            unsigned, sort_keys=True, separators=(",", ":"),
-        ).encode()).hexdigest()
-        if (discovery.get("digest") != digest
-                or discovery.get("profile") != "native-recent-activity/v1"):
+        digest = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if discovery.get("digest") != digest or discovery.get("profile") not in {
+            "native-recent-activity/v1",
+            WATCH_PROFILE,
+        }:
             raise ValueError("native discovery digest or profile mismatch")
         candidates: list[ProtectedShadowCandidate] = []
+        health = discovery["profile"] == WATCH_PROFILE
         for item in discovery["candidates"]:
-            if item["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH":
+            if not health and item["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH":
                 continue
             wallet_id, _, address = normalize_evm_wallet("polygon", item["address"])
-            if wallet_id != item["wallet_id"] or item["state"] != "ACTIVITY_CONFIRMED":
+            if (
+                wallet_id != item["wallet_id"]
+                or item["state"] != ("IDENTITY_VERIFIED" if health else "ACTIVITY_CONFIRMED")
+                or health
+                and (
+                    item.get("execution_eligibility") != "OBSERVATION_ONLY"
+                    or re.fullmatch(r"[0-9a-f]{64}", item.get("identity_evidence_sha256", ""))
+                    is None
+                )
+            ):
                 raise ValueError("native candidate identity or evidence mismatch")
-            candidates.append(ProtectedShadowCandidate(wallet_id, address, ("NATIVE_RESEARCH",)))
-        if not candidates or len(candidates) > 10 or len({c.wallet_id for c in candidates}) != len(
-            candidates
+            candidates.append(
+                ProtectedShadowCandidate(
+                    wallet_id, address, ("NATIVE_OBSERVATION" if health else "NATIVE_RESEARCH",)
+                )
+            )
+        if (
+            not candidates
+            or len(candidates) > (3 if health else 10)
+            or len({c.wallet_id for c in candidates}) != len(candidates)
         ):
             raise ContinuousSelectionUnavailableError("no valid unique native research cohort")
+        self._eligibility = eligibility
+        self._watch_digest = digest
+        self._wallets = {c.wallet_id for c in candidates}
+        if eligibility is not None:
+            unsigned = {k: v for k, v in eligibility.items() if k != "digest"}
+            if (
+                not health
+                or eligibility.get("profile") != "native-recent-activity/v1"
+                or eligibility.get("original_cohort_digest") != digest
+                or eligibility.get("digest")
+                != hashlib.sha256(
+                    json.dumps(
+                        unsigned,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                or {(c["wallet_id"], c["address"]) for c in eligibility["candidates"]}
+                != {(c.wallet_id, c.address) for c in candidates}
+                or len(eligibility["candidates"]) != len(candidates)
+            ):
+                raise ValueError("native health entry evidence identity mismatch")
         self.snapshot = ContinuousSelectionSnapshot.create(
-            source_id="polymarket-native", selection_run_id="native-" + digest[:32],
-            source_snapshot_id=digest, feature_set_version="complete-native-activity/v1",
-            policy_id="native-recent-activity", policy_version="v1",
-            ranking_version="activity-recency-identity/v1",
+            source_id="polymarket-native",
+            selection_run_id="native-" + digest[:32],
+            source_snapshot_id=digest,
+            feature_set_version=(
+                "public-identity-observation/v1" if health else "complete-native-activity/v1"
+            ),
+            policy_id="native-observation-watch" if health else "native-recent-activity",
+            policy_version="v1",
+            ranking_version=(
+                "fixed-public-identities/v1" if health else "activity-recency-identity/v1"
+            ),
             published_at=datetime.fromisoformat(discovery["frozen_at"]),
             candidates=tuple(candidates),
         )
@@ -200,20 +266,111 @@ class NativeSnapshotPort:
             raise ContinuousSelectionUnavailableError("native source identity mismatch")
         return self.snapshot
 
+    def exposure_increase_allowed(self, wallet_id: str, *, at: datetime) -> bool:
+        evidence = self._eligibility
+        if evidence is None or wallet_id not in self._wallets:
+            return False
+        stamp = datetime.fromisoformat(evidence["frozen_at"])
+        if stamp.utcoffset() != timedelta(0) or not timedelta(0) <= at - stamp <= timedelta(
+            hours=4
+        ):
+            return False
+        return any(
+            c["wallet_id"] == wallet_id
+            and c.get("state") == "ACTIVITY_CONFIRMED"
+            and c.get("execution_eligibility") == "ELIGIBLE_FOR_RESEARCH"
+            for c in evidence["candidates"]
+        )
+
+
+def observation_watch(
+    identities: list[tuple[str, str]], *, observed_at: datetime,
+) -> dict[str, Any]:
+    """Freeze verified public address / retained response-SHA pairs for observation.
+
+    The caller must retain the actual identity evidence. This constructor supplies
+    no trading eligibility, historical fills or profitability assertion.
+    """
+    if observed_at.utcoffset() != timedelta(0) or not 1 <= len(identities) <= 3:
+        raise ValueError("one to three public identities and UTC observation required")
+    candidates = []
+    for address, evidence in identities:
+        wallet_id, _, address = normalize_evm_wallet("polygon", address)
+        if re.fullmatch(r"[0-9a-f]{64}", evidence) is None:
+            raise ValueError("retained public identity evidence SHA256 required")
+        candidates.append({"wallet_id": wallet_id, "address": address,
+                           "state": "IDENTITY_VERIFIED",
+                           "execution_eligibility": "OBSERVATION_ONLY",
+                           "identity_evidence_sha256": evidence})
+    value = {"profile": WATCH_PROFILE, "source": "polymarket-native",
+             "frozen_at": observed_at.isoformat(), "cutoff": observed_at.isoformat(),
+             "window_start": (observed_at - timedelta(seconds=300)).isoformat(),
+             "candidates": candidates}
+    result = {**value, "digest": hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()}
+    NativeSnapshotPort(result)  # Reject duplicate identities before writing the binding.
+    return result
+
+
+def native_observation_status(value: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+    """Expose observation permission separately from current per-wallet entry evidence."""
+    discovery = json.loads(Path(value["cohort"]).read_bytes())["discovery"]
+    path = Path(value.get("cohort_refresh", str(
+        Path(value["authority"]).with_name("cohort-revalidation.json"),
+    )))
+    check: dict[str, Any] = {}
+    if path.exists():
+        if path.is_symlink() or path.stat().st_size > 1_048_576:
+            raise ValueError("invalid native observation evidence")
+        check = json.loads(path.read_bytes())
+        if (check.get("code_sha") != value["release_commit"]
+                or check.get("original_cohort_digest") != discovery["digest"]):
+            raise ValueError("native observation publication identity mismatch")
+    port = NativeSnapshotPort(discovery, eligibility=check.get("eligibility"))
+    return {"purpose": HEALTH_PURPOSE, "observed_at": now.isoformat(),
+            "watch_digest": discovery["digest"], "permission": "OBSERVATION_ONLY",
+            "eligibility_check": check.get("outcome", "NOT_CHECKED"),
+            "eligibility_checked_at": check.get("checked_at"),
+            "eligibility_detail": check.get("detail"),
+            "wallets": [{"wallet_id": c.wallet_id,
+                         "entry": "ELIGIBLE_CURRENT" if port.exposure_increase_allowed(
+                             c.wallet_id, at=now,
+                         ) else "BLOCKED_NO_CURRENT_ELIGIBILITY"}
+                        for c in port.snapshot.candidates],
+            "financial_authority": False}
+
 
 def native_shadow_service(
-    database: Path, discovery: dict[str, Any], *, authority: AcquisitionAuthority,
-    code_sha: str, admission: dict[str, Any], closure: bool = False,
-    persistent: bool = False, refreshed_discovery: dict[str, Any] | None = None,
+    database: Path,
+    discovery: dict[str, Any],
+    *,
+    authority: AcquisitionAuthority,
+    code_sha: str,
+    admission: dict[str, Any],
+    closure: bool = False,
+    persistent: bool = False,
+    refreshed_discovery: dict[str, Any] | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ContinuousShadowService:
     initial = NativeSnapshotPort(discovery)
-    port = initial if refreshed_discovery is None else NativeSnapshotPort(refreshed_discovery)
-    if refreshed_discovery is not None and (
-        refreshed_discovery.get("original_cohort_digest") != discovery["digest"]
-        or {(c.wallet_id, c.address) for c in port.snapshot.candidates}
-        != {(c.wallet_id, c.address) for c in initial.snapshot.candidates}
-        or port.snapshot.published_at < initial.snapshot.published_at
+    health = discovery.get("profile") == WATCH_PROFILE
+    if health != (authority.policy.purpose == HEALTH_PURPOSE) or health and not persistent:
+        raise ValueError("native factory observation/research purpose mismatch")
+    port = (
+        NativeSnapshotPort(discovery, eligibility=refreshed_discovery)
+        if health
+        else (initial if refreshed_discovery is None else NativeSnapshotPort(refreshed_discovery))
+    )
+    if (
+        not health
+        and refreshed_discovery is not None
+        and (
+            refreshed_discovery.get("original_cohort_digest") != discovery["digest"]
+            or {(c.wallet_id, c.address) for c in port.snapshot.candidates}
+            != {(c.wallet_id, c.address) for c in initial.snapshot.candidates}
+            or port.snapshot.published_at < initial.snapshot.published_at
+        )
     ):
         raise ValueError("native revalidation cannot replace admitted identities")
     if len(port.snapshot.candidates) > authority.policy.cohort_limit:
@@ -221,18 +378,27 @@ def native_shadow_service(
     limits = NativeRunLimits.from_admission(admission)
     transport = BoundedPublicTransport(authority, closure=closure)
     config = ContinuousShadowConfig(
-        code_sha=code_sha, runtime_version=(
-            "continuous-shadow-native-research-v2" if persistent
+        code_sha=code_sha,
+        runtime_version=(
+            HEALTH_RUNTIME
+            if health
+            else "continuous-shadow-native-research-v2"
+            if persistent
             else "continuous-shadow-native-research-v1"
         ),
-        policy_version="native-research-shadow-policy/v1",
-        selection_policy="native-recent-activity-v1",
+        policy_version="native-health-shadow-policy/v1"
+        if health
+        else "native-research-shadow-policy/v1",
+        selection_policy="native-observation-watch-v1" if health else "native-recent-activity-v1",
         wallet_count=len(port.snapshot.candidates),
         selection_observed_at=initial.snapshot.published_at,
         selection_preflight_digest=initial.snapshot.source_snapshot_id,
-        capacity_evidence=admission, period_duration_seconds=0 if persistent else 86_400,
-        poll_interval_seconds=authority.policy.cadence_seconds, initial_lookback_minutes=1,
-        source_max_pages=4, source_max_requests=4,
+        capacity_evidence=admission,
+        period_duration_seconds=0 if persistent else 86_400,
+        poll_interval_seconds=authority.policy.cadence_seconds,
+        initial_lookback_minutes=1,
+        source_max_pages=4,
+        source_max_requests=4,
         maximum_selection_age_hours=4,
         period_max_events=limits.period_max_events,
         period_max_storage_bytes=limits.period_max_storage_bytes,
@@ -240,15 +406,24 @@ def native_shadow_service(
     telemetry = LatencyTelemetryStore(database.with_name("native-latency.sqlite3"))
     identity_cache = MetadataIdentityCache(database.with_name("metadata-identity.sqlite3"))
     return NativeShadowService(
-        ContinuousShadowRepository(database), port, ContinuousShadowLeaseRepository(database),
+        ContinuousShadowRepository(database),
+        port,
+        ContinuousShadowLeaseRepository(database),
         lambda leaders: PolymarketCopyTradingSource(
-            leaders, transport=transport, clock=clock,
+            leaders,
+            transport=transport,
+            clock=clock,
             market_scope=PolymarketMarketScope.ALL_VERIFIED,
-            max_pages=4, max_requests=4, max_elapsed_seconds=30,
+            max_pages=4,
+            max_requests=4,
+            max_elapsed_seconds=30,
             identity_cache=identity_cache,
         ),
-        BoundedMarketAdapter(transport), config=config, concurrency=1,
-        maximum_pages_per_wallet=4, maximum_selection_age=timedelta(hours=4),
+        BoundedMarketAdapter(transport),
+        config=config,
+        concurrency=1,
+        maximum_pages_per_wallet=4,
+        maximum_selection_age=timedelta(hours=4),
         automatic_rollover=False,
         clock=clock,
         latency_recorder=LatencyRecorder(telemetry, load_runtime_identity(venue_id="polymarket")),
