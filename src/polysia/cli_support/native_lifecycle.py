@@ -156,7 +156,8 @@ async def native_lifecycle_poll(
                        if c["execution_eligibility"] != "ELIGIBLE_FOR_RESEARCH"]
             quiet = bool(invalid) and all(
                 c.get("state") == "NO_COMPLETE_ACTIVITY"
-                and c.get("complete_activity_rows") == 0 for c in invalid
+                and c.get("complete_activity_rows") == c.get("window_filtered_rows", 0)
+                for c in invalid
             )
             if quiet:
                 if age >= timedelta(hours=4):

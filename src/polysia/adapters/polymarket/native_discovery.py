@@ -99,7 +99,11 @@ async def discover_native_activity(
         )
         verified: list[datetime] = []
         latest: dict[str, Any] | None = None
+        window_filtered = 0
         for row in activity:
+            if _floor_second_overlap(row, lower=lower):
+                window_filtered += 1
+                continue
             wallet, when = qualifying_trade(row, lower=lower, cutoff=cutoff)
             if wallet != address:
                 raise ValueError("native_activity_wallet_mismatch")
@@ -113,6 +117,7 @@ async def discover_native_activity(
                 "last_qualifying_activity": max(verified).isoformat() if verified else None,
                 "feed_last_trade": last_trade.isoformat(),
                 "complete_activity_rows": len(activity),
+                "window_filtered_rows": window_filtered,
                 "market_reference": latest.get("conditionId") if latest else None,
                 "outcome_reference": latest.get("asset") if latest else None,
                 "state": "ACTIVITY_CONFIRMED" if verified else "NO_COMPLETE_ACTIVITY",
@@ -160,6 +165,20 @@ async def discover_native_activity(
     }
     raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
     return {**result, "digest": hashlib.sha256(raw.encode()).hexdigest()}
+
+
+def _floor_second_overlap(row: dict[str, Any], *, lower: datetime) -> bool:
+    """Exclude only the subsecond overlap introduced by an integer API start.
+
+    Other invalid/out-of-window rows still fail validation. Raw coverage counts
+    remain intact; this overlap never becomes fresh activity or eligibility.
+    """
+    stamp = row.get("timestamp")
+    return (
+        type(stamp) is int
+        and stamp == int(lower.timestamp())
+        and datetime.fromtimestamp(stamp, lower.tzinfo) < lower
+    )
 
 
 def qualifying_trade(
@@ -270,7 +289,11 @@ async def revalidate_native_cohort(
         )
         latest = None
         latest_at = None
+        window_filtered = 0
         for row in rows:
+            if _floor_second_overlap(row, lower=lower):
+                window_filtered += 1
+                continue
             address, when = qualifying_trade(row, lower=lower, cutoff=cutoff)
             if address != original["address"]:
                 raise ValueError("native_activity_wallet_mismatch")
@@ -282,6 +305,7 @@ async def revalidate_native_cohort(
             "execution_eligibility": "UNKNOWN_REQUIRES_MAPPING_BOOK_AND_FEE_EVIDENCE",
             "last_qualifying_activity": latest_at.isoformat() if latest_at else None,
             "complete_activity_rows": len(rows),
+            "window_filtered_rows": window_filtered,
             "market_reference": latest.get("conditionId") if latest else None,
             "outcome_reference": latest.get("asset") if latest else None,
         })

@@ -104,6 +104,19 @@ defect or deployment change was demonstrated. The
 [N1-F evidence and nine verdicts](../18-ai-handoffs/nonlive-n1-functional-diagnostic-2026-11-05.md)
 record the precise current-input gate; no new sustained run is active.
 
+N1-F2 prospective functional proof, 2026-11-05 13:34 UTC: **FINITE NATIVE PATH
+PASSED; SUSTAINED TRIAL NOT STARTED**. The separately accounted installed native
+engine recorded 32 genuine post-start events, 27 virtual postings and actual
+authenticated Console report/evaluation projection. A second container continued
+the same store and suppressed seven duplicates. Final usage: 103 requests /
+1,798,565 bytes / uncertainty 0; temporary worker, gateway and Console are stopped.
+Old N1/N1-F scopes and nine original positions are unchanged. Current valuation
+is partially marked. A demonstrated lower-second activity-boundary rejection
+has a focused correction; production activation remains gated by protected
+retained-state bindings. The same [canonical N1-F/F2 record](../18-ai-handoffs/nonlive-n1-functional-diagnostic-2026-11-05.md)
+contains seven scoped verdicts and an inactive sustained proposal addressing
+request cost, period caps, three/four-hour eligibility and useful-flow gaps.
+
 Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
 Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
 full exact-main CI and was installed on the owner-confirmed Helsinki target in
