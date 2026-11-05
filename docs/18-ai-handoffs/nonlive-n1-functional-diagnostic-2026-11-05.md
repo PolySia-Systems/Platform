@@ -2,6 +2,8 @@
 
 Date: 2026-11-05. Status: **DIAGNOSTIC COMPLETE; SUSTAINED TRIAL BLOCKED**.
 This is dated evidence, not live host truth or a new campaign authorization.
+The N1-F2 continuation below establishes a later prospective functional result;
+it does not change the closed N1-F or failed sustained N1 verdicts.
 
 ## Decision and provenance
 
@@ -260,3 +262,250 @@ benchmarks, then measure a post-start native event before estimating a new
 sustained budget. Zero admitted useful polls supplies no defensible 48-hour
 throughput/cost extrapolation. The real two rolling windows and 48 useful hours,
 human acceptance and financial/Live authority remain separate unmet gates.
+
+## N1-F2 prospective native path, 2026-11-05
+
+**PROSPECTIVE FUNCTIONAL PATH PASSED within the isolated native engine.** A real
+post-start stream reached the journal, decisions, virtual ledger and authenticated
+shipped Console API. No financial action occurred. This is not a sustained-run,
+profitability, human-acceptance or full persistent-worker commissioning verdict.
+
+Baseline was clean `main` at `32a1cf59fd5330067bc6c4da26e9b1e1b4cfd6c6`;
+the actual run used the unchanged installed executable `783954f9c9fb1ffef3905c2536f503df71f3f43b`
+and image recorded above. Task branch: `codex/n1f2-prospective-proof`.
+The delivery PR owns final correction/CI/Git identity. No production release
+activation, old-store transition or new campaign was performed.
+
+### Prepared sequence and selection
+
+Before provider I/O, the complete server runner, finite supervisor and private
+Console were prepared. The stock Console and stock Caddy gateway used a separate
+Unix socket and `https://localhost:9445`, a separately generated local CA and an
+explicit reader role. Certificate verification succeeded; anonymous access was
+401, authenticated session/report/evaluation workspace were 200. Initial gateway
+validation encountered backend startup delay; it was resolved and all checks
+passed **before** any provider request. Production Console/configuration and
+public ingress were untouched. No authentication or role was bypassed.
+
+The official `ISOLATED_DIAGNOSTIC` factory persists the same native service,
+source, evaluator, accounting repository and reporting path as the persistent
+factory. Offline constructor comparison confirmed identical configurations except
+`runtime_version` and `period_duration_seconds` (one day versus unbounded). The
+actual service class and `poll` method are identical. A one-day period cannot
+expire within this two-hour envelope. This establishes finite-horizon engine
+equivalence, **not** coverage of `native_lifecycle_poll`/`worker_tick` CONTINUOUS
+admission, three-hour revalidation or long-period behavior. No fabricated
+`persisted_simulations` or CONTINUOUS admission was supplied to earn this result.
+
+Policy `owner-n1f2-prospective-20261105`, digest
+`59af854a8e50f08074b91138c0c1e64666df8fc273c108d030a26a683712c15e`,
+was frozen at 13:24:10.114382 UTC with expiry 15:24:10.114382 UTC. Limits:
+300 attempts/128 MiB total, 150 attempts/64 MiB per rolling hour, response
+4 MiB, timeout 15 s, one request in flight, cadence at least 60 s, worker
+512 MiB/50% of one core and free-disk reserve 9 GiB. The earlier scope's unused
+allowance was not used. The explicit budget check before starting required at
+least 64 requests/64 MiB remaining; later polls required 16 requests/8 MiB.
+Actual authority still reserves before every GET and owns all hard limits.
+
+Frozen selection: at most two 500-row public seed samples, five individually
+inspected identities, first eligible singleton; seed-window frequency descending,
+latest timestamp descending, then normalized address. No P&L ranking. Complete
+five-minute activity required at least two rows, latest age at most 60 s, valid
+mapping/fees/current two-sided book and at least 300 s market lifetime remaining.
+No model deliberation or benchmark intervened between preflight and startup.
+
+One seed was sufficient; four identities were inspected, one admitted. Two
+earlier candidates hit the subsecond boundary defect described below; another
+had latest activity older than 60 s. Exclusions remain retained. The admitted
+candidate had 101 complete activity rows, latest execution 13:29:12 UTC, verified
+fees/mapping/book and active market ending 17:00 UTC. Its preflight lasted
+13:29:25.451999–13:29:25.890617 UTC; prospective start was
+**13:29:26.041693 UTC**, about 151 ms later. No identity was replaced after start.
+
+### Actual prospective trace and restart
+
+Experiment: `28294882e0934103a5b3b4a90743ed6f`.
+All **32 unique journal events** executed strictly after its recorded start;
+pre-start events credited: **zero**. There were **64 evaluations**, comprising
+**27 SIMULATED / 33 REJECTED / 4 UNKNOWN**, and **27 ledger entries**. These are
+virtual portfolio records, not 27 venue transactions: wallet portfolio 20 fills,
+follower portfolio seven. Rejections retained minimum-order-size (11), capital
+limit (20) and conflicting-outcome (2) reasons. Four stale-book evaluations
+remained UNKNOWN; quotes were not invented or freshness thresholds lowered.
+
+| Actual process | Poll ID | New events / duplicates | Evaluations / virtual fills |
+|---|---|---:|---:|
+| First worker container | `8990c2f6f62d49fd96102d22ec014a90` | 12 / 0 | 24 / 17 |
+| New worker container, same durable store | `e370907e74da45dcb72d2fd17b5af0eb` | 20 / 7 | 40 / 10 |
+
+The server automatically performed the second container invocation after the
+first useful result; its due time was durable and cadence respected. Duplicate
+checks confirmed unique journal IDs, unique portfolio/event evaluations and
+unique ledger entry IDs across both polls. The seven overlapping occurrences
+did not generate repeated accounting. No model loop controlled acquisition.
+
+Representative linked event:
+`5f1de54e22f4d6febc728c60fbc3a1ae976df8266fe49bc7d2fd0a82bfa5b4c9`.
+Execution 13:29:30 UTC; first observation/first-seen 13:30:26.265644 UTC;
+evaluation 13:30:30.214142 UTC; quote 13:30:22.356 UTC. Raw request
+`3998d6fbfdd8428da9d532bb6925d816`, provider trace
+`e97f911c7f674fcaba3c3c1ec56e95d1`, response SHA-256
+`1484331e954ea9115e67589009f945e1535704da4b959e2b979916eb5a91b770`
+links to its complete trade page, normalized event, current Gamma/book requests,
+SIMULATED decisions and ledger postings. Detailed linked traces remain protected.
+
+The private shipped `/api/report` and `/api/console/v1/workspace?panel=evaluate`
+returned the same analytical digest:
+`5c9b45b2c7f557b54930c3f73c8b5b37b7abb2131f2c1c7a9c401dae045cc18e`.
+The publication identified `N1-F2_ISOLATED_DIAGNOSTIC`, actual experiment/times,
+decisions, virtual balances and final STOPPED state. This is real authenticated
+Console/API evidence, not a mock projection or human browser acceptance.
+
+Final follower cash: `974.61619`; exposure: `25`; recorded fees: `0.38381`;
+realized P&L: zero. Ledger balance and adjusted accounting identity delta were
+zero. Total retained positions: 25 (seven follower positions); no liquidation,
+fabricated settlement or reset occurred. **Valuation is incomplete**: two
+follower positions had incomplete marks and reported NAV `998.359661745083...`
+was explicitly `PARTIAL_OR_LAST_KNOWN_GOOD`. Posting/reconciliation success does
+not establish complete current NAV or profitable performance.
+
+### Measured limits, STOP and recovery
+
+First request: **13:29:24.674450 UTC**; last: **13:31:36.873252 UTC**;
+provider activity spanned about **132.199 s**. All **103 attempts** completed,
+**1,798,565 measured/accounted response bytes**, uncertainty **zero**.
+Preflight spent 8 requests/1,157,620 bytes; polls spent 37/261,242 and
+58/379,703 respectively. Successful HTTP observations ranged 56–167 ms.
+Endpoints: trades 3, activity 4, Gamma markets 60, CLOB book 36; no inventory,
+financial-account or mutation endpoint was requested.
+
+Native telemetry retained two real poll samples, zero errors/drops/history gap,
+peak process RSS 129,212,416 bytes, maximum observed one-core CPU 40.387%, and
+minimum free disk 23,298,920,448 bytes. These short samples are not sustained
+capacity evidence. Container ceilings were enforced independently.
+
+The finite systemd supervisor owned expiry, two process invocations, private
+Console receipt collection and idempotent offline STOP/cleanup. It completed at
+13:31:49.756531 UTC; by 13:34 all owned containers/unit were inactive, port 9445
+was closed and the isolated spent authority/directory were OS write-fenced.
+A network-none replay of the actual STOPped authority snapshot returned
+`authority_stopped_or_mismatched` before HTTP, with usage unchanged. The actual
+primary likewise remained at 103/1,798,565/0 after STOP.
+
+Old N1 remains 454/66,678,249/0 with its nine positions and 148/296/22 records;
+old N1-F remains 18/4,626,777/**1**, STOPped. Their stores, plans, old fence,
+original encrypted recovery and failed verdicts were not changed.
+The closed diagnostic capsule contains SQLite backup-API snapshots, raw hashes,
+cohort/start, all adverse results, both polls, telemetry and actual Console
+receipts. Credentials, CSRF secret and gateway private keys are excluded.
+Capsule: **458,150 bytes**, SHA-256
+`9d220a1267c98810a834eeff5752058116fff9377ef1030badb9c6dd7afca6a9`.
+Exact contents, SQLite integrity and spent STOP/accounting were independently
+verified on fenced Nuremberg. This is diagnostic recovery, not a repeated or
+replacement production recovery drill. Protected roots use `n1f2-20261105`
+beside their N1-F predecessors. Local evidence is under ignored
+`artifacts/n1f2-20261105/`.
+
+### Demonstrated boundary correction and validation
+
+Two rejected preflight payloads contained 295 and 297 rows, including two rows
+exactly at the integer query start. The API's whole-second start includes them,
+but a fractional application lower bound puts that second's start just outside
+the precise window. Native discovery/revalidation previously raised for the
+entire complete response. Source-only offline replay reproduced this on the
+unchanged captured bytes with an explicitly synthetic fractional replay clock.
+This is a demonstrated implementation defect, not evidence of provider downtime.
+
+The focused correction filters **only** this known lower-second encoding overlap,
+retains raw coverage plus `window_filtered_rows`, and validates all remaining
+rows unchanged. Whole-second inclusive boundaries remain included. Malformed,
+wrong-wallet and other out-of-window rows still fail closed. Boundary-only input
+is healthy quiet, supplies no fresh eligibility and still blocks at four hours;
+it cannot refresh the original selection age or earn useful observation credit.
+Old cohorts/stores are not rewritten. Identical captured replay now retains
+293/295 in-window rows; missing uncaptured market metadata remains explicitly
+ineligible. That offline replay is not additional prospective credit.
+
+New regression tests first failed four boundary cases on the predecessor.
+After correction, focused discovery/native lifecycle tests passed **35 in
+28.14 s**; Ruff over the repository, compileall and mypy over both changed source
+modules passed. The prior 141 checks were reused rather than rerun unchanged.
+Full applicable source-change checks, immutable CI identities and integration
+outcome belong to the delivery PR. The live operational proof above used the
+pre-correction installed artifact; a post-correction live smoke was not performed.
+
+Production activation is separately gated: the supported bootstrap refuses an
+active pinned native session without an audited release transition. That
+transition writes the original retained store, which N1-F2 explicitly forbids.
+The old installation and its rollback binding therefore remain at `783954f`;
+no ad-hoc admission/store edits or fence removal were used to deploy this fix.
+The reviewable correction can be commissioned in a separately scoped supported
+installation, or through an explicitly assessed retained-state transition.
+
+### Seven scoped verdicts and next decision
+
+| Verdict | Result | Scope |
+|---|---|---|
+| ENGINEERING | PASS | Finite runner/Console completed; reproduced boundary defect corrected with regression/replay evidence. Production activation remains gated as above. |
+| INPUT_ELIGIBILITY | PASS | One explicitly admitted singleton had complete recent activity and actual current mapping/fee/book evidence; 32 later unique events were genuinely post-start. |
+| PROSPECTIVE_NATIVE_PATH | PASS | Actual installed native engine, journal, evaluation and persisted continuation across two real containers. Full CONTINUOUS worker/admission and long-horizon lifecycle are not exercised. |
+| VIRTUAL_ACCOUNTING | PASS | 27 real virtual postings, duplicate protection and balanced ledger; complete current valuation is not established. |
+| CONSOLE_PROJECTION | PASS | Authenticated stock TLS Console report/evaluation API matches the analytical digest and stopped state; no human acceptance claimed. |
+| SAFETY_AND_RECOVERY | PASS | Finite budgets/STOP/expiry, OS fencing, removed owned services, preserved old scopes and independently verified exact diagnostic capsule. |
+| READY_TO_PLAN_SUSTAINED_TRIAL | PASS | Enough evidence to formulate the conditional proposal below; **not authorization or readiness to start it**. |
+
+Next decision: review a **workload-fitting sustained plan and its commissioning
+boundary**, rather than repeating this successful short run or starting 48 hours
+blindly. This control had 101 trades in five minutes and 32 events over roughly
+two poll minutes. Its observed rate projects beyond the unchanged 10,000-event
+period cap over 50 hours; the 64 MiB period-storage cap also needs measured growth
+evidence. The higher poll cost, 58 requests, would imply about 3,480 requests/hour
+at one-minute cadence, far beyond this diagnostic's 150/hour envelope. Neither
+increasing a grant nor idle waiting fixes the period/lifecycle constraint.
+
+The smallest explicit draft is **NOT_AUTHORIZED / DO_NOT_ACTIVATE**:
+
+```json
+{
+  "scope": "new isolated sustained trial; original scopes and inventory preserved",
+  "starts_at": null,
+  "maximum_duration_seconds": 181800,
+  "canary_windows": {"count": 2, "seconds": 3600},
+  "useful_observation_seconds": 172800,
+  "safety_margin_seconds": 1800,
+  "cadence_seconds": 60,
+  "cohort_limit": 1,
+  "maximum_requests": 220000,
+  "maximum_bytes": 4294967296,
+  "rolling_seconds": 3600,
+  "rolling_maximum_requests": 4320,
+  "rolling_maximum_bytes": 67108864,
+  "maximum_response_bytes": 4194304,
+  "timeout_seconds": 15,
+  "memory_max_bytes": 536870912,
+  "cpu_quota_percent": 50,
+  "minimum_free_disk_bytes": 9663676416,
+  "automatic_renewal": false,
+  "activate": false
+}
+```
+
+These are **proposed ceilings**, not granted authority or a reliable SLO forecast.
+The larger HTTP allowance needs a new explicit owner decision; two polls cannot
+establish steady-state cost. Before executable commissioning: assess a fixed
+cohort whose measured event/storage growth fits the unchanged period caps, or
+review a separate versioned period/lifecycle design. Do not silently replace the
+control, raise period caps or reset a period to force completion. Preserve both
+the old nine positions and this run's 25 virtual positions in their own scopes.
+
+The proposal additionally requires real CONTINUOUS admission/installation
+compatibility, fresh preflight, two measured rolling windows and validated rate
+headroom before 48 useful hours. Three-hour revalidation and four-hour selection
+expiry remain enforced; fresh complete revalidation must keep the same identities
+and cannot treat quiet as renewed eligibility. A singleton avoids mixed-cohort
+blocking for this proposal; adding wallets would reopen that unresolved boundary.
+The existing 900-second useful-evaluation gap and all per-event freshness/Risk
+rules remain unchanged. Failed freshness, depleted allowance or incompatible
+revalidation must STOP and preserve inventory/evidence. No part of this draft
+starts a canary, supplies elapsed-time credit, accepts human feedback or grants
+financial authority. `LIVE_NOT_AUTHORIZED / NOT_PERFORMED` remains absolute.

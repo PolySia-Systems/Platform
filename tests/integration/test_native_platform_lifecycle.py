@@ -409,6 +409,40 @@ async def test_complete_quiet_revalidation_keeps_original_age_and_publishes_diag
     ) == before
 
 
+@pytest.mark.asyncio
+async def test_floor_second_only_activity_is_quiet_without_renewing_eligibility(
+    native_runtime, monkeypatch: pytest.MonkeyPatch,
+):
+    root, clock, _, authority, _, _, _, _ = native_runtime
+    original = await tick(native_runtime)
+
+    class BoundaryTransport:
+        def __init__(self, standing_authority):
+            self.authority = standing_authority
+
+        async def get_json(self, _base, _path, params, **_kwargs):
+            request = self.authority.reserve(ENDPOINT, now=clock(), host="host")
+            self.authority.settle(request, response_bytes=100)
+            return {"data": [{
+                "proxy_wallet": ADDRESS, "timestamp": params["start"],
+                "price": "0.5", "size": "2", "side": "BUY", "type": "TRADE",
+            }], "pagination": {"has_more": False, "next_cursor": None}}
+
+    monkeypatch.setattr(native_lifecycle, "BoundedPublicTransport", BoundaryTransport)
+    clock.value = NOW + timedelta(hours=3, minutes=1, microseconds=500_000)
+    outcome = await tick(native_runtime)
+    assert outcome.experiment.experiment_id == original.experiment.experiment_id
+    assert not (root / "refresh.json").exists()
+    store = ContinuousShadowRepository(root / "financial.sqlite3")
+    before = store.results(original.experiment.experiment_id, limit=10)
+    clock.value = NOW + timedelta(hours=4, minutes=1, microseconds=500_000)
+    with pytest.raises(AcquisitionBlockedError, match="native_cohort_no_recent_activity"):
+        await tick(native_runtime)
+    assert store.results(original.experiment.experiment_id, limit=10) == before
+    assert not (root / "refresh.json").exists()
+    assert authority.status()["requests_charged"] == 2
+
+
 def test_real_worker_composition_obeys_cadence_across_restarts(
     native_runtime, monkeypatch: pytest.MonkeyPatch,
 ):
