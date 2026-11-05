@@ -1,5 +1,8 @@
 # Evidence Index
 
+- [`nonlive-n1-functional-diagnostic-2026-11-05.md`](nonlive-n1-functional-diagnostic-2026-11-05.md)
+  records the closed bounded N1-F public-data comparison, exact adapter replay,
+  cache measurements, preserved STOP/accounting and remaining prospective-input gate.
 - [`nonlive-operational-qualification-2026-10-29.md`](nonlive-operational-qualification-2026-10-29.md)
   records actual public-data acquisition, bounded persistent Shadow operation,
   exact corrective artifacts, protected controls, recovery and capacity limits.
