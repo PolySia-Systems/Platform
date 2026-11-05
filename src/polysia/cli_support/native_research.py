@@ -25,6 +25,7 @@ from polysia.application.ports.continuous_shadow import (
 from polysia.application.ports.dynamic_shadow import ProtectedShadowCandidate
 from polysia.application.services.continuous_shadow import ContinuousShadowService
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowConfig
+from polysia.domain.copytrading.native_run_limits import NativeRunLimits
 from polysia.domain.wallet_intelligence import normalize_evm_wallet
 from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
 from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
@@ -217,6 +218,7 @@ def native_shadow_service(
         raise ValueError("native revalidation cannot replace admitted identities")
     if len(port.snapshot.candidates) > authority.policy.cohort_limit:
         raise ValueError("native cohort exceeds acquisition policy")
+    limits = NativeRunLimits.from_admission(admission)
     transport = BoundedPublicTransport(authority, closure=closure)
     config = ContinuousShadowConfig(
         code_sha=code_sha, runtime_version=(
@@ -232,7 +234,8 @@ def native_shadow_service(
         poll_interval_seconds=authority.policy.cadence_seconds, initial_lookback_minutes=1,
         source_max_pages=4, source_max_requests=4,
         maximum_selection_age_hours=4,
-        period_max_storage_bytes=67_108_864,
+        period_max_events=limits.period_max_events,
+        period_max_storage_bytes=limits.period_max_storage_bytes,
     )
     telemetry = LatencyTelemetryStore(database.with_name("native-latency.sqlite3"))
     identity_cache = MetadataIdentityCache(database.with_name("metadata-identity.sqlite3"))

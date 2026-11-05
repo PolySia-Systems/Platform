@@ -21,6 +21,7 @@ from polysia.cli_support.native_research import (
     publish_native_health,
 )
 from polysia.domain.copytrading.continuous_shadow import ContinuousShadowLifecycle
+from polysia.domain.copytrading.native_run_limits import NativeRunLimits
 from polysia.monitoring.latency_intelligence.identity import load_runtime_identity
 from polysia.monitoring.latency_intelligence.recorder import LatencyRecorder
 from polysia.monitoring.process_capacity import ProcessCapacity
@@ -60,6 +61,10 @@ def validate_native_admission(
         raise AcquisitionBlockedError("native_admission_expiry_required") from error
     if expires.utcoffset() != timedelta(0) or expires <= now:
         raise AcquisitionBlockedError("native_admission_expired")
+    try:
+        NativeRunLimits.from_admission(admission)
+    except ValueError as error:
+        raise AcquisitionBlockedError("native_run_limits_invalid") from error
 
 
 async def native_lifecycle_poll(
