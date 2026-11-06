@@ -1,6 +1,7 @@
 # N3 native technical-health qualification
 
-Dated engineering handoff: **2026-11-06 04:59 UTC**. Protected current host
+Dated engineering handoff: **2026-11-06 04:59 UTC**; canary review updated
+**2026-11-06 07:19 UTC**. Protected current host
 configuration, frozen plan, authority and native stores own runtime truth;
 this record is not a live dashboard. The delivery PR owns ordinary continuity.
 All work is DATA_ONLY, `LIVE_TRADING_ENABLED=false`, and
@@ -12,7 +13,8 @@ All work is DATA_ONLY, `LIVE_TRADING_ENABLED=false`, and
 CONTINUOUS worker, public reads, persistent storage, private Console, actual
 controls and affected-layout encrypted recovery passed commissioning. A real
 scheduled invocation after the start was verified. The first two-hour canary
-and final 48-hour empirical verdict are **pending**, not engineering leftovers.
+has **PASSED**; the final 48-hour empirical verdict remains **pending**.
+This is an engineering/canary report, not the final 48-hour completion report.
 
 | Binding | Verified value |
 |---|---|
@@ -173,6 +175,41 @@ complete two-row N2 sample (SHA256
 without an activity band, five-wallet limit or profitability ranking; this is
 biased sampled coverage, not venue/population coverage.
 
+## Two-hour canary review
+
+The server recorded `canary_passed_at=2026-11-06T06:58:29.556236Z`
+(10:28:29 Asia/Tehran), after both real rolling windows. The protected read at
+**07:18:17 UTC**, reviewed at **07:19:18 UTC**, confirmed the unchanged installed
+release, configuration binding and single grant, with healthy continuing
+collection. These counts are from that review, not a claim that all occurred
+within exactly the first 120 minutes.
+
+| Measured item | Review evidence |
+|---|---|
+| Canary verdict | **PASS** for the frozen technical-health purpose |
+| Actual observed interval at the latest worker check | 8,434 seconds |
+| Successful post-anchor complete polls | 128 |
+| Frozen-slot coverage | 100% |
+| Failed polls / retry ticks | 0 / 0 |
+| Maximum complete-poll / durable-tick gap | 78.510 / 66.912 seconds |
+| Total grant usage, including commissioning | 131 requests / 11,135 accounted response bytes |
+| Uncertain requests | 0 |
+| Actual prospective events / evaluations / fills | 0 / 0 / 0 |
+| Native telemetry errors / drops | 0 / 0 |
+| Independent server safety | `SERVER_SAFETY_ACTIVE`; scheduled worker and recovery timers active |
+
+All sampled source responses were complete and quiet. This is positive evidence
+of the exercised observation/scheduling/accounting path, not proof of current
+event processing, book/mark/cache coverage, strategy performance or provider-wide
+inactivity. Captured replay remains separate. The two-hour pass neither completes
+48 hours nor relabels historical N1/N2 economic-flow attempts as qualified.
+
+The dated local receipts are `health-read-20261106T071821.json` and
+`canary-review-20261106.json` under `artifacts/n3-20261106/`. A fresh **07:21 UTC**
+safety read confirmed the same running phase and one grant, now at 133 requests /
+11,305 bytes / zero uncertainty. No new authority, acceptance restart or runtime
+change was needed for this review.
+
 ## Server-owned continuation and final closure
 
 The stock worker timer owns acquisition. The root `polysia-n3-watch` independently
@@ -181,10 +218,12 @@ An actual scheduled post-start poll, current root safety receipt and all require
 timers were verified; no chat polling loop owns the 48-hour wait.
 
 Existing app follow-up **`platform-sol-1`** was updated, not duplicated. Its
-persisted ID/status/rule/target were read back: next canary review is
-**2026-11-06 07:10 UTC / 10:40 Asia/Tehran**. It must then update the **same**
-follow-up for final review after **2026-11-08 04:57:39.381560 UTC**. Scheduler
-execution may be later; the real host anchor, never alarm time, owns time credit.
+initial canary review was configured for 07:10 UTC; the actual evidence review
+above occurred at 07:19 UTC. The same follow-up was then updated and its persisted
+ID/status/rule/target read back for final review at **2026-11-08 05:10 UTC /
+08:40 Asia/Tehran**, after the actual 48-hour end of
+**2026-11-08 04:57:39.381560 UTC**. Scheduler execution may be later;
+the real host anchor, never alarm time, owns time credit.
 Server safety is independent of this app follow-up. Do not retire it before
 actual final review or explicit owner request.
 
@@ -210,7 +249,7 @@ protected PRs before retiring the app follow-up.
 |---|---|
 | ENGINEERING_CLOSURE | CLOSED for this scoped release; no known unfinished critical fix, missing changed-component wiring or failing required check |
 | INSTALLED_CONTINUOUS_RUNTIME | PASS for actual installed worker/storage/source/private Console and restart paths |
-| TECHNICAL_HEALTH_SOAK | RUNNING; two-hour and 48-hour verdicts PENDING |
+| TECHNICAL_HEALTH_SOAK | Two-hour canary PASS; 48-hour observation RUNNING / final verdict PENDING |
 | ACCOUNTING_CORRECTNESS | PASS for exercised actual quiet state and isolated captured-event paths; prospective fills not exercised |
 | REAL_EVENT_COVERAGE | NOT_EXERCISED in N3 prospective period; replay counts separate |
 | CONSOLE_AND_CONTROLS | PASS for actual private-TLS Operate/report and scoped controls; human acceptance NOT_PERFORMED |

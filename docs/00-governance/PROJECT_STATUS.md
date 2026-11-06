@@ -21,6 +21,19 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
+N3 canary review, 2026-11-06 07:19 UTC: **TWO-HOUR CANARY PASS;
+48-HOUR OBSERVATION RUNNING**. The server recorded the canary pass at 06:58:29
+UTC; protected current receipts confirmed 128 successful post-anchor complete
+polls, 100% slot coverage, zero failed polls/retries and zero uncertainty.
+Total grant use at that review was 131 requests/11,135 bytes; prospective
+events/evaluations/fills remained zero under complete quiet responses.
+No runtime change, new grant or acceptance restart was needed. This does not
+complete the 48-hour trial or qualify the old N1/N2 economic-flow criteria.
+The same app follow-up `platform-sol-1` was verified for final review on
+2026-11-08 at 05:10 UTC / 08:40 Asia/Tehran, after the actual 48-hour end.
+The [single N3 record](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md)
+contains the measured canary result and remaining limitations.
+
 N3 engineering handoff, 2026-11-06 04:59 UTC: **ENGINEERING_CLOSED /
 HEALTH_OBSERVATION_RUNNING**. #258/#259/#260 and exact-main CI42163180551
 passed; runtime `74406cb8751ec396588f810ef1e25cf9e6363b34` was installed
