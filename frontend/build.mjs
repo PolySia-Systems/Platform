@@ -11,7 +11,8 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const root = resolve('..');
 const output = resolve('../src/polysia/monitoring/human_console_assets');
 if (!output.startsWith(resolve(root, 'src/polysia/monitoring') + sep)) throw Error('Asset target outside workspace');
-const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+const walk = dir => readdirSync(dir, { withFileTypes: true })
+  .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).flatMap(e =>
   e.isDirectory() ? walk(resolve(dir, e.name)) : [resolve(dir, e.name)]);
 const sources = [...walk('src'), ...walk('tests'), ...walk('licenses'), ...['package.json', 'package-lock.json',
   'tsconfig.json', 'vite.config.mjs', 'build.mjs', '.npmrc', '.node-version'].map(p => resolve(p)),
