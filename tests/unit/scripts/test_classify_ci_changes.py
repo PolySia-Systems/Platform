@@ -142,6 +142,22 @@ def test_installed_runtime_entry_points_select_container_contract(path: str) -> 
     assert classify_paths((path,)).container
 
 
+@pytest.mark.parametrize("path", [
+    "src/polysia/monitoring/nonlive_campaign.py",
+    "src/polysia/monitoring/technical_health.py",
+])
+def test_worker_safety_controllers_select_installed_and_windows_checks(path: str) -> None:
+    result = classify_paths((path,))
+    assert result.python and result.package and result.browser
+    assert result.container and result.windows
+
+
+def test_console_presentation_keeps_its_bounded_ci_scope() -> None:
+    result = classify_paths(("src/polysia/monitoring/dashboard.py",))
+    assert result.python and result.package and result.browser
+    assert not result.container and not result.windows
+
+
 def test_browser_document_asset_is_executable_not_editorial() -> None:
     result = classify_paths(("docs/console/index.html",))
     assert result.python and result.browser
