@@ -183,3 +183,19 @@ economics remain EXTERNAL/UNKNOWN. No production-readiness claim follows.
 
 Documentation establishes supported mechanisms. The installed protected browser
 tests establish the scope actually verified here.
+
+## Product design system extension — 2026-11-06
+
+The existing single presentation now uses shared semantic light/dark tokens,
+local Inter, selected original brand assets and exact status mappings. A volatile
+theme switch preserves the React root and command owner. Internal workspace IDs
+are independent of labels; Investigation filters survive workspace navigation.
+
+The same static custody recipe now admits bounded PNG, outlined SVG and WOFF2
+files with binary MIME serving and same-origin img/font CSP. No CDN, inline-data
+asset allowance, upload endpoint, new service or production dependency is added.
+Selected source hashes and font notices are retained. Artifact changes still
+change financial package binding; no deployment or renewal is authorized.
+
+See [product design system](../product-design-system.md) for current sources,
+extension rules, limitations and whole-release rollback.

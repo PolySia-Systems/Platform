@@ -1,3 +1,7 @@
 * text=auto eol=lf
 
 *.ps1 text eol=crlf
+
+# Preserve reviewed brand artwork bytes and their provenance hashes.
+frontend/src/assets/brand/*.svg -text
+src/polysia/monitoring/human_console_assets/*.svg -text

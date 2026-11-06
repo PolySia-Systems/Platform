@@ -1,4 +1,5 @@
 // One asset custody recipe. Production consumes these bytes without Node/npm.
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
@@ -43,7 +44,7 @@ if (process.argv.includes('--check')) {
     }
     writeFileSync(resolve(output,name),bytes); files[name] = hash(bytes);
   }
-  let notices = 'PolySia Console third-party software notices\n\n';
+  let notices = 'PolySia Console third-party software notices\n\n' + readFileSync('licenses/inter-OFL.txt', 'utf8') + '\n\n';
   const lock = JSON.parse(readFileSync('package-lock.json'));
   for (const [path, entry] of Object.entries(lock.packages).sort()) {
     if (!path || entry.dev) continue;
@@ -57,10 +58,15 @@ if (process.argv.includes('--check')) {
   const script = Object.keys(files).find(p => p.endsWith('.js'));
   const css = Object.keys(files).find(p => p.endsWith('.css'));
   if (!script || !css) throw Error('Missing Console entry');
-  const html = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="style-nonce" content="{{nonce}}"><title>PolySia Console</title><link rel="stylesheet" href="/assets/${css}"><script type="module" src="/assets/${script}"></script></head><body><div id="root"></div></body></html>\n`;
+  const favicon = Object.keys(files).find(p => p.startsWith('favicon-') && p.endsWith('.png'));
+  if (!favicon) throw Error('Missing favicon');
+  const html = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="style-nonce" content="{{nonce}}"><title>PolySia Console</title><link rel="icon" type="image/png" href="/assets/${favicon}"><link rel="stylesheet" href="/assets/${css}"><script type="module" src="/assets/${script}"></script></head><body><div id="root"></div></body></html>\n`;
   const document = html.replace('<title>', `<meta name="bundle-source" content="${source}"><title>`);
   writeFileSync(resolve(output,'index.html'),document); files['index.html'] = hash(document);
   writeFileSync(resolve(output,'manifest.json'), JSON.stringify({
     version: 1, api: 'console/v1', release: '0.4.0', source, files,
   }, null, 2)+'\n');
 }
+
+const validation = spawnSync(process.env.POLYSIA_BUILD_PYTHON || 'python', ['-c', "import sys; sys.path.insert(0, '../src'); from polysia.monitoring.console_bundle import verify_bundle; verify_bundle()"], {stdio:'inherit'});
+if (validation.status !== 0) throw Error('Console asset content validation failed');

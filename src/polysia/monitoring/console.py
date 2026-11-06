@@ -23,7 +23,7 @@ from polysia.application.services.report_integrity import verify_analytical_dige
 from polysia.application.services.shadow_reporting import comparison_csv
 from polysia.control.scoped_operations import Operation
 from polysia.control.service import ControlError, ControlService
-from polysia.monitoring.console_bundle import verify_bundle
+from polysia.monitoring.console_bundle import MEDIA_TYPES, verify_bundle
 from polysia.monitoring.console_gateway import PREFIX, ConsoleGateway
 from polysia.storage.console_commands import ConsoleCommandStore
 
@@ -116,7 +116,8 @@ class ConsoleApplication:
             (
                 "Content-Security-Policy",
                 "default-src 'none'; style-src 'self'; "
-                "script-src 'self'; connect-src 'self'; form-action 'self'; "
+                "img-src 'self'; font-src 'self'; script-src 'self'; "
+                "connect-src 'self'; form-action 'self'; "
                 "base-uri 'none'; frame-ancestors 'none'",
             ),
             ("Strict-Transport-Security", "max-age=31536000"),
@@ -125,7 +126,13 @@ class ConsoleApplication:
         def respond(status: str, payload: object, *, media: str | None = None) -> list[bytes]:
             if media:
                 headers[0] = ("Content-Type", media)
-            body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
+            body = (
+                payload
+                if isinstance(payload, bytes)
+                else payload.encode()
+                if isinstance(payload, str)
+                else json.dumps(payload).encode()
+            )
             start_response(status, [*headers, ("Content-Length", str(len(body)))])
             return [body]
 
@@ -284,12 +291,8 @@ class ConsoleApplication:
                 name = path.removeprefix("/assets/")
                 if name not in manifest["files"] or name == "index.html":
                     return respond("404 Not Found", {"reason": "unknown_asset"})
-                media = {".css": "text/css", ".js": "text/javascript", ".txt": "text/plain"}[
-                    Path(name).suffix
-                ]
-                return respond(
-                    "200 OK", (directory / name).read_text(encoding="utf-8"), media=media
-                )
+                media = MEDIA_TYPES[Path(name).suffix]
+                return respond("200 OK", (directory / name).read_bytes(), media=media)
             except OSError, ValueError, TypeError, KeyError:
                 return respond(
                     "503 Service Unavailable",

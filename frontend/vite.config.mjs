@@ -40,7 +40,7 @@ export default defineConfig({
   } }],
   base: '/assets/',
   build: {
-    target: 'es2022', outDir: '.build', emptyOutDir: true,
+    assetsInlineLimit: 0, target: 'es2022', outDir: '.build', emptyOutDir: true,
     cssCodeSplit: false, modulePreload: false,
     rollupOptions: { input: 'src/main.tsx', output: {
       entryFileNames: '[name]-[hash].js', assetFileNames: '[name]-[hash][extname]',

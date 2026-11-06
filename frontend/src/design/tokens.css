@@ -1,0 +1,20 @@
+@font-face { font-family: Inter; src: url('../assets/fonts/InterVariable.woff2') format('woff2'); font-style: normal; font-weight: 100 900; font-display: swap; }
+:root {
+  --brand-midnight: #080b12; --brand-graphite: #222b39; --brand-silver: #aab4c3; --brand-white: #f5f7fa; --brand-signal: #ef2946;
+  --console-bg: #f5f7fa; --console-surface: #ffffff; --console-raised: #edf0f5; --console-ink: #222b39; --console-muted: #526072; --console-border: #c5cdd8;
+  --console-accent: #a71933; --console-action: #222b39; --console-on-action: #f5f7fa; --console-action-hover: #364255;
+  --console-success: #176343; --console-success-bg: #eaf5ee; --console-warning: #79520d; --console-warning-bg: #fff5df; --console-danger: #a42535; --console-danger-bg: #fff0f1;
+  --console-sidebar: #080b12; --console-nav-text: #b9c3d2; --console-nav-hover: #222b39; --console-nav-active: #303b4c;
+  --console-focus: #a71933; --console-radius: 8px; --console-radius-small: 6px; --console-space: 8px; --console-font-body: 14px; --console-font-meta: 12px;
+  --mantine-font-family: Inter, 'Segoe UI', system-ui, sans-serif; --mantine-radius-default: var(--console-radius);
+  --mantine-primary-color-filled: var(--console-action); --mantine-primary-color-filled-hover: var(--console-action-hover);
+  --mantine-color-blue-filled: var(--console-action); --mantine-color-blue-filled-hover: var(--console-action-hover);
+  --mantine-color-blue-outline: var(--console-accent); --mantine-color-blue-outline-hover: var(--console-raised);
+  font-family: var(--mantine-font-family); color: var(--console-ink); background: var(--console-bg); color-scheme: light;
+}
+:root[data-mantine-color-scheme='dark'] {
+  --console-bg: #080b12; --console-surface: #151b25; --console-raised: #222b39; --console-ink: #f5f7fa; --console-muted: #aab4c3; --console-border: #536175;
+  --console-accent: #ff8095; --console-action: #f5f7fa; --console-on-action: #080b12; --console-action-hover: #dbe1eb;
+  --console-success: #89d6ac; --console-success-bg: #122d23; --console-warning: #f0cd85; --console-warning-bg: #332916; --console-danger: #ffa1ad; --console-danger-bg: #371d27;
+  --console-focus: #ff8095; color-scheme: dark;
+}
