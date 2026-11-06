@@ -1,0 +1,12 @@
+{
+  "source": "PolySia_Complete_Brand_Kit_Reviewed.zip; Inter from rsms/inter official distribution",
+  "inter_source": "https://raw.githubusercontent.com/rsms/inter/master/docs/font-files/InterVariable.woff2",
+  "sha256": {
+    "brand/compact.png": "38988f8f1f1dc6436d6e9a6e43b6ea5c05d9d33142bf444ad7e9961dcf477262",
+    "brand/favicon.png": "6d1979eceda0975b63d674dcba3b01ff7621f90356e96c1121617efdec2482d3",
+    "brand/primary.png": "0b3d818e2958e23c9e8846a0d1c37c93e2edda295cd3a0e021af45ce16812579",
+    "brand/wordmark-dark.svg": "3c164e2107ffd44e275b6a635819d4b22c6ba1eed990e21f9c0f6317d2566c6c",
+    "brand/wordmark-light.svg": "e322cddcb239980a94a389fdf80cc5d51cfd0aaf8651eb6827bf26c901ad017f",
+    "fonts/InterVariable.woff2": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3"
+  }
+}

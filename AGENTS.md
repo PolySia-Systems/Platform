@@ -440,3 +440,10 @@ exist; their universal invariants remain in this root file. Nested files must
 not duplicate or weaken root safety. Use `AGENTS.override.md` only for a
 deliberate same-directory replacement. Keep the combined instruction chain
 within the configured guidance budget.
+
+## Product presentation
+
+For Console/UI changes, follow
+[`docs/04-architecture/product-design-system.md`](docs/04-architecture/product-design-system.md).
+Reuse semantic tokens and presentation primitives; preserve exact financial
+strings, command ownership and static asset custody. Validate rendered output.

@@ -95,3 +95,4 @@ The [capability catalog](01-discovery/capability-catalog.md) is a baseline
 non-live inventory of CAP-001 through CAP-012. It is not a complete statement
 of current Wallet Intelligence or Stage 4B capabilities. Use project status
 and architecture for CURRENT product truth.
+- [Product design system and Console extension rules](04-architecture/product-design-system.md)

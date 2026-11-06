@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Workspace } from './contract.generated';
 import { ApiError, read } from './client';
+import { Badge } from './design/Primitives';
 import { m } from './messages';
 import s from './Console.module.css';
 
@@ -33,13 +34,13 @@ export function EvidenceWorkspace({ panel, generation, identity, clock, onIdenti
       const expired = section.validity.valid_until !== null && clock >= Date.parse(section.validity.valid_until);
       const state = expired ? m.stale : section.validity.state;
       return <section className={s.panel} key={section.title} aria-label={section.title}>
-        <div className={s.panelHeading}><h2>{section.title}</h2><span className={`${s.badge} ${state !== 'AVAILABLE' ? s.bad : ''}`}>{state}</span></div>
+        <div className={s.panelHeading}><h2>{section.title}</h2><Badge>{state}</Badge></div>
         <p className={s.muted}>{m.observedAt}: <bdi dir="ltr">{section.validity.observed_at ?? m.unknown}</bdi>
           {' · '}{m.validUntil}: <bdi dir="ltr">{section.validity.valid_until ?? m.unknown}</bdi></p>
         <dl className={s.facts}>{section.facts.map(fact => <div key={fact.label}>
           <dt>{fact.label}</dt><dd><bdi dir={valueDirection(fact.value)}>{fact.value ?? m.unknown}</bdi></dd></div>)}</dl>
         {section.tables.map(table => <div key={table.title}>
-          <h3>{table.title} <span className={`${s.badge} ${table.state !== 'AVAILABLE' ? s.bad : ''}`}>{table.state}</span></h3>
+          <h3>{table.title} <Badge>{table.state}</Badge></h3>
           <div className={s.tableRegion} tabIndex={0} role="region" aria-label={table.title}>
             <table><thead><tr>{table.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
               <tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}><bdi dir={valueDirection(cell)}>{cell ?? m.unknown}</bdi></td>)}</tr>)}</tbody></table>

@@ -4,33 +4,31 @@ import type { Action, ActionCatalog, Component, Detail, Money, Page, Preview, Re
 import { ApiError, post, read } from './client';
 import { m } from './messages';
 import s from './Console.module.css';
+import { BrandLockup, Amount, Badge } from './design/Primitives';
+import { useMantineColorScheme } from '@mantine/core';
 import { EvidenceWorkspace, valueDirection } from './Workspaces';
 
 type Intent = { preview_id: string; expected_revision: number; idempotency_key: string; context: string; identity: string };
-type Tab = 'Overview' | 'Investigate' | 'Operate' | 'Evaluate' | 'System / Setup';
+const tabs = { overview: m.overview, investigate: m.investigate, operate: m.operate, evaluate: m.evaluate, system: m.system } as const;
+type Tab = keyof typeof tabs;
 const names = { publication: m.source, financial: m.financial, supervision: m.supervision, worker: m.worker, publisher: m.publisher };
 const stamp = (value: string | null | undefined, locale = 'en-GB') => value
   ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' }).format(new Date(value)) + ' UTC' : m.unknown;
 const identifier = (value: string | null | undefined) => <bdi title={value ?? m.unknown} className={s.identifier} dir="ltr">{value ?? m.unknown}</bdi>;
-function Amount({ value }: { value: Money | null | undefined }) {
-  return <span className={s.amount} title={value?.meaning}><bdi dir="ltr">{value?.value ?? m.unknown}</bdi>
-    <span className={s.unit}>{value?.unit ?? m.unknown}</span></span>;
-}
 function Timestamp({ value, locale }: { value: string | null | undefined; locale?: string }) {
   return <bdi dir="ltr">{stamp(value, locale)}</bdi>;
-}
-function Badge({ children, alert = false }: { children: React.ReactNode; alert?: boolean }) {
-  const uncertain = typeof children === 'string' && ['UNKNOWN', 'DENIED', 'EXPIRED', 'NOT_STARTED', 'PARTIAL', 'STALE', 'BLOCKED', 'FAILED', 'CLAIMED', 'REQUESTED', 'STOP', 'DRAIN', 'UNAVAILABLE', 'INCOMPATIBLE'].some(value => children.startsWith(value));
-  return <span className={`${s.badge} ${alert || uncertain ? s.bad : ''}`}>{children}</span>;
 }
 function errorText(error: unknown): string {
   if (error instanceof ApiError) return error.status === 403 ? m.auth : error.status === 410 ? m.cursor : error.status === 409 ? m.conflict : m.missing;
   return error instanceof Error && error.message === 'incompatible_contract' ? m.contract : m.missing;
 }
 export default function App() {
+  const { colorScheme, setColorScheme } = useMantineColorScheme();
   const example = new URLSearchParams(location.search).get('example') === '1';
   const { setDirection } = useDirection();
-  const [tab, setTab] = useState<Tab>('Overview');
+  const [tab, setTab] = useState<Tab>('overview');
+  const [filters, setFilters] = useState({ kind: 'order', query: '', state: '', source: '' });
+  const investigationMemory = useRef<InvestigationMemory | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [failure, setFailure] = useState('');
@@ -65,6 +63,7 @@ export default function App() {
   const active = useRef(true);
   const currentIdentity = useRef('');
   const currentContext = useRef('');
+  const investigationScope = useRef('');
   const selectedAction = useRef<Action | null>(null);
   const [rtl, setRtl] = useState(new URLSearchParams(location.search).get('locale') === 'fa-IR');
   const validIdentity = session !== null && !authFailure && clock < Date.parse(session.valid_until);
@@ -82,7 +81,7 @@ export default function App() {
   }, []);
   const identityFailure = useCallback(() => {
     authEpoch.current += 1;
-    currentIdentity.current = ''; setSession(null); setAuthFailure(m.auth);
+    currentIdentity.current = ''; investigationMemory.current = null; setFilters({ kind: 'order', query: '', state: '', source: '' }); setSession(null); setAuthFailure(m.auth);
     setSnapshot(null); setHistory(null); setReceipt(null); setProtective(null); invalidate();
   }, [invalidate]);
 
@@ -96,7 +95,7 @@ export default function App() {
       read<Session>('/session', 'Session').then(value => {
         if (!current()) return;
         if (value.bundle !== document.querySelector<HTMLMetaElement>('meta[name="bundle-source"]')?.content) throw Error('incompatible_contract');
-        if (currentIdentity.current && currentIdentity.current !== value.identity) invalidate();
+        if (currentIdentity.current && currentIdentity.current !== value.identity) { investigationMemory.current = null; setFilters({ kind: 'order', query: '', state: '', source: '' }); invalidate(); }
         currentIdentity.current = value.identity;
         anchor.current = { server: Date.parse(value.server_time), mono: performance.now() };
         setClockSkew(Math.abs(Date.now() - anchor.current.server) > 60_000);
@@ -105,6 +104,9 @@ export default function App() {
         if (error instanceof ApiError && error.status === 403) identityFailure(); } }),
       read<Snapshot>('/snapshot', 'Snapshot').then(value => {
         if (!current()) return;
+        const scope = JSON.stringify(value.context.scope);
+        if (investigationScope.current && investigationScope.current !== scope) { investigationMemory.current = null; setFilters({ kind: 'order', query: '', state: '', source: '' }); }
+        investigationScope.current = scope;
         const context = JSON.stringify([value.context, value.actions]);
         if (currentContext.current && currentContext.current !== context && !selectedAction.current?.protective) invalidate();
         currentContext.current = context; setSnapshot(value); setFailure('');
@@ -236,16 +238,16 @@ export default function App() {
   return <div className={s.shell}>
     <a href="#main" className={s.skip}>{m.skip}</a>
     <aside className={s.sidebar} aria-label="Workspace navigation">
-      <a className={s.brand} href="/"><span className={s.mark}>P</span><span>PolySia<small>CONSOLE</small></span></a>
+      <a className={s.brand} href="/"><BrandLockup /></a>
       <span className={s.navLabel}>{m.workspace}</span>
-      <nav>{([m.overview, m.investigate, m.operate, m.evaluate, m.system] as const).map((name, i) => <button key={name}
+      <nav>{(Object.keys(tabs) as Tab[]).map((name) => <button key={name}
         className={tab === name ? s.navActive : s.navButton} onClick={() => setTab(name)} aria-current={tab === name ? 'page' : undefined}>
-        <span className={s.navIcon} aria-hidden="true">{['◫', '⌕', '↗', '◷', '◇'][i]}</span>{name}</button>)}
+        {tabs[name]}</button>)}
       </nav>
       <div className={s.sidebarFoot}><p>{m.operatingBoundary}</p><a href={example ? '/' : '/?example=1'}>{example ? m.retained : m.example}</a></div>
     </aside>
     <div className={s.workspace}>
-      <header className={s.topbar}><div><span className={s.breadcrumb}>Workspace / </span><strong>{tab}</strong></div>
+      <header className={s.topbar}><div><span className={s.breadcrumb}>Workspace / </span><strong>{tabs[tab]}</strong></div>
         <div className={s.identity}><span className={validIdentity ? s.dot : s.dotBad} />
           <span>{session?.role === 'reader' ? m.readOnly : validIdentity ? m.valid : m.unknown}</span>{identifier(session?.actor)}</div>
       </header>
@@ -260,23 +262,23 @@ export default function App() {
       <div className={s.protective} role="region" aria-label={m.protective}>
         <span>{m.protective}</span>{actions.filter(a => a.protective && a.operation !== 'acquisition.drain').map(a =>
           <Button key={a.operation + a.target} variant="outline" disabled={!validIdentity || ['sending', 'uncertain', 'absent'].includes(commandState)}
-            onClick={() => { setTab('Operate'); changeAction(a.operation + '|' + a.target); }}>{a.label} · {identifier(a.target)}</Button>)}
+            onClick={() => { setTab('operate'); changeAction(a.operation + '|' + a.target); }}>{a.label} · {identifier(a.target)}</Button>)}
         {!actions.some(a => a.protective) && <span>{m.unavailable}</span>}
       </div>
       <main id="main" tabIndex={-1} className={s.main} aria-busy={refreshBusy}>
         <div className={s.pageHeading}><div><p className={s.eyebrow}>{m.eyebrow}</p>
-          <h1>{tab === 'Overview' ? m.heading : tab === 'Investigate' ? m.investigateTitle : tab === 'Operate' ? m.operateTitle : tab === 'Evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
-          <p>{tab === 'Overview' ? m.subtitle : tab === 'Investigate' ? m.investigateSubtitle : tab === 'Operate' ? m.operateSubtitle : tab === 'Evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p></div>
+          <h1>{tab === 'overview' ? m.heading : tab === 'investigate' ? m.investigateTitle : tab === 'operate' ? m.operateTitle : tab === 'evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
+          <p>{tab === 'overview' ? m.subtitle : tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p></div>
           <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>
         </div>
         {(authFailure || failure) && <div className={s.error} role="alert">{authFailure || failure}
           {authFailure && <Button onClick={() => void refresh()}>{m.renew}</Button>}</div>}
         {clockSkew && <p className={s.muted} role="status">{m.clockSkew}</p>}
         {example && <p role="status">{m.exampleNotice}</p>}
-        {tab === 'Overview' && <>
+        {tab === 'overview' && <>
           <section className={s.blocker} aria-label={m.attention}><span className={s.blockerIcon}>!</span><div>
             <strong>{m.attention}</strong><p>{snapshot?.blocker ?? m.loading}</p></div>
-            <button onClick={() => setTab('Operate')}>{m.operate} →</button></section>
+            <button onClick={() => setTab('operate')}>{m.operate} →</button></section>
           <section className={s.metrics} aria-label="Exact financial amounts">
             {[[m.cash, snapshot?.financial?.cash], [m.exposure, snapshot?.financial?.exposure], [m.reserved, snapshot?.financial?.reserved]].map(([label, value]) =>
               <article key={label as string} className={s.metric}><p>{label as string}</p><Amount value={value as Money | undefined} />
@@ -287,7 +289,7 @@ export default function App() {
             <section className={s.panel} aria-label={m.independent}><div className={s.panelHeading}><h2>{m.independent}</h2>
               <Badge alert={!supervisionValid || snapshot?.supervision.status === 'STOPPED'}>{supervisionValid ? snapshot?.supervision.status : m.unknown}</Badge></div>
               <p>{supervisionValid ? snapshot?.supervision.reason : m.staleData}</p><p className={s.muted}>{snapshot?.supervision.next_action ?? m.missing}</p>
-              <button className={s.textButton} onClick={() => { setTab('Operate'); const stop = actions.find(a => a.operation === 'session.stop');
+              <button className={s.textButton} onClick={() => { setTab('operate'); const stop = actions.find(a => a.operation === 'session.stop');
                 if (stop) changeAction(stop.operation + '|' + stop.target); }}>{m.operate} →</button></section>
             <section className={s.panel}><div className={s.panelHeading}><h2>{m.authority}</h2><Badge>{financialStale ? m.unknown : snapshot?.financial?.authority_until && clock >= Date.parse(snapshot.financial.authority_until) ? 'EXPIRED' : snapshot?.financial?.authority ?? m.unknown}</Badge></div>
               <dl className={s.facts}><dt>{m.operational}</dt><dd>{snapshot?.financial?.status ?? m.unknown}</dd>
@@ -311,8 +313,8 @@ export default function App() {
               <dt>{m.environment}</dt><dd>{snapshot?.context.environment ?? m.unknown}</dd><dt>{m.generation}</dt><dd>{identifier(snapshot?.context.generation)}</dd></dl></details>
           </section>
         </>}
-        {tab === 'Investigate' && <Investigation generation={snapshot?.context.generation ?? null} onIdentityFailure={identityFailure} />}
-        {tab === 'Operate' && <>
+        {tab === 'investigate' && <Investigation key={(session?.identity ?? '') + investigationScope.current} memory={investigationMemory} filters={filters} setFilters={setFilters} generation={snapshot?.context.generation ?? null} onIdentityFailure={identityFailure} />}
+        {tab === 'operate' && <>
           <section className={s.panel}><h2>{m.target}</h2><label className={s.label} htmlFor="operation">{m.target}</label>
             <select id="operation" className={s.input} value={chosen} onChange={e => changeAction(e.target.value)} disabled={!validIdentity || ['sending', 'uncertain', 'absent'].includes(commandState)}>
               <option value="">{actions.length ? m.chooseOperation : m.unavailable}</option>{actions.map(a => <option key={a.operation + a.target}
@@ -357,12 +359,12 @@ export default function App() {
           </section>
           <EvidenceWorkspace key={workspaceRefresh} panel="operate" generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />
         </>}
-        {(tab === 'Evaluate' || tab === 'System / Setup') && <EvidenceWorkspace key={tab + workspaceRefresh} panel={tab === 'Evaluate' ? 'evaluate' : 'system'}
+        {(tab === 'evaluate' || tab === 'system') && <EvidenceWorkspace key={tab + workspaceRefresh} panel={tab === 'evaluate' ? 'evaluate' : 'system'}
           generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />}
-        {tab === 'Evaluate' && <section className={s.panel} aria-label={m.exports}><h2>{m.exports}</h2>
+        {tab === 'evaluate' && <section className={s.panel} aria-label={m.exports}><h2>{m.exports}</h2>
           {example ? <p>{m.exampleNoExports} <a href="/">{m.retained}</a></p> : <><p><a href="/api/report">{m.reportDownload}</a></p><p><a href="/download/comparison.csv">{m.comparisonDownload}</a></p></>}</section>}
-        {tab === 'Evaluate' && history?.items.filter(row => (row.tables ?? []).length > 0).map(row => <ReceiptView key={row.idempotency_key} receipt={row} />)}
-        <footer className={s.footer}><span>{m.permit}</span><label>{m.locale} <input type="checkbox" checked={rtl} onChange={e => setRtl(e.target.checked)} /> fa-IR / RTL</label>
+        {tab === 'evaluate' && history?.items.filter(row => (row.tables ?? []).length > 0).map(row => <ReceiptView key={row.idempotency_key} receipt={row} />)}
+        <footer className={s.footer}><Button variant="outline" onClick={() => setColorScheme(colorScheme === 'dark' ? 'light' : 'dark')}>Switch to {colorScheme === 'dark' ? 'light' : 'dark'} theme</Button><span>{m.permit}</span><label>{m.locale} <input type="checkbox" checked={rtl} onChange={e => setRtl(e.target.checked)} /> fa-IR / RTL</label>
           {rtl && <span lang="fa" dir="rtl">{m.persianFixture}</span>}</footer>
       </main>
     </div>
@@ -390,13 +392,21 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
     {receipt.download && <p><a href={receipt.download}>{m.receiptDownload}</a></p>}</article>;
 }
 
-function Investigation({ generation, onIdentityFailure }: { generation: string | null; onIdentityFailure: () => void }) {
-  const [kind, setKind] = useState('order');
-  const [query, setQuery] = useState('');
-  const [state, setState] = useState('');
-  const [source, setSource] = useState('');
-  const [page, setPage] = useState<Page | null>(null);
-  const [detail, setDetail] = useState<Detail | null>(null);
+type Filters = { kind: string; query: string; state: string; source: string };
+type InvestigationMemory = { generation: string | null; kind: string; page: Page | null; detail: Detail | null; scroll: number };
+function Investigation({ generation, onIdentityFailure, filters, setFilters, memory }: { generation: string | null; onIdentityFailure: () => void; filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>; memory: React.MutableRefObject<InvestigationMemory | null> }) {
+  const kind = filters.kind;
+  const setKind = (value: string) => setFilters(previous => ({ ...previous, kind: value }));
+  const query = filters.query;
+  const setQuery = (value: string) => setFilters(previous => ({ ...previous, query: value }));
+  const state = filters.state;
+  const setState = (value: string) => setFilters(previous => ({ ...previous, state: value }));
+  const source = filters.source;
+  const setSource = (value: string) => setFilters(previous => ({ ...previous, source: value }));
+  const remembered = memory.current?.generation === generation && memory.current?.kind === filters.kind ? memory.current : null;
+  const [page, setPage] = useState<Page | null>(remembered?.page ?? null);
+  const [detail, setDetail] = useState<Detail | null>(remembered?.detail ?? null);
+  const table = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
   const epoch = useRef(0);
   const reading = useRef<AbortController | null>(null);
@@ -409,11 +419,19 @@ function Investigation({ generation, onIdentityFailure }: { generation: string |
     } catch (err) { if (version === epoch.current) { setError(errorText(err));
       if (err instanceof ApiError && err.status === 403) onIdentityFailure(); } }
   }, [kind, query, state, source, onIdentityFailure]);
-  useEffect(() => { setPage(null); setDetail(null); epoch.current += 1;
-    // New generation requires a visible explicit list refresh; never append incompatible pages.
-    setError(m.cursor);
+  useEffect(() => {
+    const prior = memory.current;
+    if (prior?.generation !== generation || prior.kind !== kind) {
+      setPage(null); setDetail(null); setError(m.cursor);
+      memory.current = { generation, kind, page: null, detail: null, scroll: 0 };
+    } else if (table.current) table.current.scrollTop = prior.scroll;
+    epoch.current += 1;
     return () => { epoch.current += 1; reading.current?.abort(); };
-  }, [generation, kind]);
+  }, [generation, kind, memory]);
+  useEffect(() => {
+    // Store only evidence for this exact generation; never reuse it under a new identity/scope.
+    memory.current = { generation, kind, page, detail, scroll: memory.current?.scroll ?? 0 };
+  }, [generation, kind, page, detail, memory]);
   return <section className={s.panel}>
     <form className={s.searchForm} onSubmit={e => { e.preventDefault(); void load(); }}>
       <label className={s.label}>{m.kind}<select className={s.input} value={kind} onChange={e => { setKind(e.target.value); setQuery(''); setState(''); }}>
@@ -423,9 +441,9 @@ function Investigation({ generation, onIdentityFailure }: { generation: string |
       {kind === 'wallet' && <label className={s.label}>{m.sourceFilter}<input className={s.input} maxLength={128} value={source} onChange={e => { epoch.current++; setSource(e.target.value); }} /></label>}
       <Button type="submit">{m.searchButton}</Button></form>
     {error && <p role="status">{error}</p>}
-    <div className={s.tableRegion} tabIndex={0} role="region" aria-label={m.investigate}>
+    <div ref={table} onScroll={event => { if (memory.current) memory.current.scroll = event.currentTarget.scrollTop; }} className={s.tableRegion} tabIndex={0} role="region" aria-label={m.investigate}>
       <table><thead><tr>{[m.identity, m.state, m.side, m.quantity, m.price].map(v => <th key={v}>{v}</th>)}</tr></thead>
-        <tbody>{page?.items.map(row => <tr key={row.identity}><td><button className={s.recordButton} onClick={async () => {
+        <tbody>{page?.items.map(row => <tr key={row.identity}><td><button data-record={row.identity} className={s.recordButton} onClick={async () => {
           const version = ++epoch.current;
           try { const result = await read<Detail>('/detail?' + new URLSearchParams({ kind, identity: row.identity, generation: page.generation }), 'Detail');
             if (version === epoch.current) setDetail(result); } catch (err) { if (version === epoch.current) { setError(errorText(err)); if (err instanceof ApiError && err.status === 403) onIdentityFailure(); } }
@@ -435,7 +453,7 @@ function Investigation({ generation, onIdentityFailure }: { generation: string |
     <div className={s.pagination}><span>{page ? `${page.items.length} / ${page.total} ${m.observations}` : m.noEvidence}</span>
       <Button className={s.secondaryButton} onClick={() => void load()}>{m.reset}</Button>
       <Button disabled={!page?.next_cursor || !!error} onClick={() => void load(page?.next_cursor ?? '')}>{m.next}</Button></div>
-    {detail && <section className={s.detail} aria-label={m.details}><div className={s.panelHeading}><h2>{m.details}</h2><Button onClick={() => setDetail(null)}>{m.close}</Button></div>
+    {detail && <section className={s.detail} aria-label={m.details}><div className={s.panelHeading}><h2>{m.details}</h2><Button onClick={() => { table.current?.querySelector<HTMLButtonElement>(`button[data-record="${CSS.escape(detail.record.identity)}"]`)?.focus(); setDetail(null); }}>{m.close}</Button></div>
       <dl className={s.facts}>{[[m.identity, detail.record.identity], [m.state, detail.record.state], [m.token, detail.record.token],
         [m.fill, detail.record.fill_state], [m.settlement, detail.record.settlement_state], [m.reason, detail.record.reason],
         [m.updated, stamp(detail.record.updated_at)]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{identifier(value)}</dd></div>)}</dl>
