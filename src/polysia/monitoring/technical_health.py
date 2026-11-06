@@ -122,6 +122,10 @@ def health_check(
     if not database.exists():
         return {**result, "reason": "await_installed_continuous_poll"}
     experiment = ContinuousShadowRepository(database).active_experiment("polymarket-native")
+    if experiment is None and result["phase"] == "PREPARING":
+        # Initialization precedes qualification I/O. A bounded provider retry can
+        # legitimately leave schema-only storage, not a lost running period.
+        return {**result, "reason": "await_installed_continuous_poll"}
     if (experiment is None or experiment.config.runtime_version != RUNTIME
             or experiment.config.code_sha != plan["release_commit"]
             or experiment.config.selection_preflight_digest != plan["cohort_digest"]

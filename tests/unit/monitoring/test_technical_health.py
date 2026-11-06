@@ -146,3 +146,16 @@ def test_sqlite_checkpoint_shrinkage_is_not_consumption_regression(run, monkeypa
     assert current["period_storage_bytes"] == 500000
     assert current["period_storage_peak_bytes"] == 1000000
     assert current["capacity_forecast"]["period_storage_bytes"] == 1000000
+
+
+def test_preparing_initialized_store_without_period_waits_for_bounded_retry(run, monkeypatch):
+    monkeypatch.setattr(health.ContinuousShadowRepository, "active_experiment",
+                        lambda self, source: None)
+    current = check(run, {}, NOW)
+    assert current["phase"] == "PREPARING"
+    assert current["reason"] == "await_installed_continuous_poll"
+    assert run[0].status()["requests_charged"] == 1
+    assert run[0].status()["stopped"] is False
+    retained = {"campaign_id": run[2]["campaign_id"], "phase": "HEALTH_OBSERVATION_RUNNING",
+                "observation_started_at": NOW.isoformat()}
+    assert check(run, retained, NOW)["reason"] == "health_installed_period_identity_mismatch"
