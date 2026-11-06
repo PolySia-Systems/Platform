@@ -74,6 +74,9 @@ CONTAINER_PATTERNS = (
     "src/polysia/cli_commands/core.py",
     "src/polysia/cli_commands/platform_*.py",
     "src/polysia/cli_support/native_*.py",
+    # Worker-owned safety controllers must ship through installed runtime checks.
+    "src/polysia/monitoring/nonlive_campaign.py",
+    "src/polysia/monitoring/technical_health.py",
 )
 DEPENDENCY_PATTERNS = (
     "scripts/dependency*.py",
@@ -88,6 +91,8 @@ DEPENDENCY_PATTERNS = (
     ".github/actions/supply-chain/**",
 )
 WINDOWS_PATTERNS = (
+    "src/polysia/monitoring/nonlive_campaign.py",
+    "src/polysia/monitoring/technical_health.py",
     "Dockerfile",
     "locks/**",
     "scripts/dependency*.py",
