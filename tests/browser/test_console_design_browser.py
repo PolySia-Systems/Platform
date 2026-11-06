@@ -144,7 +144,8 @@ def test_open_tab_bundle_change_preserves_uncertain_request(rich_console):  # no
         page.route("**/api/console/v1/apply", lost)
         page.get_by_role("button", name="Request exact operation", exact=True).click()
         expect(page.get_by_text("Response lost.", exact=False)).to_be_visible()
-        key = page.locator("p").filter(has_text="Request identity").locator("bdi").inner_text()
+        request_identity = page.locator("p").filter(has_text="Request identity").locator("bdi")
+        key = request_identity.inner_text()
         source = page.locator('meta[name="bundle-source"]').get_attribute("content")
 
         def upgraded(route):
@@ -156,7 +157,8 @@ def test_open_tab_bundle_change_preserves_uncertain_request(rich_console):  # no
         page.route("**/api/console/v1/session", upgraded)
         page.get_by_role("button", name="Refresh evidence", exact=False).click()
         expect(page.get_by_text("Incompatible response.", exact=False)).to_be_visible()
-        expect(page.get_by_text(key, exact=True)).to_be_visible()
+        expect(request_identity).to_be_visible()
+        expect(request_identity).to_have_text(key)
         expect(page.get_by_role("button", name="Preview operation", exact=True)).to_be_disabled()
         assert page.locator('meta[name="bundle-source"]').get_attribute("content") == source
         assert len(sends) == 1
