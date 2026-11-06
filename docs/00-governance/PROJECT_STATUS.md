@@ -21,6 +21,27 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
+N3 engineering handoff, 2026-11-06 04:59 UTC: **ENGINEERING_CLOSED /
+HEALTH_OBSERVATION_RUNNING**. #258/#259/#260 and exact-main CI42163180551
+passed; runtime `74406cb8751ec396588f810ef1e25cf9e6363b34` was installed
+and commissioned on the actual CONTINUOUS worker with private controls,
+exact-image isolated captured replay and independent encrypted STOPPED recovery.
+One separately accounted finite grant expires 2026-11-09 03:44:45 UTC;
+initial actual use was four requests/340 bytes with zero uncertainty. Quiet
+complete reads now count for this versioned technical-health purpose while
+entry eligibility, Risk, Decimal accounting and all safety limits remain separate.
+Real health collection began 2026-11-06 04:57:39 UTC; the first two-hour canary
+is inside the 48-hour period ending no earlier than 2026-11-08 04:57:39 UTC.
+Neither empirical verdict has passed yet. The stock server scheduler and root
+safety watcher own progress/STOP; existing app follow-up `platform-sol-1` was
+verified for the canary review at 07:10 UTC. No owner action is required.
+Actual prospective event/fill coverage is not exercised by the initial quiet
+reads; replay has no prospective/time credit. N1/N2 history and grants remain
+unchanged. All seven verdicts, frozen identities, measured limits and final-review
+instructions are in the single [N3 record](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md).
+DATA_ONLY and Live disabled remain mandatory; human acceptance/Live are
+`NOT_PERFORMED / LIVE_NOT_AUTHORIZED`.
+
 N2 final review, 2026-11-05 18:37 UTC: **ATTEMPT CLOSED; SUSTAINED_NONLIVE
 NOT_QUALIFIED**. #256 and exact-main CI passed; runtime
 `086a7d7b362ca7d04911b7ee2c3e8613e1a2717b` was installed with verified old
