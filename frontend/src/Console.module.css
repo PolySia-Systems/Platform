@@ -8,8 +8,8 @@
 .detail > button { margin-block: 4px; max-inline-size: 100%; block-size: auto; min-block-size: 40px; }
 .detail :global(.mantine-Button-label) { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 .sidebar { inline-size: 216px; flex: 0 0 216px; background: var(--console-sidebar); color: var(--console-nav-text); padding: 30px 18px; display: flex; flex-direction: column; }
-.brand { color: var(--brand-white); display: flex; align-items: center; gap: 12px; font-size: 23px; font-weight: 650; text-decoration: none; margin-block-end: 55px; padding-inline: 8px; }
-.brand small { display: block; color: var(--console-nav-text); font-size: var(--console-font-meta); letter-spacing: .2em; font-weight: 500; }
+.brand { color: var(--brand-white); display: flex; align-items: center; gap: 8px; text-decoration: none; margin-block-end: 55px; }
+.brand small { display: block; margin-block-start: 4px; line-height: 1.2; color: var(--console-nav-text); font-size: var(--console-font-meta); letter-spacing: .2em; font-weight: 500; }
 
 .navLabel { font-size: var(--console-font-meta); color: var(--console-nav-text); letter-spacing: .15em; margin: 0 12px 15px; }
 .sidebar nav { display: grid; gap: 6px; }
@@ -54,13 +54,20 @@
 .detail { margin-block-start: 25px; padding: 23px; border: 1px solid var(--console-border); background: var(--console-raised); border-radius: 7px; }.receipt { padding: 18px; border: 1px solid var(--console-border); border-radius: var(--console-radius-small); margin-block: 15px; }.receipt p { margin-block-end: 8px; }.receipt small { color: var(--console-muted); }.commandMessage { color: var(--console-warning); margin-block: 15px; font-size: var(--console-font-meta); }
 .footer { display: flex; justify-content: space-between; gap: 20px; color: var(--console-muted); font-size: var(--console-font-meta); padding-block: 4px 10px; }.footer label { display: flex; align-items: center; gap: 6px; }
 @media (max-width: 1100px) { .sidebar { inline-size: 180px; flex-basis: 180px; padding-inline: 12px; }.main { padding-inline: 24px; }.context,.topbar { padding-inline: 24px; }.evidenceRow { grid-template-columns: 1fr .7fr 1.3fr; }.evidenceRow small { grid-column: 1 / -1; }.metric { padding-inline: 17px; }.metric .amount { font-size: 22px; } }
-@media (max-width: 760px) { .shell { display: block; }.sidebar { inline-size: 100%; padding: 13px 16px 8px; }.brand { font-size: 18px; margin: 0 0 12px; }.brand small { font-size: 8px; }.sidebar nav { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px; }.navButton,.navActive { inline-size: 100%; padding: 9px 13px; white-space: normal; }.navLabel,.sidebarFoot,.navIcon { display: none; }.topbar { block-size: 53px; padding-inline: 18px; }.identity .identifier { display: none; }.context { padding: 13px 18px; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px 16px; }.main { padding: 23px 17px 15px; }.pageHeading { display: block; }.pageHeading h1 { font-size: 28px; }.pageHeading .secondaryButton { margin-block-start: 17px; }.metrics { grid-template-columns: 1fr; gap: 12px; }.metric { padding: 18px 20px; }.metric > small { min-block-size: 0; margin-block: 7px 12px; }.twoColumns { grid-template-columns: 1fr; gap: 0; }.panel { padding: 20px; }.blocker { align-items: start; padding: 15px 14px; gap: 10px; flex-wrap: wrap; }.blocker div { flex: 1; }.blocker button { margin-inline-start: 34px; }.evidenceRow { grid-template-columns: 1fr 1fr; }.evidenceRow span:not(.badge) { grid-column: 1/-1; }.evidenceRow small { display: none; }.footer { flex-wrap: wrap; }.facts { grid-template-columns: 1fr; gap: 4px; }.facts dd { text-align: start; margin-block-end: 6px; }.searchForm { display: grid; grid-template-columns: 1fr; }.searchForm .label { min-inline-size: 0; } }
+@media (max-width: 760px) { .shell { display: block; }.sidebar { inline-size: 100%; padding: 13px 16px 8px; }.brand { margin: 0 0 12px; }.brand small { font-size: 8px; }.sidebar nav { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px; }.navButton,.navActive { inline-size: 100%; padding: 9px 13px; white-space: normal; }.navLabel,.sidebarFoot,.navIcon { display: none; }.topbar { block-size: 53px; padding-inline: 18px; }.identity .identifier { display: none; }.context { padding: 13px 18px; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px 16px; }.main { padding: 23px 17px 15px; }.pageHeading { display: block; }.pageHeading h1 { font-size: 28px; }.pageHeading .secondaryButton { margin-block-start: 17px; }.metrics { grid-template-columns: 1fr; gap: 12px; }.metric { padding: 18px 20px; }.metric > small { min-block-size: 0; margin-block: 7px 12px; }.twoColumns { grid-template-columns: 1fr; gap: 0; }.panel { padding: 20px; }.blocker { align-items: start; padding: 15px 14px; gap: 10px; flex-wrap: wrap; }.blocker div { flex: 1; }.blocker button { margin-inline-start: 34px; }.evidenceRow { grid-template-columns: 1fr 1fr; }.evidenceRow span:not(.badge) { grid-column: 1/-1; }.evidenceRow small { display: none; }.footer { flex-wrap: wrap; }.facts { grid-template-columns: 1fr; gap: 4px; }.facts dd { text-align: start; margin-block-end: 6px; }.searchForm { display: grid; grid-template-columns: 1fr; }.searchForm .label { min-inline-size: 0; } }
 
-.brandSymbol { inline-size: 40px; block-size: 40px; object-fit: contain; flex: none; }
-.wordmark { inline-size: 112px; block-size: 40px; object-fit: contain; }
+.brandSymbol { inline-size: 56px; block-size: 56px; object-fit: contain; flex: none; }
+.wordmark { display: block; inline-size: 112px; block-size: auto; }
 .neutral { color: var(--console-muted); background: var(--console-raised); border-color: var(--console-border); }
 .good { color: var(--console-success); background: var(--console-success-bg); }
 .danger { color: var(--console-danger); background: var(--console-danger-bg); }
 .badge { font-size: var(--console-font-meta); letter-spacing: 0; }
 .navButton, .navActive { min-block-size: 44px; }
-@media (max-width: 760px) { .brand { direction: ltr; justify-content: center; } }
+@media (760px < width <= 1100px) {
+  .brandSymbol { inline-size: 50px; block-size: 50px; }
+  .wordmark { inline-size: 96px; }
+}
+@media (max-width: 760px) {
+  .brand { direction: ltr; justify-content: center; gap: 10px; }
+  .wordmark { inline-size: 120px; }
+}

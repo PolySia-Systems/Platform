@@ -102,6 +102,16 @@ def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
         output = Path("output/playwright")
         output.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(output / "design-light.png"), full_page=True)
+        page.set_viewport_size({"width": 1024, "height": 1000})
+        brand = page.get_by_role("link", name="PolySia CONSOLE", exact=True)
+        assert brand.evaluate("""link => {
+            const { left, right } = link.getBoundingClientRect();
+            return [...link.querySelectorAll('img')].every(image => {
+                const bounds = image.getBoundingClientRect();
+                return bounds.left >= left && bounds.right <= right;
+            });
+        }""")
+        page.set_viewport_size({"width": 1440, "height": 1000})
         page.get_by_role("button", name="Investigate", exact=True).click()
         page.get_by_label("Search exact identity").fill("order-00000")
         page.get_by_role("button", name="Search", exact=True).click()
