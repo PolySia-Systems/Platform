@@ -2,17 +2,17 @@
   "version": 1,
   "api": "console/v1",
   "release": "0.4.0",
-  "source": "a008c0115603b0bd899caf06e718111de0ace95bde64f38b7adb854b8339e215",
+  "source": "595d4ef1ac21d3bffd27b6b6430913daf73d99d6b0f98b797d2f8558ab9a1920",
   "files": {
     "InterVariable-DiVDrmQJ.woff2": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3",
-    "compact-B1acUm88.png": "38988f8f1f1dc6436d6e9a6e43b6ea5c05d9d33142bf444ad7e9961dcf477262",
-    "favicon-DSz71nK2.png": "6d1979eceda0975b63d674dcba3b01ff7621f90356e96c1121617efdec2482d3",
-    "main-02a7698ebae5.js": "02a7698ebae5805ba785050d06369c9aaf25ab034bb5efcdc854877de6554118",
-    "primary-BmWDAuMO.png": "0b3d818e2958e23c9e8846a0d1c37c93e2edda295cd3a0e021af45ce16812579",
+    "favicon-CV7_qo3M.png": "1d18266d1a9a75ecb4f7d3933d678611f84aaee3b25179853a836a8f3faf2a29",
+    "main-e9d95736c47c.js": "e9d95736c47cc9488e2dc7089f439d13c757ea84126e4759925953ed1b19844a",
     "style-Bwsd_bpD.css": "73ce7255675f4c798c4840adb09cd9007de9255575816979255d1a8899c649b7",
-    "wordmark-dark-BsJ47cOm.svg": "3c164e2107ffd44e275b6a635819d4b22c6ba1eed990e21f9c0f6317d2566c6c",
-    "wordmark-light-DeNtjX69.svg": "e322cddcb239980a94a389fdf80cc5d51cfd0aaf8651eb6827bf26c901ad017f",
+    "symbol-dark-CeKr76-U.svg": "6e1445358c81c3e6779628029a9351feb0a1d6e0af243f59bc10c17dd31750a8",
+    "symbol-light-CMOgkaJC.svg": "d5035d14aa7e10df761041a1b782b14149d6abcbfe501e73aed9665a909d41c0",
+    "wordmark-dark-B7nWMhh4.svg": "b965181515df7b16b13db8c5fd1ff8367dca52299dcb28c2dcfe08c9d41bd2e2",
+    "wordmark-light-Cql4-U_g.svg": "a46cc889eee59145471944cec43041e09939f63686278da131f2df22f8520faa",
     "notices.txt": "77b5a4423543a525d3d5f820455aa96de03df0b1c164ac6906f27829c92db904",
-    "index.html": "ab1cb8ca670bb8e369e64409fc3759d58685928ac9bcb94cc459b44f7d426383"
+    "index.html": "a0f3419fe2eaca43937d1de8b0d8dba29dac56de3ce9829dc4ff31a1b14d95bc"
   }
 }

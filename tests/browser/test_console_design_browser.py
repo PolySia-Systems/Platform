@@ -149,11 +149,12 @@ def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
         manifest = json.loads(
             Path("src/polysia/monitoring/human_console_assets/manifest.json").read_text()
         )
-        compact = next(name for name in manifest["files"] if name.startswith("compact-"))
+        compact = next(name for name in manifest["files"] if name.startswith("symbol-light-"))
         symbol = page.locator('img[alt=""]').first
         original = symbol.get_attribute("src")
         symbol.evaluate("(e, url) => { e.src = url; }", origin + "/assets/" + compact)
-        expect(symbol).to_have_js_property("naturalWidth", 459)
+        expect(symbol).to_have_js_property("complete", True)
+        assert symbol.evaluate("e => e.naturalWidth > 0")
         assert symbol.evaluate("e => getComputedStyle(e).objectFit") == "contain"
         symbol.evaluate("(e, url) => { e.src = url; }", original)
         for workspace in ("Investigate", "Operate", "Evaluate", "System / Setup"):
