@@ -13,7 +13,7 @@ dependencies = [
     "cryptography==50.0.2",
     "eth-account==0.13.7",
     "httpx==0.28.1",
-    "pydantic==2.14.1",
+    "pydantic==2.14.2",
     "pydantic-settings>=2.15.0,<3",
     "python-dotenv>=1.2.3,<2",
     "structlog>=26.1.0,<27",
