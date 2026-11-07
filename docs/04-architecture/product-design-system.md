@@ -87,8 +87,10 @@ is distinct from language, calendar and financial formatting.
 1. Use a stable internal workspace ID and a display label in messages.ts.
 2. Prefer an existing typed workspace response. Do not infer a numeric or financial
    type from generic string cells, and do not edit contract.generated.ts manually.
-3. Compose the existing page heading, panel, facts and TableFrame-style scroll
-   recipe. Reuse Amount and Badge rather than creating new formatting/status logic.
+3. Compose the existing page heading, panel and facts styles. For tables, follow
+   the named, keyboard-focusable `tableRegion` recipe in Workspaces.tsx; there is
+   no separate TableFrame component. Reuse Amount and Badge rather than creating
+   new formatting/status logic.
 4. Supply loading, missing, empty, stale, partial and error handling as relevant.
    Show observed time, validity and safe next action; disclosure must not hide a
    critical warning. Reuse the existing synthetic producer fixtures.
@@ -108,6 +110,11 @@ for the same identity, scope, generation and record kind. Navigation restores
 that context; generation changes require an explicit refresh. Closing detail
 returns focus to the originating record. No navigation state or financial payload is persisted in browser
 storage or copied into shareable navigation URLs.
+
+An unsearched list prompts the user to search; it does not claim missing evidence
+or a generation change. Editing filters clears the previous results, detail and
+cursor before another search. Read failures remain visible across workspace
+navigation; they must not restore a previous successful list as the new result.
 
 Changing theme does not remount App or alter preview/intent identity. Existing
 bundle mismatch detection blocks incompatible commands, invalidates previews,
