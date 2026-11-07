@@ -393,7 +393,7 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
 }
 
 type Filters = { kind: string; query: string; state: string; source: string };
-type InvestigationMemory = { generation: string | null; kind: string; page: Page | null; detail: Detail | null; scroll: number };
+type InvestigationMemory = { generation: string | null; kind: string; page: Page | null; detail: Detail | null; error: string; scroll: number };
 function Investigation({ generation, onIdentityFailure, filters, setFilters, memory }: { generation: string | null; onIdentityFailure: () => void; filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>; memory: React.MutableRefObject<InvestigationMemory | null> }) {
   const kind = filters.kind;
   const setKind = (value: string) => setFilters(previous => ({ ...previous, kind: value }));
@@ -407,38 +407,44 @@ function Investigation({ generation, onIdentityFailure, filters, setFilters, mem
   const [page, setPage] = useState<Page | null>(remembered?.page ?? null);
   const [detail, setDetail] = useState<Detail | null>(remembered?.detail ?? null);
   const table = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(remembered?.error ?? '');
   const epoch = useRef(0);
   const reading = useRef<AbortController | null>(null);
   const boundedSignal = () => { reading.current?.abort(); reading.current = new AbortController();
     return AbortSignal.any([reading.current.signal, AbortSignal.timeout(4000)]); };
+  const clearResults = () => {
+    epoch.current++; reading.current?.abort();
+    setPage(null); setDetail(null); setError('');
+    if (memory.current) memory.current.scroll = 0;
+  };
   const load = useCallback(async (cursor = '') => {
     const version = ++epoch.current;
     try { const value = await read<Page>('/records?' + new URLSearchParams({ kind, q: query, state, source, cursor }), 'Page', boundedSignal());
       if (version === epoch.current) { setPage(value); setError(''); setDetail(null); }
-    } catch (err) { if (version === epoch.current) { setError(errorText(err));
+    } catch (err) { if (version === epoch.current) { setPage(null); setDetail(null); setError(errorText(err));
       if (err instanceof ApiError && err.status === 403) onIdentityFailure(); } }
   }, [kind, query, state, source, onIdentityFailure]);
   useEffect(() => {
     const prior = memory.current;
-    if (prior?.generation !== generation || prior.kind !== kind) {
-      setPage(null); setDetail(null); setError(m.cursor);
-      memory.current = { generation, kind, page: null, detail: null, scroll: 0 };
+    if (!prior || prior.generation !== generation || prior.kind !== kind) {
+      const message = prior && prior.generation !== generation ? m.cursor : '';
+      setPage(null); setDetail(null); setError(message);
+      memory.current = { generation, kind, page: null, detail: null, error: message, scroll: 0 };
     } else if (table.current) table.current.scrollTop = prior.scroll;
     epoch.current += 1;
     return () => { epoch.current += 1; reading.current?.abort(); };
   }, [generation, kind, memory]);
   useEffect(() => {
     // Store only evidence for this exact generation; never reuse it under a new identity/scope.
-    memory.current = { generation, kind, page, detail, scroll: memory.current?.scroll ?? 0 };
-  }, [generation, kind, page, detail, memory]);
+    memory.current = { generation, kind, page, detail, error, scroll: memory.current?.scroll ?? 0 };
+  }, [generation, kind, page, detail, error, memory]);
   return <section className={s.panel}>
     <form className={s.searchForm} onSubmit={e => { e.preventDefault(); void load(); }}>
-      <label className={s.label}>{m.kind}<select className={s.input} value={kind} onChange={e => { setKind(e.target.value); setQuery(''); setState(''); }}>
+      <label className={s.label}>{m.kind}<select className={s.input} value={kind} onChange={e => { clearResults(); setKind(e.target.value); setQuery(''); setState(''); setSource(''); }}>
         <option value="order">{m.orders}</option><option value="wallet">{m.wallets}</option><option value="position">{m.positions}</option></select></label>
-      <label className={s.label}>{m.search}<input className={s.input} type="search" maxLength={128} value={query} onChange={e => { epoch.current++; setQuery(e.target.value); }} /></label>
-      <label className={s.label}>{m.filter}<input className={s.input} maxLength={64} value={state} onChange={e => { epoch.current++; setState(e.target.value); }} /></label>
-      {kind === 'wallet' && <label className={s.label}>{m.sourceFilter}<input className={s.input} maxLength={128} value={source} onChange={e => { epoch.current++; setSource(e.target.value); }} /></label>}
+      <label className={s.label}>{m.search}<input className={s.input} type="search" maxLength={128} value={query} onChange={e => { clearResults(); setQuery(e.target.value); }} /></label>
+      <label className={s.label}>{m.filter}<input className={s.input} maxLength={64} value={state} onChange={e => { clearResults(); setState(e.target.value); }} /></label>
+      {kind === 'wallet' && <label className={s.label}>{m.sourceFilter}<input className={s.input} maxLength={128} value={source} onChange={e => { clearResults(); setSource(e.target.value); }} /></label>}
       <Button type="submit">{m.searchButton}</Button></form>
     {error && <p role="status">{error}</p>}
     <div ref={table} onScroll={event => { if (memory.current) memory.current.scroll = event.currentTarget.scrollTop; }} className={s.tableRegion} tabIndex={0} role="region" aria-label={m.investigate}>
@@ -450,7 +456,7 @@ function Investigation({ generation, onIdentityFailure, filters, setFilters, mem
         }}>{identifier(row.identity)}</button></td><td><Badge>{row.state}</Badge></td><td>{row.side ?? m.unknown}</td>
           <td><Amount value={row.quantity} /></td><td><Amount value={row.price} /></td></tr>)}</tbody></table>
       {page?.items.length === 0 && <p>{m.empty}</p>}</div>
-    <div className={s.pagination}><span>{page ? `${page.items.length} / ${page.total} ${m.observations}` : m.noEvidence}</span>
+    <div className={s.pagination}><span>{page ? `${page.items.length} / ${page.total} ${m.observations}` : m.searchPrompt}</span>
       <Button className={s.secondaryButton} onClick={() => void load()}>{m.reset}</Button>
       <Button disabled={!page?.next_cursor || !!error} onClick={() => void load(page?.next_cursor ?? '')}>{m.next}</Button></div>
     {detail && <section className={s.detail} aria-label={m.details}><div className={s.panelHeading}><h2>{m.details}</h2><Button onClick={() => { table.current?.querySelector<HTMLButtonElement>(`button[data-record="${CSS.escape(detail.record.identity)}"]`)?.focus(); setDetail(null); }}>{m.close}</Button></div>

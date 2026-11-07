@@ -5,3 +5,6 @@
 # Preserve reviewed brand artwork bytes and their provenance hashes.
 frontend/src/assets/brand/*.svg -text
 src/polysia/monitoring/human_console_assets/*.svg -text
+
+# Preserve owner-supplied vector source exports for provenance.
+frontend/brand-source/*.svg -text whitespace=cr-at-eol

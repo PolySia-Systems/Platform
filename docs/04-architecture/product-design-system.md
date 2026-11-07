@@ -49,19 +49,29 @@ reintroduce platform-dependent text symbols.
 
 ## Brand usage and replacement
 
-BrandLockup owns header placement. It references primary/compact and wordmark
-roles, not historical V4/V5 names in pages. Intrinsic artwork: primary 500×472,
-compact 459×444; wordmarks 554×196. Use contain, preserve ratios and reserve
-explicit width/height. Sidebar artwork always has its intended Midnight surface.
-The light-surface wordmark is retained as an approved alternative. Do not invert,
-retrace or crop the source artwork to make it fit.
+BrandLockup owns header placement. It uses the dark-surface symbol and wordmark
+roles on the Midnight sidebar. Preserve aspect ratio with contain and explicit
+layout dimensions. Light-surface variants are separate artwork, not CSS filters.
 
-The selected symbol masters are raster; the wordmarks are outlined SVG paths.
-The current 32 px favicon is derived from the supplied V5 family. Recognition at
-16 px remains limited by the detailed source: no new micro-mark or vector master
-is claimed. Later vector delivery is a scoped follow-up, not a reason to hold
-all UI work. Validate, update the role map/provenance, rebuild and inspect actual
-sizes. Materially changed geometry may require a layout decision.
+Current masters are normalized native SVG paths from the owner-supplied final
+exports. Original exports are retained in `frontend/brand-source/` for provenance,
+not served. `frontend/src/assets/brand/` contains symbol, wordmark and combined
+lockup variants for light/dark surfaces. Only imported product roles are bundled.
+Combined lockups are reusable artwork; the Console composes the separate roles
+at its existing compact proportions. Outlined wordmarks do not require a font.
+
+Provenance records original and normalized hashes and the normalization recipe.
+The source artwork's grays and #ED3237 accent are intentionally preserved; UI
+semantic/brand tokens remain independent. No trading-status color changed.
+Normalization removes export metadata, DTD and styles, converts primitive shapes
+to equivalent paths and adjusts viewBoxes without altering path coordinates.
+The extra fully occluded circle in the light original has no visible effect.
+
+The 32 px favicon is a raster derivative of the current dark symbol on Midnight.
+At 16 px the faceted core and fine orbital details are not individually legible;
+the silhouette and red node carry recognition. A new simplified micro-mark is
+not claimed. Future changes must preserve identity, pass the existing path-only
+SVG profile, update provenance, rebuild and be reviewed at actual rendered sizes.
 
 ## Evidence vocabulary
 
@@ -87,8 +97,10 @@ is distinct from language, calendar and financial formatting.
 1. Use a stable internal workspace ID and a display label in messages.ts.
 2. Prefer an existing typed workspace response. Do not infer a numeric or financial
    type from generic string cells, and do not edit contract.generated.ts manually.
-3. Compose the existing page heading, panel, facts and TableFrame-style scroll
-   recipe. Reuse Amount and Badge rather than creating new formatting/status logic.
+3. Compose the existing page heading, panel and facts styles. For tables, follow
+   the named, keyboard-focusable `tableRegion` recipe in Workspaces.tsx; there is
+   no separate TableFrame component. Reuse Amount and Badge rather than creating
+   new formatting/status logic.
 4. Supply loading, missing, empty, stale, partial and error handling as relevant.
    Show observed time, validity and safe next action; disclosure must not hide a
    critical warning. Reuse the existing synthetic producer fixtures.
@@ -108,6 +120,11 @@ for the same identity, scope, generation and record kind. Navigation restores
 that context; generation changes require an explicit refresh. Closing detail
 returns focus to the originating record. No navigation state or financial payload is persisted in browser
 storage or copied into shareable navigation URLs.
+
+An unsearched list prompts the user to search; it does not claim missing evidence
+or a generation change. Editing filters clears the previous results, detail and
+cursor before another search. Read failures remain visible across workspace
+navigation; they must not restore a previous successful list as the new result.
 
 Changing theme does not remount App or alter preview/intent identity. Existing
 bundle mismatch detection blocks incompatible commands, invalidates previews,

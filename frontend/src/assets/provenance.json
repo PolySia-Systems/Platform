@@ -1,12 +1,20 @@
 {
-  "source": "PolySia_Complete_Brand_Kit_Reviewed.zip; Inter from rsms/inter official distribution",
+  "source": "Owner-supplied CorelDRAW final SVG exports, 2026-11-07; Inter from rsms/inter official distribution",
   "inter_source": "https://raw.githubusercontent.com/rsms/inter/master/docs/font-files/InterVariable.woff2",
   "sha256": {
-    "brand/compact.png": "38988f8f1f1dc6436d6e9a6e43b6ea5c05d9d33142bf444ad7e9961dcf477262",
-    "brand/favicon.png": "6d1979eceda0975b63d674dcba3b01ff7621f90356e96c1121617efdec2482d3",
-    "brand/primary.png": "0b3d818e2958e23c9e8846a0d1c37c93e2edda295cd3a0e021af45ce16812579",
-    "brand/wordmark-dark.svg": "3c164e2107ffd44e275b6a635819d4b22c6ba1eed990e21f9c0f6317d2566c6c",
-    "brand/wordmark-light.svg": "e322cddcb239980a94a389fdf80cc5d51cfd0aaf8651eb6827bf26c901ad017f",
+    "brand/favicon.png": "1d18266d1a9a75ecb4f7d3933d678611f84aaee3b25179853a836a8f3faf2a29",
+    "brand/lockup-dark.svg": "e32c967da99dc96c56a4f50a676b77bb8a517936adb33fd7d9428ce6ec714b96",
+    "brand/lockup-light.svg": "3d2fdf58579fba4e97b0323c80711b746768cd1802d82207aac5517c45541732",
+    "brand/symbol-dark.svg": "6e1445358c81c3e6779628029a9351feb0a1d6e0af243f59bc10c17dd31750a8",
+    "brand/symbol-light.svg": "d5035d14aa7e10df761041a1b782b14149d6abcbfe501e73aed9665a909d41c0",
+    "brand/wordmark-dark.svg": "b965181515df7b16b13db8c5fd1ff8367dca52299dcb28c2dcfe08c9d41bd2e2",
+    "brand/wordmark-light.svg": "a46cc889eee59145471944cec43041e09939f63686278da131f2df22f8520faa",
     "fonts/InterVariable.woff2": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3"
-  }
+  },
+  "original_svg_sha256": {
+    "frontend/brand-source/dark.svg": "02c1cf42091490b5f63462a3f9aabf7378937c4eba552817f6364ae642891e57",
+    "frontend/brand-source/light.svg": "683a8448e06fce7b097e47de1c6b70aa4a6dab038b33d96e524ae192074987e3"
+  },
+  "normalization": "Retain all original path coordinates, fills and transforms. Inline class fill rules; convert circles to equivalent two-arc paths and polygons to closed paths. Remove DTD, metadata and unused namespaces. Crop viewBoxes only. No recoloring or optical redesign.",
+  "favicon": "32px PNG: symbol-dark contained in 28x28 on Midnight, 2px padding; no newly invented micro-mark."
 }
