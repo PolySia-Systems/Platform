@@ -27,7 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build==1.6.1",
-    "cyclonedx-bom==7.5.0",
+    "cyclonedx-bom==8.0.1",
     "hatchling==1.32.4",
     "hypothesis==6.170.5",
     "mypy==2.4.0",
