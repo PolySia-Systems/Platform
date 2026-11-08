@@ -7,7 +7,16 @@ this record is not a live dashboard. The delivery PR owns ordinary continuity.
 All work is DATA_ONLY, `LIVE_TRADING_ENABLED=false`, and
 `LIVE_NOT_AUTHORIZED / NOT_PERFORMED`.
 
-## Phase handoff
+## Current verdict
+
+The original run is **48H_NOT_QUALIFIED**. A backup failure caused durable STOP
+and restart fencing after 69,426 seconds of real observation. The separate
+[N3-R1 incident repair](#n3-r1-incident-closure) closed on 2026-11-08 with the
+installed publisher, encrypted transfer and independent restore verified.
+Acquisition remains stopped. The original canary and commissioning entries
+below are dated evidence.
+
+## Initial phase handoff
 
 **ENGINEERING_CLOSED / HEALTH_OBSERVATION_RUNNING**. The exact installed native
 CONTINUOUS worker, public reads, persistent storage, private Console, actual
@@ -255,10 +264,98 @@ protected PRs before retiring the app follow-up.
 | CONSOLE_AND_CONTROLS | PASS for actual private-TLS Operate/report and scoped controls; human acceptance NOT_PERFORMED |
 | SOURCE_AND_MARK_COVERAGE | Complete quiet reads from one identity; current nonempty event/book/mark coverage NOT_EXERCISED |
 
-No current owner action is required. Engineering/commissioning is closed;
-48 real hours and final empirical review remain. This establishes neither
+At this historical handoff, engineering/commissioning was closed and the
+48-hour empirical review remained open. That evidence did not establish
 profitable strategy/copying, complete NAV/source coverage, human acceptance nor
 Live readiness. Optional private review: SSH forward
 `ssh -N -L 8443:127.0.0.1:8443 Hetzner-Finland-Helsinki-01`, then
 `https://localhost:8443/` with the existing private credentials/CA. No credential
 is included in this record.
+
+## N3-R1 incident closure
+
+At 2026-11-07 00:15 UTC, publisher and backup jobs failed. The safety watcher
+recorded `N3_RECOVERY_HEALTH_BACKUP` and fenced acquisition at 00:15:51 UTC.
+The retained observation interval was **19h 17m 06s**. Its two-hour canary
+passed. The 48-hour period did not. One grant consumed 2,290 requests and
+5,417,306 accounted bytes with zero uncertainty. The retained state contains
+61 unique events, 122 evaluations and 30 simulated executions across
+independent portfolios, with zero real orders. The stopped follower ledger
+has NAV 992.1660423543275769014108528, fees 2.74831 and total marked virtual
+P&L −7.833957645672423098589147152 at the 00:14:45 UTC cutoff. This replaces
+the stale positive publication as evidence for the stopped state.
+
+The exact-image stopped-copy reproduction failed while converting a verified
+zero settlement payout to a generic positive-only execution price. The
+historical child exception was not logged. Retained zero marks, publisher
+timing and the controlled reproduction support the attribution. The repair
+stores terminal payout in verified settlement provenance and omits execution
+price from that observation. Positive finite trade/book prices and the
+causal payout rules remain enforced.
+
+[PR #272](https://github.com/PolySia-Systems/Platform/pull/272) also separates
+authoritative snapshot validation from optional derived analytics in recovery
+v2. Degraded analytics can preserve encrypted state and receive a distinctly
+degraded restore verdict. Required state, identity, accounting, consumption
+and report digest checks remain strict. The v1 reader retains its recorded
+validation rules. Host job failures expose a bounded stage, error code, child
+exit status and attempt ID. The report API qualifies retained data as stale
+after publisher failure. See the [recovery contract](../10-operations/independent-platform-shadow.md#recovery-and-terminal-settlement-evidence).
+
+The final review checked settlement/quote semantics, recovery and legacy
+contracts, secret redaction, stopped transition provenance and unchanged
+monetary rows. Installed CI exposed two integration gaps before the final
+pass. The success fixture had an unresolved reservation, and the initial
+diagnostic wrapper changed the transfer exception type. The successful
+fixture now settles its response while a separate regression rejects
+uncertainty. The wrapper preserves the original exception contract and
+attaches a redacted diagnostic.
+
+Local validation included 40 focused unit and 6 focused integration passes,
+Ruff, mypy, full Standards, secret scan, changed-file validation and diff
+checks. Final protected PR CI `42450722549` and
+[exact runtime-main CI 42452378743](https://github.com/PolySia-Systems/Platform/actions/runs/42452378743)
+passed, including Linux **2,084 passed / 33 skipped**, Windows
+**2,080 passed / 37 skipped**, browser, container, installed acceptance and CI
+Gate. Dependency-health was not selected for these push/PR events. Supply-chain
+used the successful strict run `42163180551` with unchanged dependency inputs.
+
+| Installed proof | Verified evidence |
+|---|---|
+| Source / image | `96ddb5d887003423c10d9b118f6a9c0f1b53f0d7` / `sha256:5d804d55caa770dc0367d0868244d5dd4e34475d8e2fb69bacfd2db02b222d26` |
+| Artifact custody | CI artifact `13606585211`; 343 first-party files matched Git on both hosts |
+| Retained transition | Proved on a copy, then applied with the supported installer under durable STOP and the OS fence at 06:11:17 UTC. Exact economic and authority row fingerprints matched. Historical campaign and policy bytes, admission provenance, private binding and unrelated service were preserved. |
+| Real publisher | `PUBLISHED`; private TLS report retained the stopped ledger totals and analytical digest `8af3ca803a2db058e6c54d3f162949f83b485bffd4a198109c5ba1dbbd3786f0` |
+| Failure receipt | Installed wrapper rejected a diagnostic invalid recipient using a separate protected receipt. Stage `configuration`, code `INVALID_EVIDENCE`, child exit 1, attempt `139fa0aaf1e347d39f284db27a886a4f` |
+| Encrypted transfer | `platform-20261108T061204Z.tar.age`, 105,108,728 bytes, SHA256 `5907e7ec56ab1c4a634fa649ecbe4386c6068a0dc57ba5ff1e02405c75583e12` matched both hosts |
+| Independent restore | Nuremberg, `VERIFIED_ISOLATED_RESTORE` at 06:13:29 UTC, attempt `a3b3070c6c02416b802b01f474d9e799`; network none, acquisition false, runtime STOPPED |
+| Restored accounting | Exact financial SQLite digest `e9a5c38a57897a886668ce373dceefbc9383be0a45d387be795082c42956e9a2` and experiment identity matched generation. Ledger invariants and analytical digest verified, with 2,290 requests / 5,417,306 bytes / zero uncertainty preserved through startup. |
+
+Restore elapsed time was **50.702 s** and the fresh generation was **72.590 s**
+old at verification. The stopped financial cutoff was approximately
+**29h 57m** old when this generation was made. These are distinct measurements.
+The fresh generation does not establish that the failed original backup met
+its RPO. The prior verified generation was retained on both hosts.
+
+Final state was durable STOP and OS fence on Helsinki and fenced recovery on
+Nuremberg. The acquisition timer is inactive. Publisher, backup,
+recovery-status and secondary restore timers are active. The owned N3 watcher
+units and cadence override were retired into the protected maintenance record.
+The app confirmed `platform-sol-1` was already absent (`not_found`).
+
+| Verdict | Result |
+|---|---|
+| SETTLEMENT_REPORTING | PASS on the affected persisted settlement state |
+| BACKUP_FAULT_ISOLATION | PASS, explicit degraded round trip in regression and verified normal installed generation |
+| DIAGNOSTICS | PASS, allowlisted failure receipt and stale-publication regression |
+| INSTALLED_REPAIR | PASS, exact immutable release commissioned under STOP |
+| INDEPENDENT_RESTORE | PASS, affected encrypted state restored and verified on fenced Nuremberg |
+| INCIDENT_ENGINEERING_CLOSURE | CLOSED |
+| N3_48H_QUALIFICATION | 48H_NOT_QUALIFIED |
+| LIVE_AUTHORIZATION | LIVE_NOT_AUTHORIZED / NOT_PERFORMED |
+
+The protected pre-transition checkpoint is
+`/var/lib/polysia-platform/n3-r1-96ddb5d88700/checkpoint`. Use the checkpoint
+and corresponding trusted release for compatible rollback under STOP.
+Operational receipts are retained under `artifacts/n3-r1-20261108/`. A future
+observation requires its own finite owner authorization.
