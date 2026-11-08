@@ -105,9 +105,12 @@ findings. See [operating and deployment prerequisites](../10-operations/continuo
 | B5 | One durable request/byte/cost owner confines actual SDK/RPC HTTP traffic. Entry admission reserves requests/bytes/cost/attempts/turnover/storage for protection. Optional source work sheds within the frozen envelope. Local deduplicated incidents and fake notification receipts require separate delivery authority. |
 
 The composed route is deliberately limited to chain 137, standard legacy CTF
-Exchange V2, six-decimal pUSD/CTF, EOA signer=funder, signature type 0, and the
-pinned SDK's exact contract addresses. Negative risk, V3 token namespaces,
-proxy/Safe/deposit wallets, builders and nonempty baseline migration reject.
+Exchange V2, six-decimal pUSD/CTF and the pinned SDK's exact contract
+addresses. Type 0 requires signer=funder. Type 3 requires the exact configured
+owner signer and its deterministically derived deposit wallet funder. The
+latter scope extension awaits operational acceptance under ADR-0023. Negative
+risk, V3 token namespaces, proxy/Safe wallets, deposit-wallet session keys,
+builders and nonempty baseline migration reject.
 Actual account completeness depends on a qualified all-or-error historical RPC
 provider, complete bounded authenticated orders/trades, canonical finalized
 headers, cash and all token balances. Large accounts that exceed any bound

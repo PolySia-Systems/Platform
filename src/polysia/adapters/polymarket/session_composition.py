@@ -178,6 +178,7 @@ class _ExactOperationalAdapter(PolymarketSecureAdapter):
             exchange=self.session_config.exchange,
             signer=self.session_config.account_mapping.signer,
             funder=self.session_config.account_mapping.funder,
+            signature_type=self.session_config.account_mapping.signature_type,
             request=request,
         )
         return prepared

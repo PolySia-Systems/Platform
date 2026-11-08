@@ -241,11 +241,25 @@ async def test_live_requires_receipt_before_financial_state_or_credentials(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("signature_type", "cancel"), [(0, False), (3, False), (3, True)])
 async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signature_type: int, cancel: bool
 ) -> None:
+    from polymarket._internal.wallet import derive_beacon_deposit_wallet_address
+    from polymarket.environments import PRODUCTION
+
     ephemeral = Account.create()
     config = runtime_config(tmp_path, ephemeral.address)
+    funder = ephemeral.address
+    if signature_type == 3:
+        funder = derive_beacon_deposit_wallet_address(
+            ephemeral.address, PRODUCTION._config.wallet_derivation
+        )
+        config = replace(
+            config, account_mapping=replace(
+                config.account_mapping, funder=funder, signature_type=signature_type
+            )
+        )
     auth, verifier = signed(config)
     custody = SessionCustody(config.custody_path)
     custody.initialize()
@@ -281,6 +295,11 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
 
     def wire(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, request.url.path))
+        if request.url.path == "/order" and request.method == "DELETE":
+            assert cancel
+            assert request.headers["POLY_ADDRESS"].lower() == ephemeral.address.lower()
+            assert json.loads(request.content) == {"orderID": "0x" + "2" * 64}
+            return httpx.Response(200, json={"canceled": ["0x" + "2" * 64], "not_canceled": {}})
         if request.url.path == "/api/geoblock":
             return httpx.Response(200, json={"blocked": False})
         if request.url.path == "/time":
@@ -295,6 +314,9 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             state = session.coordinator.journal.read()
             assert any(row["state"] == "UNCERTAIN_SUBMIT" for row in state["orders"].values())
             order = json.loads(request.content)["order"]
+            assert order["signatureType"] == signature_type
+            assert order["signer"].lower() == funder.lower()
+            assert order["maker"].lower() == funder.lower()
             assert order["makerAmount"] == "1000000" and order["takerAmount"] == "2000000"
             return httpx.Response(
                 200,
@@ -330,7 +352,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                 log = fill_log(10)
                 log["address"] = config.exchange
                 log["data"] = abi(0, int(SESSION_TOKEN), 1000000, 2000000, 1234, 0, 0)
-                log["topics"][2] = topic_address(ephemeral.address)
+                log["topics"][2] = topic_address(funder)
                 result = [log]
             if method == "eth_call":
                 data = body["params"][0]["data"]
@@ -342,6 +364,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             assert result is not None
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
         if request.url.path == "/balance-allowance":
+            assert request.url.params["signature_type"] == str(signature_type)
             return httpx.Response(
                 200,
                 json={
@@ -358,7 +381,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                         "market": auth.instruments[0].market,
                         "asset_id": SESSION_TOKEN,
                         "owner": "fixture-api",
-                        "maker_address": ephemeral.address,
+                        "maker_address": funder,
                         "taker_order_id": "0x" + "2" * 64,
                         "side": "BUY",
                         "trader_side": "TAKER",
@@ -484,6 +507,15 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         )
         intent_id = await session.coordinator.submit(candidate)
         assert session.coordinator.journal.read()["orders"][intent_id]["state"] == "ACCEPTED"
+        if cancel:
+            await session.coordinator.cancel(intent_id)
+            assert requests.count(("DELETE", "/order")) == 1
+            pending = session.coordinator.journal.read()["orders"][intent_id]
+            assert pending["state"] == "CANCEL_PENDING"
+            with pytest.raises(SessionBlocked, match="known_open_order"):
+                await session.coordinator.cancel(intent_id)
+            assert requests.count(("DELETE", "/order")) == 1
+            return
         observed_fill["enabled"] = True
         await session.reconcile()
         assert session.coordinator.journal.read()["orders"][intent_id]["state"] == "FINALIZED"
@@ -506,11 +538,13 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
-async def test_actual_sdk_eoa_signature_preserves_exact_amounts_and_exchange(side):
+@pytest.mark.parametrize("signature_type", [0, 3])
+async def test_actual_sdk_signature_preserves_exact_amounts_and_exchange(side, signature_type):
     from types import SimpleNamespace
 
     from polymarket import AsyncSecureClient
     from polymarket._internal.actions.orders.types import OrderDraft
+    from polymarket._internal.wallet import derive_beacon_deposit_wallet_address
     from polymarket.environments import PRODUCTION
     from polymarket.types import EvmAddress
 
@@ -518,16 +552,23 @@ async def test_actual_sdk_eoa_signature_preserves_exact_amounts_and_exchange(sid
 
     signer = Account.create()
     exchange = PRODUCTION._config.standard_exchange
+    funder = EvmAddress(signer.address)
+    wallet_type = "EOA"
+    if signature_type == 3:
+        funder = derive_beacon_deposit_wallet_address(
+            signer.address, PRODUCTION._config.wallet_derivation
+        )
+        wallet_type = "DEPOSIT_WALLET"
     client = SimpleNamespace(
         _ctx=SimpleNamespace(
-            wallet=EvmAddress(signer.address), wallet_type="EOA", signer=signer, signer_type="OWNER"
+            wallet=funder, wallet_type=wallet_type, signer=signer, signer_type="OWNER"
         )
     )
     draft = OrderDraft(
         chain_id=137,
         exchange_address=exchange,
         expiration=2000000000,
-        funder_address=EvmAddress(signer.address),
+        funder_address=funder,
         offered_amount=1000000 if side == "BUY" else 2000000,
         requested_amount=2000000 if side == "BUY" else 1000000,
         order_type="GTD",
@@ -539,8 +580,18 @@ async def test_actual_sdk_eoa_signature_preserves_exact_amounts_and_exchange(sid
     request = dict(
         token_id=SESSION_TOKEN, side=side, size=D(2), price=D("0.5"), expiration=2000000000
     )
-    check = dict(exchange=exchange, signer=signer.address, funder=signer.address, request=request)
+    check = dict(
+        exchange=exchange, signer=signer.address, funder=funder, signature_type=signature_type,
+        request=request,
+    )
     assert_exact_prepared(prepared, **check)
+    if signature_type == 3:
+        wrong_nibble = "f" if prepared.signature[-1] != "f" else "e"
+        changed_signature = replace(prepared, signature=prepared.signature[:-1] + wrong_nibble)
+        with pytest.raises(SessionBlocked, match="authorized_exchange"):
+            assert_exact_prepared(changed_signature, **check)
+        with pytest.raises(SessionBlocked, match="envelope"):
+            assert_exact_prepared(replace(prepared, signer=signer.address), **check)
     with pytest.raises(SessionBlocked, match="economics"):
         assert_exact_prepared(prepared, **{**check, "request": {**request, "size": D("2.001")}})
     with pytest.raises(SessionBlocked, match="authorized_exchange"):
