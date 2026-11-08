@@ -22,10 +22,10 @@ dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
 OP1 review, 2026-11-08: **PREPARATION_COMPLETE_WITH_LISTED_DEPENDENCIES**.
-Private HTTPS and authorization checks passed against the installed N3-R1
-bundle. Public Console remains pending Zero Trust plan and owner-policy
-verification. A separate bounded public diagnostic stopped after four
-read-only requests. The sampled book had no ask and retained N3 history
+Owner-authenticated public Console, API and exact assets were verified against
+the installed N3-R1 bundle. Private HTTPS rollback was verified and the unused
+deep-hostname A record removed. A separate bounded public diagnostic stopped
+after four read-only requests. The sampled book had no ask and retained N3 history
 provided no complete canonical follower pair. Actual financial account,
 capacity, custody, recovery, human and alert acceptance remain uncommissioned.
 No real trade occurred and no new campaign remains active. See
@@ -262,7 +262,7 @@ CURRENT capabilities:
   exact immutable request approved by Risk; generic `live limit-order` is
   preview-only.
 - A SHADOW-only Control Kernel slice for `stale-price@0.1.0`.
-- Wallet Intelligence Stages 1â€“4B as DATA_ONLY research/Shadow systems. They
+- Wallet Intelligence Stages 1Ã¢â‚¬â€œ4B as DATA_ONLY research/Shadow systems. They
   are not profitability evidence and do not authorize trading.
 - Stage 4B Continuous Shadow is a bounded experimental portfolio and ledger
   on its own store. It is not the TARGET OMS, allocator, or execution router.
@@ -296,7 +296,7 @@ CURRENT capabilities:
   recovery bundle. Public book reads support bounded batches; historical reads
   enforce exact time windows. See the [operating runbook](../10-operations/wallet-intelligence-ingestion.md).
 - Versioned Research and Shadow configuration now supports a software envelope
-  of 1â€“40 wallets with explicit operational capacity admission, shared active
+  of 1Ã¢â‚¬â€œ40 wallets with explicit operational capacity admission, shared active
   selection, readiness diagnostics, and JSON contracts for a future UI. The
   envelope is not a measured Helsinki capacity. Existing frozen v1/v2 Research
   and v1 Shadow periods retain their original semantics.
@@ -388,7 +388,7 @@ Next milestones: investigate the selected-wallet activity and market evidence
 needed for a fresh standard Canary, continue explicit Shadow health checks,
 and address recurring backup/alert delivery and branch protection separately.
 The four-hour failure archive and deterministic empty-sample analyses are
-preserved off-host. The Stage 1â€“3 daily timer was re-enabled after Main closed;
+preserved off-host. The Stage 1Ã¢â‚¬â€œ3 daily timer was re-enabled after Main closed;
 Stage 4B continued through its first period rollover. Any new experiment
 requires its own authorized scope; do not access Nuremberg.
 
@@ -429,7 +429,7 @@ Do not duplicate these records here.
 |---|---|
 | LIVE-004 completed round trip | [live-004 handoff](../18-ai-handoffs/polysia-live-004-final-handoff.md) |
 | Tiny Live Copy 004 cancellation | [004 diagnostic](../18-ai-handoffs/polysia-tiny-live-copy-004-cancellation-diagnostic.md) |
-| Helsinki Stages 1â€“4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
+| Helsinki Stages 1Ã¢â‚¬â€œ4 deployment | [Finland deployment](../18-ai-handoffs/polysia-finland-wallet-intelligence-deployment.md) |
 | Stage 4B data lifecycle T0 and 24h | [data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md) |
 | Frozen Target Exposure v1 baseline | [Target Exposure v1](../18-ai-handoffs/shadow-target-exposure-v1-baseline.md) |
 | Python 3.14 / SDK upgrade | [UPGRADE-006](../18-ai-handoffs/polysia-upgrade-006-handoff.md) |
