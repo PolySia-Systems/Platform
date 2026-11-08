@@ -1,19 +1,19 @@
 # OP1 operational readiness and unsigned Live proposal
 
-**2026-11-08. PREPARATION_COMPLETE_WITH_LISTED_DEPENDENCIES.** The private Console
-and bounded public diagnostic worked. Public Console cutover and actual financial
-commissioning remain pending. No real orders, cancellations, transactions,
-signatures, transfers or money movement occurred. No OP1 process or timer remains.
+**2026-11-08. PREPARATION_COMPLETE_WITH_LISTED_DEPENDENCIES.** Public Console
+cutover and private rollback are verified. Actual financial commissioning
+remains pending. No real orders, cancellations, transactions, signatures,
+transfers or money movement occurred. No OP1 acquisition process or timer remains.
 
 ## Readiness and coverage
 
 | Journey | Evidence and cutoff (UTC) | Result and next check |
 | --- | --- | --- |
-| ACCESS | Private HTTPS sample at 12:17:23 and protected gateway checks at 12:22:05. Cloudflare inventory confirmed the existing canonical DNS, dedicated published loopback route and Down connector. | **PRIVATE VERIFIED / PUBLIC BLOCKED.** The account's Access application screen requires an active Zero Trust plan. Free was offered. The public endpoint returned HTTP 302 under normal TLS. Current Access app/policy membership and actual authenticated public serving remain unverified. Owner restores Zero Trust Free access to the existing account, then review the policy, issuer/audience and protected connector before a cutover. |
+| ACCESS | Public cutover and private rollback verified on 2026-11-08. See [cutover evidence](#public-console-cutover). | **PUBLIC VERIFIED / PRIVATE ROLLBACK VERIFIED.** The owner session reached the application, APIs and exact installed assets. Anonymous edge and origin protection passed. |
 | HUMAN_ACCEPTANCE | Dated private browser evidence and current automated checks. | **PENDING.** The operator completes the card below. |
 | ACCOUNT_ROUTE_COMPATIBILITY | Installed source and pinned SDK `0.13.0`; current contract docs list the same Polygon 137 standard CTF Exchange V2, CTF, pUSD and collateral adapter. Actual pinned-SDK deterministic signature/read tests passed. Public geoblock returned allowed for the Helsinki egress at 12:21:41. | **DOCUMENTED ROUTE MATCH / ACTUAL ACCOUNT UNKNOWN.** Helsinki's point-in-time IP result cannot establish account or owner eligibility. Verify the designated signer/funder, signature type 0 and exact standard token route at activation. |
 | ACCOUNT_STATE | The protected report still exposes no authenticated financial snapshot. No current approved account designation or pre-provisioned account/RPC bindings were established. | **UNKNOWN.** Use the supported read-only qualification on exact instruments and approved account. Require complete pagination, finalized cash and CTF positions, open orders, fills/fees, canonical occurrences and no unexplained balances or orders. Start flat only. |
-| SOURCE/COPYABILITY | Original N3 checkpoint through 2026-11-07 00:14:46.901 UTC. 61 opportunities with historical schema `1.0`, 54 retained follower samples, zero complete canonical forward pairs at a 60 s horizon and 5 s tolerance. OP1 public sample at 12:21:41–12:21:42 is described below. | **ENTRY NOT QUALIFIED.** Historical source IDs and fees do not supply canonical paired entry/exit evidence. Freeze selection before evaluation and require confirmed native occurrence, attributable fills, usable depth and fresh fees/quotes for the exact token and proposed shares. |
+| SOURCE/COPYABILITY | Original N3 checkpoint through 2026-11-07 00:14:46.901 UTC. 61 opportunities with historical schema `1.0`, 54 retained follower samples, zero complete canonical forward pairs at a 60 s horizon and 5 s tolerance. OP1 public sample at 12:21:41â€“12:21:42 is described below. | **ENTRY NOT QUALIFIED.** Historical source IDs and fees do not supply canonical paired entry/exit evidence. Freeze selection before evaluation and require confirmed native occurrence, attributable fills, usable depth and fresh fees/quotes for the exact token and proposed shares. |
 | CAPACITY | 12:17:23 Helsinki read had 21,193,957,376 free disk bytes and 3,022,778,368 available RAM bytes. Public diagnostic took 0.980 s across four requests in the capped container. | **HEADROOM AT OBSERVATION / FINANCIAL CAPACITY UNKNOWN.** Qualify actual bound workload, paging and reserve costs, latency, failure modes and expiry. No production percentile follows from four requests. |
 | CUSTODY/SUPERVISION | Protected acceptance/revocation, checkpoint ACK, lost supervision and single writer passed in isolated fixtures. No corresponding Helsinki financial session unit or provisioned authority was established at 12:22. | **FIXTURE PASS / UNCOMMISSIONED.** Review ADR-0023 trust and native ACLs, one active writer, independent supervisor lifetime and off-host checkpoint ownership. |
 | PROTECTIVE_EXIT | Tests cover accepted/rejected/partial orders, lost reply and no resend, DRAIN/STOP, cancellation/finality, reserved capacity, stale/unknown evidence and fee-aware reconciliation. Public book lacked an ask. | **FIXTURE PASS / REAL EXIT UNPROVEN.** Freeze per-run protection, validate closeability and dust outcomes, and assign the owner for residual exposure. |
@@ -53,18 +53,60 @@ observation and later installed recovery proof are separate evidence. See
 [N3-R1 closure](nonlive-n3-health-2026-11-06.md#n3-r1-incident-closure).
 Original N3 remains `48H_NOT_QUALIFIED`.
 
-Cloudflare's existing `console.movafegh.com` record points to the historical
-dedicated `polysia-platform-console` tunnel and published
-`http://127.0.0.1:8765` origin. The primary lacked its connector unit and
-protected runtime token, and the historical secondary Console recovery
-directory was absent. Historical [Access setup and ownership](platform-independent-shadow-2026-10-16.md)
-are useful for identifying the resources. Current Access policy and management
-credential revocation status require authenticated verification. Keep DNS,
-existing ingress and public ports in place until owner-only Access is verified,
-a protected pinned connector and application assertion validation are restored,
-and the owner journey and rollback pass. App configuration has one exclusive
-identity mode, so the access cutover needs a rollback that restores the private
-profile. The old deep hostname is eligible for cleanup only after cutover.
+## Public Console cutover
+
+2026-11-08, 15:31â€“15:36 UTC. The owner activated Zero Trust Free. The existing
+self-hosted Access app and its sole owner email policy were verified. The
+canonical [public Console](https://console.movafegh.com/) serves the existing
+dedicated tunnel and a loopback HTTP origin at 127.0.0.1:8765. A terminal 404
+ends ingress. The public web unit uses the installed N3-R1 image and supported
+Cloudflare profile with independent RS256 issuer, audience and role checks.
+The existing private Caddy/web pair stays active on 127.0.0.1:8443. The two
+web units use separate identity settings and CSRF secrets, read the same
+publication and use the existing authorized command queue. Neither mounts
+worker financial or authority stores. The public web config SHA-256 is
+b01afc0063fc698e5d99f58e003482eeb7acb7eccb3e0b755bba255425374e63.
+
+- Helsinki runs one enabled dedicated connector with four edge connections.
+  Pinned cloudflared 2026.10.1 matched the recorded binary checksum. systemd
+  supplies the dedicated runtime token through a root-only credential file.
+  No management token or shared tunnel change was required.
+- After connector restoration, the existing owner browser session reached the
+  origin and initially received identity_required. The role map was restricted
+  to the verified Gmail mailbox and its lowercase spelling. The next browser
+  reload rendered the Console. This resolved the observed application denial.
+  The earlier reported redirect loop did not recur. Its original cause was
+  not independently isolated.
+- The authenticated browser returned 200 for HTML, the exact installed CSS
+  and JavaScript hashes above, /api/report and /api/console/v1/snapshot.
+  The report still shows STALE_WORKER_RECEIPT and real_orders=false. Anonymous
+  public requests for those five paths redirected to the verified Access
+  issuer under normal TLS. Direct loopback requests without assertion
+  returned 403 for all five paths. Wrong-role, signature, origin and CSRF
+  behavior is covered by the focused tests and the earlier installed private
+  denial checks. A second public identity was not enrolled or used.
+- Stopping both public units left authenticated private TLS returning 200.
+  Both public units were restarted and the owner browser reached the Console
+  again. Emergency rollback over verified SSH stops only the public units
+  with systemctl disable --now polysia-platform-tunnel.service followed by
+  systemctl stop polysia-platform-edge-web.service. The private SSH/CA
+  route and its independent emergency procedure remain available.
+- After the rollback rehearsal and public recheck, removed only the unused
+  platform.polysia.movafegh.com A record. The rollback values are 37.27.8.79,
+  proxied, TTL Auto and comment CoreOS service - PolySia. The canonical tunnel
+  record and unrelated resources were preserved. The old shared management
+  credential rotation status remains unverified and outside this cutover.
+- At 15:35:57 UTC Helsinki showed the N3 STOP and restart fence, the worker
+  timer inactive, 2,290 historical attempts, 5,417,306 bytes and zero unknown
+  reservations. Nuremberg remained fenced. Six private authenticated API
+  reads passed at 15:36:02 UTC with zero pending commands. No additional
+  grant, provider acquisition or financial action was performed.
+
+Affected checks used systemd-analyze verify and the installed tests above.
+The focused gateway/Console suite passed 19 tests during staging. The three
+identity, CSRF and exclusive-profile tests were rerun on cutover and passed.
+The unrelated host xfs_scrub unit warnings about removed CPUAccounting were
+unchanged. The human operator card is still pending.
 
 ## Bounded public diagnostic and historical replay
 
@@ -153,7 +195,7 @@ the selected instrument and activation cutoffs. Existing data is historical.
   ceiling. For a later eligible market with the same 5-share minimum and 0.07
   exponent-1 schedule, recommend an execution-only screening ceiling of 5.175
   pUSD: 5 pUSD maximum gross debit plus up to 0.0875 pUSD per leg before
-  venue rounding. The maximum fee follows 5 × 0.07 × 0.25. Reduce the actual
+  venue rounding. The maximum fee follows 5 Ã— 0.07 Ã— 0.25. Reduce the actual
   cap to the selected quote-based worst case, include any rounding and separately
   verified non-venue costs, and reject higher-minimum or higher-fee candidates
   for this first run. The July tiny-run limits were scoped to its own account and SDK.
@@ -204,12 +246,9 @@ An explicit/supervision STOP remains latched. No old fence or counters are reset
 
 ## Consolidated owner packet
 
-1. Restore access to **Zero Trust Free** on the existing Cloudflare account and
-   make the dedicated policy and route reviewable. Confirm the historical shared
-   credential rotation and dedicated management credential disposition. Provide
-   protected administrative access where needed. Keep only verified existing
-   owner identity and scope. Complete the operator card when the public route
-   is verified or use the private route in the meantime.
+1. Complete the operator card using the verified public Console or private
+   rollback route. Confirm disposition of the historical shared and dedicated
+   management credentials separately from financial readiness.
 2. Decide [ADR-0023](../04-architecture/adrs/ADR-0023-bounded-financial-session.md)
    operational acceptance. Accept or revise the sole-writer, independent
    supervisor, external issuer and off-host witness/checkpoint failure domains
@@ -239,9 +278,8 @@ python -m pytest -q tests/integration/test_financial_session.py tests/integratio
 ```
 
 Protected installed GET/denial checks and one metered public sample were
-performed separately. The private operator's browser exercise, authenticated
-financial reads, actual financial recovery and public installed journey are
-pending. Existing runtime-main gates were reused for unchanged code and
+performed separately. The human operator exercise, authenticated financial reads and actual financial
+recovery remain pending. The public installed journey is verified above. Existing runtime-main gates were reused for unchanged code and
 artifact. OP1 documentation uses the changed-docs, Standards and secret gates.
 The #264 correction was verified against [attempt 2, installation-acceptance](https://github.com/PolySia-Systems/Platform/actions/runs/42472604797/job/128711442287?attempt=2).
 Backup replacement/nonempty recovery passed. The ACME step failed while reading
