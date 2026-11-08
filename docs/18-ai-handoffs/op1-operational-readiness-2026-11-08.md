@@ -160,7 +160,7 @@ for canonical pairs. Rebinding the historical rows would erase provenance.
 
 ## Unsigned Live proposal for later review
 
-**RECOMMENDED, inert, ungranted.** Use the existing bounded financial-session
+**Historical proposal before the type-3 follow-up below.** Use the existing bounded financial-session
 composition. Prefer Helsinki as sole writer, one explicitly designated flat
 EOA with signer = funder, one corroborated frozen leader, one active standard
 CTF condition and one outcome, one entry attempt, one open position and one
@@ -250,10 +250,17 @@ The pinned SDK 0.13.0 deterministically classified the protected local account
 as a deposit wallet with an owner signer and signature type 3. No address or
 credential value is recorded. The laptop's bounded geographic preflight did
 not return an affirmative allowance. A direct retry also failed to establish
-eligibility. The attempt stopped before authenticated venue access. Deployment,
-on-chain owner status, CLOB credentials, collateral, open orders and fills
-remain unverified. A qualified Polygon RPC route and an eligible approved
-execution context are required for the finalized opening read.
+eligibility. The attempt stopped before authenticated API access. A subsequent
+official geoblock GET from the installed Helsinki image returned HTTP 200,
+country `FI` and `blocked=false` after a bare-host check returned HTTP 403.
+The cause of the earlier 403 remains undetermined. The Helsinki result applies
+to that connection's egress. On November 8, 2026, the owner's authenticated
+browser portfolio displayed available cash, no positions and no open orders.
+This is a browser observation. The browser address was not independently
+matched to the configured funder during that observation. Deployment, on-chain
+owner status and authenticated CLOB opening evidence remain unverified. The
+supported qualification still requires a separately approved finite read
+window, a qualified Polygon RPC route and an eligible execution context.
 
 The historical Tiny Live workflow uses consumed, run-specific authorizations.
 It is not the OP1 financial session. The scope extension in ADR-0023 adds an
@@ -293,7 +300,7 @@ under the existing incident and custody procedures.
    operational acceptance. Accept or revise the sole-writer, independent
    supervisor, external issuer and off-host witness/checkpoint failure domains
    and define the financial recovery objectives. Supply protected references for
-   the explicitly designated eligible EOA, pre-existing account credential
+   the explicitly designated test account, pre-existing account credential
    references and owner-approved RPC/read method scope. A later qualification
    needs its own finite approved window because this OP1 exercise is closed.
 3. For alerts, propose one redacted synthetic incident via an existing approved
