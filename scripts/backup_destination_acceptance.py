@@ -364,8 +364,10 @@ def main() -> None:
         bad_b = {**destinations["B"], "secondary_port": 12224}
         try:
             backup.change_destination(bad_b)
-        except subprocess.CalledProcessError:
-            pass
+        except subprocess.CalledProcessError as error:
+            detail = getattr(error, "recovery_diagnostic", None)
+            assert detail is not None
+            assert detail.stage == "transfer" and detail.error_code == "PROCESS_FAILED"
         else:
             raise AssertionError("failed B was accepted")
         assert (backup.CONFIG_ROOT / "backup-job.json").read_bytes() == active_a

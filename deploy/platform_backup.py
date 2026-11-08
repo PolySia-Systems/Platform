@@ -80,10 +80,12 @@ class JobFailure(RuntimeError):
 def job_stage(stage: str) -> Iterator[None]:
     try:
         yield
-    except JobFailure:
-        raise
     except Exception as error:
-        raise JobFailure(stage, error) from None
+        # Retain exception types for programmatic callers such as destination
+        # switching. The job entry point publishes only the safe diagnostic.
+        if not isinstance(getattr(error, "recovery_diagnostic", None), JobFailure):
+            error.recovery_diagnostic = JobFailure(stage, error)  # type: ignore[attr-defined]
+        raise
 
 
 def run(args: list[str], *, data: str | None = None, timeout: int = 300) -> str:
@@ -683,7 +685,9 @@ def main() -> None:
         if receipt["status"] == "RECOVERY_OBJECTIVES_NOT_MET":
             raise SystemExit(1)
     except Exception as error:
-        detail = error if isinstance(error, JobFailure) else JobFailure(args.mode, error)
+        detail = getattr(error, "recovery_diagnostic", None)
+        if not isinstance(detail, JobFailure):
+            detail = JobFailure(args.mode, error)
         failure = {
             "status": "FAILED",
             "attempt_id": attempt_id,
