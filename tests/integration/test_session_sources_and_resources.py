@@ -153,6 +153,8 @@ async def test_rpc_log_windows_require_every_page(failure: str | None) -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         rpc = ReadOnlyRPC(http, "https://rpc.fixture/", log_block_span=2)
+        with pytest.raises(SessionBlocked, match="finalized_log_boundary_invalid"):
+            await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="-0x1")
         if failure is None:
             logs = await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="0x4")
             assert [row["blockNumber"] for row in logs] == ["0x1", "0x3", "0x4"]

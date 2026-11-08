@@ -189,6 +189,8 @@ class SessionRuntimeConfig:
         self, executable: tuple[InstrumentScope, ...]
     ) -> tuple[InstrumentScope, ...]:
         scopes = {item.token: item for item in executable}
+        if not scopes or len(scopes) != len(executable):
+            raise SessionBlocked("unique_executable_token_mapping_required")
         for item in self.historical_instruments:
             if scopes.setdefault(item.token, item) != item:
                 raise SessionBlocked("historical_token_mapping_conflicts_with_executable_scope")

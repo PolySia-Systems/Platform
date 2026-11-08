@@ -86,7 +86,7 @@ class ReadOnlyRPC:
     def __init__(
         self, client: httpx.AsyncClient, url: str, *, log_block_span: int | None = None
     ) -> None:
-        if log_block_span is not None and log_block_span <= 0:
+        if log_block_span is not None and (type(log_block_span) is not int or log_block_span <= 0):
             raise ValueError("log block span must be positive")
         self.client, self.url = client, url
         self.log_block_span = log_block_span
@@ -130,6 +130,8 @@ class ReadOnlyRPC:
         return payload["result"]
 
     async def logs(self, *, address: str, topics: list[object], through: str) -> list[Any]:
+        if not isinstance(through, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", through):
+            raise SessionBlocked("RPC_finalized_log_boundary_invalid")
         end = int(through, 16)
         span = self.log_block_span or end + 1
         logs = []
