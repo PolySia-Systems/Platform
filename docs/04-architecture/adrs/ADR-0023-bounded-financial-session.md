@@ -115,7 +115,16 @@ Engineering tests and a draft PR do not approve those actions.
 `polysia ops session run` returns a disabled result in DATA_ONLY/PAPER before
 constructing Live collaborators. The Live branch lazily composes the actual
 adapter only after receipt, frozen identity and current custody verification.
-The SDK route is restricted to standard CTF Exchange V2 and an EOA account.
+The SDK route is restricted to standard CTF Exchange V2. Type 0 requires an
+EOA whose signer equals the funder. The type-3 scope extension is proposed for
+review and implemented for an owner-derived Polymarket deposit wallet only.
+The configured signer must derive the configured funder under the pinned SDK.
+The prepared order uses the deposit wallet as maker and wire signer. The
+adapter verifies the ERC-7739 wrapper and recovers the exact owner signer
+against the approved exchange and economics. Existing account, cancellation,
+finality and independent custody requirements apply to the same bound funder.
+Session keys, unknown deposit wallet mappings, proxy and Safe accounts remain
+out of scope. Operational acceptance of this extension remains pending.
 The prepared EIP-712 signature is recovered against the authorized exchange;
 amounts, token, side, expiry, post-only and identity must equal the exact Risk
 request. Hidden SDK rounding, builder routes and V3 namespace routing reject.

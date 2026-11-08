@@ -13,6 +13,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from polymarket._internal.wallet import try_classify_wallet_type
+from polymarket.environments import PRODUCTION
+
 from polysia.adapters.polymarket.session_chain import ChainFill, CTFChainReader, address
 from polysia.domain.financial_session import (
     AccountObservation,
@@ -36,11 +39,17 @@ class ExactAccountMapping:
         address(self.signer)
         address(self.funder)
         address(self.collateral)
-        # Deliberately bounded first composition: no implicit proxy/deposit-wallet
-        # creation, approvals or signer/funder substitution in SDK bootstrap.
         if (
-            self.signature_type != 0
-            or self.signer.lower() != self.funder.lower()
+            self.signature_type not in (0, 3)
+            or (self.signature_type == 0 and self.signer.lower() != self.funder.lower())
+            or (
+                self.signature_type == 3
+                and try_classify_wallet_type(
+                    signer=self.signer,
+                    wallet=self.funder,
+                    config=PRODUCTION._config.wallet_derivation,
+                ) != "DEPOSIT_WALLET"
+            )
             or self.venue != "polymarket"
             or not self.account_id
             or self.settlement_route != "ctf-exchange-v2-standard"
@@ -73,10 +82,13 @@ class ExactSessionAccountReader:
         self.last_observation: AccountObservation | None = None
 
     def require_identity(self) -> None:
+        deposit_wallet = self.mapping.signature_type == 3
+        wallet_type = "DEPOSIT_WALLET" if deposit_wallet else "EOA"
         if (
             address(str(self.client.signer)) != address(self.mapping.signer)
             or address(str(self.client.wallet)) != address(self.mapping.funder)
-            or str(self.client.wallet_type) != "EOA"
+            or str(self.client.wallet_type) != wallet_type
+            or (deposit_wallet and self.client._ctx.signer_type != "OWNER")
             or self.chain.collateral != address(self.mapping.collateral)
         ):
             raise SessionBlocked("authenticated_account_identity_changed")

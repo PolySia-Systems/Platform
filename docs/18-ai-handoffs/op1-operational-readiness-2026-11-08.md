@@ -244,6 +244,46 @@ Use the bounded `qualify-account`, `inspect` and `validate` paths. Release
 only a later explicitly authorized commissioning STOP through its exact gate.
 An explicit/supervision STOP remains latched. No old fence or counters are reset.
 
+## Owner-designated test account follow-up
+
+The pinned SDK 0.13.0 deterministically classified the protected local account
+as a deposit wallet with an owner signer and signature type 3. No address or
+credential value is recorded. The laptop's bounded geographic preflight did
+not return an affirmative allowance. A direct retry also failed to establish
+eligibility. The attempt stopped before authenticated venue access. Deployment,
+on-chain owner status, CLOB credentials, collateral, open orders and fills
+remain unverified. A qualified Polygon RPC route and an eligible approved
+execution context are required for the finalized opening read.
+
+The historical Tiny Live workflow uses consumed, run-specific authorizations.
+It is not the OP1 financial session. The scope extension in ADR-0023 adds an
+owner-derived type-3 account to the same standard CTF V2 composition. It
+reuses its risk, custody, per-action bounds and cancellation/finality gates.
+The pinned SDK signs the deposit-wallet order and the adapter verifies its
+exact wire maker, signer, economics, exchange and wrapped owner signature.
+Qualification uses the same account binding for authenticated CLOB and
+finalized chain evidence. This is a code candidate for review, with no rollout
+or real signature, order, cancellation or transaction.
+
+The candidate tiny run is conditional on a qualified instrument with a
+five-share minimum and the verified fee schedule. Propose one entry of
+exactly five shares at a limit of 0.50 pUSD per share or less, with a 2.50 pUSD
+maximum gross entry. Use a worst-case taker fee reserve of 0.08750 pUSD per
+leg at rate 0.07 and exponent 1. The proposed maximum total loss is 2.67500
+pUSD, including both fee reserves. Reject the candidate if independently
+verified rounding, other charges or share minimums cannot fit the cap. There
+is no funded amount or approved order until eligibility, cash, allowances,
+quotes, finality and source evidence are measured and bound.
+
+A later grant may permit one entry, one exact cancellation of its resting
+remainder, one bounded reduction of confirmed run-created inventory and one
+exact cancellation of that exit if it rests. Keep one open order and one
+position at a time. An unknown response consumes the attempt and requires
+reconciliation. Quote age, order expiry and the separate protective cutoff
+require measured activation inputs. No retry, replacement, wallet creation,
+approval, redemption or transfer is included. Residual exposure is reported
+under the existing incident and custody procedures.
+
 ## Consolidated owner packet
 
 1. Complete the operator card using the verified public Console or private

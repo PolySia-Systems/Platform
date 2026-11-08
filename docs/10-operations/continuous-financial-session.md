@@ -16,8 +16,9 @@ provider or account acquisition, commissioning, deployment, Live run or alerts.
 1. Integrate only after separate approval. Retain PR #230's dependency on #229,
    exact final source/native CI receipts, source-bound wheel/image hashes and
    release manifest. Local Python 3.14.7 is not a 3.14.8 release receipt.
-2. Accept ADR-0023's operational contract and the restricted standard CTF V2 EOA
-   route. No negative-risk/V3, proxy/Safe/deposit wallet or nonempty migration is
+2. Accept ADR-0023's operational contract and the restricted standard CTF V2
+   route. The proposed type-3 extension requires the bound owner key and its
+   deterministically derived deposit wallet, plus explicit operational review. No negative-risk/V3, proxy/Safe/deposit wallet or nonempty migration is
    supported. The pinned SDK's exchange/collateral contracts must match.
 3. Assign one eligible active host and dedicated account. Review native OS ACLs
    and filesystem atomicity, trusted issuer key installation, egress ownership,

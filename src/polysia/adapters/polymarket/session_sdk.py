@@ -11,10 +11,13 @@ import httpx
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 from polymarket._internal.actions.orders.context import resolve_order_exchange_address
-from polymarket._internal.actions.orders.typed_data import build_order_typed_data
+from polymarket._internal.actions.orders.typed_data import (
+    build_order_signature,
+    build_order_typed_data,
+)
 from polymarket._internal.actions.orders.types import BYTES32_ZERO, UnsignedOrder
 from polymarket.environments import PRODUCTION
-from polymarket.types import EvmAddress
+from polymarket.types import EvmAddress, HexString
 
 from polysia.domain.financial_session import SessionBlocked
 
@@ -75,15 +78,18 @@ def require_sdk_scope(config: Any, instruments: tuple[Any, ...]) -> None:
 
 
 def assert_exact_prepared(
-    prepared: Any, *, exchange: str, signer: str, funder: str, request: dict[str, Any]
+    prepared: Any, *, exchange: str, signer: str, funder: str, signature_type: int,
+    request: dict[str, Any],
 ) -> None:
+    order_signer = funder if signature_type == 3 else signer
     if (
-        str(prepared.token_id) != request["token_id"]
+        signature_type not in (0, 3)
+        or str(prepared.token_id) != request["token_id"]
         or prepared.side != request["side"]
         or prepared.expiration != request.get("expiration")
         or prepared.post_only != request.get("post_only", False)
-        or prepared.signature_type != 0
-        or str(prepared.signer).lower() != signer.lower()
+        or prepared.signature_type != signature_type
+        or str(prepared.signer).lower() != order_signer.lower()
         or prepared.builder != BYTES32_ZERO
         or prepared.metadata != BYTES32_ZERO
         or prepared.order_type != ("GTD" if request.get("expiration") else "GTC")
@@ -110,6 +116,12 @@ def assert_exact_prepared(
     unsigned = UnsignedOrder(
         chain_id=137, exchange_address=EvmAddress(exchange), protocol_version="2", **fields
     )
+    if signature_type == 3:
+        # The SDK appends an ERC-7739 trailer to the 65-byte owner signature.
+        owner_signature = HexString(signature[:132])
+        if build_order_signature(unsigned, owner_signature) != signature:
+            raise SessionBlocked("prepared_order_signature_not_for_authorized_exchange")
+        signature = owner_signature
     try:
         recovered = Account.recover_message(
             encode_typed_data(full_message=build_order_typed_data(unsigned)), signature=signature
