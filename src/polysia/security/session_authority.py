@@ -64,6 +64,10 @@ class SessionReceiptVerifier:
         action: str = "ENTRY",
     ) -> VerifiedSessionReceipt:
         authority.assert_action(binding, utc(now), action)
+        return self.verify_signature(authority)
+
+    def verify_signature(self, authority: SessionAuthorization) -> VerifiedSessionReceipt:
+        """Check the detached owner signature without accepting or consuming authority."""
         try:
             envelope = json.loads(authority.owner_receipt)
             if not isinstance(envelope, dict) or set(envelope) != {

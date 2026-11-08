@@ -86,11 +86,30 @@ SessionAuthorization (version 2), key/receipt IDs and exact binding. Trust JSON
 maps key ID to base64 Ed25519 public bytes only. CopyPolicy fingerprint freezes
 its version and all parameters. The `schema` command grants no authority.
 
+Prepare a version-2 draft with `granted=true` and `owner_receipt="UNSIGNED"`.
+Write the canonical bytes with `polysia ops session receipt-message --authority
+DRAFT --key-id KEY_ID --receipt-id RECEIPT_ID --output MESSAGE`. The owner reviews
+those exact bytes and signs them with the trusted Ed25519 issuer outside the
+worker. An offline OpenSSL issuer can use `openssl pkeyutl -sign -rawin -inkey
+OWNER_KEY -in MESSAGE -out SIGNATURE`. Attach the 64-byte signature with
+`polysia ops session attach-receipt --authority DRAFT --key-id KEY_ID
+--receipt-id RECEIPT_ID --signature SIGNATURE --trust PUBLIC_KEYS --output SIGNED`.
+This verifies the signature. Use `validate` for the exact host binding and time
+window before provisioning under STOP.
+
 Separately authorized read-only qualification uses the same concrete account
 reader with an independent AcquisitionPolicy, no financial custody or signing
 operation. Supply exact instrument scopes and already installed credential
-references. Output contains protected account evidence and must not be a web
-path:
+references. Keep the protected account evidence outside web paths.
+
+The optional `historical_instruments` configuration adds account reconciliation
+scope. Bind each observed token to its exact supported condition, collateral and
+settlement route. Unmapped or incompatible history blocks qualification. Trading
+and source discovery use the instruments in the signed authority. The
+`rpc_log_block_span` option divides finalized log scans into contiguous inclusive
+ranges and charges every request to the active allowance. A range limit may be
+handled with smaller pages when the complete scan fits the allowance and timing
+limits. Missing archival access or a failed page blocks account qualification.
 
 ```powershell
 polysia ops session qualify-account --config C:\protected\session.json --scopes C:\protected\scopes.json --policy C:\protected\read-policy.json --allowance-store C:\readonly\allowance.sqlite3 --output C:\readonly\opening.json --read-account

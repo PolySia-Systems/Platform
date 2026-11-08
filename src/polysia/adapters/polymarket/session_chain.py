@@ -8,6 +8,7 @@ outside this slice and must not be silently interpreted with this ABI.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -82,8 +83,13 @@ class ReadOnlyRPC:
         }
     )
 
-    def __init__(self, client: httpx.AsyncClient, url: str) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, url: str, *, log_block_span: int | None = None
+    ) -> None:
+        if log_block_span is not None and log_block_span <= 0:
+            raise ValueError("log block span must be positive")
         self.client, self.url = client, url
+        self.log_block_span = log_block_span
         self._sequence = 0
 
     async def call(self, method: str, params: list[object]) -> Any:
@@ -100,6 +106,18 @@ class ReadOnlyRPC:
                 "params": params,
             },
         )
+        if method == "eth_getLogs":
+            # Provider errors may arrive as HTTP failures or JSON-RPC errors.
+            diagnostic = response.text.lower()
+            if any(marker in diagnostic for marker in (
+                "archive requests require", "historical data is unavailable"
+            )):
+                raise SessionBlocked("RPC_archival_access_unavailable")
+            if any(marker in diagnostic for marker in (
+                "max allowed range", "block range too large",
+                "blocks are not supported on free plan",
+            )):
+                raise SessionBlocked("RPC_log_block_range_rejected")
         response.raise_for_status()
         payload = json.loads(response.content, parse_float=Decimal)
         if (
@@ -110,6 +128,28 @@ class ReadOnlyRPC:
         ):
             raise SessionBlocked("RPC_read_incomplete")
         return payload["result"]
+
+    async def logs(self, *, address: str, topics: list[object], through: str) -> list[Any]:
+        end = int(through, 16)
+        span = self.log_block_span or end + 1
+        logs = []
+        for first in range(0, end + 1, span):
+            last = min(first + span - 1, end)
+            page = await self.call(
+                "eth_getLogs",
+                [{"address": address, "topics": topics, "fromBlock": hex(first),
+                  "toBlock": hex(last)}],
+            )
+            if not isinstance(page, list) or any(
+                not isinstance(row, dict)
+                or not isinstance(number := row.get("blockNumber"), str)
+                or not re.fullmatch(r"0x[0-9a-fA-F]+", number)
+                or not first <= int(number, 16) <= last
+                for row in page
+            ):
+                raise SessionBlocked("RPC_log_page_incomplete_or_outside_range")
+            logs.extend(page)
+        return logs
 
 
 class CTFChainReader:
@@ -152,16 +192,9 @@ class CTFChainReader:
     ) -> tuple[ChainFill, ...]:
         wallet = address(wallet)
         if transaction is None:
-            logs = await self.rpc.call(
-                "eth_getLogs",
-                [
-                    {
-                        "address": self.exchange,
-                        "fromBlock": "0x0",
-                        "toBlock": block["number"],
-                        "topics": [ORDER_FILLED, None, topic_address(wallet)],
-                    }
-                ],
+            logs = await self.rpc.logs(
+                address=self.exchange, through=block["number"],
+                topics=[ORDER_FILLED, None, topic_address(wallet)],
             )
         else:
             receipt = await self.rpc.call("eth_getTransactionReceipt", [transaction])
@@ -304,24 +337,11 @@ class CTFChainReader:
         block: Mapping[str, Any],
     ) -> tuple[ObservedRedemption, ...]:
         adapter = address(adapter)
-        logs = await self.rpc.call(
-            "eth_getLogs",
-            [
-                {
-                    "address": self.ctf,
-                    "fromBlock": "0x0",
-                    "toBlock": block["number"],
-                    "topics": [
-                        [TRANSFER_SINGLE, TRANSFER_BATCH],
-                        None,
-                        topic_address(wallet),
-                        topic_address(adapter),
-                    ],
-                }
-            ],
+        logs = await self.rpc.logs(
+            address=self.ctf, through=block["number"],
+            topics=[[TRANSFER_SINGLE, TRANSFER_BATCH], None,
+                    topic_address(wallet), topic_address(adapter)],
         )
-        if not isinstance(logs, list):
-            raise SessionBlocked("redemption_inventory_incomplete")
         results = []
         for tx_id in sorted({row["transactionHash"] for row in logs}):
             receipt = await self.rpc.call("eth_getTransactionReceipt", [tx_id])
@@ -420,19 +440,7 @@ class CTFChainReader:
         for position in (2, 3):
             topics: list[object] = [[TRANSFER_SINGLE, TRANSFER_BATCH], None, None, None]
             topics[position] = topic_address(wallet)
-            logs = await self.rpc.call(
-                "eth_getLogs",
-                [
-                    {
-                        "address": self.ctf,
-                        "fromBlock": "0x0",
-                        "toBlock": block["number"],
-                        "topics": topics,
-                    }
-                ],
-            )
-            if not isinstance(logs, list):
-                raise SessionBlocked("account_token_inventory_incomplete")
+            logs = await self.rpc.logs(address=self.ctf, topics=topics, through=block["number"])
             for log in logs:
                 if (
                     log.get("removed") is not False

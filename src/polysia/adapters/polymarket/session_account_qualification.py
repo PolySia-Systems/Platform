@@ -56,7 +56,8 @@ async def qualify_account(
     if set(acquisition.policy.endpoints) != endpoints:
         raise SessionBlocked("exact_read_only_account_allowance_required")
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
-    require_sdk_scope(config, instruments)
+    reconciliation_scope = config.reconciliation_scope(instruments)
+    require_sdk_scope(config, reconciliation_scope)
     acquisition.initialize()
 
     def transport() -> httpx.AsyncBaseTransport:
@@ -88,11 +89,11 @@ async def qualify_account(
                 client, transport, rpc_url=config.rpc_url, timeout=config.request_timeout_seconds
             )
             chain = CTFChainReader(
-                ReadOnlyRPC(http, config.rpc_url),
+                ReadOnlyRPC(http, config.rpc_url, log_block_span=config.rpc_log_block_span),
                 exchange=config.exchange,
                 ctf=config.ctf,
                 collateral=mapping.collateral,
-                instruments=instruments,
+                instruments=reconciliation_scope,
             )
             account = ExactSessionAccountReader(
                 client,

@@ -132,6 +132,42 @@ async def test_ambiguous_or_noncanonical_occurrences_are_rejected(defect: str) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "range", "archive", "out_of_range"])
+async def test_rpc_log_windows_require_every_page(failure: str | None) -> None:
+    windows = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        filters = body["params"][0]
+        windows.append((filters["fromBlock"], filters["toBlock"]))
+        if len(windows) == 2 and failure == "archive":
+            return httpx.Response(
+                403, json={"error": {"message": "Archive requests require a token"}}
+            )
+        if len(windows) == 2 and failure == "range":
+            return httpx.Response(
+                413, json={"error": {"message": "getLogs exceeded max allowed range"}}
+            )
+        block = "0x0" if len(windows) == 2 and failure else filters["toBlock"]
+        return httpx.Response(200, json={"id": body["id"], "result": [{"blockNumber": block}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        rpc = ReadOnlyRPC(http, "https://rpc.fixture/", log_block_span=2)
+        if failure is None:
+            logs = await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="0x4")
+            assert [row["blockNumber"] for row in logs] == ["0x1", "0x3", "0x4"]
+            assert windows == [("0x0", "0x1"), ("0x2", "0x3"), ("0x4", "0x4")]
+        else:
+            reason = {
+                "archive": "archival_access_unavailable", "range": "block_range_rejected",
+                "out_of_range": "outside_range",
+            }[failure]
+            with pytest.raises(SessionBlocked, match=reason):
+                await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="0x4")
+            assert windows == [("0x0", "0x1"), ("0x2", "0x3")]
+
+
+@pytest.mark.asyncio
 async def test_dust_is_retained_and_RPC_mutation_is_unreachable() -> None:
     async with httpx.AsyncClient(transport=chain_transport([])) as http:
         rpc = ReadOnlyRPC(http, "https://rpc.fixture/")

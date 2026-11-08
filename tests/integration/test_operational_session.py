@@ -38,6 +38,7 @@ from polysia.domain.financial_session import (
     InstrumentScope,
     SessionAccountIdentity,
     SessionBlocked,
+    canonical_json,
 )
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
 from polysia.domain.wallet_intelligence.source_cohort import CohortCandidate, CohortSelectionPolicy
@@ -51,11 +52,48 @@ from polysia.storage.acquisition_authority import AcquisitionAuthority
 from polysia.storage.financial_session import FinancialSessionJournal
 from tests.integration.test_financial_session import NOW, FakeExecution, authorization
 
+
+def test_external_owner_receipt_round_trip_and_tamper_denial(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from polysia.cli_commands.session import session_app
+    from polysia.deployment.financial_session_runtime import load_authority
+
+    config = runtime_config(tmp_path)
+    envelope, _ = signed(config)
+    draft = replace(envelope, owner_receipt="UNSIGNED")
+    source, message, signature, trust, output = (
+        tmp_path / name for name in ("draft", "message", "signature", "trust", "receipt")
+    )
+    key = Ed25519PrivateKey.generate()
+    public_key = key.public_key().public_bytes_raw()
+    trust.write_text(json.dumps({"owner": base64.b64encode(public_key).decode()}))
+    source.write_text(canonical_json(asdict(draft)))
+    receipt_id = "test-receipt-external-001"
+    opts = ["--authority", str(source), "--key-id", "owner", "--receipt-id", receipt_id]
+    runner = CliRunner()
+    result = runner.invoke(session_app, ["receipt-message", *opts, "--output", str(message)])
+    assert result.exit_code == 0, result.output
+    assert message.read_bytes() == receipt_message(draft, key_id="owner", receipt_id=receipt_id)
+    signature.write_bytes(key.sign(message.read_bytes()))
+    attach = ["attach-receipt", *opts, "--signature", str(signature), "--trust", str(trust)]
+    result = runner.invoke(session_app, [*attach, "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    assert SessionReceiptVerifier({"owner": public_key}).verify(
+        load_authority(output), draft.binding, now=NOW
+    ).receipt_id == receipt_id
+    source.write_text(canonical_json(asdict(replace(draft, max_attempts=draft.max_attempts + 1))))
+    rejected = tmp_path / "rejected"
+    result = runner.invoke(session_app, [*attach, "--output", str(rejected)])
+    assert result.exit_code != 0 and not rejected.exists()
+
 D = Decimal
 SESSION_TOKEN = str(1 << 40)
 
 
-def runtime_config(root: Path, signer: str = "0x" + "1" * 40) -> SessionRuntimeConfig:
+def runtime_config(
+    root: Path, signer: str = "0x" + "1" * 40, *, include_history: bool = False
+) -> SessionRuntimeConfig:
     from polymarket.environments import PRODUCTION
 
     environment = PRODUCTION._config
@@ -144,6 +182,10 @@ def runtime_config(root: Path, signer: str = "0x" + "1" * 40) -> SessionRuntimeC
         maximum_backup_age_seconds=60,
         checkpoint_handshake_seconds=2,
         tick_interval_seconds=1,
+        historical_instruments=(InstrumentScope(
+            "0x" + "c" * 64, str(int(SESSION_TOKEN) + 1), mapping.collateral,
+            mapping.settlement_route,
+        ),) if include_history else (),
     )
     capacity.write_text(
         json.dumps(
@@ -249,7 +291,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
     from polymarket.environments import PRODUCTION
 
     ephemeral = Account.create()
-    config = runtime_config(tmp_path, ephemeral.address)
+    config = runtime_config(tmp_path, ephemeral.address, include_history=cancel)
+    historical = next(iter(config.historical_instruments), None)
     funder = ephemeral.address
     if signature_type == 3:
         funder = derive_beacon_deposit_wallet_address(
@@ -343,7 +386,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             )
             if (
                 method == "eth_getLogs"
-                and observed_fill["enabled"]
+                and (observed_fill["enabled"] or historical is not None)
                 and body["params"][0]["address"] == config.exchange
             ):
                 from polysia.adapters.polymarket.session_chain import topic_address
@@ -351,7 +394,9 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
 
                 log = fill_log(10)
                 log["address"] = config.exchange
-                log["data"] = abi(0, int(SESSION_TOKEN), 1000000, 2000000, 1234, 0, 0)
+                token = historical.token if historical is not None else SESSION_TOKEN
+                fee = 0 if historical is not None else 1234
+                log["data"] = abi(0, int(token), 1000000, 2000000, fee, 0, 0)
                 log["topics"][2] = topic_address(funder)
                 result = [log]
             if method == "eth_call":
@@ -374,12 +419,14 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             )
         if request.url.path in {"/data/orders", "/data/trades"}:
             rows = []
-            if request.url.path == "/data/trades" and observed_fill["enabled"]:
+            if request.url.path == "/data/trades" and (
+                observed_fill["enabled"] or historical is not None
+            ):
                 rows = [
                     {
                         "id": "fixture-trade",
-                        "market": auth.instruments[0].market,
-                        "asset_id": SESSION_TOKEN,
+                        "market": historical.market if historical else auth.instruments[0].market,
+                        "asset_id": historical.token if historical else SESSION_TOKEN,
                         "owner": "fixture-api",
                         "maker_address": funder,
                         "taker_order_id": "0x" + "2" * 64,
@@ -451,6 +498,10 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         assert requests == []  # construction performs no bootstrap network mutation/read
         await session.reconcile()
         assert session.coordinator.journal.read()["reconciliation_ok"] is True
+        if historical is not None:
+            assert session.account.last_fills[0].occurrence.instrument == historical
+            broker = session.coordinator.execution.broker
+            assert broker._allowed_token_ids == {SESSION_TOKEN}
         assert session.network.observation()["actual_requests"] == len(requests)
         assert all(method == "GET" or path == "/" for method, path in requests)
         before = len(requests)
@@ -489,6 +540,13 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         assert qualified["opening"]["cash"] == 100 and qualified["opening"]["positions"] == ()
         assert qualified["financial_authority"] == "NOT_ISSUED"
         assert qualified["acquisition"]["requests_charged"] == len(requests) - before
+        if historical is not None:
+            missing_history = replace(config, historical_instruments=())
+            with pytest.raises(SessionBlocked, match="trade_ownership_or_contribution_unknown"):
+                await qualify_account(
+                    missing_history, auth.instruments, allowance,
+                    read_account=True, clock=lambda: NOW,
+                )
         # Complete the actual coordinator -> Risk -> LiveBroker -> SDK signing
         # and HTTP boundary. Only clock, network and temporary custody are fakes.
         from polymarket._internal.actions.orders import limit as sdk_limit

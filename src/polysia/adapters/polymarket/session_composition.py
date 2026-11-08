@@ -858,7 +858,8 @@ async def create_live_session(
     if distribution_version("polymarket-client") != "0.13.0":
         raise SessionBlocked("composed_SDK_contract_requires_reviewed_0_13_0")
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
-    require_sdk_scope(config, authority.instruments)
+    reconciliation_scope = config.reconciliation_scope(authority.instruments)
+    require_sdk_scope(config, reconciliation_scope)
     selection = SharedCohortSelection.from_dict(
         read_bound_json(config.cohort_path, config.cohort_file_digest)
     )
@@ -950,12 +951,13 @@ async def create_live_session(
             rpc_url=config.rpc_url,
             timeout=config.request_timeout_seconds,
         )
+        chain_rpc = ReadOnlyRPC(http, config.rpc_url, log_block_span=config.rpc_log_block_span)
         chain = CTFChainReader(
-            ReadOnlyRPC(http, config.rpc_url),
+            chain_rpc,
             exchange=config.exchange,
             ctf=config.ctf,
             collateral=mapping.collateral,
-            instruments=authority.instruments,
+            instruments=reconciliation_scope,
         )
         account = ExactSessionAccountReader(
             client,
@@ -984,10 +986,11 @@ async def create_live_session(
             server_time_reader=eligibility,
         )
         await adapter.connect()
+        executable_tokens = tuple(item.token for item in authority.instruments)
         settings = _OperationalSettings(
             trading_mode=TradingMode.LIVE,
             live_trading_enabled=True,
-            polymarket_live_token_allowlist=tuple(chain.instruments),
+            polymarket_live_token_allowlist=executable_tokens,
             polymarket_live_max_order_size=config.maximum_order_shares,
             polymarket_live_max_order_notional=authority.max_order_all_in,
             polymarket_live_max_open_orders=authority.max_concurrent_orders,
@@ -997,7 +1000,7 @@ async def create_live_session(
             adapter=adapter,
             risk_engine=risk,
             settings=settings,
-            allowed_token_ids=tuple(chain.instruments),
+            allowed_token_ids=executable_tokens,
             geoblock_check=eligibility,
             clock=clock,
         )
@@ -1055,7 +1058,13 @@ async def create_live_session(
             http,
             account,
             CorroboratedSessionSource(
-                SessionPublicJSON(http), chain, maximum_pages=config.maximum_pages, clock=clock
+                SessionPublicJSON(http),
+                CTFChainReader(
+                    chain_rpc, exchange=config.exchange, ctf=config.ctf,
+                    collateral=mapping.collateral,
+                    instruments=authority.instruments,
+                ),
+                maximum_pages=config.maximum_pages, clock=clock,
             ),
             selection,
             samples,
