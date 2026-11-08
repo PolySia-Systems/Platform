@@ -21,6 +21,16 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
+OP1 review, 2026-11-08: **PREPARATION_COMPLETE_WITH_LISTED_DEPENDENCIES**.
+Private HTTPS and authorization checks passed against the installed N3-R1
+bundle. Public Console remains pending Zero Trust plan and owner-policy
+verification. A separate bounded public diagnostic stopped after four
+read-only requests. The sampled book had no ask and retained N3 history
+provided no complete canonical follower pair. Actual financial account,
+capacity, custody, recovery, human and alert acceptance remain uncommissioned.
+No real trade occurred and no new campaign remains active. See
+[OP1 operational readiness and unsigned Live proposal](../18-ai-handoffs/op1-operational-readiness-2026-11-08.md).
+
 N3-R1 closure, 2026-11-08 06:13 UTC: **INCIDENT ENGINEERING CLOSED;
 ORIGINAL N3 48H_NOT_QUALIFIED**. The original run stopped after 19h 17m 06s
 when backup failed. [PR #272](https://github.com/PolySia-Systems/Platform/pull/272)
