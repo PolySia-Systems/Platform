@@ -48,7 +48,7 @@ export function EvidenceWorkspace({ panel, generation, identity, clock, onIdenti
           <p className={s.muted}>{table.rows.length} / {table.total ?? m.unknown} {m.observations}{(table.total ?? 0) > table.rows.length ? ' · ' + m.boundedView : ''}</p>
           {table.total === 0 && <p>{m.noPublishedRows}</p>}
         </div>)}
-        <p className={s.muted}>{section.guidance}</p>
+        <p>{section.guidance}</p>
       </section>;
     })}
   </div>;

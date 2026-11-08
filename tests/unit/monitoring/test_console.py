@@ -88,6 +88,19 @@ def test_unauthenticated_downloads_assets_and_origin_are_denied(tmp_path: Path) 
     assert request(app, path="/../../secret")[0] == "404 Not Found"
 
 
+def test_report_marks_retained_publication_stale_after_publisher_failure(tmp_path: Path) -> None:
+    app = application(tmp_path)
+    assert json.loads(request(app, path="/api/report")[2])["status"] == "STOPPED"
+    health = tmp_path / "publisher-status.json"
+    health.write_text(json.dumps({"status": "FAILED", "checked_at": "2026-10-17"}))
+    retained = json.loads(request(app, path="/api/report")[2])
+    assert retained["publication_status"] == "STALE"
+    assert retained["publication_reason"] == "publisher_failed"
+    assert retained["published_at"] == "2026-10-16"
+    health.write_text(json.dumps({"status": "PUBLISHED", "checked_at": "2026-10-18"}))
+    assert json.loads(request(app, path="/api/report")[2])["status"] == "STOPPED"
+
+
 def test_stop_path_survives_missing_report_publication(tmp_path: Path) -> None:
     app = application(tmp_path)
     (tmp_path / "publication.json").unlink()

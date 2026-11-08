@@ -27,6 +27,7 @@ export const m = {
   identity: 'Identity', state: 'State', side: 'Side', quantity: 'Quantity', price: 'Limit / share',
   details: 'Evidence detail', close: 'Close details', next: 'Next 50', reset: 'Refresh list',
   empty: 'No matching records in this retained generation.', filter: 'State filter',
+  searchPrompt: 'Search to load retained evidence for these filters.',
   phase: 'Command phase', effect: 'Observed effect', reason: 'Reason', token: 'Token',
   fill: 'Fill state', settlement: 'Settlement', updated: 'Last evidence', exact: 'Exact retained amount; no browser arithmetic.',
   operateTitle: 'Request. Then verify.', operateSubtitle: 'The existing owner checks admission and records the effect independently.',

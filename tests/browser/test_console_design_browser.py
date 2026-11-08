@@ -17,6 +17,75 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.parametrize("width", [390, 1440])
+def test_investigation_distinguishes_unsearched_filters_errors_and_generation(rich_console, width):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, *_ = rich_console
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, token, width=width)
+        page = context.new_page()
+        page.goto(origin)
+        page.get_by_role("button", name="Investigate", exact=True).click()
+        prompt = page.get_by_text("Search to load retained evidence for these filters.", exact=True)
+        changed = page.get_by_text("This evidence generation changed.", exact=False)
+        expect(prompt).to_be_visible()
+        expect(changed).to_have_count(0)
+        expect(page.get_by_text("No retained financial evidence", exact=True)).to_have_count(0)
+        search = page.get_by_label("Search exact identity")
+        assert search.evaluate("e => getComputedStyle(e).fontSize") == "14px"
+        search.fill("order-00000")
+        page.get_by_role("button", name="Search", exact=True).click()
+        record = page.get_by_role("button", name="order-00000", exact=True)
+        record.click()
+        expect(page.get_by_label("Evidence detail", exact=True)).to_be_visible()
+        search.fill("no-matching-record")
+        expect(record).to_have_count(0)
+        expect(page.get_by_label("Evidence detail", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="Next 50", exact=True)).to_be_disabled()
+        expect(prompt).to_be_visible()
+        page.get_by_role("button", name="Search", exact=True).click()
+        expect(page.get_by_text("No matching records in this retained generation.")).to_be_visible()
+        page.get_by_label("Record type").select_option("wallet")
+        expect(changed).to_have_count(0)
+        page.get_by_label("Source filter").fill("unused-source")
+        page.get_by_label("Record type").select_option("order")
+        search.fill("order-00000")
+        page.get_by_role("button", name="Search", exact=True).click()
+        # The now-hidden source filter must not leak into this query.
+        expect(record).to_be_visible()
+        page.route("**/api/console/v1/records?*", lambda route: route.abort())
+        page.get_by_role("button", name="Refresh list", exact=True).click()
+        expect(record).to_have_count(0)
+        status = page.get_by_role("status")
+        expect(status).to_be_visible()
+        error = status.inner_text()
+        page.get_by_role("button", name="Overview", exact=True).click()
+        page.get_by_role("button", name="Investigate", exact=True).click()
+        expect(page.get_by_role("status")).to_have_text(error)
+        expect(record).to_have_count(0)
+        page.unroute("**/api/console/v1/records?*")
+        page.get_by_role("button", name="Search", exact=True).click()
+        expect(record).to_be_visible()
+        page.get_by_role("button", name="Overview", exact=True).click()
+
+        def next_generation(route):
+            response = route.fetch()
+            payload = response.json()
+            payload["context"]["generation"] = "f" * 64
+            route.fulfill(response=response, json=payload)
+
+        page.route("**/api/console/v1/snapshot", next_generation)
+        page.get_by_role("button", name="Refresh evidence", exact=False).click()
+        expect(page.locator("#main")).to_have_attribute("aria-busy", "false")
+        page.get_by_role("button", name="Investigate", exact=True).click()
+        expect(changed).to_be_visible()
+        expect(record).to_have_count(0)
+        expect(search).to_have_value("order-00000")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
 def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
     from playwright.sync_api import expect, sync_playwright
 
@@ -33,6 +102,16 @@ def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
         output = Path("output/playwright")
         output.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(output / "design-light.png"), full_page=True)
+        page.set_viewport_size({"width": 1024, "height": 1000})
+        brand = page.get_by_role("link", name="PolySia CONSOLE", exact=True)
+        assert brand.evaluate("""link => {
+            const { left, right } = link.getBoundingClientRect();
+            return [...link.querySelectorAll('img')].every(image => {
+                const bounds = image.getBoundingClientRect();
+                return bounds.left >= left && bounds.right <= right;
+            });
+        }""")
+        page.set_viewport_size({"width": 1440, "height": 1000})
         page.get_by_role("button", name="Investigate", exact=True).click()
         page.get_by_label("Search exact identity").fill("order-00000")
         page.get_by_role("button", name="Search", exact=True).click()
@@ -80,11 +159,12 @@ def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
         manifest = json.loads(
             Path("src/polysia/monitoring/human_console_assets/manifest.json").read_text()
         )
-        compact = next(name for name in manifest["files"] if name.startswith("compact-"))
+        compact = next(name for name in manifest["files"] if name.startswith("symbol-light-"))
         symbol = page.locator('img[alt=""]').first
         original = symbol.get_attribute("src")
         symbol.evaluate("(e, url) => { e.src = url; }", origin + "/assets/" + compact)
-        expect(symbol).to_have_js_property("naturalWidth", 459)
+        expect(symbol).to_have_js_property("complete", True)
+        assert symbol.evaluate("e => e.naturalWidth > 0")
         assert symbol.evaluate("e => getComputedStyle(e).objectFit") == "contain"
         symbol.evaluate("(e, url) => { e.src = url; }", original)
         for workspace in ("Investigate", "Operate", "Evaluate", "System / Setup"):

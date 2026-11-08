@@ -33,7 +33,7 @@ def test_selected_media_are_accepted_and_png_crc_is_checked():
     for path in assets.rglob("*"):
         if path.is_file() and path.suffix in {".png", ".svg", ".woff2"}:
             validate_media(path.name, path.read_bytes())
-    data = bytearray((assets / "brand/primary.png").read_bytes())
+    data = bytearray((assets / "brand/favicon.png").read_bytes())
     data[-1] ^= 1
     with pytest.raises(ValueError):
         validate_media("brand.png", bytes(data))

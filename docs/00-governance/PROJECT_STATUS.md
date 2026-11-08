@@ -21,6 +21,20 @@ This document is durable repository status. It is not a live runtime
 dashboard. Git HEAD is implementation truth. Current operational SHA, health,
 and restart counts must be queried on the host.
 
+N3-R1 closure, 2026-11-08 06:13 UTC: **INCIDENT ENGINEERING CLOSED;
+ORIGINAL N3 48H_NOT_QUALIFIED**. The original run stopped after 19h 17m 06s
+when backup failed. [PR #272](https://github.com/PolySia-Systems/Platform/pull/272)
+corrected terminal settlement reporting, isolated backup from analytical
+calculation failures and added redacted job diagnostics. Exact runtime-main
+CI `42452378743` passed and source `96ddb5d887003423c10d9b118f6a9c0f1b53f0d7`
+was installed under STOP. Actual publisher, encrypted transfer and independent
+fenced restore passed with matching financial snapshot, report digest and
+consumed authority. Helsinki remains STOPped and restart-fenced with the
+acquisition timer inactive. Publisher and recovery schedules remain active.
+No new grant or observation was started. See the
+[incident closure evidence](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md#n3-r1-incident-closure).
+DATA_ONLY and `LIVE_NOT_AUTHORIZED / NOT_PERFORMED` apply.
+
 N3 canary review, 2026-11-06 07:19 UTC: **TWO-HOUR CANARY PASS;
 48-HOUR OBSERVATION RUNNING**. The server recorded the canary pass at 06:58:29
 UTC; protected current receipts confirmed 128 successful post-anchor complete

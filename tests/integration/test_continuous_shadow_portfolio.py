@@ -2898,11 +2898,14 @@ async def test_verified_restore_allows_processing_after_accounting_block(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("telemetry_corrupt", [False, True])
+@pytest.mark.parametrize(("telemetry_corrupt", "analytical_failure"), [
+    (False, False), (True, False), (False, True),
+])
 async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     telemetry_corrupt: bool,
+    analytical_failure: bool,
 ) -> None:
     import subprocess
     import sys
@@ -2914,6 +2917,8 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     from tests.unit.storage.test_acquisition_authority import ENDPOINT, policy
 
     database, service, clock, scenario = _started_service(tmp_path, name="backup")
+    market = _MarketPort(clock)
+    service = _service(database, scenario, market, clock)
     experiment = service._store.active_experiment("polycop")
     assert experiment is not None
     _, candidates = DynamicShadowRepository(database).current_candidates("polycop")
@@ -2924,16 +2929,24 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
             LeaderTradeAction.BUY,
             NOW + timedelta(seconds=100),
             Decimal("0.40"),
-        )
+            outcome_reference="token-yes" if telemetry_corrupt else "token-no",
+        ),
     ]
     clock.value = NOW + timedelta(minutes=2)
     assert (await service.poll("polycop")).simulated_count > 0
     clock.value = NOW + timedelta(minutes=4)
-    await service.poll("polycop")
+    market.closed = True
+    assert (await service.poll("polycop")).settlement_count > 0
+    store = ContinuousShadowRepository(_shadow_database(database))
+    before = store.results(experiment.experiment_id, limit=100)
+    with sqlite3.connect(_shadow_database(database)) as db:
+        assert {row[0] for row in db.execute(
+            "SELECT DISTINCT mark_price FROM continuous_shadow_position_marks "
+            "WHERE mark_status='VERIFIED_SETTLEMENT'",
+        )} == {"1" if telemetry_corrupt else "0"}
     authority = AcquisitionAuthority(tmp_path / "authority.sqlite3", policy())
     authority.initialize()
-    # Unknown in-flight stays charged.
-    authority.reserve(ENDPOINT, now=policy().starts_at, host="host")
+    request_id = authority.reserve(ENDPOINT, now=policy().starts_at, host="host")
     authority.stop()
     commands = ConsoleCommandStore(tmp_path / "commands.sqlite3")
     commands.initialize()
@@ -3016,6 +3029,18 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     monkeypatch.setattr(recovery.subprocess, "Popen", fake_age)
     monkeypatch.setattr(recovery.shutil, "which", lambda _: "age-fixture")
     target = tmp_path / "fixture.tar"
+    with pytest.raises(ValueError, match="unresolved authority accounting"):
+        recovery.create_encrypted_backup(
+            config, image_archive=image, release_manifest=release,
+            recipient="age1fixture", output=target,
+        )
+    assert not target.exists()
+    authority.settle(request_id, response_bytes=1024)
+    if analytical_failure:
+        def fail_report(*_args: Any, **_kwargs: Any) -> Any:
+            raise ValueError("private unpublishable analytical details")
+
+        monkeypatch.setattr(ShadowReportingService, "report", fail_report)
     result = recovery.create_encrypted_backup(
         config,
         image_archive=image,
@@ -3029,8 +3054,14 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     receipt = recovery.extract_and_verify_recovery(
         target, restored, trusted_release_manifest=release
     )
-    assert receipt["status"] == "VERIFIED_ISOLATED_RESTORE"
-    assert receipt["analytical_digest"]
+    assert receipt["status"] == (
+        "DEGRADED_ISOLATED_RESTORE" if analytical_failure else "VERIFIED_ISOLATED_RESTORE"
+    )
+    assert receipt["snapshot_integrity"] == "VERIFIED"
+    assert receipt["analytical_status"] == ("DEGRADED" if analytical_failure else "VERIFIED")
+    assert bool(receipt["analytical_digest"]) is not analytical_failure
+    assert result["status"] == ("ENCRYPTED_DEGRADED" if analytical_failure else "ENCRYPTED")
+    assert result["independent_restore"] == "PENDING"
     assert receipt["restored_reports"] == 1
     assert receipt["unavailable_report_receipts"] == 1
     recovered_report = json.loads((restored / "reports" / archive_name).read_text())
@@ -3046,6 +3077,11 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     assert receipts[1]["result"]["download"] == download
     assert commands.status()["receipts"][0]["status"] == "APPLIED"
     assert Path(safe["database"]).parent == restored
+    recovered_results = ContinuousShadowRepository(Path(safe["database"])).results(
+        experiment.experiment_id, limit=100,
+    )
+    assert recovered_results["follower"] == before["follower"]
+    assert recovered_results["accounting"] == before["accounting"]
     if telemetry_corrupt:
         assert not (restored / "native-latency.sqlite3").exists()
     else:
@@ -3057,6 +3093,61 @@ async def test_platform_backup_replays_nonempty_snapshot_and_preserves_consumed_
     assert recovered_authority.status()["requests_charged"] == 1
     assert recovered_authority.status()["bytes_charged"] == 1024
     assert authority.status() == recovered_authority.status()
+    if not telemetry_corrupt and not analytical_failure:
+        import io
+        import tarfile
+
+        with tarfile.open(target) as stream:
+            files = {
+                member.name: stream.extractfile(member).read()
+                for member in stream.getmembers()
+            }
+        metadata = json.loads(files.pop("platform-recovery.json"))
+
+        def repack(path: Path, contents: dict[str, bytes], manifest: dict[str, Any]) -> None:
+            inventory = {name: hashlib.sha256(body).hexdigest() for name, body in contents.items()}
+            payload = {
+                **contents,
+                "platform-recovery.json": json.dumps({**manifest, "files": inventory}).encode(),
+            }
+            with tarfile.open(path, "w") as stream:
+                for name, body in payload.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(body)
+                    stream.addfile(member, io.BytesIO(body))
+
+        legacy = {**metadata, "version": "platform-recovery/v1"}
+        for field in ("snapshot_integrity", "financial_experiment_id", "analytical_status"):
+            legacy.pop(field)
+        bundle = json.loads(files["recovery-bundle.json"])
+        for record in bundle["databases"]:
+            record["counts"].pop("uncertain_requests", None)
+        legacy_path = tmp_path / "legacy.tar"
+        repack(legacy_path, {**files, "recovery-bundle.json": json.dumps(bundle).encode()}, legacy)
+        legacy_receipt = recovery.extract_and_verify_recovery(
+            legacy_path, tmp_path / "legacy", trusted_release_manifest=release,
+        )
+        assert legacy_receipt["analytical_digest"] == receipt["analytical_digest"]
+        assert legacy_receipt["status"] == "VERIFIED_ISOLATED_RESTORE"
+
+        invalid_report = {**archived, "analytical": {**archived["analytical"], "status": "altered"}}
+        corrupted = tmp_path / "corrupted.tar"
+        repack(corrupted, {
+            **files, "report-" + archive_name: json.dumps(invalid_report).encode(),
+        }, metadata)
+        with pytest.raises(ValueError, match="digest"):
+            recovery.extract_and_verify_recovery(
+                corrupted, tmp_path / "corrupted", trusted_release_manifest=release,
+            )
+        missing = tmp_path / "missing.tar"
+        financial_name = next(
+            x["filename"] for x in bundle["databases"] if x["role"] == "financial"
+        )
+        repack(missing, {k: v for k, v in files.items() if k != financial_name}, metadata)
+        with pytest.raises(ValueError, match="database is outside"):
+            recovery.extract_and_verify_recovery(
+                missing, tmp_path / "missing", trusted_release_manifest=release,
+            )
     release.write_text(json.dumps({"commit": "c" * 40}))
     with pytest.raises(ValueError, match="independently retained"):
         recovery.extract_and_verify_recovery(

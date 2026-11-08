@@ -8,13 +8,14 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 button { white-space: normal; }
 h1, h2, p { margin-block-start: 0; }
-h2 { font-size: 15px; letter-spacing: -.01em; }
+h2 { font-size: 16px; letter-spacing: -.01em; }
+h3 { font-size: var(--console-font-body); }
 a { color: var(--console-accent); }
 th { text-align: start; }
 td, th { border-block-end: 1px solid var(--console-border); padding: 13px 12px; }
-th { color: var(--console-muted); font-weight: 600; font-size: 12px; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-summary { cursor: pointer; font-size: 13px; color: var(--console-accent); }
+th { color: var(--console-muted); font-weight: 600; font-size: var(--console-font-meta); }
+table { width: 100%; border-collapse: collapse; font-size: var(--console-font-body); }
+summary { cursor: pointer; font-size: var(--console-font-body); color: var(--console-accent); }
 .mantine-Modal-title { font-weight: 650; }
 .mantine-Modal-body { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }

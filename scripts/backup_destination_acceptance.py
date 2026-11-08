@@ -70,8 +70,11 @@ async def seed(root: Path, *, commit: str) -> tuple[dict, dict]:
     assert service._store.open_position_count(experiment.experiment_id) > 0
     authority = AcquisitionAuthority(worker / "authority.sqlite3", policy())
     authority.initialize()
-    authority.reserve(ENDPOINT, now=policy().starts_at, host="host")
-    authority.stop()  # An uncertain request remains fully charged.
+    request_id = authority.reserve(ENDPOINT, now=policy().starts_at, host="host")
+    authority.stop()
+    # A completed fixture response supplies the exact charge for the successful
+    # recovery path. Unresolved reservations are rejected by the v2 backup.
+    authority.settle(request_id, response_bytes=1024)
     commands = ConsoleCommandStore(control / "commands.sqlite3")
     commands.initialize()
     reporting = ShadowReportingService(_shadow_database(database))
@@ -361,8 +364,10 @@ def main() -> None:
         bad_b = {**destinations["B"], "secondary_port": 12224}
         try:
             backup.change_destination(bad_b)
-        except subprocess.CalledProcessError:
-            pass
+        except subprocess.CalledProcessError as error:
+            detail = getattr(error, "recovery_diagnostic", None)
+            assert detail is not None
+            assert detail.stage == "transfer" and detail.error_code == "PROCESS_FAILED"
         else:
             raise AssertionError("failed B was accepted")
         assert (backup.CONFIG_ROOT / "backup-job.json").read_bytes() == active_a
