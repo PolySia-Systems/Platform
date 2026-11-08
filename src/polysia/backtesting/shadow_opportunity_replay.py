@@ -145,7 +145,7 @@ def replay_shadow_opportunities(
     for settlement in settlements:
         observed_at = _time(settlement["observed_at"])
         price = Decimal(settlement["price"])
-        if price not in {Decimal("0"), Decimal("1")}:
+        if not price.is_finite() or price not in {Decimal("0"), Decimal("1")}:
             raise ValueError("Shadow settlement price is not terminal")
         snapshots.append(_event(
             evidence_id=_digest({"experiment_id": experiment_id, "settlement": settlement}),
@@ -154,7 +154,7 @@ def replay_shadow_opportunities(
             market=settlement["market_reference"],
             token=settlement["outcome_reference"],
             side="SELL",
-            price=price,
+            price=None,
             size=None,
             source_at=observed_at,
             observed_at=observed_at,
@@ -207,7 +207,7 @@ def _event(
     market: str,
     token: str,
     side: str,
-    price: Decimal,
+    price: Decimal | None,
     size: Decimal | None,
     source_at: datetime,
     observed_at: datetime,

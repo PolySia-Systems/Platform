@@ -737,3 +737,33 @@ Disable only the dedicated new units/connector/upload identity when rolling back
 retain ciphertext and the protected recovery key. Preserve unrelated services.
 Public research replay/accessor APIs with unique historical-schema tests remain
 experimental rather than live runtime gates.
+### Recovery and terminal settlement evidence
+
+Verified terminal payouts use the settlement provenance field. The generic
+execution price is absent on settlement observations, including zero payouts.
+The reporting replay reads the payout from the existing verified settlement
+contract, which remains separate from executable book and trade evidence.
+
+Recovery generations written as `platform-recovery/v2` validate the required
+SQLite inventory, consumed authority, release/policy binding, native session
+identity and financial accounting before computing the optional analytical
+report. A calculation failure permits encrypted preservation and an isolated
+restore with explicitly degraded analytics. The job publishes
+`ENCRYPTED_UPLOADED_DEGRADED` or `DEGRADED_ISOLATED_RESTORE` for those outcomes.
+These statuses do not satisfy recovery health acceptance. Digest or identity
+failure in a computed or archived report still fails validation. Restored
+runtime remains acquisition-disabled and requires authority reconciliation.
+
+The reader continues to validate v1 generations using their original
+inventory and replay rules. Use the trusted release and image that match each
+generation. Keep the prior verified generation during repair. A native health
+period can be rebound for STOP-only maintenance through the audited transition
+command with `--maintenance-only`, under durable STOP and the OS fence. The
+transition retains the prior admission evidence and appends the old/new config
+binding without granting acquisition. Rollback requires the protected
+pre-transition checkpoint and the corresponding trusted release.
+
+Backup and restore job receipts expose the failing stage, an allowlisted error
+code, child exit status where available and an attempt ID shared by the receipt
+and journal output. The protected report API labels the retained publication
+stale when a publisher failure follows its publication timestamp.

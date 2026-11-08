@@ -10,6 +10,7 @@ import pytest
 
 from polysia.cli_support import native_lifecycle
 from polysia.cli_support.native_research import NativeSnapshotPort, observation_watch
+from polysia.deployment.native_session_transition import transition_native_session
 from polysia.domain.copytrading import LeaderTradeAction
 from polysia.domain.copytrading.native_health import ADMISSION, PURPOSE, RUNTIME
 from polysia.storage.acquisition_authority import AcquisitionAuthority, AcquisitionBlockedError
@@ -103,6 +104,43 @@ async def test_incomplete_revalidation_never_becomes_entry_evidence(native_runti
     receipt = json.loads((root / "refresh.json").read_bytes())
     assert receipt["outcome"] == "SOURCE_INCOMPLETE"
     assert receipt["eligibility"] is None
+
+
+@pytest.mark.asyncio
+async def test_stopped_health_maintenance_preserves_old_admission_and_positions(native_runtime):
+    runtime = health_runtime(native_runtime)
+    root, clock, scenario, authority, watch, _, _, faults = runtime
+    faults["stale"] = True
+    first = await tick(runtime)
+    clock.value += timedelta(hours=3)
+    faults["stale"] = False
+    wallet = watch["candidates"][0]["wallet_id"]
+    scenario.events[wallet] = [_EventSpec(
+        "retained-health-position", LeaderTradeAction.BUY,
+        clock() - timedelta(seconds=20), Decimal("0.40"),
+    )]
+    outcome = await tick(runtime)
+    assert outcome.simulated_count == 2
+    database = root / "financial.sqlite3"
+    store = ContinuousShadowRepository(database)
+    before = store.results(first.experiment.experiment_id, limit=100)["follower"]
+    kwargs = dict(
+        authority=root / "health-authority.sqlite3",
+        expected_source="a" * 40, target_source="b" * 40, admission=None,
+        authorization_reference="owner-n3-r1", now=clock(), maintenance_only=True,
+    )
+    with pytest.raises(ValueError, match="durable acquisition STOP"):
+        transition_native_session(database, **kwargs)
+    authority.stop()
+    usage = authority.status()
+    receipt = transition_native_session(database, **kwargs)
+    assert transition_native_session(database, **kwargs) == receipt
+    assert authority.status() == usage
+    after = store.latest_experiment("polymarket-native")
+    assert after is not None and after.config.code_sha == "b" * 40
+    assert after.config.capacity_evidence == first.experiment.config.capacity_evidence
+    assert store.results(after.experiment_id, limit=100)["follower"] == before
+    assert store.opportunity_report(after.experiment_id)["opportunity_count"] == 1
 
 
 @pytest.mark.asyncio

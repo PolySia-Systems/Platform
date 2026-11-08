@@ -28,6 +28,24 @@ def test_backup_mounts_campaign_without_exposing_other_configuration(tmp_path, m
         backup.campaign_mounts({"campaign": "/config/nonlive-campaign.json"})
 
 
+def test_backup_child_diagnostic_is_allowlisted_and_redacted() -> None:
+    from subprocess import CalledProcessError
+
+    from deploy.platform_backup import JobFailure
+
+    prefix = {"contract": "platform-recovery-diagnostic/v1", "error_code": "INVALID_EVIDENCE"}
+    accepted = JobFailure("snapshot", CalledProcessError(
+        1, ["secret-command"], stderr=json.dumps({**prefix, "stage": "encryption"}),
+    ))
+    assert (accepted.stage, accepted.error_code, accepted.exit_status) == (
+        "encryption", "INVALID_EVIDENCE", 1,
+    )
+    rejected = JobFailure("snapshot", CalledProcessError(
+        1, ["secret-command"], stderr=json.dumps({**prefix, "stage": "secret-data"}),
+    ))
+    assert str(rejected) == "snapshot:PROCESS_FAILED"
+
+
 def test_standalone_backup_loads_its_own_release_helper(tmp_path, monkeypatch):
     from runpy import run_path
 

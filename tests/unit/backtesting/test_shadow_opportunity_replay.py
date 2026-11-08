@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from polysia.backtesting.shadow_opportunity_replay import replay_shadow_opportunities
 
 NOW = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
@@ -118,12 +120,13 @@ def test_partial_depth_is_reported_without_inventing_full_fill() -> None:
     assert control["partially_filled"] == 1
 
 
-def test_verified_terminal_settlement_values_inventory_once() -> None:
+@pytest.mark.parametrize("payout", ["0", "1"])
+def test_verified_terminal_settlement_values_inventory_once(payout: str) -> None:
     row = _row("buy", book_hash="buy-book")
     terminal = {
         "market_reference": "condition-1",
         "outcome_reference": "token-1",
-        "price": "1",
+        "price": payout,
         "observed_at": (NOW + timedelta(minutes=1)).isoformat(),
         "poll_run_id": "settlement-poll",
     }
@@ -139,4 +142,27 @@ def test_verified_terminal_settlement_values_inventory_once() -> None:
     )["report"]
     assert isinstance(once, dict)
     assert control["net_pnl"] == once["control"]["net_pnl"]
-    assert Decimal(str(control["net_pnl"])) > 0
+    assert (Decimal(str(control["net_pnl"])) > 0) == (payout == "1")
+
+
+@pytest.mark.parametrize("payout", ["-1", "0.5", "NaN", "sNaN", "Infinity"])
+def test_nonterminal_payout_is_rejected(payout: str) -> None:
+    with pytest.raises(ValueError, match="not terminal"):
+        replay_shadow_opportunities(
+            (), experiment_id="period-1", settlements=({
+                "observed_at": NOW.isoformat(), "price": payout,
+                "market_reference": "condition-1", "outcome_reference": "token-1",
+                "poll_run_id": "settlement-poll",
+            },),
+        )
+
+
+def test_verified_payout_does_not_substitute_for_a_book() -> None:
+    row = _row("missing-book", book_hash="missing")
+    row["book_levels"] = []
+    result = replay_shadow_opportunities((row,), experiment_id="period-1", settlements=({
+        "observed_at": (NOW + timedelta(minutes=1)).isoformat(), "price": "1",
+        "market_reference": "condition-1", "outcome_reference": "token-1",
+        "poll_run_id": "settlement-poll",
+    },))
+    assert result["report"]["evaluated_observations"] == 0
