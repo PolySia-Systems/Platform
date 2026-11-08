@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import sqlite3
 import subprocess
 import tarfile
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -34,21 +36,77 @@ from polysia.storage.continuous_shadow import ContinuousShadowRepository
 
 MAX_BUNDLE_BYTES = 536_870_912
 MAX_PAYLOAD_BYTES = 503_316_480
+RECOVERY_VERSION = "platform-recovery/v2"
+LEGACY_RECOVERY_VERSION = "platform-recovery/v1"
 
 
-def _authority_counts(path: Path) -> dict[str, Any]:
+@dataclass
+class RecoveryDiagnostic:
+    """Track the active operation for a redacted CLI failure receipt."""
+
+    stage: str = "configuration"
+
+
+def _authority_counts(path: Path, *, strict: bool = False) -> dict[str, Any]:
     with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection:
         row = connection.execute("SELECT policy_digest, stopped FROM authority").fetchone()
-        requests, charged = connection.execute(
-            "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0) "
+        requests, charged, uncertain = connection.execute(
+            "SELECT COUNT(*),COALESCE(SUM(COALESCE(actual_bytes,reserved_bytes)),0),"
+            "COALESCE(SUM(actual_bytes IS NULL),0) "
             "FROM reservations",
         ).fetchone()
-    return {
+    if row is None or strict and (row[1] not in (0, 1) or uncertain):
+        raise ValueError("unresolved authority accounting")
+    counts = {
         "policy_digest": row[0],
         "stopped": bool(row[1]),
         "requests_charged": requests,
         "bytes_charged": charged,
     }
+    if strict:
+        counts["uncertain_requests"] = uncertain
+    return counts
+
+
+def _financial_experiment(
+    database: Path, source_id: str, *, identity: Path, release_commit: str,
+) -> str | None:
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
+        if connection.execute(
+            "SELECT schema_version FROM continuous_shadow_metadata",
+        ).fetchall() != [(9,)]:
+            raise ValueError("unsupported financial snapshot schema")
+    store = ContinuousShadowRepository(database)
+    experiment = store.latest_experiment(source_id)
+    if experiment is None:
+        if identity.exists():
+            raise ValueError("session identity has no financial experiment")
+        return None
+    if experiment.config.runtime_version in {
+        "continuous-shadow-native-research-v2", "continuous-shadow-native-health-v1",
+    } and (experiment.config.code_sha != release_commit or not identity.is_file()):
+        raise ValueError("required native financial identity missing or mismatched")
+    if identity.exists():
+        if identity.is_symlink() or identity.stat().st_size > 4096:
+            raise ValueError("financial session identity file invalid")
+        binding = json.loads(identity.read_bytes())
+        if (
+            binding.get("schema") != "native-financial-session/v1"
+            or binding.get("experiment_id") != experiment.experiment_id
+            or binding.get("code_sha") != release_commit
+            or binding.get("cohort_digest") != experiment.config.selection_preflight_digest
+        ):
+            raise ValueError("financial session identity differs from snapshot")
+    if not store.invariant_report(experiment.experiment_id).accounting_passed:
+        raise ValueError("financial snapshot accounting failed")
+    return experiment.experiment_id
+
+
+def _verify_policy_binding(policy_path: Path, counts: dict[str, Any]) -> None:
+    policy = json.loads(policy_path.read_bytes())
+    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()
+    if hashlib.sha256(canonical).hexdigest() != counts["policy_digest"]:
+        raise ValueError("recovery policy differs from consumed authority")
 
 
 def create_encrypted_backup(
@@ -58,7 +116,9 @@ def create_encrypted_backup(
     release_manifest: Path,
     recipient: str,
     output: Path,
+    diagnostic: RecoveryDiagnostic | None = None,
 ) -> dict[str, Any]:
+    diagnostic = diagnostic or RecoveryDiagnostic()
     if not recipient.startswith("age1") or output.exists():
         raise ValueError("public recovery recipient and unused output path are required")
     if shutil.which("age") is None:
@@ -78,8 +138,10 @@ def create_encrypted_backup(
     ):
         raise ValueError("recovery artifact does not match runtime release")
     database = Path(value["database"])
+    identity_path = database.with_suffix(database.suffix + ".session.json")
     now = datetime.now(UTC)
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    diagnostic.stage = "snapshot"
     with (
         workflow_lock(database.with_suffix(".worker.lock")),
         TemporaryDirectory(
@@ -92,6 +154,8 @@ def create_encrypted_backup(
         sources: dict[str, Path] = {}
         observational_errors: list[str] = []
         report = None
+        financial_experiment = None
+        financial_snapshot = None
         for role, source in (
             ("authority", Path(value["authority"])),
             ("commands", Path(value["commands"])),
@@ -112,6 +176,11 @@ def create_encrypted_backup(
                 observational_errors.append("native_latency_snapshot_unavailable")
                 continue  # Optional diagnostics must not prevent authoritative recovery.
             sources[snapshot.backup_path.name] = snapshot.backup_path
+            counts = (
+                _authority_counts(snapshot.backup_path, strict=True) if role == "authority" else {}
+            )
+            if role == "authority":
+                _verify_policy_binding(Path(value["manifest"]), counts)
             records.append(
                 RecoveryDatabaseRecord(
                     role=role,
@@ -121,17 +190,17 @@ def create_encrypted_backup(
                     integrity="ok",
                     created_at=now.isoformat(),
                     size_bytes=snapshot.backup_path.stat().st_size,
-                    counts=_authority_counts(snapshot.backup_path) if role == "authority" else {},
+                    counts=counts,
                 )
             )
             if role == "financial":
-                experiment = ContinuousShadowRepository(snapshot.backup_path).latest_experiment(
+                financial_snapshot = snapshot.backup_path
+                financial_experiment = _financial_experiment(
+                    financial_snapshot,
                     value.get("source_id", "polymarket-native"),
+                    identity=identity_path,
+                    release_commit=value["release_commit"],
                 )
-                if experiment:
-                    report = ShadowReportingService(snapshot.backup_path).report(
-                        experiment.experiment_id,
-                    )
         bundle = assemble_recovery_bundle(
             stage / "bundles",
             created_at=now,
@@ -145,19 +214,25 @@ def create_encrypted_backup(
             "release.json": release_manifest,
             "polysia-image.tar.gz": image_archive,
         }
-        identity_path = database.with_suffix(database.suffix + ".session.json")
         if identity_path.exists():
-            if identity_path.is_symlink() or identity_path.stat().st_size > 4096:
-                raise ValueError("financial session identity file invalid")
-            identity = json.loads(identity_path.read_text())
-            if (
-                report is None
-                or identity.get("schema") != "native-financial-session/v1"
-                or identity.get("experiment_id") != report["analytical"]["experiment_id"]
-                or identity.get("code_sha") != value["release_commit"]
-            ):
-                raise ValueError("financial session identity differs from snapshot")
+            if financial_experiment is None:
+                raise ValueError("session identity has no financial snapshot")
             extras["financial-session.json"] = identity_path
+        analytical_status = "NOT_APPLICABLE"
+        if financial_experiment is not None and financial_snapshot is not None:
+            diagnostic.stage = "analytical"
+            try:
+                report = ShadowReportingService(financial_snapshot).report(financial_experiment)
+            except Exception:
+                # Authoritative snapshots and session identity have already passed.
+                # Only the derived calculation may degrade, never its returned digest.
+                analytical_status = "DEGRADED"
+            else:
+                verify_analytical_digest(report)
+                if report["analytical"]["experiment_id"] != financial_experiment:
+                    raise ValueError("analytical experiment differs from snapshot")
+                analytical_status = "VERIFIED"
+        diagnostic.stage = "inventory"
         policy_path = Path(value["manifest"])
         if policy_path.is_file() or not unconfigured:
             extras["policy.json"] = policy_path
@@ -213,7 +288,10 @@ def create_encrypted_backup(
         if total > MAX_PAYLOAD_BYTES:
             raise ValueError("recovery bundle exceeds reserved generation capacity")
         metadata = {
-            "version": "platform-recovery/v1",
+            "version": RECOVERY_VERSION,
+            "snapshot_integrity": "VERIFIED",
+            "financial_experiment_id": financial_experiment,
+            "analytical_status": analytical_status,
             "created_at": now.isoformat(),
             "release_commit": value["release_commit"],
             "files": files,
@@ -227,6 +305,7 @@ def create_encrypted_backup(
             "observational_errors": observational_errors,
         }
         (bundle / "platform-recovery.json").write_text(json.dumps(metadata, sort_keys=True))
+        diagnostic.stage = "encryption"
         encrypted = output.with_suffix(output.suffix + ".partial")
         try:
             process = subprocess.Popen(
@@ -254,7 +333,19 @@ def create_encrypted_backup(
         finally:
             encrypted.unlink(missing_ok=True)
     return {
-        "status": "ENCRYPTED",
+        "status": "ENCRYPTED_DEGRADED" if analytical_status == "DEGRADED" else "ENCRYPTED",
+        "recovery_version": RECOVERY_VERSION,
+        "snapshot_integrity": "VERIFIED",
+        "analytical_status": analytical_status,
+        "analytical_error_code": (
+            "ANALYTICAL_CALCULATION_FAILED" if analytical_status == "DEGRADED" else None
+        ),
+        "independent_restore": "PENDING",
+        "financial_experiment_id": financial_experiment,
+        "financial_snapshot_sha256": next(
+            (r.sha256 for r in records if r.role == "financial"), None,
+        ),
+        "snapshot_authority": next((r.counts for r in records if r.role == "authority"), None),
         "release_commit": value["release_commit"],
         "sha256": sha256_file(output),
         "size_bytes": output.stat().st_size,
@@ -268,8 +359,11 @@ def extract_and_verify_recovery(
     destination: Path,
     *,
     trusted_release_manifest: Path,
+    diagnostic: RecoveryDiagnostic | None = None,
 ) -> dict[str, Any]:
     """Extract only bounded flat regular files into a new isolated recovery root."""
+    diagnostic = diagnostic or RecoveryDiagnostic()
+    diagnostic.stage = "restore_integrity"
     if destination.exists():
         raise FileExistsError("recovery requires a new isolated root")
     destination.mkdir(parents=True, mode=0o700)
@@ -298,8 +392,10 @@ def extract_and_verify_recovery(
             if os.name != "nt":
                 target.chmod(0o600)
     metadata = json.loads((destination / "platform-recovery.json").read_text())
-    if metadata.get("version") != "platform-recovery/v1":
+    version = metadata.get("version")
+    if version not in {LEGACY_RECOVERY_VERSION, RECOVERY_VERSION}:
         raise ValueError("unsupported recovery version")
+    legacy = version == LEGACY_RECOVERY_VERSION
     if set(metadata["files"]) != names - {"platform-recovery.json"}:
         raise ValueError("recovery file inventory mismatch")
     for name, digest in metadata["files"].items():
@@ -321,23 +417,56 @@ def extract_and_verify_recovery(
         or sha256_file(destination / "polysia-image.tar.gz") != release["archive_sha256"]
     ):
         raise ValueError("restored release identity mismatch")
+    safe_config = json.loads((destination / "worker-config.json").read_text())
+    financial_experiment = metadata["report_experiment_id"]
+    analytical_status = "VERIFIED" if financial_experiment else "NOT_APPLICABLE"
+    if not legacy:
+        financial_experiment = metadata["financial_experiment_id"]
+        analytical_status = metadata["analytical_status"]
+        if (
+            metadata["snapshot_integrity"] != "VERIFIED"
+            or analytical_status not in {"VERIFIED", "DEGRADED", "NOT_APPLICABLE"}
+            or (financial_experiment is None) != (analytical_status == "NOT_APPLICABLE")
+            or metadata["report_experiment_id"] != (
+                financial_experiment if analytical_status == "VERIFIED" else None
+            )
+            or (metadata["analytical_digest"] is not None) != (analytical_status == "VERIFIED")
+            or safe_config.get("release_commit") != metadata["release_commit"]
+            or bundle.release_sha != metadata["release_commit"]
+        ):
+            raise ValueError("recovery validation metadata differs")
+    roles = [record.role for record in bundle.databases]
+    if not legacy and (
+        len(roles) != len(set(roles))
+        or financial_experiment is not None and "financial" not in roles
+    ):
+        raise ValueError("ambiguous or missing recovery database role")
     for record in bundle.databases:
         if record.filename not in metadata["files"]:
             raise ValueError("database is outside verified recovery inventory")
         verify_sqlite_backup(destination / record.filename)
         if sha256_file(destination / record.filename) != record.sha256:
             raise ValueError("database recovery digest mismatch")
-        if record.role == "authority" and _authority_counts(destination / record.filename) != (
-            record.counts
-        ):
-            raise ValueError("restored STOP or consumed authority differs")
+        if record.role == "authority":
+            counts = _authority_counts(destination / record.filename, strict=not legacy)
+            if counts != record.counts:
+                raise ValueError("restored STOP or consumed authority differs")
+            if not legacy:
+                _verify_policy_binding(destination / "policy.json", counts)
+        if record.role == "financial" and not legacy and _financial_experiment(
+            destination / record.filename, safe_config.get("source_id", "polymarket-native"),
+            identity=destination / "financial-session.json",
+            release_commit=metadata["release_commit"],
+        ) != financial_experiment:
+            raise ValueError("restored authoritative experiment differs")
         if record.role == "financial" and metadata["report_experiment_id"]:
+            diagnostic.stage = "restore_analytics"
             report = ShadowReportingService(destination / record.filename).report(
                 metadata["report_experiment_id"],
             )
             if report["analytical_digest"] != metadata["analytical_digest"]:
                 raise ValueError("restored analytical replay differs")
-    safe_config = json.loads((destination / "worker-config.json").read_text())
+            diagnostic.stage = "restore_integrity"
     if unconfigured and (
         safe_config.get("installation_state") != "UNCONFIGURED"
         or safe_config.get("acquisition_enabled") is not False
@@ -388,7 +517,7 @@ def extract_and_verify_recovery(
         identity = json.loads(identity_source.read_text())
         if (
             identity.get("schema") != "native-financial-session/v1"
-            or identity.get("experiment_id") != metadata["report_experiment_id"]
+            or identity.get("experiment_id") != financial_experiment
             or identity.get("code_sha") != metadata["release_commit"]
         ):
             raise ValueError("restored financial session identity differs")
@@ -411,7 +540,20 @@ def extract_and_verify_recovery(
     )
     (destination / "recovery-runtime.json").write_text(json.dumps(safe_config, sort_keys=True))
     return {
-        "status": "VERIFIED_ISOLATED_RESTORE",
+        "status": (
+            "DEGRADED_ISOLATED_RESTORE" if analytical_status == "DEGRADED"
+            else "VERIFIED_ISOLATED_RESTORE"
+        ),
+        "recovery_version": version,
+        "snapshot_integrity": "VERIFIED",
+        "analytical_status": analytical_status,
+        "financial_experiment_id": financial_experiment,
+        "financial_snapshot_sha256": next(
+            (r.sha256 for r in bundle.databases if r.role == "financial"), None,
+        ),
+        "snapshot_authority": next(
+            (r.counts for r in bundle.databases if r.role == "authority"), None,
+        ),
         "release_commit": metadata["release_commit"],
         "analytical_digest": metadata["analytical_digest"],
         "acquisition_enabled": False,

@@ -10,10 +10,13 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from runpy import run_path
 from typing import Any
+from uuid import uuid4
 
 if __package__:
     from .platform_bootstrap import campaign_mounts as _campaign_mounts
@@ -29,6 +32,58 @@ NAME = re.compile(r"platform-\d{8}T\d{6}Z\.tar\.age")
 STATE_ROOT = Path("/var/lib/polysia-platform")
 CONFIG_ROOT = Path("/etc/polysia-platform")
 VAULT_ROOT = Path("/srv/polysia-platform-backups")
+
+_CHILD_STAGES = {
+    "configuration", "snapshot", "analytical", "inventory", "encryption",
+    "restore_integrity", "restore_analytics",
+}
+_CHILD_CODES = {
+    "TIMEOUT", "PROCESS_FAILED", "DATABASE_ERROR", "INVALID_EVIDENCE", "IO_ERROR",
+    "UNEXPECTED_ERROR",
+}
+
+
+class JobFailure(RuntimeError):
+    def __init__(self, stage: str, error: Exception) -> None:
+        self.stage = stage
+        self.exit_status = (
+            error.returncode if isinstance(error, subprocess.CalledProcessError) else None
+        )
+        self.error_code = (
+            "TIMEOUT" if isinstance(error, (TimeoutError, subprocess.TimeoutExpired))
+            else "PROCESS_FAILED" if self.exit_status is not None
+            else "INVALID_EVIDENCE" if isinstance(error, (ValueError, KeyError, TypeError))
+            else "IO_ERROR" if isinstance(error, OSError)
+            else "UNEXPECTED_ERROR"
+        )
+        # The child may report a precise stage. Accept only known values, never
+        # echo the command or arbitrary stderr (which may contain credentials).
+        if isinstance(error, subprocess.CalledProcessError) and isinstance(error.stderr, str):
+            for line in error.stderr[-4096:].splitlines():
+                try:
+                    value = json.loads(line)
+                except ValueError:
+                    continue
+                if (
+                    isinstance(value, dict)
+                    and value.get("contract") == "platform-recovery-diagnostic/v1"
+                    and isinstance(value.get("stage"), str) and value["stage"] in _CHILD_STAGES
+                    and isinstance(value.get("error_code"), str)
+                    and value["error_code"] in _CHILD_CODES
+                ):
+                    self.stage, self.error_code = value["stage"], value["error_code"]
+                    break
+        super().__init__(self.stage + ":" + self.error_code)
+
+
+@contextmanager
+def job_stage(stage: str) -> Iterator[None]:
+    try:
+        yield
+    except JobFailure:
+        raise
+    except Exception as error:
+        raise JobFailure(stage, error) from None
 
 
 def run(args: list[str], *, data: str | None = None, timeout: int = 300) -> str:
@@ -97,14 +152,16 @@ def sftp_command(value: dict[str, Any]) -> list[str]:
 
 def backup(value: dict[str, Any]) -> dict[str, Any]:
     try:
-        return _backup_generation(value)
+        with job_stage("backup_preflight"):
+            return _backup_generation(value)
     finally:
-        subprocess.run(
-            ["docker", "stop", "-t", "5", "polysia-platform-backup-stage"],
-            capture_output=True,
-            timeout=15,
-            check=False,
-        )
+        with suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["docker", "stop", "-t", "5", "polysia-platform-backup-stage"],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
 
 
 def campaign_mounts(worker: dict[str, Any]) -> list[str]:
@@ -146,8 +203,8 @@ def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
         args += ["--volume", f"{CONFIG_ROOT}/manifest.json:/config/manifest.json:ro"]
     args += campaign_mounts(json.loads((CONFIG_ROOT / "worker.json").read_bytes()))
     args += ["--name", "polysia-platform-backup-stage"]
-    receipt = json.loads(
-        run(
+    with job_stage("snapshot"):
+        output_json = run(
             args
             + [
                 value["image_id"],
@@ -165,26 +222,37 @@ def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
                 "/out/" + name,
             ]
         )
-    )
+        receipt = json.loads(output_json)
     if target.stat().st_size > MAX_GENERATION or receipt["release_commit"] != manifest["commit"]:
         raise ValueError("backup generation identity or size differs")
+    analytical = receipt.get("analytical_status")
+    expected_status = "ENCRYPTED_DEGRADED" if analytical == "DEGRADED" else "ENCRYPTED"
+    if receipt.get("recovery_version") == "platform-recovery/v2" and (
+        receipt.get("snapshot_integrity") != "VERIFIED"
+        or analytical not in {"VERIFIED", "DEGRADED", "NOT_APPLICABLE"}
+        or receipt.get("status") != expected_status
+    ):
+        raise ValueError("invalid versioned backup receipt")
     if mode == "sftp":
-        run(
-            sftp_command(value),
-            data=(
-                f'put "{target}" /incoming/{name}.partial\n'
-                f"rename /incoming/{name}.partial /incoming/{name}\n"
-            ),
-        )
+        with job_stage("transfer"):
+            run(
+                sftp_command(value),
+                data=(
+                    f'put "{target}" /incoming/{name}.partial\n'
+                    f"rename /incoming/{name}.partial /incoming/{name}\n"
+                ),
+            )
     # Prune only this job's named generated ciphertext after confirmed upload.
     generations = sorted((p for p in output.iterdir() if NAME.fullmatch(p.name)), reverse=True)
-    for old in generations[2:] if value.get("retire_generations", True) else []:
+    degraded = receipt.get("analytical_status") == "DEGRADED"
+    for old in generations[2:] if value.get("retire_generations", True) and not degraded else []:
         if old.is_symlink():
             raise ValueError("backup generation cannot be a symlink")
         old.unlink()
     return {
         **receipt,
-        "status": "ENCRYPTED_UPLOADED" if mode == "sftp" else "LOCAL_ENCRYPTED",
+        "status": ("ENCRYPTED_UPLOADED" if mode == "sftp" else "LOCAL_ENCRYPTED")
+        + ("_DEGRADED" if degraded else ""),
         "filename": name,
     }
 
@@ -263,30 +331,31 @@ def verify_generation(
     args = isolated(
         image, f"{stage}:/restore:rw", str(recovery_key) + ":/run/recovery-key:ro", user="0:0"
     )
-    decrypt_bounded(
-        args
-        + [
-            "--interactive",
-            "--name",
-            "polysia-platform-restore-decrypt",
-            "--entrypoint",
-            "age",
-            image,
-            "--decrypt",
-            "--identity",
-            "/run/recovery-key",
-            "--output",
-            "/restore/bundle.tar",
-        ],
-        source,
-    )
+    with job_stage("decryption"):
+        decrypt_bounded(
+            args
+            + [
+                "--interactive",
+                "--name",
+                "polysia-platform-restore-decrypt",
+                "--entrypoint",
+                "age",
+                image,
+                "--decrypt",
+                "--identity",
+                "/run/recovery-key",
+                "--output",
+                "/restore/bundle.tar",
+            ],
+            source,
+        )
     tar = stage / "bundle.tar"
     if tar.stat().st_size > MAX_GENERATION:
         raise ValueError("plaintext_generation_limit_exceeded")
     verify = isolated(image, f"{stage}:/restore:rw", f"{trusted}:/release.json:ro", user="0:0")
     verify += ["--name", "polysia-platform-restore-stage"]
-    receipt = json.loads(
-        run(
+    with job_stage("restore_integrity"):
+        output_json = run(
             verify
             + [
                 image,
@@ -301,14 +370,14 @@ def verify_generation(
             ],
             timeout=300,
         )
-    )
+        receipt = json.loads(output_json)
     run(
         isolated(image) + ["--name", "polysia-platform-restore-stage", image, "system", "health"],
         timeout=60,
     )
     # Restore startup stays network-isolated and uses rewritten isolated paths.
-    command_receipt = json.loads(
-        run(
+    with job_stage("restore_startup"):
+        output_json = run(
             verify
             + [
                 image,
@@ -319,7 +388,7 @@ def verify_generation(
             ],
             timeout=60,
         )
-    )
+        command_receipt = json.loads(output_json)
     # The CLI intentionally prints a compact status/reason. The durable worker
     # record owns the restored authority counters and financial identity.
     status_path = stage / "bundle/restored-status.json"
@@ -333,8 +402,21 @@ def verify_generation(
     )
     if worker["status"] not in allowed or receipt["acquisition_enabled"] is not False:
         raise ValueError("restored_runtime_not_stopped")
+    if receipt["status"] not in {"VERIFIED_ISOLATED_RESTORE", "DEGRADED_ISOLATED_RESTORE"}:
+        raise ValueError("restored_snapshot_receipt_invalid")
+    expected_authority = receipt.get("snapshot_authority")
+    if expected_authority is not None:
+        actual_authority = worker.get("authority", {})
+        if actual_authority.get("stopped") is not True or any(
+            actual_authority.get(key) != expected_authority[key]
+            for key in expected_authority if key != "stopped"
+        ):
+            raise ValueError("restored authority changed during startup")
     metadata = json.loads((stage / "bundle/platform-recovery.json").read_text())
     tar.unlink()
+    receipt["independent_restore"] = (
+        "DEGRADED_VERIFIED" if receipt["status"] == "DEGRADED_ISOLATED_RESTORE" else "VERIFIED"
+    )
     return receipt, worker, metadata
 
 
@@ -367,7 +449,7 @@ def _restore_generation(value: dict[str, Any]) -> dict[str, Any]:
     age = (datetime.now(UTC) - datetime.fromisoformat(metadata["created_at"])).total_seconds()
     elapsed = time.monotonic() - started
     objectives_met = 0 <= age <= 86_400 and elapsed <= 3600
-    for old in generations[2:]:
+    for old in generations[2:] if receipt["status"] == "VERIFIED_ISOLATED_RESTORE" else []:
         if old.is_symlink():
             raise ValueError("backup generation cannot be a symlink")
         old.unlink()
@@ -390,6 +472,7 @@ def _restore_generation(value: dict[str, Any]) -> dict[str, Any]:
         network="none",
         runtime_status=worker["status"],
         ciphertext_sha256=ciphertext_digest,
+        restored_authority=worker.get("authority"),
     )
     return receipt
 
@@ -415,6 +498,13 @@ def fetch_restore_status(value: dict[str, Any]) -> dict[str, Any]:
             "ciphertext_sha256",
             "analytical_digest",
             "restored_reports",
+            "snapshot_integrity",
+            "analytical_status",
+            "independent_restore",
+            "stage",
+            "error_code",
+            "exit_status",
+            "attempt_id",
         }
         return {key: receipt[key] for key in allowed if key in receipt}
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -427,12 +517,15 @@ def fetch_restore_status(value: dict[str, Any]) -> dict[str, Any]:
         target.unlink(missing_ok=True)
 
 
-def _atomic_json(path: Path, value: dict[str, Any]) -> None:
+def _atomic_json(path: Path, value: dict[str, Any], *, mode: int = 0o600,
+                 group: int = 0) -> None:
     if path.is_symlink() or path.parent.resolve() != path.parent:
         raise ValueError("backup configuration must remain inside its protected root")
     temporary = path.with_suffix(".partial")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as stream:
+        os.fchown(stream.fileno(), 0, group)
+        os.fchmod(stream.fileno(), mode)
         stream.write(json.dumps(value, sort_keys=True) + "\n")
         stream.flush()
         os.fsync(stream.fileno())
@@ -571,6 +664,8 @@ def main() -> None:
     parser.add_argument("mode", choices=("backup", "restore", "status"))
     parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args()
+    attempt_id = uuid4().hex
+    mode, group = (0o644, 0) if args.mode == "restore" else (0o640, 10102)
     try:
         value = json.loads(args.config.read_text())
         with Path("/run/lock/polysia-platform-" + args.mode + ".lock").open("a+b") as lock:
@@ -582,33 +677,28 @@ def main() -> None:
             if args.mode != "status":
                 receipt["checked_at"] = datetime.now(UTC).isoformat()
         output = Path(value["receipt"])
-        output.write_text(json.dumps(receipt, sort_keys=True) + "\n")
-        if args.mode == "restore":
-            output.chmod(0o644)  # Root-owned read-only status directory in SFTP chroot.
-        else:
-            os.chown(output, 0, 10102)
-            output.chmod(0o640)
+        receipt["attempt_id"] = attempt_id
+        _atomic_json(output, receipt, mode=mode, group=group)
         print(json.dumps(receipt, sort_keys=True))
         if receipt["status"] == "RECOVERY_OBJECTIVES_NOT_MET":
             raise SystemExit(1)
     except Exception as error:
+        detail = error if isinstance(error, JobFailure) else JobFailure(args.mode, error)
         failure = {
             "status": "FAILED",
-            "error_type": type(error).__name__,
+            "attempt_id": attempt_id,
+            "stage": detail.stage,
+            "error_code": detail.error_code,
+            "exit_status": detail.exit_status,
             "checked_at": datetime.now(UTC).isoformat(),
             "next_action": "inspect private job configuration and retained generations",
         }
         if "value" in locals() and value.get("receipt"):
-            Path(value["receipt"]).write_text(json.dumps(failure, sort_keys=True) + "\n")
-        print(
-            json.dumps(
-                {
-                    "status": "FAILED",
-                    "error_type": type(error).__name__,
-                    "next_action": "inspect private job configuration and retained generations",
-                }
-            )
-        )
+            try:
+                _atomic_json(Path(value["receipt"]), failure, mode=mode, group=group)
+            except (OSError, ValueError):
+                failure["receipt_write"] = "FAILED"
+        print(json.dumps(failure, sort_keys=True))
         raise SystemExit(1) from None
 
 

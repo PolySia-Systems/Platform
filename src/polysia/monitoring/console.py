@@ -367,6 +367,28 @@ class ConsoleApplication:
                 },
             )
         if path == "/api/report":
+            publisher = self._publication.parent / "publisher-status.json"
+            try:
+                if publisher.is_symlink():
+                    raise ValueError("publisher_status_symlink")
+                with publisher.open("rb") as stream:
+                    encoded = stream.read(4097)
+                if len(encoded) > 4096:
+                    raise ValueError("publisher_status_size_limit")
+                health = json.loads(encoded)
+                if (
+                    health.get("status") == "FAILED"
+                    and datetime.fromisoformat(health["checked_at"])
+                    >= datetime.fromisoformat(publication["published_at"])
+                ):
+                    publication = {
+                        **publication,
+                        "status": "STALE_PUBLICATION",
+                        "publication_status": "STALE",
+                        "publication_reason": "publisher_failed",
+                    }
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                pass  # Older retained publications may predate publisher receipts.
             return respond("200 OK", publication)
         if path == "/download/comparison.csv":
             headers.append(("Content-Disposition", 'attachment; filename="comparison.csv"'))

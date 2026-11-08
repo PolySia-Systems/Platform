@@ -31,9 +31,10 @@ def transition_native_session(
     authority: Path,
     expected_source: str,
     target_source: str,
-    admission: dict[str, Any],
+    admission: dict[str, Any] | None,
     authorization_reference: str,
     now: datetime,
+    maintenance_only: bool = False,
 ) -> dict[str, Any]:
     if (
         len(authorization_reference) < 8
@@ -45,8 +46,11 @@ def transition_native_session(
         )
     ):
         raise ValueError("explicit release transition identity required")
-    if (
-        admission.get("code_sha") != target_source
+    if maintenance_only and admission is not None:
+        raise ValueError("STOP-only maintenance cannot carry admission")
+    if not maintenance_only and (
+        admission is None
+        or admission.get("code_sha") != target_source
         or admission.get("mode") != "CONTINUOUS"
         or admission.get("contract") != "native-research-admission/v1"
         or admission.get("resource_admitted") is not True
@@ -62,11 +66,16 @@ def transition_native_session(
         identity = json.loads(identity_path.read_text())
         if (identity.get("schema") != "native-financial-session/v1"
                 or identity.get("code_sha") not in {expected_source, target_source}
-                or identity.get("cohort_digest") != admission["cohort_digest"]):
+                or admission is not None
+                and identity.get("cohort_digest") != admission["cohort_digest"]):
             raise ValueError("retained identity mismatch; remain STOPPED")
         with closing(sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True)) as control:
             if control.execute("SELECT stopped FROM authority").fetchone() != (1,):
                 raise ValueError("durable acquisition STOP required")
+            if maintenance_only and control.execute(
+                "SELECT 1 FROM reservations WHERE actual_bytes IS NULL LIMIT 1",
+            ).fetchone():
+                raise ValueError("maintenance requires reconciled authority")
         with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             if connection.execute(
@@ -83,11 +92,14 @@ def transition_native_session(
             if identity.get("experiment_id") != experiment:
                 raise ValueError("retained experiment identity mismatch; remain STOPPED")
             before = json.loads(raw)
-            if before.get(
-                "runtime_version"
-            ) != "continuous-shadow-native-research-v2" or before.get(
-                "selection_preflight_digest"
-            ) != admission.get("cohort_digest"):
+            runtime = (
+                "continuous-shadow-native-health-v1" if maintenance_only
+                else "continuous-shadow-native-research-v2"
+            )
+            if (
+                before.get("runtime_version") != runtime
+                or before.get("selection_preflight_digest") != identity.get("cohort_digest")
+            ):
                 raise ValueError("native session/cohort transition mismatch")
             if connection.execute(
                 "SELECT COUNT(*) FROM continuous_shadow_poll_runs WHERE status='running'"
@@ -108,7 +120,7 @@ def transition_native_session(
             if existing:
                 if (
                     before != json.loads(existing[1])
-                    or before["capacity_evidence"] != admission
+                    or admission is not None and before["capacity_evidence"] != admission
                     or existing[2] != authorization_reference
                     or json.loads(existing[0])["code_sha"] != expected_source
                 ):
@@ -117,7 +129,9 @@ def transition_native_session(
             else:
                 if before.get("code_sha") != expected_source:
                     raise ValueError("retained source differs from expected predecessor")
-                after = {**before, "code_sha": target_source, "capacity_evidence": admission}
+                after = {**before, "code_sha": target_source}
+                if admission is not None:
+                    after["capacity_evidence"] = admission
                 connection.execute(
                     "INSERT INTO continuous_shadow_release_transitions VALUES(?,?,?,?,?,?,?,?)",
                     (
@@ -144,7 +158,7 @@ def transition_native_session(
                 expected_source,
                 target_source,
             }
-            or identity.get("cohort_digest") != admission["cohort_digest"]
+            or identity.get("cohort_digest") != before.get("selection_preflight_digest")
         ):
             raise ValueError("retained identity mismatch; remain STOPPED")
         identity["code_sha"] = target_source
@@ -158,13 +172,17 @@ def transition_native_session(
             "config_digest": config_digest(after),
             "economic_rows_preserved": True,
             "code_rollback_requires_checkpoint": True,
+            "maintenance_only": maintenance_only,
         }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for field in ("database", "authority", "admission"):
+    for field in ("database", "authority"):
         parser.add_argument("--" + field, type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--admission", type=Path)
+    mode.add_argument("--maintenance-only", action="store_true")
     for field in ("expected-source", "target-source", "authorization-reference"):
         parser.add_argument("--" + field, required=True)
     args = parser.parse_args()
@@ -175,7 +193,8 @@ def main() -> None:
                 authority=args.authority.resolve(),
                 expected_source=args.expected_source,
                 target_source=args.target_source,
-                admission=json.loads(args.admission.read_text()),
+                admission=json.loads(args.admission.read_text()) if args.admission else None,
+                maintenance_only=args.maintenance_only,
                 authorization_reference=args.authorization_reference,
                 now=datetime.now(UTC),
             )
