@@ -18,7 +18,7 @@ cfgv==3.5.0
 chardet==5.2.0
 charset-normalizer==3.5.2
 ckzg==2.1.8
-click==8.5.0
+click==8.5.1
 colorama==0.4.6
 cryptography==50.0.2
 cyclonedx-bom==7.5.0
