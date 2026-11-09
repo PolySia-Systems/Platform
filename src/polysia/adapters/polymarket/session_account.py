@@ -214,6 +214,7 @@ class ExactSessionAccountReader:
                 (
                     "id",
                     "asset_id",
+                    "market",
                     "side",
                     "status",
                     "transaction_hash",
@@ -252,6 +253,7 @@ class ExactSessionAccountReader:
             if not legs or any(
                 leg["order_id"] in {"None", ""}
                 or leg["token"] not in self.chain.instruments
+                or self.chain.instruments[leg["token"]].market.lower() != row["market"].lower()
                 or leg["side"] not in {"BUY", "SELL"}
                 or not 0 < Decimal(leg["price"]) <= 1
                 or Decimal(leg["size"]) <= 0

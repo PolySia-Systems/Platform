@@ -24,6 +24,7 @@ from polysia.config.settings import TradingMode
 from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.financial_session import (
     AccountObservation,
+    InstrumentScope,
     RuntimeBinding,
     SessionAccountIdentity,
     SessionAuthorization,
@@ -80,6 +81,10 @@ class SessionRuntimeConfig:
     maximum_backup_age_seconds: int
     checkpoint_handshake_seconds: int
     tick_interval_seconds: int
+    historical_instruments: tuple[InstrumentScope, ...] = ()
+    rpc_log_block_span: int | None = None
+    rpc_checkpoint_path: Path | None = None
+    rpc_bearer_token_reference: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -99,6 +104,14 @@ class SessionRuntimeConfig:
             raise SessionBlocked("bounded_supervision_configuration_required")
         if type(self.tick_interval_seconds) is not int or not 1 <= self.tick_interval_seconds <= 30:
             raise SessionBlocked("bounded_fixed_poll_cadence_required")
+        if self.rpc_log_block_span is not None and (
+            type(self.rpc_log_block_span) is not int or self.rpc_log_block_span <= 0
+        ):
+            raise SessionBlocked("positive_RPC_log_block_span_required")
+        if len({item.token for item in self.historical_instruments}) != len(
+            self.historical_instruments
+        ):
+            raise SessionBlocked("ambiguous_historical_token_mapping")
         if len(dict(self.source_wallets)) != len(self.source_wallets):
             raise SessionBlocked("duplicate_source_wallet_mapping")
         if len({wallet.lower() for _, wallet in self.source_wallets}) != len(
@@ -124,6 +137,14 @@ class SessionRuntimeConfig:
             or rpc.fragment
         ):
             raise SessionBlocked("exact_nonsecret_HTTPS_RPC_required")
+        if self.rpc_bearer_token_reference is not None and (
+            self.rpc_url != "https://polygon-mainnet.g.alchemy.com/v2"
+            or re.fullmatch(r"POLYSIA_[A-Z0-9_]{1,80}", self.rpc_bearer_token_reference) is None
+            or self.rpc_bearer_token_reference in (
+                self.private_key_reference, self.api_credentials_reference,
+            )
+        ):
+            raise SessionBlocked("exact_Alchemy_RPC_and_dedicated_secret_reference_required")
         paths = [
             self.financial_path,
             self.witness_root,
@@ -136,6 +157,10 @@ class SessionRuntimeConfig:
             self.incident_path,
             self.capacity_evidence_path,
         ]
+        if self.rpc_checkpoint_path is not None:
+            paths.append(self.rpc_checkpoint_path)
+            if self.rpc_checkpoint_path.resolve().is_relative_to(self.witness_root.resolve()):
+                raise SessionBlocked("separate_RPC_checkpoint_required")
         if (
             any(
                 not path.is_absolute() or any(part.is_symlink() for part in (path, *path.parents))
@@ -165,10 +190,29 @@ class SessionRuntimeConfig:
     @property
     def fingerprint(self) -> str:
         value = asdict(self)
+        if not self.historical_instruments:
+            del value["historical_instruments"]
+        if self.rpc_log_block_span is None:
+            del value["rpc_log_block_span"]
+        if self.rpc_checkpoint_path is None:
+            del value["rpc_checkpoint_path"]
+        if self.rpc_bearer_token_reference is None:
+            del value["rpc_bearer_token_reference"]
         for key, item in value.items():
             if isinstance(item, Path):
                 value[key] = str(item)
         return digest(value)
+
+    def reconciliation_scope(
+        self, executable: tuple[InstrumentScope, ...]
+    ) -> tuple[InstrumentScope, ...]:
+        scopes = {item.token: item for item in executable}
+        if not scopes or len(scopes) != len(executable):
+            raise SessionBlocked("unique_executable_token_mapping_required")
+        for item in self.historical_instruments:
+            if scopes.setdefault(item.token, item) != item:
+                raise SessionBlocked("historical_token_mapping_conflicts_with_executable_scope")
+        return tuple(scopes.values())
 
 
 def package_tree_digest(root: Path | None = None) -> str:
@@ -203,20 +247,26 @@ def inspect_configuration(config: SessionRuntimeConfig) -> dict[str, Any]:
 
 
 def capacity_workload(config: SessionRuntimeConfig) -> str:
-    return digest(
-        {
-            "package": config.package_tree_digest,
-            "policy": config.policy.fingerprint,
-            "wallets": len(config.source_wallets),
-            "pages": config.maximum_pages,
-            "response_bytes": config.maximum_response_bytes,
-            "queue": config.maximum_queued,
-            "timeout": config.request_timeout_seconds,
-            "requests": config.per_action_requests,
-            "egress": config.egress_allocation_receipt,
-            "tick_interval_seconds": config.tick_interval_seconds,
-        }
-    )
+    workload: dict[str, object] = {
+        "package": config.package_tree_digest,
+        "policy": config.policy.fingerprint,
+        "wallets": len(config.source_wallets),
+        "pages": config.maximum_pages,
+        "response_bytes": config.maximum_response_bytes,
+        "queue": config.maximum_queued,
+        "timeout": config.request_timeout_seconds,
+        "requests": config.per_action_requests,
+        "egress": config.egress_allocation_receipt,
+        "tick_interval_seconds": config.tick_interval_seconds,
+    }
+    if config.historical_instruments or config.rpc_log_block_span is not None:
+        workload["account_read_scope"] = [asdict(item) for item in config.historical_instruments]
+        workload["rpc_log_block_span"] = config.rpc_log_block_span
+    if config.rpc_checkpoint_path is not None:
+        workload["durable_RPC_checkpoint"] = True
+    if config.rpc_bearer_token_reference is not None:
+        workload["authenticated_RPC_endpoint"] = config.rpc_url
+    return digest(workload)
 
 
 def validate_capacity_record(config: SessionRuntimeConfig, *, now: datetime) -> dict[str, Any]:
@@ -253,6 +303,7 @@ def binding_for(config: SessionRuntimeConfig) -> RuntimeBinding:
 
 
 def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAuthorization) -> None:
+    config.reconciliation_scope(authority.instruments)
     if (
         authority.binding != binding_for(config)
         or config.package_tree_digest != package_tree_digest()

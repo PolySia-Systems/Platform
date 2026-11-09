@@ -21,6 +21,7 @@ from polysia.adapters.polymarket.session_chain import (
     topic_address,
     transfer_deltas,
 )
+from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
 from polysia.adapters.polymarket.session_network import SessionNetwork
 from polysia.application.ports.financial_session import RequestCharge
 from polysia.application.services.follower_qualification import (
@@ -129,6 +130,88 @@ async def test_ambiguous_or_noncanonical_occurrences_are_rejected(defect: str) -
         )
         with pytest.raises(SessionBlocked):
             await chain.fills(WALLET, block=BLOCK, observed_at=NOW, transaction=TX)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "range", "archive", "out_of_range"])
+async def test_rpc_log_windows_require_every_page(failure: str | None) -> None:
+    windows = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        filters = body["params"][0]
+        windows.append((filters["fromBlock"], filters["toBlock"]))
+        if len(windows) == 2 and failure == "archive":
+            return httpx.Response(
+                403, json={"error": {"message": "Archive requests require a token"}}
+            )
+        if len(windows) == 2 and failure == "range":
+            return httpx.Response(
+                413, json={"error": {"message": "getLogs exceeded max allowed range"}}
+            )
+        block = "0x0" if len(windows) == 2 and failure else filters["toBlock"]
+        return httpx.Response(200, json={"id": body["id"], "result": [{"blockNumber": block}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        rpc = ReadOnlyRPC(http, "https://rpc.fixture/", log_block_span=2)
+        with pytest.raises(SessionBlocked, match="finalized_log_boundary_invalid"):
+            await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="-0x1")
+        if failure is None:
+            logs = await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="0x4")
+            assert [row["blockNumber"] for row in logs] == ["0x1", "0x3", "0x4"]
+            assert windows == [("0x0", "0x1"), ("0x2", "0x3"), ("0x4", "0x4")]
+        else:
+            reason = {
+                "archive": "archival_access_unavailable", "range": "block_range_rejected",
+                "out_of_range": "outside_range",
+            }[failure]
+            with pytest.raises(SessionBlocked, match=reason):
+                await rpc.logs(address=EXCHANGE, topics=[ORDER_FILLED], through="0x4")
+            assert windows == [("0x0", "0x1"), ("0x2", "0x3")]
+
+
+@pytest.mark.asyncio
+async def test_finalized_log_checkpoint_restart_and_failed_page(tmp_path: Path) -> None:
+    path = tmp_path / "history.sqlite3"
+    ranges: list[tuple[str, str]] = []
+    hashes = {"0x1": "initial", "0x3": "next"}
+    fail = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        args = body["params"]
+        if body["method"] == "eth_getBlockByNumber":
+            result = {"hash": hashes[args[0]], "number": args[0]}
+        else:
+            begin, end = args[0]["fromBlock"], args[0]["toBlock"]
+            ranges.append((begin, end))
+            if fail:
+                return httpx.Response(503)
+            result = [{"blockNumber": end}]
+        return httpx.Response(200, json={"id": body["id"], "result": result})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        query = {"address": EXCHANGE, "topics": [ORDER_FILLED]}
+        rpc = ReadOnlyRPC(
+            http, "https://rpc.fixture/", checkpoint=FinalizedLogCheckpoint(path, "a")
+        )
+        assert await rpc.logs(**query, through="0x1", block_hash="initial") == [
+            {"blockNumber": "0x1"},
+        ]
+        restarted = ReadOnlyRPC(
+            http, "https://rpc.fixture/", checkpoint=FinalizedLogCheckpoint(path, "a")
+        )
+        fail = True
+        with pytest.raises(httpx.HTTPStatusError):
+            await restarted.logs(**query, through="0x3", block_hash="next")
+        fail = False
+        assert await restarted.logs(**query, through="0x3", block_hash="next") == [
+            {"blockNumber": "0x1"}, {"blockNumber": "0x3"},
+        ]
+        assert ranges == [("0x0", "0x1"), ("0x2", "0x3"), ("0x2", "0x3")]
+        hashes["0x3"] = "contradiction"
+        with pytest.raises(SessionBlocked, match="checkpoint_conflict"):
+            await restarted.logs(**query, through="0x3", block_hash="next")
 
 
 @pytest.mark.asyncio

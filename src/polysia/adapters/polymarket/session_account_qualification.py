@@ -10,7 +10,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from typing import Any
 
@@ -28,6 +28,7 @@ async def qualify_account(
     *,
     read_account: bool,
     clock: Callable[[], datetime],
+    prime_history: bool = False,
 ) -> dict[str, Any]:
     if not read_account:
         return {"status": "DISABLED", "account_read": "NOT_PERFORMED", "network": "NOT_CONSTRUCTED"}
@@ -40,7 +41,12 @@ async def qualify_account(
     )
     from polysia.adapters.polymarket.session_chain import CTFChainReader, ReadOnlyRPC
     from polysia.adapters.polymarket.session_composition import _Eligibility
-    from polysia.adapters.polymarket.session_sdk import confine_sdk_http, require_sdk_scope
+    from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
+    from polysia.adapters.polymarket.session_sdk import (
+        confine_sdk_http,
+        require_sdk_scope,
+        rpc_auth_headers,
+    )
 
     if version("polymarket-client") != "0.13.0":
         raise SessionBlocked("read_only_SDK_contract_requires_reviewed_0_13_0")
@@ -56,7 +62,15 @@ async def qualify_account(
     if set(acquisition.policy.endpoints) != endpoints:
         raise SessionBlocked("exact_read_only_account_allowance_required")
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
-    require_sdk_scope(config, instruments)
+    reconciliation_scope = config.reconciliation_scope(instruments)
+    require_sdk_scope(config, reconciliation_scope)
+    checkpoint = (
+        FinalizedLogCheckpoint(config.rpc_checkpoint_path, config.rpc_url)
+        if config.rpc_checkpoint_path is not None else None
+    )
+    if prime_history and checkpoint is None:
+        raise SessionBlocked("protected_RPC_checkpoint_required_for_bootstrap")
+    rpc_headers = rpc_auth_headers(config.rpc_bearer_token_reference)
     acquisition.initialize()
 
     def transport() -> httpx.AsyncBaseTransport:
@@ -85,14 +99,19 @@ async def qualify_account(
             raise SessionBlocked("read_only_credentials_or_identity_invalid") from None
         try:
             await confine_sdk_http(
-                client, transport, rpc_url=config.rpc_url, timeout=config.request_timeout_seconds
+                client, transport, rpc_url=config.rpc_url, timeout=config.request_timeout_seconds,
+                rpc_headers=rpc_headers,
             )
             chain = CTFChainReader(
-                ReadOnlyRPC(http, config.rpc_url),
+                ReadOnlyRPC(
+                    http, config.rpc_url, log_block_span=config.rpc_log_block_span,
+                    checkpoint=checkpoint,
+                    headers=rpc_headers,
+                ),
                 exchange=config.exchange,
                 ctf=config.ctf,
                 collateral=mapping.collateral,
-                instruments=instruments,
+                instruments=reconciliation_scope,
             )
             account = ExactSessionAccountReader(
                 client,
@@ -102,6 +121,17 @@ async def qualify_account(
                 maximum_age_seconds=30,
                 clock=clock,
             )
+            if prime_history:
+                account.require_identity()
+                block = await chain.finalized()
+                await chain.fills(mapping.funder, block=block, observed_at=clock())
+                await chain.holdings(mapping.funder, block=block)
+                await chain.redemptions(
+                    mapping.funder, account_id=mapping.account_id,
+                    adapter=config.collateral_adapter, block=block,
+                    since=datetime.fromtimestamp(int(block["timestamp"], 16), UTC)
+                    + timedelta(seconds=1),
+                )
             observation = await account.observe(instruments[0])
             return {
                 "status": "READ_ONLY_OBSERVED",

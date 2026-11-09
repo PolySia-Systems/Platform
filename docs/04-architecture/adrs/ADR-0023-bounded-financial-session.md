@@ -125,6 +125,12 @@ against the approved exchange and economics. Existing account, cancellation,
 finality and independent custody requirements apply to the same bound funder.
 Session keys, unknown deposit wallet mappings, proxy and Safe accounts remain
 out of scope. Operational acceptance of this extension remains pending.
+
+The signed configuration may bind a separate historical instrument inventory for
+account reconciliation. The venue allowlist, source discovery and Risk continue
+to use the executable instruments in the authorization. Qualification requires
+complete finalized history for the supported route and blocks unmapped activity.
+
 The prepared EIP-712 signature is recovered against the authorized exchange;
 amounts, token, side, expiry, post-only and identity must equal the exact Risk
 request. Hidden SDK rounding, builder routes and V3 namespace routing reject.

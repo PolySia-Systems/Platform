@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import time
 from contextlib import suppress
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -48,7 +49,11 @@ from polysia.domain.financial_session import (
 )
 from polysia.domain.research_evidence.acquisition_policy import AcquisitionPolicy
 from polysia.monitoring.session_incidents import SessionIncidents
-from polysia.security.session_authority import SessionCustody, SessionReceiptVerifier
+from polysia.security.session_authority import (
+    SessionCustody,
+    SessionReceiptVerifier,
+    receipt_message,
+)
 from polysia.storage.acquisition_authority import AcquisitionAuthority
 from polysia.storage.console_commands import ConsoleCommandStore
 from polysia.storage.financial_session import FinancialSessionJournal
@@ -85,6 +90,60 @@ def _verifier(path: Path) -> SessionReceiptVerifier:
     )
 
 
+def _unsigned_authority(path: Path, key_id: str, receipt_id: str) -> SessionAuthorization:
+    envelope = load_authority(path)
+    if (
+        envelope.version != 2
+        or not envelope.granted
+        or envelope.owner_receipt != "UNSIGNED"
+        or not key_id
+        or not 16 <= len(receipt_id) <= 128
+    ):
+        raise SessionBlocked("exact_unsigned_owner_receipt_required")
+    return envelope
+
+
+def _write_receipt_output(path: Path, body: bytes) -> None:
+    if not path.is_absolute() or any(parent.is_symlink() for parent in path.parents):
+        raise SessionBlocked("absolute_protected_receipt_output_required")
+    with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb") as stream:
+        stream.write(body)
+
+
+@session_app.command("receipt-message")
+def prepare_receipt_message(
+    authority: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    key_id: Annotated[str, typer.Option()],
+    receipt_id: Annotated[str, typer.Option()],
+    output: Annotated[Path, typer.Option()],
+) -> None:
+    """Write the exact bytes for the external owner to review and sign."""
+    envelope = _unsigned_authority(authority, key_id, receipt_id)
+    _write_receipt_output(output, receipt_message(envelope, key_id=key_id, receipt_id=receipt_id))
+
+
+@session_app.command("attach-receipt")
+def attach_receipt(
+    authority: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    key_id: Annotated[str, typer.Option()],
+    receipt_id: Annotated[str, typer.Option()],
+    signature: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    trust: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option()],
+) -> None:
+    """Verify and attach a raw Ed25519 signature from the external owner."""
+    envelope = _unsigned_authority(authority, key_id, receipt_id)
+    if signature.is_symlink() or signature.stat().st_size != 64:
+        raise SessionBlocked("raw_Ed25519_signature_required")
+    signed = replace(envelope, owner_receipt=canonical_json({
+        "key_id": key_id,
+        "receipt_id": receipt_id,
+        "signature": base64.b64encode(signature.read_bytes()).decode("ascii"),
+    }))
+    _verifier(trust).verify_signature(signed)
+    _write_receipt_output(output, canonical_json(asdict(signed)).encode())
+
+
 @session_app.command("inspect")
 def inspect(config: ConfigPath) -> None:
     typer.echo(canonical_json(inspect_configuration(load_runtime_config(config))))
@@ -98,12 +157,16 @@ def qualify_account_command(
     allowance_store: Annotated[Path, typer.Option()],
     output: Annotated[Path, typer.Option()],
     read_account: bool = False,
+    prime_history: bool = False,
 ) -> None:
     prepared = load_runtime_config(config)
     if (
         not allowance_store.is_absolute()
         or not output.is_absolute()
         or output.exists()
+        or (prepared.rpc_checkpoint_path is not None and (
+            prepared.rpc_checkpoint_path.resolve() in {allowance_store.resolve(), output.resolve()}
+        ))
         or any(
             allowance_store.resolve().is_relative_to(root.resolve())
             or output.resolve().is_relative_to(root.resolve())
@@ -132,13 +195,12 @@ def qualify_account_command(
                 AcquisitionAuthority(allowance_store, allowance),
                 read_account=read_account,
                 clock=lambda: datetime.now(UTC),
+                prime_history=prime_history,
             )
         )
         if read_account:
             # Protected account evidence, deliberately not a Console projection.
             output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            import os
-
             descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 stream.write(canonical_json(result))
