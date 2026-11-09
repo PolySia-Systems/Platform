@@ -458,6 +458,18 @@ class SessionOpportunity:
 
 
 @dataclass(frozen=True, slots=True)
+class ExactSessionEntry:
+    shares: Decimal
+    price_ceiling: Decimal
+
+    def __post_init__(self) -> None:
+        decimal_value(self.shares)
+        decimal_value(self.price_ceiling)
+        if self.shares <= ZERO or not ZERO < self.price_ceiling < 1:
+            raise SessionBlocked("invalid_exact_entry_bounds")
+
+
+@dataclass(frozen=True, slots=True)
 class AccountObservation:
     account: str
     observed_at: datetime

@@ -384,13 +384,22 @@ def run(
     mode: TradingMode = TradingMode.DATA_ONLY,
     live_enabled: bool = False,
     ticks: Annotated[int, typer.Option(min=1, max=10000)] = 1,
+    owner_entry: Annotated[bool, typer.Option("--owner-entry")] = False,
 ) -> None:
     prepared = load_runtime_config(config)
+    if owner_entry and (
+        prepared.exact_entry is None or mode is not TradingMode.LIVE or not live_enabled
+    ):
+        raise typer.BadParameter("--owner-entry requires signed exact-entry configuration and LIVE")
+
+    if owner_entry and ticks != 1:
+        raise typer.BadParameter("--owner-entry uses the signed deadline. Omit --ticks.")
 
     async def bounded() -> Any:
+        envelope = None if authority is None else load_authority(authority)
         session = await compose_session(
             prepared,
-            authority=None if authority is None else load_authority(authority),
+            authority=envelope,
             verifier=None if trust is None else _verifier(trust),
             mode=mode,
             live_enabled=live_enabled,
@@ -400,14 +409,24 @@ def run(
         try:
             await session.start()
             result = None
-            for index in range(ticks):
+            deadline = envelope.protective_until if owner_entry and envelope is not None else None
+            count = 0
+            while True:
+                if deadline is not None and datetime.now(UTC) >= deadline:
+                    return result
                 tick_started = time.monotonic()
-                result = await session.tick()
-                if index + 1 < ticks:
-                    await asyncio.sleep(
-                        max(0, prepared.tick_interval_seconds - (time.monotonic() - tick_started))
-                    )
-            return result
+                result = await session.tick(owner_entry=owner_entry)
+                count += 1
+                delay = max(0, prepared.tick_interval_seconds - (time.monotonic() - tick_started))
+                if deadline is None:
+                    if count >= ticks:
+                        return result
+                else:
+                    remaining = (deadline - datetime.now(UTC)).total_seconds()
+                    if remaining <= 0:
+                        return result
+                    delay = min(delay, remaining)
+                await asyncio.sleep(delay)
         finally:
             await session.close()
 

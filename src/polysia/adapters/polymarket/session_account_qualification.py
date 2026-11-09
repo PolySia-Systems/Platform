@@ -36,6 +36,7 @@ async def qualify_account(
 
     from polysia.adapters.polymarket.research_rpc import BoundedResearchRPC
     from polysia.adapters.polymarket.session_account import (
+        WALLET_OPEN_ORDERS_PATH,
         ExactAccountMapping,
         ExactSessionAccountReader,
     )
@@ -59,6 +60,8 @@ async def qualify_account(
         "https://clob.polymarket.com/data/trades",
         "https://clob.polymarket.com/balance-allowance",
     }
+    if config.account_mapping.signature_type == 3:
+        endpoints.add("https://clob.polymarket.com" + WALLET_OPEN_ORDERS_PATH)
     if set(acquisition.policy.endpoints) != endpoints:
         raise SessionBlocked("exact_read_only_account_allowance_required")
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
@@ -119,6 +122,7 @@ async def qualify_account(
                 mapping,
                 maximum_pages=config.maximum_pages,
                 maximum_age_seconds=30,
+                executable_markets=frozenset(item.market for item in instruments),
                 clock=clock,
             )
             if prime_history:

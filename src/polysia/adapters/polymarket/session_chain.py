@@ -323,6 +323,22 @@ class CTFChainReader:
             result[event.identity] = fill
         return tuple(result.values())
 
+    async def require_resolved(self, market: str, *, block: Mapping[str, Any]) -> int:
+        if re.fullmatch(r"0x[0-9a-fA-F]{64}", market) is None:
+            raise SessionBlocked("invalid_retained_inventory_condition")
+        # ConditionalTokens.payoutDenominator(bytes32) is nonzero after resolution.
+        value = await self.rpc.call(
+            "eth_call",
+            [
+                {"to": self.ctf, "data": "0xdd34de67" + market[2:]},
+                {"blockHash": block["hash"], "requireCanonical": True},
+            ],
+        )
+        result = words(value)
+        if len(result) != 1 or result[0] == 0:
+            raise SessionBlocked("retained_inventory_resolution_unverified")
+        return result[0]
+
     async def cash(self, wallet: str, *, block: Mapping[str, Any]) -> Decimal:
         payload = "0x70a08231" + topic_address(wallet)[2:]
         value = await self.rpc.call(

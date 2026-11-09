@@ -95,8 +95,12 @@ timeouts; optional latency/report failure cannot change financial state.
   Reuse PositionLedger with durable confirmed fills, alongside account truth.
 
 The new session has its own versioned store; historical financial stores are
-neither migrated nor rewritten. Bootstrap refuses nonempty accounts pending an
-assessed migration. A different envelope cannot reuse an old store or witness.
+neither migrated nor rewritten. The assessed OP1 opening may retain signed
+inventory in mapped and finalized resolved conditions outside all executable
+markets. The account reconciliation includes those quantities. The run ledger,
+valuation and exit ownership cover run-created inventory. Existing orders and
+unresolved or overlapping opening inventory deny commissioning or entry. A
+different envelope cannot reuse an old store or witness.
 Rollback stops the new composition and selects retained compatible code. Keep
 STOP, consumed authority, financial state and witness; never downgrade a live
 store or restore older allowance.
