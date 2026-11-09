@@ -23,6 +23,7 @@ from polysia.domain.financial_session import (
     AccountObservation,
     ApprovedSessionLimit,
     ConfirmedSessionFill,
+    ExactSessionEntry,
     InstrumentScope,
     RuntimeBinding,
     SessionAuthorization,
@@ -188,11 +189,20 @@ class FakeExecution:
 
 
 class Harness:
-    def __init__(self, root: Path, auth: SessionAuthorization | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        auth: SessionAuthorization | None = None,
+        *,
+        opening_positions: dict[str, Decimal] | None = None,
+        exact_entry: ExactSessionEntry | None = None,
+    ) -> None:
+        self.exact_entry = exact_entry
         self.now = NOW
         self.tick = 0
         self.auth = auth or authorization()
         self.execution = FakeExecution(lambda: self.now)
+        self.execution.positions = dict(opening_positions or {})
         self.journal = FinancialSessionJournal(
             root / "financial" / "session.sqlite3", root / "witness", self.auth
         )
@@ -218,6 +228,7 @@ class Harness:
             clock=lambda: self.now,
             monotonic=lambda: self.tick,
             trading_mode=TradingMode.PAPER,
+            exact_entry=self.exact_entry,
         )
 
     def start(self) -> None:
@@ -242,7 +253,10 @@ class Harness:
         sign = 1 if side == "BUY" else -1
         self.execution.cash -= sign * quantity * value + charged
         remaining = self.execution.positions.get("token", D("0")) + sign * quantity
-        self.execution.positions = {} if remaining == 0 else {"token": remaining}
+        if remaining:
+            self.execution.positions["token"] = remaining
+        else:
+            self.execution.positions.pop("token", None)
         if terminal:
             self.execution.open_orders.discard(row["order_id"])
         fill = ConfirmedSessionFill(
@@ -274,6 +288,56 @@ def h(tmp_path: Path) -> Iterator[Harness]:
         yield value
     finally:
         value.journal.close()
+
+
+async def test_opening_inventory_is_reconciled_but_excluded_from_run_ownership(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(
+        tmp_path,
+        opening_positions={"retained-token": D("53.5936")},
+        exact_entry=ExactSessionEntry(D("5"), D("0.5")),
+    )
+    try:
+        entry = await harness.coordinator.submit(opportunity(shares=D("5")))
+        harness.fill(entry, size="2", terminal=False)
+        assert harness.coordinator.reconcile(harness.execution.account())
+        state = harness.journal.read()
+        assert set(session_ledger(state).positions) == {"token"}
+        assert session_ledger(state).fees == D("0.01")
+        assert state["opening"]["positions"] == [["retained-token", "53.5936"]]
+        checkpoint = harness.journal.checkpoint()
+        harness.journal.close()
+        harness.journal.open(checkpoint=checkpoint)
+        harness.coordinator = harness.new_coordinator()
+        assert harness.coordinator.reconcile(harness.execution.account())
+        harness.start()
+        with pytest.raises(SessionBlocked, match="exact_entry_already_reserved"):
+            await harness.coordinator.submit(opportunity(occurrence="second", shares=D("5")))
+        harness.execution.positions["retained-token"] -= D("0.0001")
+        assert not harness.coordinator.reconcile(harness.execution.account())
+        assert len(harness.execution.submissions) == 1
+    finally:
+        harness.journal.close()
+
+
+@pytest.mark.parametrize(("price", "shares"), [("0.51", "5"), ("0.50", "4.99")])
+async def test_exact_entry_refuses_wrong_price_or_quantity(
+    tmp_path: Path, price: str, shares: str
+) -> None:
+    harness = Harness(tmp_path, exact_entry=ExactSessionEntry(D("5"), D("0.50")))
+    try:
+        with pytest.raises(SessionBlocked, match="exact_entry_quantity_or_price_rejected"):
+            await harness.coordinator.submit(opportunity(price=D(price), shares=D(shares)))
+        assert harness.execution.submissions == []
+        assert harness.journal.read()["attempts"] == 0
+    finally:
+        harness.journal.close()
+
+
+def test_opening_inventory_cannot_overlap_executable_tokens(tmp_path: Path) -> None:
+    with pytest.raises(SessionBlocked, match="opening_inventory_overlaps_execution_scope"):
+        Harness(tmp_path, opening_positions={"token": D("0.0001")})
 
 
 async def test_complete_entry_exit_with_actual_cashflows_and_fees_once(h: Harness) -> None:

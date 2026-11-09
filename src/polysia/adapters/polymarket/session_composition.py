@@ -423,7 +423,7 @@ class OperationalSession:
             if fill.order_hash == row["order_id"].lower()
         )
 
-    async def tick(self) -> dict[str, Any]:
+    async def tick(self, *, owner_entry: bool = False) -> dict[str, Any]:
         coordinator = self.coordinator
         try:
             self.process_controls()
@@ -440,7 +440,9 @@ class OperationalSession:
                 and (self.discovery_retry_at is None or self.clock() >= self.discovery_retry_at)
             ):
                 try:
-                    await self._source_entries()
+                    await self._source_entries(
+                        allow_entry=self.config.exact_entry is None or owner_entry
+                    )
                 except _OptionalInputUnavailable:
                     # Prove mandatory persistence and independent custody are
                     # still current before classifying an input-only failure.
@@ -470,7 +472,7 @@ class OperationalSession:
             raise SessionBlocked("operational_tick_blocked:" + type(error).__name__) from error
         return self.publish()
 
-    async def _source_entries(self) -> None:
+    async def _source_entries(self, *, allow_entry: bool) -> None:
         coordinator = self.coordinator
         now = self.clock()
         start = max(
@@ -494,7 +496,11 @@ class OperationalSession:
                     # baseline, not absolute leader shares. See mirror_reduction.
                     await self.mirror_reduction(fill)
                     continue
-                if not self.qualification_verified:
+                if not allow_entry or not self.qualification_verified:
+                    continue
+                if self.config.exact_entry is not None and any(
+                    row["side"] == "BUY" for row in coordinator.journal.read()["orders"].values()
+                ):
                     continue
                 opportunity = await self._entry_opportunity(event)
                 if opportunity is not None:
@@ -578,8 +584,13 @@ class OperationalSession:
             depth=book.best_ask.size,
             entered_before=entered,
         )
+        exact = self.config.exact_entry
         if not shares:
             return None
+        if exact is not None:
+            if shares < exact.shares or price > exact.price_ceiling:
+                return None
+            shares = exact.shares
         return SessionOpportunity(
             event,
             self.config.policy.version,
@@ -977,6 +988,7 @@ async def create_live_session(
             mapping,
             maximum_pages=config.maximum_pages,
             maximum_age_seconds=authority.max_evidence_age_seconds,
+            executable_markets=frozenset(item.market for item in authority.instruments),
             clock=clock,
             collateral_adapter=config.collateral_adapter,
             recognition_since=authority.starts_at,
@@ -1049,6 +1061,7 @@ async def create_live_session(
             trading_mode=TradingMode.LIVE,
             independent_guard=guard,
             copy_policy=config.policy,
+            exact_entry=config.exact_entry,
             telemetry=LatencyRecorder(
                 LatencyTelemetryStore(config.incident_path.with_suffix(".latency.sqlite3")),
                 RuntimeIdentity(

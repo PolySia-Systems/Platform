@@ -384,8 +384,13 @@ def run(
     mode: TradingMode = TradingMode.DATA_ONLY,
     live_enabled: bool = False,
     ticks: Annotated[int, typer.Option(min=1, max=10000)] = 1,
+    owner_entry: Annotated[bool, typer.Option("--owner-entry")] = False,
 ) -> None:
     prepared = load_runtime_config(config)
+    if owner_entry and (
+        prepared.exact_entry is None or mode is not TradingMode.LIVE or not live_enabled
+    ):
+        raise typer.BadParameter("--owner-entry requires signed exact-entry configuration and LIVE")
 
     async def bounded() -> Any:
         session = await compose_session(
@@ -402,7 +407,7 @@ def run(
             result = None
             for index in range(ticks):
                 tick_started = time.monotonic()
-                result = await session.tick()
+                result = await session.tick(owner_entry=owner_entry)
                 if index + 1 < ticks:
                     await asyncio.sleep(
                         max(0, prepared.tick_interval_seconds - (time.monotonic() - tick_started))

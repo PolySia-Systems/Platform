@@ -22,6 +22,7 @@ from polysia.domain.financial_session import (
     AccountObservation,
     ApprovedSessionLimit,
     ConfirmedSessionFill,
+    ExactSessionEntry,
     ObservedRedemption,
     PositionTrigger,
     RuntimeBinding,
@@ -96,6 +97,7 @@ class FinancialSessionCoordinator:
         telemetry: LatencyRecorder | None = None,
         independent_guard: Callable[[], None] | None = None,
         copy_policy: CopyPolicy | None = None,
+        exact_entry: ExactSessionEntry | None = None,
     ) -> None:
         self.journal, self.execution, self.risk = journal, execution, risk
         self.binding, self.clock, self.monotonic = binding, clock, monotonic
@@ -108,6 +110,7 @@ class FinancialSessionCoordinator:
         if copy_policy is not None and copy_policy.fingerprint != binding.policy:
             raise SessionBlocked("active_copy_policy_binding_mismatch")
         self.copy_policy = copy_policy
+        self.exact_entry = exact_entry
 
     @property
     def authority(self) -> SessionAuthorization:
@@ -293,7 +296,14 @@ class FinancialSessionCoordinator:
             and row["order_id"] is not None
             and row["state"] != "FILLED"
         )
-        expected_positions = {key: position.size for key, position in ledger.positions.items()}
+        # The signed opening holdings never belong to this run's trading ledger.
+        expected_positions = {
+            token: Decimal(quantity)
+            for token, quantity in state["opening"]["positions"]
+            if Decimal(quantity)
+        }
+        for token, position in ledger.positions.items():
+            expected_positions[token] = expected_positions.get(token, ZERO) + position.size
         actual_positions = {key: value for key, value in observation.positions or () if value != 0}
         return (
             not unknown
@@ -614,6 +624,14 @@ class FinancialSessionCoordinator:
             if len(active) >= self.authority.max_concurrent_orders - order_reserve:
                 raise SessionBlocked("concurrent_order_limit")
             shares = approved.request.shares
+            if entry and self.exact_entry is not None:
+                if (
+                    shares != self.exact_entry.shares
+                    or approved.request.price > self.exact_entry.price_ceiling
+                ):
+                    raise SessionBlocked("exact_entry_quantity_or_price_rejected")
+                if any(row["side"] == "BUY" for row in state["orders"].values()):
+                    raise SessionBlocked("exact_entry_already_reserved")
             notional = shares * opportunity.price
             all_in = notional * (1 + self.authority.fee_rate)
             if all_in > self.authority.max_order_all_in:

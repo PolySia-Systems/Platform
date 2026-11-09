@@ -24,6 +24,7 @@ from polysia.config.settings import TradingMode
 from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.financial_session import (
     AccountObservation,
+    ExactSessionEntry,
     InstrumentScope,
     RuntimeBinding,
     SessionAccountIdentity,
@@ -85,6 +86,7 @@ class SessionRuntimeConfig:
     rpc_log_block_span: int | None = None
     rpc_checkpoint_path: Path | None = None
     rpc_bearer_token_reference: str | None = None
+    exact_entry: ExactSessionEntry | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -198,6 +200,8 @@ class SessionRuntimeConfig:
             del value["rpc_checkpoint_path"]
         if self.rpc_bearer_token_reference is None:
             del value["rpc_bearer_token_reference"]
+        if self.exact_entry is None:
+            del value["exact_entry"]
         for key, item in value.items():
             if isinstance(item, Path):
                 value[key] = str(item)
@@ -242,6 +246,7 @@ def inspect_configuration(config: SessionRuntimeConfig) -> dict[str, Any]:
             "api": config.api_credentials_reference,
         },
         "commissioning": "PENDING",
+        "exact_entry": None if config.exact_entry is None else asdict(config.exact_entry),
         "financial_adapter": "NOT_CONSTRUCTED",
     }
 
@@ -303,7 +308,16 @@ def binding_for(config: SessionRuntimeConfig) -> RuntimeBinding:
 
 
 def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAuthorization) -> None:
-    config.reconciliation_scope(authority.instruments)
+    reconciliation = {
+        item.token: item for item in config.reconciliation_scope(authority.instruments)
+    }
+    executable_markets = {item.market for item in authority.instruments}
+    for token, quantity in config.opening.positions or ():
+        if not quantity:
+            continue
+        scope = reconciliation.get(token)
+        if scope is None or scope.market in executable_markets:
+            raise SessionBlocked("opening_inventory_must_map_outside_executable_markets")
     if (
         authority.binding != binding_for(config)
         or config.package_tree_digest != package_tree_digest()
@@ -327,6 +341,15 @@ def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAut
         or authority.protective_turnover_reserve <= 0
     ):
         raise SessionBlocked("composed_scope_or_protective_headroom_missing")
+    exact = config.exact_entry
+    if exact is not None and (
+        len(authority.instruments) != 1
+        or exact.shares > config.maximum_order_shares
+        or exact.shares % config.policy.quantity_quantum
+        or exact.shares * exact.price_ceiling * (1 + authority.fee_rate)
+        > min(authority.max_order_all_in, authority.max_total_loss)
+    ):
+        raise SessionBlocked("exact_entry_exceeds_signed_instrument_or_budget")
     if authority.binding.host != __import__("socket").gethostname():
         raise SessionBlocked("active_host_identity_mismatch")
     if config.tick_interval_seconds * 2 > authority.max_evidence_age_seconds:

@@ -35,6 +35,7 @@ from polysia.deployment.session_supervision import (
 )
 from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.financial_session import (
+    ExactSessionEntry,
     InstrumentScope,
     SessionAccountIdentity,
     SessionBlocked,
@@ -268,6 +269,38 @@ async def test_nonlive_composition_has_no_signer_account_or_network(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payout", [0, 1])
+async def test_retained_inventory_requires_pinned_condition_resolution(payout: int) -> None:
+    from polysia.adapters.polymarket.session_chain import CTFChainReader, ReadOnlyRPC
+
+    market = "0x" + "ab" * 32
+    block = {"hash": "0x" + "cd" * 32}
+    ctf = "0x" + "ab" * 20
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["method"] == "eth_call"
+        assert payload["params"] == [
+            {"to": ctf, "data": "0xdd34de67" + market[2:]},
+            {"blockHash": block["hash"], "requireCanonical": True},
+        ]
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": payload["id"], "result": f"0x{payout:064x}"}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        chain = CTFChainReader(
+            ReadOnlyRPC(http, "https://rpc.example"),
+            exchange=ctf, ctf=ctf, collateral=ctf, instruments=(),
+        )
+        if payout:
+            assert await chain.require_resolved(market, block=block) == payout
+        else:
+            with pytest.raises(SessionBlocked, match="retained_inventory_resolution_unverified"):
+                await chain.require_resolved(market, block=block)
+
+
+@pytest.mark.asyncio
 async def test_live_requires_receipt_before_financial_state_or_credentials(tmp_path: Path) -> None:
     config = runtime_config(tmp_path)
     with pytest.raises(SessionBlocked, match="owner_receipt"):
@@ -295,6 +328,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
 
     ephemeral = Account.create()
     config = runtime_config(tmp_path, ephemeral.address, include_history=cancel)
+    if cancel:
+        config = replace(config, exact_entry=ExactSessionEntry(D(5), D("0.50")))
     historical = next(iter(config.historical_instruments), None)
     funder = ephemeral.address
     if signature_type == 3:
@@ -368,7 +403,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             assert order["signatureType"] == signature_type
             assert order["signer"].lower() == funder.lower()
             assert order["maker"].lower() == funder.lower()
-            assert order["makerAmount"] == "1000000" and order["takerAmount"] == "2000000"
+            assert order["makerAmount"] == ("2500000" if cancel else "1000000")
+            assert order["takerAmount"] == ("5000000" if cancel else "2000000")
             return httpx.Response(
                 200,
                 json={
@@ -434,6 +470,12 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                     "allowances": {},
                 },
             )
+        if request.url.path == "/data/wallet-open-orders":
+            assert signature_type == 3
+            cursor = request.url.params.get("cursor")
+            assert cursor in {None, "fixture-wallet-page"}
+            next_cursor = "fixture-wallet-page" if cancel and cursor is None else ""
+            return httpx.Response(200, json={"data": [], "next_cursor": next_cursor})
         if request.url.path in {"/data/orders", "/data/trades"}:
             rows = []
             if request.url.path == "/data/trades" and (
@@ -542,7 +584,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                 "https://clob.polymarket.com/data/orders",
                 "https://clob.polymarket.com/data/trades",
                 "https://clob.polymarket.com/balance-allowance",
-            ),
+            ) + (("https://clob.polymarket.com/data/wallet-open-orders",)
+                 if signature_type == 3 else ()),
             100,
             200000,
             4096,
@@ -588,6 +631,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             strategy=config.policy.version,
             exit_policy=config.policy.version,
             policy_digest=config.policy.fingerprint,
+            shares=D(5) if cancel else D(2),
         )
         candidate = replace(
             candidate, event=replace(candidate.event, instrument=auth.instruments[0])

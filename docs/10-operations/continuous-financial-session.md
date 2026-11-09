@@ -28,7 +28,10 @@ provider or account acquisition, commissioning, deployment, Live run or alerts.
 4. Separately authorize bounded public Shadow acquisition and read-only account
    qualification. Verify all-or-error historical RPC completeness, real canonical
    occurrence identity, account orders/trades/fees/cash/holdings and timing. A
-   public positions inventory is insufficient. Freeze independently reviewed
+   public positions inventory is insufficient. Type-3 account reads also walk
+   wallet-wide orders to the terminal cursor and require agreement with the
+   credential order view. Budget both reads and retained condition checks.
+   Freeze independently reviewed
    numeric request/page/byte/cost/storage/latency bounds from actual samples.
 5. Produce retained causal follower samples and a frozen SharedCohortSelection
    using the existing source-cohort service. Qualify estimator calibration,
@@ -37,7 +40,10 @@ provider or account acquisition, commissioning, deployment, Live run or alerts.
    has been established here.
 6. Install the exact config/schema/policy/sample/cohort/capacity identities. The
    owner signs the version-2 envelope externally. No private issuer interface is
-   supplied. Provision only a fresh complete flat opening, still under STOP.
+   supplied. Provision only a fresh complete opening with no orders, still under
+   STOP. An assessed opening can retain holdings in mapped, finalized resolved
+   conditions outside all executable markets. Retained quantities must continue
+   to match the account. They confer no authority and contribute no run P&L.
 7. Verify isolated recovery and run the independent supervisor. Release only the
    initial commissioning STOP after exact proof. Explicit/supervision STOP is
    latched and cannot be cleared by that commissioning flag.
@@ -96,6 +102,18 @@ OWNER_KEY -in MESSAGE -out SIGNATURE`. Attach the 64-byte signature with
 --receipt-id RECEIPT_ID --signature SIGNATURE --trust PUBLIC_KEYS --output SIGNED`.
 This verifies the signature. Use `validate` for the exact host binding and time
 window before provisioning under STOP.
+
+For a reviewed single-entry run, bind config "exact_entry" to the fixed share
+quantity and price ceiling. The regular strategy and fresh qualified source
+still supply the candidate. The local owner adds "--owner-entry" explicitly to
+the installed "polysia ops session run" command after commissioning, using
+"--mode LIVE --live-enabled --owner-entry" with the signed config, authority and
+public trust registry. Leave it out for protective-only operation on an
+exact-entry session. Risk may deny the entry. A smaller Risk size, a price above
+the signed ceiling or any prior durable buy reservation blocks submission.
+Inspect the redacted session publication and the independent supervisor status
+before taking any further action. An absent qualified candidate does not
+constitute a submission.
 
 Separately authorized read-only qualification uses the same concrete account
 reader with an independent AcquisitionPolicy, no financial custody or signing

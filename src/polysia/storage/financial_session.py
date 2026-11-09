@@ -61,7 +61,7 @@ class FinancialSessionJournal:
     def provision(self, opening: AccountObservation) -> None:
         """Explicit trusted-owner bootstrap; never called by a worker or Console.
 
-        Existing inventory/orders require an assessed migration and are refused.
+        Opening inventory is held outside run ownership. Existing orders are refused.
         Neither an existing witness nor an existing journal may be overwritten.
         """
         opening.require_complete(
@@ -70,8 +70,11 @@ class FinancialSessionJournal:
             max_age=self.authority.max_evidence_age_seconds,
         )
         self.authority.assert_action(self.authority.binding, opening.observed_at, "ENTRY")
-        if opening.positions or opening.open_order_ids:
-            raise SessionBlocked("nonempty_account_requires_assessed_migration")
+        if opening.open_order_ids:
+            raise SessionBlocked("opening_account_has_orders")
+        executable = {item.token for item in self.authority.instruments}
+        if any(token in executable and quantity for token, quantity in opening.positions or ()):
+            raise SessionBlocked("opening_inventory_overlaps_execution_scope")
         self._lock.acquire()
         try:
             if self.path.exists() or self.witness.exists():

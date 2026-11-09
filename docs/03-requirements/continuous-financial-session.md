@@ -109,8 +109,11 @@ Exchange V2, six-decimal pUSD/CTF and the pinned SDK's exact contract
 addresses. Type 0 requires signer=funder. Type 3 requires the exact configured
 owner signer and its deterministically derived deposit wallet funder. The
 latter scope extension awaits operational acceptance under ADR-0023. Negative
-risk, V3 token namespaces, proxy/Safe wallets, deposit-wallet session keys,
-builders and nonempty baseline migration reject.
+risk, V3 token namespaces, proxy/Safe wallets, deposit-wallet session keys
+and builders remain outside this route. Signed, mapped opening holdings in
+finalized resolved conditions outside executable markets may be retained as a
+separate reconciliation baseline. Existing orders, overlap, unresolved passive
+holdings and changes to the retained baseline fail closed.
 Actual account completeness depends on a qualified all-or-error historical RPC
 provider, complete bounded authenticated orders/trades, canonical finalized
 headers, cash and all token balances. Large accounts that exceed any bound
