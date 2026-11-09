@@ -40,6 +40,7 @@ from polysia.adapters.polymarket.session_sdk import (
     assert_exact_prepared,
     confine_sdk_http,
     require_sdk_scope,
+    rpc_auth_headers,
 )
 from polysia.adapters.polymarket.session_source import CorroboratedSessionSource
 from polysia.application.ports.cancellation import OrderTradeEvidence
@@ -928,6 +929,7 @@ async def create_live_session(
         # Read secrets only after every financial/authority/identity/custody gate.
         private_key = os.environ.get(config.private_key_reference)
         credentials_json = os.environ.get(config.api_credentials_reference)
+        rpc_headers = rpc_auth_headers(config.rpc_bearer_token_reference)
         if not private_key or not credentials_json:
             raise SessionBlocked("preprovisioned_account_credentials_missing")
         try:
@@ -950,6 +952,7 @@ async def create_live_session(
             network.transport,
             rpc_url=config.rpc_url,
             timeout=config.request_timeout_seconds,
+            rpc_headers=rpc_headers,
         )
         from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
 
@@ -958,7 +961,8 @@ async def create_live_session(
             if config.rpc_checkpoint_path is not None else None
         )
         chain_rpc = ReadOnlyRPC(
-            http, config.rpc_url, log_block_span=config.rpc_log_block_span, checkpoint=checkpoint
+            http, config.rpc_url, log_block_span=config.rpc_log_block_span, checkpoint=checkpoint,
+            headers=rpc_headers,
         )
         chain = CTFChainReader(
             chain_rpc,
@@ -1068,7 +1072,8 @@ async def create_live_session(
             CorroboratedSessionSource(
                 SessionPublicJSON(http),
                 CTFChainReader(
-                    ReadOnlyRPC(http, config.rpc_url), exchange=config.exchange, ctf=config.ctf,
+                    ReadOnlyRPC(http, config.rpc_url, headers=rpc_headers),
+                    exchange=config.exchange, ctf=config.ctf,
                     collateral=mapping.collateral,
                     instruments=authority.instruments,
                 ),

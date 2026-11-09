@@ -121,6 +121,11 @@ Keep the checkpoint outside the financial, custody, witness and publication stor
 Allow only one bootstrap or worker to write it at a time. An incomplete page or
 conflicting block hash blocks qualification. Retain the evidence on a conflict.
 
+For an approved Alchemy Polygon Mainnet route, use the exact URL
+`https://polygon-mainnet.g.alchemy.com/v2` and set `rpc_bearer_token_reference`
+to the dedicated protected environment variable name. The bearer value is sent
+only to the RPC transport. Keep the value out of URLs, configuration and evidence.
+
 ```powershell
 polysia ops session qualify-account --config C:\protected\session.json --scopes C:\protected\scopes.json --policy C:\protected\read-policy.json --allowance-store C:\readonly\allowance.sqlite3 --output C:\readonly\opening.json --read-account
 polysia ops session lab-init --config C:\shadow\lab.json --commands C:\control\commands.sqlite3

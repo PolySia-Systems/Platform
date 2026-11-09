@@ -87,12 +87,14 @@ class ReadOnlyRPC:
     def __init__(
         self, client: httpx.AsyncClient, url: str, *, log_block_span: int | None = None,
         checkpoint: FinalizedLogCheckpoint | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         if log_block_span is not None and (type(log_block_span) is not int or log_block_span <= 0):
             raise ValueError("log block span must be positive")
         self.client, self.url = client, url
         self.log_block_span = log_block_span
         self.checkpoint = checkpoint
+        self._headers = headers
         self._sequence = 0
 
     async def call(self, method: str, params: list[object]) -> Any:
@@ -102,6 +104,7 @@ class ReadOnlyRPC:
         request_id = self._sequence
         response = await self.client.post(
             self.url,
+            headers=self._headers,
             json={
                 "jsonrpc": "2.0",
                 "id": request_id,

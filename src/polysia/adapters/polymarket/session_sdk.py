@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import asdict
 from decimal import Decimal
@@ -22,14 +23,25 @@ from polymarket.types import EvmAddress, HexString
 from polysia.domain.financial_session import SessionBlocked
 
 
+def rpc_auth_headers(reference: str | None) -> dict[str, str]:
+    if reference is None:
+        return {}
+    token = os.environ.get(reference)
+    if not token or not token.isascii() or any(not 33 <= ord(char) <= 126 for char in token):
+        raise SessionBlocked("protected_RPC_bearer_token_required")
+    return {"Authorization": f"Bearer {token}"}
+
+
 async def confine_sdk_http(
-    client: Any, factory: Callable[[], httpx.AsyncBaseTransport], *, rpc_url: str, timeout: int
+    client: Any, factory: Callable[[], httpx.AsyncBaseTransport], *, rpc_url: str, timeout: int,
+    rpc_headers: dict[str, str] | None = None,
 ) -> None:
     rpc = client._ctx.rpc._transport
     await rpc._client.aclose()
     rpc._base_url = rpc_url
     rpc._client = httpx.AsyncClient(
-        transport=factory(), base_url=rpc_url, follow_redirects=False, timeout=timeout
+        transport=factory(), base_url=rpc_url, follow_redirects=False, timeout=timeout,
+        headers=rpc_headers,
     )
     for name in (
         "secure_clob",

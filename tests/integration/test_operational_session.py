@@ -155,7 +155,8 @@ def runtime_config(
         cohort_file_digest=hashlib.sha256(cohort.read_bytes()).hexdigest(),
         follower_samples_file_digest=hashlib.sha256(samples.read_bytes()).hexdigest(),
         source_wallets=(("wallet", "0x" + "2" * 40),),
-        rpc_url="https://rpc.fixture/",
+        rpc_url=("https://polygon-mainnet.g.alchemy.com/v2" if include_history
+                 else "https://rpc.fixture/"),
         exchange=environment.standard_exchange.lower(),
         ctf=environment.conditional_tokens.lower(),
         collateral_adapter=environment.collateral_adapter.lower(),
@@ -183,6 +184,7 @@ def runtime_config(
         checkpoint_handshake_seconds=2,
         tick_interval_seconds=1,
         rpc_checkpoint_path=root / "checkpoint.sqlite3" if include_history else None,
+        rpc_bearer_token_reference="POLYSIA_FIXTURE_RPC" if include_history else None,
         historical_instruments=(InstrumentScope(
             "0x" + "c" * 64, str(int(SESSION_TOKEN) + 1), mapping.collateral,
             mapping.settlement_route,
@@ -340,6 +342,10 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
 
     def wire(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, request.url.path))
+        if request.url == httpx.URL(config.rpc_url) and historical is not None:
+            assert request.headers["Authorization"] == "Bearer fixture-rpc-value"
+        else:
+            assert "Authorization" not in request.headers
         if request.url.path == "/order" and request.method == "DELETE":
             assert cancel
             assert request.headers["POLY_ADDRESS"].lower() == ephemeral.address.lower()
@@ -375,7 +381,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                     "transactionsHashes": [],
                 },
             )
-        if request.url.host == "rpc.fixture":
+        if request.url == httpx.URL(config.rpc_url):
             body = json.loads(request.content)
             method = body["method"]
             rpc_methods.append(method)
@@ -459,6 +465,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         raise AssertionError("unexpected request; automatic credential or wallet setup forbidden")
 
     monkeypatch.setattr(httpx, "AsyncHTTPTransport", lambda **kwargs: httpx.MockTransport(wire))
+    if config.rpc_bearer_token_reference is not None:
+        monkeypatch.setenv(config.rpc_bearer_token_reference, "fixture-rpc-value")
     monkeypatch.setenv(config.private_key_reference, ephemeral.key.hex())
     monkeypatch.setenv(
         config.api_credentials_reference,
@@ -470,22 +478,28 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             }
         ),
     )
-    def await_supervisor(_seconds: float) -> None:
+    supervisor_time = 0.0
+
+    def await_supervisor(seconds: float) -> None:
+        nonlocal supervisor_time
         # This proof composes the actual owners with deterministic scheduling.
         # A polling thread can queue duplicate inspections and race SQLite reads
         # with its own ACK transaction on slow Windows storage. Complete the
-        # actual inspection at the injected wait boundary; the publisher still
-        # enforces its original real monotonic ACK deadline. Process ownership
+        # actual inspection at the injected wait boundary. Advance the test
+        # clock only for the simulated polling wait. Process ownership
         # and durable STOP have separate acceptance tests.
         supervisor.inspect()
+        supervisor_time += seconds
 
     from functools import partial
 
     import polysia.adapters.polymarket.session_composition as composition
     from polysia.application.services.financial_session import FinancialSessionCoordinator
 
-    monkeypatch.setattr(composition, "CheckpointPublisher",
-                        partial(CheckpointPublisher, wait=await_supervisor))
+    monkeypatch.setattr(
+        composition, "CheckpointPublisher",
+        partial(CheckpointPublisher, wait=await_supervisor, monotonic=lambda: supervisor_time),
+    )
     # UTC is frozen for this composition proof. Freeze the coordinator's
     # monotonic clock too, so slow fixture filesystem work does not simulate
     # elapsed supervision time. Dedicated expiry tests advance monotonic time
@@ -514,7 +528,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             broker = session.coordinator.execution.broker
             assert broker._allowed_token_ids == {SESSION_TOKEN}
         assert session.network.observation()["actual_requests"] == len(requests)
-        assert all(method == "GET" or path == "/" for method, path in requests)
+        assert all(method == "GET" or path == httpx.URL(config.rpc_url).path
+                   for method, path in requests)
         before = len(requests)
         read_policy = AcquisitionPolicy(
             "fixture-read-only",

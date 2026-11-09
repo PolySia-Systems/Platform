@@ -84,6 +84,7 @@ class SessionRuntimeConfig:
     historical_instruments: tuple[InstrumentScope, ...] = ()
     rpc_log_block_span: int | None = None
     rpc_checkpoint_path: Path | None = None
+    rpc_bearer_token_reference: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -136,6 +137,14 @@ class SessionRuntimeConfig:
             or rpc.fragment
         ):
             raise SessionBlocked("exact_nonsecret_HTTPS_RPC_required")
+        if self.rpc_bearer_token_reference is not None and (
+            self.rpc_url != "https://polygon-mainnet.g.alchemy.com/v2"
+            or re.fullmatch(r"POLYSIA_[A-Z0-9_]{1,80}", self.rpc_bearer_token_reference) is None
+            or self.rpc_bearer_token_reference in (
+                self.private_key_reference, self.api_credentials_reference,
+            )
+        ):
+            raise SessionBlocked("exact_Alchemy_RPC_and_dedicated_secret_reference_required")
         paths = [
             self.financial_path,
             self.witness_root,
@@ -187,6 +196,8 @@ class SessionRuntimeConfig:
             del value["rpc_log_block_span"]
         if self.rpc_checkpoint_path is None:
             del value["rpc_checkpoint_path"]
+        if self.rpc_bearer_token_reference is None:
+            del value["rpc_bearer_token_reference"]
         for key, item in value.items():
             if isinstance(item, Path):
                 value[key] = str(item)
@@ -253,6 +264,8 @@ def capacity_workload(config: SessionRuntimeConfig) -> str:
         workload["rpc_log_block_span"] = config.rpc_log_block_span
     if config.rpc_checkpoint_path is not None:
         workload["durable_RPC_checkpoint"] = True
+    if config.rpc_bearer_token_reference is not None:
+        workload["authenticated_RPC_endpoint"] = config.rpc_url
     return digest(workload)
 
 

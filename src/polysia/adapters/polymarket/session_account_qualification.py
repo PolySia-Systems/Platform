@@ -42,7 +42,11 @@ async def qualify_account(
     from polysia.adapters.polymarket.session_chain import CTFChainReader, ReadOnlyRPC
     from polysia.adapters.polymarket.session_composition import _Eligibility
     from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
-    from polysia.adapters.polymarket.session_sdk import confine_sdk_http, require_sdk_scope
+    from polysia.adapters.polymarket.session_sdk import (
+        confine_sdk_http,
+        require_sdk_scope,
+        rpc_auth_headers,
+    )
 
     if version("polymarket-client") != "0.13.0":
         raise SessionBlocked("read_only_SDK_contract_requires_reviewed_0_13_0")
@@ -66,6 +70,7 @@ async def qualify_account(
     )
     if prime_history and checkpoint is None:
         raise SessionBlocked("protected_RPC_checkpoint_required_for_bootstrap")
+    rpc_headers = rpc_auth_headers(config.rpc_bearer_token_reference)
     acquisition.initialize()
 
     def transport() -> httpx.AsyncBaseTransport:
@@ -94,12 +99,14 @@ async def qualify_account(
             raise SessionBlocked("read_only_credentials_or_identity_invalid") from None
         try:
             await confine_sdk_http(
-                client, transport, rpc_url=config.rpc_url, timeout=config.request_timeout_seconds
+                client, transport, rpc_url=config.rpc_url, timeout=config.request_timeout_seconds,
+                rpc_headers=rpc_headers,
             )
             chain = CTFChainReader(
                 ReadOnlyRPC(
                     http, config.rpc_url, log_block_span=config.rpc_log_block_span,
                     checkpoint=checkpoint,
+                    headers=rpc_headers,
                 ),
                 exchange=config.exchange,
                 ctf=config.ctf,
