@@ -108,7 +108,9 @@ quantity and price ceiling. The regular strategy and fresh qualified source
 still supply the candidate. The local owner adds "--owner-entry" explicitly to
 the installed "polysia ops session run" command after commissioning, using
 "--mode LIVE --live-enabled --owner-entry" with the signed config, authority and
-public trust registry. Leave it out for protective-only operation on an
+public trust registry. This foreground invocation follows the signed
+protective deadline instead of the ordinary tick count. Leave the option out
+for protective-only operation on an
 exact-entry session. Risk may deny the entry. A smaller Risk size, a price above
 the signed ceiling or any prior durable buy reservation blocks submission.
 Inspect the redacted session publication and the independent supervisor status

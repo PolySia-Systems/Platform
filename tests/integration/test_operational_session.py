@@ -54,6 +54,50 @@ from polysia.storage.financial_session import FinancialSessionJournal
 from tests.integration.test_financial_session import NOW, FakeExecution, authorization
 
 
+def test_owner_entry_runner_follows_the_protective_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime
+
+    from polysia.cli_commands import session as command
+
+    envelope = authorization(protective_until=NOW + timedelta(hours=1, seconds=1))
+    times = iter([NOW, NOW, NOW, envelope.protective_until])
+    calls: list[bool] = []
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(times)
+
+    class Session:
+        async def start(self):
+            return None
+
+        async def tick(self, *, owner_entry: bool):
+            calls.append(owner_entry)
+            return {"polls": len(calls)}
+
+        async def close(self):
+            calls.append(False)
+
+    async def compose(*args, **kwargs):
+        return Session()
+
+    async def sleep(seconds):
+        assert seconds <= 1
+
+    config = replace(runtime_config(tmp_path), exact_entry=ExactSessionEntry(D(5), D("0.50")))
+    monkeypatch.setattr(command, "datetime", Clock)
+    monkeypatch.setattr(command, "load_runtime_config", lambda _: config)
+    monkeypatch.setattr(command, "load_authority", lambda _: envelope)
+    monkeypatch.setattr(command, "compose_session", compose)
+    monkeypatch.setattr(command.asyncio, "sleep", sleep)
+    command.run(tmp_path / "config", tmp_path / "authority", mode=TradingMode.LIVE,
+                live_enabled=True, owner_entry=True)
+    assert calls == [True, True, False]
+
+
 def test_external_owner_receipt_round_trip_and_tamper_denial(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
