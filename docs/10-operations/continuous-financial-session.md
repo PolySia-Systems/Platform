@@ -111,6 +111,16 @@ ranges and charges every request to the active allowance. A range limit may be
 handled with smaller pages when the complete scan fits the allowance and timing
 limits. Missing archival access or a failed page blocks account qualification.
 
+For an account with substantial history, set `rpc_checkpoint_path` to a dedicated
+protected SQLite file and use `qualify-account --prime-history` during the bounded
+opening read. Bootstrap scans use the same allowance as the final observation.
+The final observation starts its normal freshness clock after priming. Later reads
+verify the stored finalized block hash and scan only the next contiguous range.
+CTF balances remain pinned to the new finalized block and are read in batches.
+Keep the checkpoint outside the financial, custody, witness and publication stores.
+Allow only one bootstrap or worker to write it at a time. An incomplete page or
+conflicting block hash blocks qualification. Retain the evidence on a conflict.
+
 ```powershell
 polysia ops session qualify-account --config C:\protected\session.json --scopes C:\protected\scopes.json --policy C:\protected\read-policy.json --allowance-store C:\readonly\allowance.sqlite3 --output C:\readonly\opening.json --read-account
 polysia ops session lab-init --config C:\shadow\lab.json --commands C:\control\commands.sqlite3

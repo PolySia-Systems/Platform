@@ -10,7 +10,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from typing import Any
 
@@ -28,6 +28,7 @@ async def qualify_account(
     *,
     read_account: bool,
     clock: Callable[[], datetime],
+    prime_history: bool = False,
 ) -> dict[str, Any]:
     if not read_account:
         return {"status": "DISABLED", "account_read": "NOT_PERFORMED", "network": "NOT_CONSTRUCTED"}
@@ -40,6 +41,7 @@ async def qualify_account(
     )
     from polysia.adapters.polymarket.session_chain import CTFChainReader, ReadOnlyRPC
     from polysia.adapters.polymarket.session_composition import _Eligibility
+    from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
     from polysia.adapters.polymarket.session_sdk import confine_sdk_http, require_sdk_scope
 
     if version("polymarket-client") != "0.13.0":
@@ -58,6 +60,12 @@ async def qualify_account(
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
     reconciliation_scope = config.reconciliation_scope(instruments)
     require_sdk_scope(config, reconciliation_scope)
+    checkpoint = (
+        FinalizedLogCheckpoint(config.rpc_checkpoint_path, config.rpc_url)
+        if config.rpc_checkpoint_path is not None else None
+    )
+    if prime_history and checkpoint is None:
+        raise SessionBlocked("protected_RPC_checkpoint_required_for_bootstrap")
     acquisition.initialize()
 
     def transport() -> httpx.AsyncBaseTransport:
@@ -89,7 +97,10 @@ async def qualify_account(
                 client, transport, rpc_url=config.rpc_url, timeout=config.request_timeout_seconds
             )
             chain = CTFChainReader(
-                ReadOnlyRPC(http, config.rpc_url, log_block_span=config.rpc_log_block_span),
+                ReadOnlyRPC(
+                    http, config.rpc_url, log_block_span=config.rpc_log_block_span,
+                    checkpoint=checkpoint,
+                ),
                 exchange=config.exchange,
                 ctf=config.ctf,
                 collateral=mapping.collateral,
@@ -103,6 +114,17 @@ async def qualify_account(
                 maximum_age_seconds=30,
                 clock=clock,
             )
+            if prime_history:
+                account.require_identity()
+                block = await chain.finalized()
+                await chain.fills(mapping.funder, block=block, observed_at=clock())
+                await chain.holdings(mapping.funder, block=block)
+                await chain.redemptions(
+                    mapping.funder, account_id=mapping.account_id,
+                    adapter=config.collateral_adapter, block=block,
+                    since=datetime.fromtimestamp(int(block["timestamp"], 16), UTC)
+                    + timedelta(seconds=1),
+                )
             observation = await account.observe(instruments[0])
             return {
                 "status": "READ_ONLY_OBSERVED",

@@ -157,12 +157,16 @@ def qualify_account_command(
     allowance_store: Annotated[Path, typer.Option()],
     output: Annotated[Path, typer.Option()],
     read_account: bool = False,
+    prime_history: bool = False,
 ) -> None:
     prepared = load_runtime_config(config)
     if (
         not allowance_store.is_absolute()
         or not output.is_absolute()
         or output.exists()
+        or (prepared.rpc_checkpoint_path is not None and (
+            prepared.rpc_checkpoint_path.resolve() in {allowance_store.resolve(), output.resolve()}
+        ))
         or any(
             allowance_store.resolve().is_relative_to(root.resolve())
             or output.resolve().is_relative_to(root.resolve())
@@ -191,6 +195,7 @@ def qualify_account_command(
                 AcquisitionAuthority(allowance_store, allowance),
                 read_account=read_account,
                 clock=lambda: datetime.now(UTC),
+                prime_history=prime_history,
             )
         )
         if read_account:

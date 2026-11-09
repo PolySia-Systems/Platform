@@ -18,9 +18,13 @@ async def qualify_account(
     *,
     read_account: bool,
     clock: Callable[[], datetime],
+    prime_history: bool = False,
 ) -> dict[str, Any]:
     if not read_account:
         return {"status": "DISABLED", "account_read": "NOT_PERFORMED", "network": "NOT_CONSTRUCTED"}
     from polysia.adapters.polymarket.session_account_qualification import qualify_account as read
 
-    return await read(config, instruments, acquisition, read_account=True, clock=clock)
+    return await read(
+        config, instruments, acquisition, read_account=True, clock=clock,
+        prime_history=prime_history,
+    )

@@ -182,6 +182,7 @@ def runtime_config(
         maximum_backup_age_seconds=60,
         checkpoint_handshake_seconds=2,
         tick_interval_seconds=1,
+        rpc_checkpoint_path=root / "checkpoint.sqlite3" if include_history else None,
         historical_instruments=(InstrumentScope(
             "0x" + "c" * 64, str(int(SESSION_TOKEN) + 1), mapping.collateral,
             mapping.settlement_route,
@@ -334,6 +335,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
     custody.release_stop(auth.fingerprint, expected=checkpoint)
     journal.close()
     requests = []
+    rpc_methods: list[str] = []
     observed_fill = {"enabled": False, "price": "0.5"}
 
     def wire(request: httpx.Request) -> httpx.Response:
@@ -376,6 +378,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         if request.url.host == "rpc.fixture":
             body = json.loads(request.content)
             method = body["method"]
+            rpc_methods.append(method)
             block = {
                 "number": "0x100",
                 "hash": "0x" + "f" * 64,
@@ -401,11 +404,19 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                 result = [log]
             if method == "eth_call":
                 data = body["params"][0]["data"]
-                result = (
-                    hex(98998766 if observed_fill["enabled"] else 100000000)
-                    if data.startswith("0x70a08231")
-                    else (hex(2000000) if observed_fill["enabled"] else "0x0")
-                )
+                if data.startswith("0x4e1273f4"):
+                    from eth_abi import decode, encode
+
+                    accounts, tokens = decode(["address[]", "uint256[]"], bytes.fromhex(data[10:]))
+                    assert set(accounts) == {funder.lower()}
+                    assert set(tokens) == {int(SESSION_TOKEN), int(historical.token)}
+                    result = "0x" + encode(["uint256[]"], [[0, 0]]).hex()
+                else:
+                    result = (
+                        hex(98998766 if observed_fill["enabled"] else 100000000)
+                        if data.startswith("0x70a08231")
+                        else (hex(2000000) if observed_fill["enabled"] else "0x0")
+                    )
             assert result is not None
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
         if request.url.path == "/balance-allowance":
@@ -534,6 +545,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             config, auth.instruments, allowance, read_account=False, clock=lambda: NOW
         )
         assert disabled["network"] == "NOT_CONSTRUCTED" and len(requests) == before
+        warm_start = len(rpc_methods)
         qualified = await qualify_account(
             config, auth.instruments, allowance, read_account=True, clock=lambda: NOW
         )
@@ -541,6 +553,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         assert qualified["financial_authority"] == "NOT_ISSUED"
         assert qualified["acquisition"]["requests_charged"] == len(requests) - before
         if historical is not None:
+            assert "eth_getLogs" not in rpc_methods[warm_start:]
+            assert rpc_methods[warm_start:].count("eth_call") == 2  # cash and one CTF batch
             missing_history = replace(config, historical_instruments=())
             with pytest.raises(SessionBlocked, match="trade_ownership_or_contribution_unknown"):
                 await qualify_account(

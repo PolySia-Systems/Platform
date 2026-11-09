@@ -83,6 +83,7 @@ class SessionRuntimeConfig:
     tick_interval_seconds: int
     historical_instruments: tuple[InstrumentScope, ...] = ()
     rpc_log_block_span: int | None = None
+    rpc_checkpoint_path: Path | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -147,6 +148,10 @@ class SessionRuntimeConfig:
             self.incident_path,
             self.capacity_evidence_path,
         ]
+        if self.rpc_checkpoint_path is not None:
+            paths.append(self.rpc_checkpoint_path)
+            if self.rpc_checkpoint_path.resolve().is_relative_to(self.witness_root.resolve()):
+                raise SessionBlocked("separate_RPC_checkpoint_required")
         if (
             any(
                 not path.is_absolute() or any(part.is_symlink() for part in (path, *path.parents))
@@ -180,6 +185,8 @@ class SessionRuntimeConfig:
             del value["historical_instruments"]
         if self.rpc_log_block_span is None:
             del value["rpc_log_block_span"]
+        if self.rpc_checkpoint_path is None:
+            del value["rpc_checkpoint_path"]
         for key, item in value.items():
             if isinstance(item, Path):
                 value[key] = str(item)
@@ -244,6 +251,8 @@ def capacity_workload(config: SessionRuntimeConfig) -> str:
     if config.historical_instruments or config.rpc_log_block_span is not None:
         workload["account_read_scope"] = [asdict(item) for item in config.historical_instruments]
         workload["rpc_log_block_span"] = config.rpc_log_block_span
+    if config.rpc_checkpoint_path is not None:
+        workload["durable_RPC_checkpoint"] = True
     return digest(workload)
 
 

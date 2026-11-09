@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import httpx
 
+from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
 from polysia.domain.financial_session import (
     InstrumentScope,
     ObservedRedemption,
@@ -84,12 +85,14 @@ class ReadOnlyRPC:
     )
 
     def __init__(
-        self, client: httpx.AsyncClient, url: str, *, log_block_span: int | None = None
+        self, client: httpx.AsyncClient, url: str, *, log_block_span: int | None = None,
+        checkpoint: FinalizedLogCheckpoint | None = None,
     ) -> None:
         if log_block_span is not None and (type(log_block_span) is not int or log_block_span <= 0):
             raise ValueError("log block span must be positive")
         self.client, self.url = client, url
         self.log_block_span = log_block_span
+        self.checkpoint = checkpoint
         self._sequence = 0
 
     async def call(self, method: str, params: list[object]) -> Any:
@@ -129,13 +132,28 @@ class ReadOnlyRPC:
             raise SessionBlocked("RPC_read_incomplete")
         return payload["result"]
 
-    async def logs(self, *, address: str, topics: list[object], through: str) -> list[Any]:
+    async def logs(
+        self, *, address: str, topics: list[object], through: str, block_hash: str | None = None
+    ) -> list[Any]:
         if not isinstance(through, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", through):
             raise SessionBlocked("RPC_finalized_log_boundary_invalid")
         end = int(through, 16)
         span = self.log_block_span or end + 1
-        logs = []
-        for first in range(0, end + 1, span):
+        key = digest((address, topics))
+        saved = self.checkpoint.get(key) if self.checkpoint is not None else None
+        start = 0
+        logs: list[Any] = []
+        if saved is not None:
+            height = saved["height"]
+            if height > end:
+                raise SessionBlocked("RPC_finalized_checkpoint_regressed")
+            anchor = await self.call("eth_getBlockByNumber", [hex(height), False])
+            if not isinstance(anchor, dict) or anchor.get("hash") != saved["hash"]:
+                raise SessionBlocked("RPC_finalized_checkpoint_conflict")
+            if height == end and anchor["hash"] != block_hash:
+                raise SessionBlocked("RPC_finalized_checkpoint_conflict")
+            start, logs = height + 1, list(saved["logs"])
+        for first in range(start, end + 1, span):
             last = min(first + span - 1, end)
             page = await self.call(
                 "eth_getLogs",
@@ -151,7 +169,28 @@ class ReadOnlyRPC:
             ):
                 raise SessionBlocked("RPC_log_page_incomplete_or_outside_range")
             logs.extend(page)
+            if self.checkpoint is not None and len(logs) > 20_000:
+                raise SessionBlocked("RPC_checkpoint_log_inventory_bound_exceeded")
+        if self.checkpoint is not None and start <= end:
+            anchor = await self.call("eth_getBlockByNumber", [through, False])
+            if not block_hash or not isinstance(anchor, dict) or anchor.get("hash") != block_hash:
+                raise SessionBlocked("RPC_finalized_checkpoint_conflict")
+            self.checkpoint.advance(key, saved, {"height": end, "hash": block_hash, "logs": logs})
         return logs
+
+    async def log_header(self, block: str, block_hash: str) -> Any:
+        key = "header:" + block_hash
+        saved = self.checkpoint.get(key) if self.checkpoint is not None else None
+        if saved is not None:
+            if saved.get("number") != block:
+                raise SessionBlocked("RPC_log_header_height_conflict")
+            return saved
+        header = await self.call("eth_getBlockByNumber", [block, False])
+        if not isinstance(header, dict) or header.get("hash") != block_hash:
+            raise SessionBlocked("chain_log_reorg")
+        if self.checkpoint is not None:
+            self.checkpoint.advance(key, None, header)
+        return header
 
 
 class CTFChainReader:
@@ -195,7 +234,7 @@ class CTFChainReader:
         wallet = address(wallet)
         if transaction is None:
             logs = await self.rpc.logs(
-                address=self.exchange, through=block["number"],
+                address=self.exchange, through=block["number"], block_hash=block["hash"],
                 topics=[ORDER_FILLED, None, topic_address(wallet)],
             )
         else:
@@ -230,8 +269,10 @@ class CTFChainReader:
                 raise SessionBlocked("chain_log_not_final")
             block_hash = log["blockHash"]
             if block_hash not in blocks:
-                blocks[block_hash] = await self.rpc.call(
-                    "eth_getBlockByNumber", [log["blockNumber"], False]
+                blocks[block_hash] = (
+                    await self.rpc.log_header(log["blockNumber"], block_hash)
+                    if transaction is None
+                    else await self.rpc.call("eth_getBlockByNumber", [log["blockNumber"], False])
                 )
             header = blocks[block_hash]
             if header.get("hash") != block_hash:
@@ -339,13 +380,31 @@ class CTFChainReader:
         block: Mapping[str, Any],
     ) -> tuple[ObservedRedemption, ...]:
         adapter = address(adapter)
+        query_topics: list[object] = [
+            [TRANSFER_SINGLE, TRANSFER_BATCH], None, topic_address(wallet),
+        ]
+        if self.rpc.checkpoint is None:
+            query_topics.append(topic_address(adapter))
+        else:
+            query_topics.append(None)
         logs = await self.rpc.logs(
-            address=self.ctf, through=block["number"],
-            topics=[[TRANSFER_SINGLE, TRANSFER_BATCH], None,
-                    topic_address(wallet), topic_address(adapter)],
+            address=self.ctf, through=block["number"], block_hash=block["hash"],
+            topics=query_topics,
         )
         results = []
-        for tx_id in sorted({row["transactionHash"] for row in logs}):
+        transactions: dict[str, tuple[str, str]] = {}
+        for row in logs:
+            if row["topics"][3].lower() != topic_address(adapter):
+                continue
+            tx_id = row["transactionHash"]
+            anchor = (row["blockNumber"], row["blockHash"])
+            if transactions.setdefault(tx_id, anchor) != anchor:
+                raise SessionBlocked("redemption_log_anchor_conflict")
+        for tx_id, (height, block_hash) in sorted(transactions.items()):
+            header = await self.rpc.log_header(height, block_hash)
+            occurred = datetime.fromtimestamp(int(header["timestamp"], 16), UTC)
+            if occurred < since:
+                continue
             receipt = await self.rpc.call("eth_getTransactionReceipt", [tx_id])
             if (
                 not isinstance(receipt, dict)
@@ -354,11 +413,7 @@ class CTFChainReader:
                 or int(receipt["blockNumber"], 16) > int(block["number"], 16)
             ):
                 raise SessionBlocked("redemption_finality_incomplete")
-            header = await self.rpc.call("eth_getBlockByNumber", [receipt["blockNumber"], False])
-            occurred = datetime.fromtimestamp(int(header["timestamp"], 16), UTC)
-            if occurred < since:
-                continue
-            if header["hash"] != receipt["blockHash"]:
+            if receipt["blockNumber"] != height or receipt["blockHash"] != block_hash:
                 raise SessionBlocked("redemption_reorg")
             transaction = await self.rpc.call("eth_getTransactionByHash", [tx_id])
             data = transaction.get("input", "")
@@ -430,6 +485,30 @@ class CTFChainReader:
         )
         return Decimal(int(raw, 16)) / UNIT
 
+    async def _token_balances(
+        self, wallet: str, tokens: list[str], *, block: Mapping[str, Any]
+    ) -> list[Decimal]:
+        if self.rpc.checkpoint is None:
+            return [await self.token_balance(wallet, token, block=block) for token in tokens]
+        quantities: list[Decimal] = []
+        wallet_word = topic_address(wallet)[2:]
+        for start in range(0, len(tokens), 128):
+            page = tokens[start:start + 128]
+            count = len(page)
+            data = (
+                "0x4e1273f4" + f"{64:064x}{(count + 3) * 32:064x}{count:064x}"
+                + wallet_word * count + f"{count:064x}"
+                + "".join(f"{int(token):064x}" for token in page)
+            )
+            result = words(await self.rpc.call("eth_call", [
+                {"to": self.ctf, "data": data},
+                {"blockHash": block["hash"], "requireCanonical": True},
+            ]))
+            if len(result) != count + 2 or result[:2] != (32, count):
+                raise SessionBlocked("RPC_CTF_balance_batch_incomplete")
+            quantities.extend(Decimal(value) / UNIT for value in result[2:])
+        return quantities
+
     async def holdings(
         self, wallet: str, *, block: Mapping[str, Any]
     ) -> tuple[tuple[str, Decimal], ...]:
@@ -442,7 +521,9 @@ class CTFChainReader:
         for position in (2, 3):
             topics: list[object] = [[TRANSFER_SINGLE, TRANSFER_BATCH], None, None, None]
             topics[position] = topic_address(wallet)
-            logs = await self.rpc.logs(address=self.ctf, topics=topics, through=block["number"])
+            logs = await self.rpc.logs(
+                address=self.ctf, topics=topics, through=block["number"], block_hash=block["hash"]
+            )
             for log in logs:
                 if (
                     log.get("removed") is not False
@@ -452,16 +533,9 @@ class CTFChainReader:
                     raise SessionBlocked("account_token_transfer_not_final")
                 tokens.update(token for token, _ in transfer_deltas(log, wallet))
         result = []
-        for token in sorted(tokens):
-            data = "0x00fdd58e" + topic_address(wallet)[2:] + f"{int(token):064x}"
-            raw = await self.rpc.call(
-                "eth_call",
-                [
-                    {"to": self.ctf, "data": data},
-                    {"blockHash": block["hash"], "requireCanonical": True},
-                ],
-            )
-            quantity = Decimal(int(raw, 16)) / UNIT
+        ordered = sorted(tokens)
+        quantities = await self._token_balances(wallet, ordered, block=block)
+        for token, quantity in zip(ordered, quantities, strict=True):
             if quantity:
                 if token not in self.instruments:
                     raise SessionBlocked("unmapped_external_account_inventory")

@@ -951,7 +951,15 @@ async def create_live_session(
             rpc_url=config.rpc_url,
             timeout=config.request_timeout_seconds,
         )
-        chain_rpc = ReadOnlyRPC(http, config.rpc_url, log_block_span=config.rpc_log_block_span)
+        from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
+
+        checkpoint = (
+            FinalizedLogCheckpoint(config.rpc_checkpoint_path, config.rpc_url)
+            if config.rpc_checkpoint_path is not None else None
+        )
+        chain_rpc = ReadOnlyRPC(
+            http, config.rpc_url, log_block_span=config.rpc_log_block_span, checkpoint=checkpoint
+        )
         chain = CTFChainReader(
             chain_rpc,
             exchange=config.exchange,
@@ -1060,7 +1068,7 @@ async def create_live_session(
             CorroboratedSessionSource(
                 SessionPublicJSON(http),
                 CTFChainReader(
-                    chain_rpc, exchange=config.exchange, ctf=config.ctf,
+                    ReadOnlyRPC(http, config.rpc_url), exchange=config.exchange, ctf=config.ctf,
                     collateral=mapping.collateral,
                     instruments=authority.instruments,
                 ),
