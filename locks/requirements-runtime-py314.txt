@@ -35,8 +35,8 @@ parsimonious==0.10.0
 polymarket-client==0.13.0
 pycparser==3.11
 pycryptodome==3.23.0
-pydantic==2.14.1
-pydantic-core==2.50.1
+pydantic==2.14.3
+pydantic-core==2.50.4
 pydantic-settings==2.15.0
 pygments==2.21.0
 pyjwt==2.15.1
