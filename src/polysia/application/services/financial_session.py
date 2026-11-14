@@ -111,6 +111,9 @@ class FinancialSessionCoordinator:
             raise SessionBlocked("active_copy_policy_binding_mismatch")
         self.copy_policy = copy_policy
         self.exact_entry = exact_entry
+        self.evidence_scope = journal.read()["opening"].get("scope", "ACCOUNT")
+        if self.evidence_scope == "ORDER_LIFECYCLE_API" and exact_entry is None:
+            raise SessionBlocked("API_lifecycle_requires_exact_entry")
 
     @property
     def authority(self) -> SessionAuthorization:
@@ -180,6 +183,7 @@ class FinancialSessionCoordinator:
             self.binding.account,
             now=self.clock(),
             max_age=self.authority.max_evidence_age_seconds,
+            scope=self.evidence_scope,
         )
         matched = False
 
@@ -203,8 +207,10 @@ class FinancialSessionCoordinator:
 
     def observe_redemption(self, event: ObservedRedemption, account: AccountObservation) -> None:
         """Trusted adapter recognition; this method has no venue-mutation port."""
-        account.require_complete(self.binding.account, now=self.clock(),
-                                 max_age=self.authority.max_evidence_age_seconds)
+        account.require_complete(
+            self.binding.account, now=self.clock(),
+            max_age=self.authority.max_evidence_age_seconds, scope=self.evidence_scope,
+        )
         if (event.account != self.binding.account or event.collateral not in {
             item.collateral for item in self.authority.instruments
         } or event.occurred_at > self.clock()):
@@ -310,7 +316,11 @@ class FinancialSessionCoordinator:
             and not state["quarantined_fills"]
             and not state["quarantined_finality"]
             and not state.get("quarantined_cash_events")
-            and ledger.cash == observation.cash
+            and observation.scope == self.evidence_scope
+            and (
+                self.evidence_scope == "ORDER_LIFECYCLE_API"
+                or ledger.cash == observation.cash
+            )
             and expected_positions == actual_positions
             and expected_open == observation.open_order_ids
             and Decimal(state["opening"]["cumulative_fees"]) + ledger.fees
@@ -606,6 +616,37 @@ class FinancialSessionCoordinator:
         ):
             raise SessionBlocked("uncertain_submission_requires_reconciliation")
 
+    def _claim_exact_mutation(
+        self, state: dict[str, Any], identity: str, *, side: str, cancellation: bool,
+    ) -> None:
+        if self.exact_entry is None:
+            return
+        # Reconstruct prior exact-entry sessions conservatively. Older records
+        # cannot prove that CANCEL_PENDING originated from a read rather than a
+        # cancel call, so that slot remains consumed after upgrade or recovery.
+        slots = dict(state.get("exact_mutation_slots", {}))
+        for previous, row in state["orders"].items():
+            entry = "ENTRY" if row["side"] == "BUY" else "EXIT"
+            if slots.setdefault(entry, previous) != previous:
+                raise SessionBlocked("prior_exact_session_has_multiple_order_cycles")
+            if "CANCEL_PENDING" in row["timeline"]:
+                name = "CANCEL_" + entry
+                if slots.setdefault(name, previous) != previous:
+                    raise SessionBlocked("prior_exact_session_has_multiple_cancellations")
+        action = "ENTRY" if side == "BUY" else "EXIT"
+        if cancellation:
+            action = "CANCEL_" + action
+        if action in slots:
+            raise SessionBlocked("exact_mutation_slot_already_consumed")
+        if len(slots) >= min(4, self.authority.max_attempts):
+            raise SessionBlocked("exact_mutation_budget_exhausted")
+        if action == "ENTRY" and slots:
+            raise SessionBlocked("exact_entry_cycle_already_started")
+        if action == "EXIT" and "ENTRY" not in slots:
+            raise SessionBlocked("exact_exit_requires_run_entry")
+        slots[action] = identity
+        state["exact_mutation_slots"] = slots
+
     def _reserve(
         self, identity: str, opportunity: SessionOpportunity, approved: ApprovedSessionLimit
     ) -> None:
@@ -643,7 +684,15 @@ class FinancialSessionCoordinator:
                 reserved = sum((Decimal(o["reservation"]) for o in active), ZERO)
                 position_cost = sum((p.size * p.avg_price for p in ledger.positions.values()), ZERO)
                 exposure = position_cost + reserved + all_in
-                if exposure > self.authority.max_open_exposure or ledger.cash - reserved < all_in:
+                available_cash = ledger.cash
+                if self.evidence_scope == "ORDER_LIFECYCLE_API":
+                    available_cash = min(
+                        available_cash, Decimal(state["last_account"]["cash"]),
+                    )
+                if (
+                    exposure > self.authority.max_open_exposure
+                    or available_cash - reserved < all_in
+                ):
                     raise SessionBlocked("aggregate_exposure_or_cash_limit")
                 # Worst-case held capital also consumes loss authority; absent marks
                 # cannot conceal losses or reset a budget at midnight.
@@ -746,6 +795,9 @@ class FinancialSessionCoordinator:
                 )
                 if shares + reserved_shares > ledger.get(opportunity.event.instrument.token).size:
                     raise SessionBlocked("exit_exceeds_unreserved_holdings")
+            self._claim_exact_mutation(
+                state, identity, side=approved.request.side, cancellation=False,
+            )
             state["orders"][identity] = {
                 "state": "RESERVED",
                 "order_id": None,
@@ -853,6 +905,10 @@ class FinancialSessionCoordinator:
                 if any(o["order_id"] == order_id for o in state["orders"].values()):
                     raise SessionBlocked("duplicate_venue_order_identity")
                 row["order_id"] = order_id
+            if target == "CANCEL_PENDING" and action == "CANCEL":
+                self._claim_exact_mutation(
+                    state, identity, side=row["side"], cancellation=True,
+                )
             row["state"] = target
             row["timeline"][target] = self.clock()
             if target == "CANCEL_PENDING":
@@ -959,6 +1015,7 @@ class FinancialSessionCoordinator:
                 self.binding.account,
                 now=self.clock(),
                 max_age=self.authority.max_evidence_age_seconds,
+                scope=self.evidence_scope,
             )
         except SessionBlocked:
 

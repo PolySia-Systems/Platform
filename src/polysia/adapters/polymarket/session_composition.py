@@ -214,7 +214,7 @@ class _CancellationReader:
     def __init__(
         self,
         adapter: PolymarketSecureAdapter,
-        account: ExactSessionAccountReader,
+        account: Any,
         network: SessionNetwork,
     ) -> None:
         self.adapter, self.account, self.network = adapter, account, network
@@ -253,6 +253,29 @@ class _CancellationReader:
             return await self.account.chain.token_balance(
                 self.account.mapping.funder, token_id, block=block
             )
+
+
+class _APICancellationReader(_CancellationReader):
+    async def observe_order_trades(self, *, order_id: str, token_id: str) -> Any:
+        with self.network.action("CANCELLATION_READ"):
+            await self.account.observe(self.account.instrument)
+            return tuple(
+                OrderTradeEvidence(
+                    digest((fill["trade_id"], order_id)), order_id, token_id,
+                    "CONFIRMED", fill["shares"], fill["price"],
+                )
+                for fill in self.account.last_evidence["confirmed_fills"]
+                if fill["order_id"] == order_id and token_id == self.account.instrument.token
+            )
+
+    async def observe_position_size(self, *, token_id: str) -> Decimal:
+        with self.network.action("CANCELLATION_READ"):
+            if token_id != self.account.instrument.token:
+                raise SessionBlocked("API_cancellation_token_mismatch")
+            value = await self.account.reader.client.get_balance_allowance(
+                asset_type="CONDITIONAL", asset_id=token_id,
+            )
+            return Decimal(value.balance) / Decimal(1_000_000)
 
 
 class _Eligibility:
@@ -405,6 +428,10 @@ class OperationalSession:
                     await self.coordinator.cancel(identity)
 
     def _confirmed(self, identity: str, row: dict[str, Any]) -> tuple[ConfirmedSessionFill, ...]:
+        from polysia.adapters.polymarket.order_lifecycle_account import OrderLifecycleSessionAccount
+
+        if isinstance(self.account, OrderLifecycleSessionAccount):
+            return self.account.confirmed(identity, row)
         return tuple(
             ConfirmedSessionFill(
                 fill.occurrence.identity,
@@ -473,6 +500,10 @@ class OperationalSession:
         return self.publish()
 
     async def _source_entries(self, *, allow_entry: bool) -> None:
+        if self.config.opening.scope == "ORDER_LIFECYCLE_API":
+            if allow_entry:
+                raise SessionBlocked("API_lifecycle_owner_intent_entrypoint_pending")
+            return
         coordinator = self.coordinator
         now = self.clock()
         start = max(
@@ -817,7 +848,11 @@ class OperationalSession:
             ),
             "active_account": {
                 "identity": self.coordinator.binding.account,
-                "status": "VERIFIED" if state["reconciliation_ok"] else "UNKNOWN",
+                "status": (
+                    "SCOPED_API" if self.config.opening.scope == "ORDER_LIFECYCLE_API"
+                    and state["reconciliation_ok"]
+                    else "VERIFIED" if state["reconciliation_ok"] else "UNKNOWN"
+                ),
                 "observed_at": state["reconciled_at"],
             },
             "copy_policy": {
@@ -982,7 +1017,7 @@ async def create_live_session(
             collateral=mapping.collateral,
             instruments=reconciliation_scope,
         )
-        account = ExactSessionAccountReader(
+        account: Any = ExactSessionAccountReader(
             client,
             chain,
             mapping,
@@ -993,6 +1028,19 @@ async def create_live_session(
             collateral_adapter=config.collateral_adapter,
             recognition_since=authority.starts_at,
         )
+        if config.opening.scope == "ORDER_LIFECYCLE_API":
+            from polysia.adapters.polymarket.order_lifecycle_account import (
+                OrderLifecycleAccountReader,
+                OrderLifecycleSessionAccount,
+            )
+
+            account = OrderLifecycleSessionAccount(
+                OrderLifecycleAccountReader(
+                    client, mapping, maximum_pages=config.maximum_pages, clock=clock,
+                    maximum_age_seconds=authority.max_evidence_age_seconds,
+                ),
+                journal, authority.instruments[0], exchange=config.exchange, http=http,
+            )
         account.require_identity()
         eligibility = _Eligibility(http, clock)
 
@@ -1097,7 +1145,11 @@ async def create_live_session(
             custody,
             clock,
         )
-        session.cancellation_evidence = _CancellationReader(adapter, account, network)
+        session.cancellation_evidence = (
+            _APICancellationReader(adapter, account, network)
+            if config.opening.scope == "ORDER_LIFECYCLE_API"
+            else _CancellationReader(adapter, account, network)
+        )
         session.capacity_evidence = capacity_record
         session.capacity_verified = True
         return session

@@ -11,7 +11,14 @@ from typing import Any
 from polymarket.errors import RequestRejectedError
 
 from polysia.adapters.polymarket.session_account import ClobSessionReads, ExactAccountMapping, field
-from polysia.domain.financial_session import InstrumentScope, SessionBlocked
+from polysia.domain.financial_session import (
+    AccountObservation,
+    ConfirmedSessionFill,
+    InstrumentScope,
+    SessionBlocked,
+    digest,
+)
+from polysia.storage.financial_session import FinancialSessionJournal
 
 TERMINAL_TRADE = frozenset({"CONFIRMED", "FAILED"})
 PENDING_TRADE = frozenset({"MATCHED", "MATCHED_NOT_BROADCASTED", "MINED", "RETRYING"})
@@ -204,6 +211,7 @@ class OrderLifecycleAccountReader(ClobSessionReads):
             "pending_trade_visibility": "AUTHENTICATED_CREDENTIAL",
             "observed_at": finished,
             "collateral_balance": cash,
+            "collateral_allowance": allowance,
             "usable_collateral": (
                 min(cash, allowance) if allowance is not None and not open_orders and not pending
                 else None
@@ -280,3 +288,82 @@ class OrderLifecycleAccountReader(ClobSessionReads):
                     "fee": Decimal(0) if explicit_zero_fee else None,
                 })
         return fills, pending
+
+
+class OrderLifecycleSessionAccount:
+    """Project only the frozen instrument and run-owned orders into session accounting."""
+
+    def __init__(
+        self, reader: OrderLifecycleAccountReader, journal: FinancialSessionJournal,
+        instrument: InstrumentScope, *, exchange: str, http: Any,
+    ) -> None:
+        self.reader, self.journal, self.instrument = reader, journal, instrument
+        self.exchange, self.http = exchange, http
+        self.last_observation: AccountObservation | None = None
+        self.last_redemptions: tuple[Any, ...] = ()
+        self.last_evidence: dict[str, Any] = {}
+        self.mapping, self.clock = reader.mapping, reader.clock
+
+    def require_identity(self) -> None:
+        self.reader.require_identity()
+
+    async def observe(self, instrument: InstrumentScope) -> AccountObservation:
+        if instrument != self.instrument:
+            raise SessionBlocked("API_lifecycle_instrument_changed")
+        state = self.journal.read()
+        if state["opening"].get("scope") != "ORDER_LIFECYCLE_API":
+            raise SessionBlocked("API_lifecycle_requires_signed_scoped_opening")
+        rows = state["orders"]
+        tracked = {row["order_id"]: row["side"] for row in rows.values() if row["order_id"]}
+        market = await self.http.get(
+            "https://clob.polymarket.com/clob-markets/" + instrument.market,
+        )
+        gamma = await self.http.get(
+            "https://gamma-api.polymarket.com/markets", params={"condition_ids": instrument.market},
+        )
+        rate = await self.http.get(
+            "https://clob.polymarket.com/fee-rate", params={"token_id": instrument.token},
+        )
+        for response in (market, gamma, rate):
+            response.raise_for_status()
+        market_body = json.loads(market.content, parse_float=Decimal)
+        if market_body.get("c") != instrument.market or not explicit_zero_fee_market(
+            market_body, instrument.token, gamma=gamma.json(), fee_rate=rate.json(),
+        ):
+            raise SessionBlocked("API_lifecycle_requires_fresh_explicit_zero_fee_market")
+        evidence = await self.reader.observe(
+            instrument, exchange=self.exchange, tracked=tracked, explicit_zero_fee=True,
+        )
+        if evidence["untracked_open_order_ids"] or evidence["pending_trade_ids"]:
+            raise SessionBlocked("API_lifecycle_unowned_order_or_pending_trade")
+        fees = evidence["confirmed_run_fees"]
+        allowance = evidence["collateral_allowance"]
+        if allowance is None:
+            raise SessionBlocked("API_lifecycle_exchange_allowance_unknown")
+        if fees is None:
+            raise SessionBlocked("API_lifecycle_charged_fees_unknown")
+        # Cash remains a spending observation only. Run P&L is reconstructed from
+        # the journal's owned fills and is never inferred from this cash balance.
+        positions = ((instrument.token, evidence["tested_token_balance"]),) if (
+            evidence["tested_token_balance"]
+        ) else ()
+        self.last_evidence = evidence
+        observation = AccountObservation(
+            self.mapping.account_id, evidence["observed_at"],
+            min(evidence["collateral_balance"], allowance), positions,
+            frozenset(evidence["open_order_ids"]), fees, True, digest(evidence),
+            scope="ORDER_LIFECYCLE_API",
+        )
+        self.last_observation = observation
+        return observation
+
+    def confirmed(self, identity: str, row: dict[str, Any]) -> tuple[ConfirmedSessionFill, ...]:
+        return tuple(
+            ConfirmedSessionFill(
+                digest((fill["trade_id"], fill["order_id"])), identity, fill["order_id"],
+                self.instrument.token, fill["side"], fill["price"], fill["shares"], fill["fee"],
+                fill["matched_at"], fill["notional"],
+            )
+            for fill in self.last_evidence.get("confirmed_fills", ())
+            if fill["order_id"] == row["order_id"]
+        )

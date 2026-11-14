@@ -192,6 +192,8 @@ class SessionRuntimeConfig:
     @property
     def fingerprint(self) -> str:
         value = asdict(self)
+        if self.opening.scope == "ACCOUNT":
+            del value["opening"]["scope"]
         if not self.historical_instruments:
             del value["historical_instruments"]
         if self.rpc_log_block_span is None:
@@ -308,6 +310,19 @@ def binding_for(config: SessionRuntimeConfig) -> RuntimeBinding:
 
 
 def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAuthorization) -> None:
+    if config.opening.scope == "ORDER_LIFECYCLE_API" and (
+        config.exact_entry is None
+        or config.exact_entry.shares != Decimal(5)
+        or config.exact_entry.price_ceiling > Decimal("0.50")
+        or len(authority.instruments) != 1
+        or authority.max_attempts > 4
+        or authority.max_total_loss > Decimal("2.675")
+        or authority.max_order_all_in > Decimal("2.675")
+        or authority.fee_rate != 0
+        or config.opening.positions
+        or config.opening.cumulative_fees
+    ):
+        raise SessionBlocked("API_lifecycle_run_contract_exceeds_OP1_scope")
     reconciliation = {
         item.token: item for item in config.reconciliation_scope(authority.instruments)
     }
@@ -393,11 +408,12 @@ def provision_session(
     validate_runtime_binding(config, authority)
     receipt = verifier.verify(authority, binding_for(config), now=now)
     config.opening.require_complete(
-        authority.binding.account, now=now, max_age=authority.max_evidence_age_seconds
+        authority.binding.account, now=now, max_age=authority.max_evidence_age_seconds,
+        scope=config.opening.scope,
     )
     custody.claim(receipt, authority)
     journal = FinancialSessionJournal(config.financial_path, config.witness_root, authority)
-    journal.provision(config.opening)
+    journal.provision(config.opening, scope=config.opening.scope)
     ConsoleCommandStore(config.commands_path).initialize()
 
 

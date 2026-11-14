@@ -480,9 +480,15 @@ class AccountObservation:
     complete: bool
     evidence_id: str
 
-    def require_complete(self, account: str, *, now: datetime, max_age: int) -> None:
+    scope: str = "ACCOUNT"
+
+    def require_complete(
+        self, account: str, *, now: datetime, max_age: int, scope: str = "ACCOUNT",
+    ) -> None:
         if (
-            self.account != account
+            scope not in {"ACCOUNT", "ORDER_LIFECYCLE_API"}
+            or self.scope != scope
+            or self.account != account
             or self.complete is not True
             or not self.evidence_id
             or self.cash is None

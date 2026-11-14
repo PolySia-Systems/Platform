@@ -147,9 +147,25 @@ with explicit official market evidence. An unpriced fee leaves run fees and
 P&L unknown. A reported round-trip P&L uses only the confirmed run fills and
 requires a flat run inventory and verified order terminal evidence.
 
-This diagnostic is independent of the continuous Live composition. The
-existing Live session still requires its full-account evidence contract.
-Do not feed the scoped report to provision or treat it as approval to trade.
+The observation carrier records its evidence scope. The default remains
+ACCOUNT. A scoped journal must be provisioned explicitly with an
+ORDER_LIFECYCLE_API opening and its signed configuration. Its selected-token
+opening and run fees start at zero; complete wallet inventory remains
+unassessed. A default full-account provision rejects this observation.
+The API session adapter requires fresh explicit zero-fee evidence and compares
+the tested token's current balance and owned fills. Current collateral and
+allowance constrain available spending. Cash changes never enter test P&L.
+
+Exact-entry sessions durably consume one ENTRY, CANCEL_ENTRY, EXIT and
+CANCEL_EXIT slot. A reserved or uncertain submission consumes its slot.
+Restart and older-state migration preserve consumed slots conservatively.
+The reporting counter includes cancellation slots.
+
+The owner-intent source and commissioning packet remain pending in this
+engineering milestone. The API composition rejects source-driven entries before
+any source network request. Protective-only work retains the same independent
+controls. The scoped diagnostic alone is insufficient to start a financial
+session. No owner trading invocation is ready in this revision.
 
 The optional `historical_instruments` configuration adds account reconciliation
 scope. Bind each observed token to its exact supported condition, collateral and

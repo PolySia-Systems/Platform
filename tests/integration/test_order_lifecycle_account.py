@@ -4,11 +4,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from polymarket.errors import RequestRejectedError
 
 from polysia.adapters.polymarket.order_lifecycle_account import (
     OrderLifecycleAccountReader,
+    OrderLifecycleSessionAccount,
     explicit_zero_fee_market,
 )
 from polysia.domain.financial_session import InstrumentScope, SessionBlocked
@@ -152,3 +154,50 @@ def test_missing_fee_curve_needs_matching_gamma_market_and_explicit_zero_base_fe
     assert explicit_zero_fee_market(market, "123", gamma=gamma, fee_rate={"base_fee": 0})
     assert not explicit_zero_fee_market(market, "123", gamma=gamma, fee_rate={"base_fee": False})
     assert not explicit_zero_fee_market(market, "456", gamma=gamma, fee_rate={"base_fee": 0})
+
+
+async def test_session_adapter_projects_API_scope_and_exact_owned_fill_only():
+    mapping = SimpleNamespace(
+        account_id="account", signer=WALLET, funder=WALLET, collateral=COLLATERAL,
+        signature_type=3, settlement_route=INSTRUMENT.settlement_route,
+    )
+    client = Client(trades=[fill("buy", "BUY")], details={"buy": detail("buy", "BUY")})
+    reader = OrderLifecycleAccountReader(client, mapping, maximum_pages=2, clock=lambda: NOW)
+    row = {"order_id": "buy", "side": "BUY"}
+    journal = SimpleNamespace(read=lambda: {
+        "opening": {"scope": "ORDER_LIFECYCLE_API"}, "orders": {"intent": row},
+    })
+
+    def respond(request):
+        if request.url.path.startswith("/clob-markets/"):
+            value = {"c": "market", "t": [{"t": "123"}], "fd": {"r": "0", "to": True}}
+        elif request.url.host == "gamma-api.polymarket.com":
+            value = []
+        else:
+            value = {"base_fee": 0}
+        return httpx.Response(200, json=value)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        account = OrderLifecycleSessionAccount(
+            reader, journal, INSTRUMENT, exchange=EXCHANGE, http=http,
+        )
+        observation = await account.observe(INSTRUMENT)
+        observation.require_complete("account", now=NOW, max_age=30, scope="ORDER_LIFECYCLE_API")
+        with pytest.raises(SessionBlocked, match="account_evidence_incomplete"):
+            observation.require_complete("account", now=NOW, max_age=30)
+        assert observation.cash == Decimal("2.7")
+        assert observation.positions == (("123", Decimal(2)),)
+        confirmed = account.confirmed("intent", row)
+        assert len(confirmed) == 1
+        assert confirmed[0].shares == 2 and confirmed[0].fee == 0
+
+
+async def test_API_session_cannot_fall_back_to_chain_source_entries():
+    from polysia.adapters.polymarket.session_composition import OperationalSession
+
+    session = SimpleNamespace(
+        config=SimpleNamespace(opening=SimpleNamespace(scope="ORDER_LIFECYCLE_API")),
+    )
+    await OperationalSession._source_entries(session, allow_entry=False)
+    with pytest.raises(SessionBlocked, match="owner_intent_entrypoint_pending"):
+        await OperationalSession._source_entries(session, allow_entry=True)
