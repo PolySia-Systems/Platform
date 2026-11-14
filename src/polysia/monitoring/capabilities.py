@@ -128,10 +128,15 @@ def capability_projection(
     *,
     now: datetime,
     enabled: Mapping[str, bool],
+    profile: Literal["ACCOUNT", "ORDER_LIFECYCLE_API"] = "ACCOUNT",
 ) -> dict[str, object]:
     utc(now)
     result = []
     for capability, (required, optional) in CAPABILITIES.items():
+        if profile == "ORDER_LIFECYCLE_API" and capability == "new_entries":
+            # Explicit owner-request test, not source-following alpha execution.
+            # All independent financial controls remain required.
+            required = tuple(name for name in required if name not in {"source", "qualification"})
         states = {
             name: evidence[name].current_state(now) if name in evidence else "MISSING"
             for name in required + optional
@@ -167,6 +172,7 @@ def capability_projection(
         )
     return {
         "version": CATALOG_VERSION,
+        "profile": profile,
         "observed_at": now.isoformat(),
         "catalog": [asdict(item) for item in REQUIREMENTS],
         "capabilities": result,

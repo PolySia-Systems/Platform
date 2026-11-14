@@ -18,6 +18,10 @@ class SessionBlocked(RuntimeError):
     """Stable, non-sensitive reason for denying a session operation."""
 
 
+class SessionRateDeferred(SessionBlocked):
+    """No wire invocation admitted; retain charges and wait for the fixed window."""
+
+
 def utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise SessionBlocked("clock_not_UTC")
@@ -363,8 +367,35 @@ class PositionTrigger:
 
 
 @dataclass(frozen=True, slots=True)
+class OwnerTestIntent:
+    """Explicit operator test request, never a leader fill or alpha estimate."""
+
+    run_id: str
+    configuration: str
+    wallet: str
+    instrument: InstrumentScope
+    occurred_at: datetime
+    observed_at: datetime
+    ingested_at: datetime
+    source_key: str
+    side: OrderSide = "BUY"
+    source: str = "owner-test-command"
+    schema: str = "owner-test-intent/v1"
+    complete: bool = True
+    finalized: bool = True
+    leader_price: Decimal | None = None
+
+    @property
+    def identity(self) -> str:
+        if not self.run_id or not self.configuration or self.side != "BUY":
+            raise SessionBlocked("invalid_owner_test_identity")
+        # One command identity across quotes, repeated clicks and restarts.
+        return digest((self.schema, self.run_id, self.configuration))
+
+
+@dataclass(frozen=True, slots=True)
 class SessionOpportunity:
-    event: SourceOccurrence | PositionTrigger
+    event: SourceOccurrence | PositionTrigger | OwnerTestIntent
     strategy: str
     exit_policy: str
     price: Decimal
@@ -390,7 +421,9 @@ class SessionOpportunity:
     def evidence_digest(self) -> str:
         return digest(asdict(self))
 
-    def validate(self, authority: SessionAuthorization, *, now: datetime) -> Decimal:
+    def validate(
+        self, authority: SessionAuthorization, *, now: datetime, scope: str = "ACCOUNT",
+    ) -> Decimal | None:
         event = self.event
         _ = event.identity
         if self.policy_digest is not None and self.policy_digest != authority.binding.policy:
@@ -401,7 +434,12 @@ class SessionOpportunity:
             or event.policy_digest != authority.binding.policy
         ):
             raise SessionBlocked("position_trigger_policy_binding_mismatch")
-        if event.side == "BUY" and not (self.cohort_digest and self.qualification_evidence_id):
+        owner_test = isinstance(event, OwnerTestIntent)
+        if scope == "ORDER_LIFECYCLE_API" and event.side == "BUY" and not owner_test:
+            raise SessionBlocked("API_test_requires_owner_intent")
+        if event.side == "BUY" and not owner_test and not (
+            self.cohort_digest and self.qualification_evidence_id
+        ):
             raise SessionBlocked("frozen_cohort_qualification_required")
         if event.wallet not in authority.wallets or event.instrument not in authority.instruments:
             raise SessionBlocked("opportunity_outside_scope")
@@ -432,6 +470,31 @@ class SessionOpportunity:
             raise SessionBlocked("invalid_size_price_or_dust")
         if min(self.entry_depth, self.exit_depth) < self.shares:
             raise SessionBlocked("insufficient_entry_or_exit_liquidity")
+        if isinstance(event, OwnerTestIntent):
+            if (
+                scope != "ORDER_LIFECYCLE_API"
+                or event.run_id != authority.run_id
+                or event.configuration != authority.binding.configuration
+                or event.wallet != "owner-test"
+                or self.policy_digest != authority.binding.policy
+                or authority.wallets != frozenset({"owner-test"})
+                or self.shares != Decimal(5)
+                or self.price > Decimal("0.50")
+                or authority.max_total_loss > Decimal("2.675")
+                or authority.max_attempts > 4
+                or authority.fee_rate != ZERO
+                or self.cost_per_share != ZERO
+                or self.fair_price is not None
+                or self.uncertainty is not None
+                or self.cohort_digest is not None
+                or self.qualification_evidence_id is not None
+                or event.source != "owner-test-command"
+                or event.schema != "owner-test-intent/v1"
+            ):
+                raise SessionBlocked("owner_test_requires_exact_API_contract")
+            # No claim of profitable edge. Risk receives unknown edge and can
+            # still reject it if the signed Risk limits require an estimate.
+            return None
         if any(value is None for value in (self.fair_price, self.uncertainty, self.cost_per_share)):
             raise SessionBlocked("edge_or_cost_unknown")
         assert self.fair_price is not None
@@ -461,12 +524,15 @@ class SessionOpportunity:
 class ExactSessionEntry:
     shares: Decimal
     price_ceiling: Decimal
+    order_expires_at: datetime | None = None
 
     def __post_init__(self) -> None:
         decimal_value(self.shares)
         decimal_value(self.price_ceiling)
         if self.shares <= ZERO or not ZERO < self.price_ceiling < 1:
             raise SessionBlocked("invalid_exact_entry_bounds")
+        if self.order_expires_at is not None:
+            utc(self.order_expires_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,9 +546,15 @@ class AccountObservation:
     complete: bool
     evidence_id: str
 
-    def require_complete(self, account: str, *, now: datetime, max_age: int) -> None:
+    scope: str = "ACCOUNT"
+
+    def require_complete(
+        self, account: str, *, now: datetime, max_age: int, scope: str = "ACCOUNT",
+    ) -> None:
         if (
-            self.account != account
+            scope not in {"ACCOUNT", "ORDER_LIFECYCLE_API"}
+            or self.scope != scope
+            or self.account != account
             or self.complete is not True
             or not self.evidence_id
             or self.cash is None

@@ -67,7 +67,7 @@ class LiveSessionExecution:
         *,
         before_submit: Callable[[], None],
         refresh: Callable[[], Awaitable[VerifiedLiveRiskSnapshot]],
-        edge: Decimal,
+        edge: Decimal | None,
     ) -> SessionSubmitReceipt:
         request = approved.request
         intent = request.as_intent()

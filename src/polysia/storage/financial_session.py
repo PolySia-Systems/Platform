@@ -58,7 +58,7 @@ class FinancialSessionJournal:
         self.after_commit: Callable[[SessionRecoveryCheckpoint], None] | None = None
         self._publication_failed = False
 
-    def provision(self, opening: AccountObservation) -> None:
+    def provision(self, opening: AccountObservation, *, scope: str = "ACCOUNT") -> None:
         """Explicit trusted-owner bootstrap; never called by a worker or Console.
 
         Opening inventory is held outside run ownership. Existing orders are refused.
@@ -68,7 +68,12 @@ class FinancialSessionJournal:
             self.authority.binding.account,
             now=opening.observed_at,
             max_age=self.authority.max_evidence_age_seconds,
+            scope=scope,
         )
+        if scope == "ORDER_LIFECYCLE_API" and (
+            len(self.authority.instruments) != 1 or opening.positions or opening.cumulative_fees
+        ):
+            raise SessionBlocked("API_lifecycle_requires_zero_run_opening_and_one_instrument")
         self.authority.assert_action(self.authority.binding, opening.observed_at, "ENTRY")
         if opening.open_order_ids:
             raise SessionBlocked("opening_account_has_orders")

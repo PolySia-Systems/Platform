@@ -437,6 +437,43 @@ async def test_actual_wire_bound_overrun_unknown_retention_and_no_retry(tmp_path
         harness.journal.close()
 
 
+async def test_API_rate_limit_is_durable_and_deferral_does_not_leak_queue(tmp_path):
+    from polysia.domain.financial_session import ExactSessionEntry, SessionRateDeferred
+
+    harness = Harness(tmp_path, evidence_scope="ORDER_LIFECYCLE_API",
+                      exact_entry=ExactSessionEntry(D(5), D("0.5")))
+    calls = []
+    try:
+        harness.journal.mutate("FIXTURE_WIRE_HISTORY", {}, lambda state: state.update(wire={
+            str(index): {"at": NOW.isoformat()} for index in range(60)
+        }))
+        network = SessionNetwork(
+            harness.journal, allowed_origins=frozenset({"https://clob.polymarket.com"}),
+            maximum_response_bytes=100, maximum_queued=1, timeout_seconds=1,
+            guard=lambda: None, clock=lambda: harness.now,
+        )
+
+        def register():
+            harness.coordinator._charge("ACCOUNT", protective=True)
+            network.register_bound("ACCOUNT", RequestCharge(1, 100, D(0)))
+
+        async with httpx.AsyncClient(transport=network.transport(httpx.MockTransport(
+            lambda request: calls.append(request) or httpx.Response(200, content=b"{}"),
+        ))) as http:
+            register()
+            with network.action("ACCOUNT"), pytest.raises(SessionRateDeferred):
+                await http.get("https://clob.polymarket.com/data/orders")
+            assert not calls and network._queued == 0
+            assert len(harness.journal.read()["wire"]) == 60
+            harness.now += timedelta(seconds=61)
+            register()
+            with network.action("ACCOUNT"):
+                await http.get("https://clob.polymarket.com/data/orders")
+            assert len(calls) == 1 and network._queued == 0
+    finally:
+        harness.journal.close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["revoked", "expired"])
 async def test_queued_request_rechecks_revocation_before_wire(tmp_path: Path, failure: str) -> None:
