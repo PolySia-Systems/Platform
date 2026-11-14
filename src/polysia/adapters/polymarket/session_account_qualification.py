@@ -140,6 +140,7 @@ async def qualify_account(
                 from polysia.adapters.polymarket.order_lifecycle_account import (
                     OrderLifecycleAccountReader,
                     explicit_zero_fee_market,
+                    scoped_opening,
                 )
 
                 instrument = instruments[0]
@@ -162,10 +163,14 @@ async def qualify_account(
                     instrument, exchange=config.exchange,
                     tracked=lifecycle_orders, explicit_zero_fee=zero_fee,
                 )
+                opening = scoped_opening(
+                    evidence, account=mapping.account_id, explicit_zero_fee=zero_fee,
+                ) if not lifecycle_orders else None
                 return {
                     "status": "API_LIFECYCLE_OBSERVED",
                     "lifecycle": evidence,
                     "explicit_zero_fee": zero_fee,
+                    "scoped_opening": None if opening is None else asdict(opening),
                     "mapping": asdict(config.account_mapping),
                     "acquisition": acquisition.status(),
                     "financial_authority": "NOT_ISSUED",

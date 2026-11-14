@@ -54,8 +54,9 @@ from polysia.storage.financial_session import FinancialSessionJournal
 from tests.integration.test_financial_session import NOW, FakeExecution, authorization
 
 
+@pytest.mark.parametrize("completed_API_lifecycle", [False, True])
 def test_owner_entry_runner_follows_the_protective_deadline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, completed_API_lifecycle: bool,
 ) -> None:
     from datetime import datetime
 
@@ -71,6 +72,9 @@ def test_owner_entry_runner_follows_the_protective_deadline(
             return next(times)
 
     class Session:
+        def lifecycle_complete(self):
+            return completed_API_lifecycle
+
         async def start(self):
             return None
 
@@ -88,6 +92,12 @@ def test_owner_entry_runner_follows_the_protective_deadline(
         assert seconds <= 1
 
     config = replace(runtime_config(tmp_path), exact_entry=ExactSessionEntry(D(5), D("0.50")))
+    if completed_API_lifecycle:
+        config = replace(
+            config, opening=replace(config.opening, scope="ORDER_LIFECYCLE_API"),
+            source_wallets=(), cohort_path=None, follower_samples_path=None,
+            cohort_file_digest="", follower_samples_file_digest="", rpc_url="",
+        )
     monkeypatch.setattr(command, "datetime", Clock)
     monkeypatch.setattr(command, "load_runtime_config", lambda _: config)
     monkeypatch.setattr(command, "load_authority", lambda _: envelope)
@@ -95,7 +105,7 @@ def test_owner_entry_runner_follows_the_protective_deadline(
     monkeypatch.setattr(command.asyncio, "sleep", sleep)
     command.run(tmp_path / "config", tmp_path / "authority", mode=TradingMode.LIVE,
                 live_enabled=True, owner_entry=True)
-    assert calls == [True, True, False]
+    assert calls == ([True, False] if completed_API_lifecycle else [True, True, False])
 
 
 def test_external_owner_receipt_round_trip_and_tamper_denial(tmp_path: Path) -> None:
@@ -261,6 +271,12 @@ def signed(config: SessionRuntimeConfig):
         config.account_mapping.collateral,
         config.account_mapping.settlement_route,
     )
+    bounded = {} if config.opening.scope == "ACCOUNT" else dict(
+        wallets=frozenset({"owner-test"}), fee_rate=D(0), max_attempts=4,
+        max_total_loss=D("2.675"), max_order_all_in=D("2.675"),
+        max_concurrent_orders=1,
+        protective_until=NOW + timedelta(minutes=119),
+    )
     auth = authorization(
         version=2,
         binding=binding_for(config),
@@ -271,11 +287,12 @@ def signed(config: SessionRuntimeConfig):
         protective_turnover_reserve=D(5),
         protective_byte_reserve=4000000,
         protective_storage_reserve=10000000,
-        protective_order_reserve=1,
-        max_requests=10000,
-        protective_request_reserve=1000,
+        protective_order_reserve=1 if config.opening.scope == "ACCOUNT" else 0,
+        max_requests=10000 if config.opening.scope == "ACCOUNT" else 1000,
+        protective_request_reserve=1000 if config.opening.scope == "ACCOUNT" else 500,
         max_response_bytes=20000000,
         max_storage_bytes=100000000,
+        **bounded,
     )
     private = Ed25519PrivateKey.generate()
     signature = private.sign(
@@ -363,15 +380,18 @@ async def test_live_requires_receipt_before_financial_state_or_credentials(tmp_p
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("signature_type", "cancel"), [(0, False), (3, False), (3, True)])
+@pytest.mark.parametrize(("signature_type", "cancel", "api_test"), [
+    (0, False, False), (3, False, False), (3, True, False), (3, True, True),
+])
 async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signature_type: int, cancel: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    signature_type: int, cancel: bool, api_test: bool,
 ) -> None:
     from polymarket._internal.wallet import derive_beacon_deposit_wallet_address
     from polymarket.environments import PRODUCTION
 
     ephemeral = Account.create()
-    config = runtime_config(tmp_path, ephemeral.address, include_history=cancel)
+    config = runtime_config(tmp_path, ephemeral.address, include_history=cancel and not api_test)
     if cancel:
         config = replace(config, exact_entry=ExactSessionEntry(D(5), D("0.50")))
     historical = next(iter(config.historical_instruments), None)
@@ -385,6 +405,21 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                 config.account_mapping, funder=funder, signature_type=signature_type
             )
         )
+    if api_test:
+        config = replace(
+            config, opening=replace(config.opening, scope="ORDER_LIFECYCLE_API"),
+            exact_entry=ExactSessionEntry(D(5), D("0.50"), NOW + timedelta(minutes=65)),
+            source_wallets=(), cohort_path=None, follower_samples_path=None,
+            cohort_file_digest="", follower_samples_file_digest="", rpc_url="",
+            tick_interval_seconds=10,
+            policy=replace(config.policy, exit_preset="HYBRID", net_take_profit=D("0.10"),
+                           maximum_holding_seconds=600),
+        )
+        capacity = json.loads(config.capacity_evidence_path.read_text())
+        capacity["workload_digest"] = capacity_workload(config)
+        config.capacity_evidence_path.write_text(json.dumps(capacity))
+        config = replace(config, capacity_evidence_digest=hashlib.sha256(
+            config.capacity_evidence_path.read_bytes()).hexdigest())
     auth, verifier = signed(config)
     custody = SessionCustody(config.custody_path)
     custody.initialize()
@@ -445,11 +480,29 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             )
         if request.url.path == "/fee-rate":
             return httpx.Response(200, json={"base_fee": 0})
-        if request.url.host == "gamma-api.polymarket.com" and request.url.path == "/markets":
-            return httpx.Response(200, json=[{
+        if request.url.host == "gamma-api.polymarket.com" and request.url.path in {
+            "/markets", "/markets/keyset",
+        }:
+            markets = [{
+                "id": "1", "active": True, "closed": False, "acceptingOrders": True,
+                "endDate": (NOW + timedelta(hours=3)).isoformat(),
                 "conditionId": auth.instruments[0].market, "feesEnabled": False,
-                "negRisk": False, "clobTokenIds": json.dumps([SESSION_TOKEN]),
-            }])
+                "negRisk": False, "clobTokenIds": json.dumps([SESSION_TOKEN,
+                                                             str(int(SESSION_TOKEN) + 1)]),
+                "outcomes": '["Yes", "No"]', "orderMinSize": "5",
+                "orderPriceMinTickSize": "0.01",
+            }]
+            return httpx.Response(200, json={"markets": markets, "next_cursor": None}
+                                  if request.url.path.endswith("/keyset") else markets)
+        if request.url.path == "/book":
+            return httpx.Response(200, json={
+                "market": auth.instruments[0].market, "asset_id": SESSION_TOKEN,
+                "timestamp": str(int(NOW.timestamp() * 1000)),
+                "bids": [{"price": "0.49", "size": "10"}],
+                "asks": [{"price": "0.50", "size": "10"}],
+                "min_order_size": "5", "tick_size": "0.01", "neg_risk": False,
+                "hash": "fixture-book",
+            })
         if request.url.path == "/order" and request.method == "POST":
             state = session.coordinator.journal.read()
             assert any(row["state"] == "UNCERTAIN_SUBMIT" for row in state["orders"].values())
@@ -560,7 +613,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
                     }
                 ]
             return httpx.Response(200, json={"data": rows, "next_cursor": "LTE=", "limit": 100})
-        raise AssertionError("unexpected request; automatic credential or wallet setup forbidden")
+        raise AssertionError("unexpected request: " + request.method + " " + request.url.path)
 
     monkeypatch.setattr(httpx, "AsyncHTTPTransport", lambda **kwargs: httpx.MockTransport(wire))
     if config.rpc_bearer_token_reference is not None:
@@ -619,7 +672,10 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             clock=lambda: NOW,
         )
         assert requests == []  # construction performs no bootstrap network mutation/read
-        await session.reconcile()
+        if api_test:
+            await session.start()
+        else:
+            await session.reconcile()
         assert session.coordinator.journal.read()["reconciliation_ok"] is True
         if historical is not None:
             assert session.account.last_fills[0].occurrence.instrument == historical
@@ -634,8 +690,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             socket.gethostname(),
             NOW,
             NOW + timedelta(hours=1),
-            (
-                config.rpc_url,
+            ((config.rpc_url,) if config.rpc_url else ()) + (
                 "https://polymarket.com/api/geoblock",
                 "https://clob.polymarket.com/data/orders",
                 "https://clob.polymarket.com/data/trades",
@@ -660,12 +715,13 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         )
         assert disabled["network"] == "NOT_CONSTRUCTED" and len(requests) == before
         warm_start = len(rpc_methods)
-        qualified = await qualify_account(
-            config, auth.instruments, allowance, read_account=True, clock=lambda: NOW
-        )
-        assert qualified["opening"]["cash"] == 100 and qualified["opening"]["positions"] == ()
-        assert qualified["financial_authority"] == "NOT_ISSUED"
-        assert qualified["acquisition"]["requests_charged"] == len(requests) - before
+        if not api_test:
+            qualified = await qualify_account(
+                config, auth.instruments, allowance, read_account=True, clock=lambda: NOW
+            )
+            assert qualified["opening"]["cash"] == 100 and qualified["opening"]["positions"] == ()
+            assert qualified["financial_authority"] == "NOT_ISSUED"
+            assert qualified["acquisition"]["requests_charged"] == len(requests) - before
         if cancel:
             api_policy = replace(
                 read_policy, policy_id="fixture-API-lifecycle",
@@ -685,6 +741,7 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             assert scoped["lifecycle"]["usable_collateral"] == D(100)
             assert scoped["lifecycle"]["full_account_reconciled"] is False
             assert scoped["explicit_zero_fee"] is True and "opening" not in scoped
+            assert scoped["scoped_opening"]["scope"] == "ORDER_LIFECYCLE_API"
             assert all(method == "GET" for method, _ in requests[previous_requests:])
         if historical is not None:
             assert "eth_getLogs" not in rpc_methods[warm_start:]
@@ -702,7 +759,8 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         from tests.integration.test_financial_session import opportunity
 
         monkeypatch.setattr(sdk_limit.time, "time", lambda: NOW.timestamp())
-        await session.start()
+        if not api_test:
+            await session.start()
         candidate = opportunity(
             strategy=config.policy.version,
             exit_policy=config.policy.version,
@@ -712,7 +770,23 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         candidate = replace(
             candidate, event=replace(candidate.event, instrument=auth.instruments[0])
         )
-        intent_id = await session.coordinator.submit(candidate)
+        if api_test:
+            from polysia.domain.financial_session import OwnerTestIntent
+
+            assert session.source is None and session.selection is None and rpc_methods == []
+            candidate = replace(
+                candidate, event=OwnerTestIntent(
+                    auth.run_id, config.fingerprint, "owner-test", auth.instruments[0],
+                    NOW, NOW, NOW, "owner-command:" + auth.run_id,
+                ), fair_price=None, uncertainty=None, cost_per_share=D(0),
+                cohort_digest=None, qualification_evidence_id=None,
+            )
+        if api_test:
+            await session.tick(owner_entry=True)
+            intent_id = next(iter(session.coordinator.journal.read()["orders"]))
+            assert session.network.observation()["actual_requests"] <= 60
+        else:
+            intent_id = await session.coordinator.submit(candidate)
         assert session.coordinator.journal.read()["orders"][intent_id]["state"] == "ACCEPTED"
         if cancel:
             await session.coordinator.cancel(intent_id)
@@ -722,6 +796,11 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             with pytest.raises(SessionBlocked, match="known_open_order"):
                 await session.coordinator.cancel(intent_id)
             assert requests.count(("DELETE", "/order")) == 1
+            if api_test:
+                assert not rpc_methods
+                assert set(session.coordinator.journal.read()["exact_mutation_slots"]) == {
+                    "ENTRY", "CANCEL_ENTRY",
+                }
             return
         observed_fill["enabled"] = True
         await session.reconcile()

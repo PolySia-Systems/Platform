@@ -104,8 +104,10 @@ This verifies the signature. Use `validate` for the exact host binding and time
 window before provisioning under STOP.
 
 For a reviewed single-entry run, bind config "exact_entry" to the fixed share
-quantity and price ceiling. The regular strategy and fresh qualified source
-still supply the candidate. The local owner adds "--owner-entry" explicitly to
+quantity and price ceiling. In ACCOUNT scope the regular strategy and fresh
+qualified source supply the candidate. In ORDER_LIFECYCLE_API scope the explicit
+owner command supplies an OwnerTestIntent, without a leader occurrence or
+claimed profitable edge. The local owner adds "--owner-entry" explicitly to
 the installed "polysia ops session run" command after commissioning, using
 "--mode LIVE --live-enabled --owner-entry" with the signed config, authority and
 public trust registry. This foreground invocation follows the signed
@@ -161,11 +163,51 @@ CANCEL_EXIT slot. A reserved or uncertain submission consumes its slot.
 Restart and older-state migration preserve consumed slots conservatively.
 The reporting counter includes cancellation slots.
 
-The owner-intent source and commissioning packet remain pending in this
-engineering milestone. The API composition rejects source-driven entries before
-any source network request. Protective-only work retains the same independent
-controls. The scoped diagnostic alone is insufficient to start a financial
-session. No owner trading invocation is ready in this revision.
+The API composition uses no RPC endpoint, cohort or follower sample files:
+set rpc_url and both input digests to empty strings, both input paths to null,
+and source_wallets to an empty list. Historical/RPC options must be absent.
+The authority's sole allocation alias is owner-test. This is an operator test
+request, not fabricated source evidence. Unknown edge is passed to Risk; a Risk
+policy that requires positive edge still rejects it. The API capability profile
+omits source/alpha qualification but retains all independent financial controls.
+
+Bind exactly five shares and a price ceiling at most 0.50. Freeze the distinct
+entry window (authority.expires_at), GTD expiry (exact_entry.order_expires_at),
+holding limit and protective deadline. The GTD expiry must follow the entry
+window and leave four socket timeouts before the protective deadline. The
+protective window must additionally accommodate the holding limit. One position
+and one simultaneous order are mandatory: the entry must have verified finality
+before the single exit can be reserved. A partial fill below venue minimums may
+remain owner-managed exposure; it never authorizes a replacement order.
+
+The GET-only qualification emits scoped_opening only when the selected token is
+flat, collateral/allowance are usable, no order or pending trade is present and
+zero costs are explicitly established. It never emits a complete-account
+opening. Bind that exact scoped_opening into the signed configuration and
+validate freshness during commissioning. During a pending settlement the
+foreground worker drains entry and continues bounded reads; it grants no interim
+account clearance or resend authority. Hard errors still stop the affected run.
+
+After current API qualification, capacity/recovery evidence and the external
+owner signature exist, the owner uses the existing command:
+`polysia ops session run CONFIG --authority SIGNED --trust PUBLIC_KEYS
+--mode LIVE --live-enabled --owner-entry`. This is a command interface, not a
+claim that this account has an installed packet or is commissioned. Inspect the
+same run's publication for order IDs, fills, fees, inventory and unknowns. The
+scoped diagnostic alone cannot start a financial session. No real order is
+signed, submitted or cancelled by ordinary tests or deployment.
+
+Initial qualification walks the authenticated trade view to its terminal page
+to establish no visible pending trade. The commissioned API runtime then freezes
+its trade filter at the signed opening time minus the evidence freshness bound.
+It continues full wallet-wide open-order checks and selected-token balance checks;
+it does not repeatedly download lifetime trades. The report records this window
+and retains credential-limited visibility. Its journal enforces a durable ceiling
+of 60 HTTP admissions per rolling minute, at most 1,000 requests, 64 MiB total
+response reservations and a two-hour maximum authority. API polling is no faster
+than ten seconds. Deferral retains consumption. A verified terminal and flat
+lifecycle exits the foreground command early; unknown state or residual inventory
+does not satisfy that completion condition.
 
 The optional `historical_instruments` configuration adds account reconciliation
 scope. Bind each observed token to its exact supported condition, collateral and

@@ -198,7 +198,14 @@ and owned fills. Run P&L uses confirmed fill cashflows. Current collateral and
 allowance constrain spending without interpreting unexplained wallet cash changes
 as P&L. This experiment's four mutation slots include both cancellation slots.
 
-CURRENT code provides the scoped observation and adapter. Owner-intent admission
-and live commissioning remain pending review and implementation. Scope-specific
-source-driven entry is disabled before source I/O while that integration is
-incomplete. This extension does not authorize an uncommissioned financial run.
+CURRENT code provides the scoped observation, adapter and explicit OwnerTestIntent
+admission through the same Risk and Execution owners. The owner command is not a
+SourceOccurrence, cohort qualification or alpha estimate. Unknown edge remains
+unknown; independently configured Risk may require it and reject the test.
+The signed API profile has no source-wallet, cohort or RPC configuration. The
+full ACCOUNT profile preserves its original requirements. The API capability
+projection retains account, authority, supervision, reconciliation, recovery,
+backup and capacity, while source-following evidence remains inapplicable to
+this owner-operated purpose. This extension does not authorize an uncommissioned
+financial run. Current host qualification, issuer signature, supervision and
+recovery acceptance remain operational evidence, not facts supplied by this ADR.

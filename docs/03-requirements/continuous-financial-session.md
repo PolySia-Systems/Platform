@@ -160,6 +160,12 @@ slot and one exit-cancellation slot. Reservations and ambiguous mutations consum
 their slots. Recovery cannot reissue slots. Existing records are interpreted
 conservatively without rewriting original history.
 
-CURRENT engineering supports the scoped accounting carrier and API adapter.
-The owner-intent entry point and actual scoped commissioning remain pending.
-Source-driven entry is blocked before network access for the API scope.
+CURRENT engineering supports the scoped accounting carrier, API adapter and
+explicit owner-test intent through independent Risk and Execution. No source
+occurrence or alpha is invented. Full-account/source-following behavior retains
+its original requirements. Scoped commissioning requires a fresh flat-token
+API baseline, external signed exact binding, independent custody/supervision
+and recovery acceptance. Entry window, GTD expiry, holding limit and protective
+deadline are separate frozen facts. Source-driven entry and RPC configuration
+are excluded from this API profile. Pending settlement drains entry while bounded
+reads continue; ambiguity never authorizes a replacement or another cycle.

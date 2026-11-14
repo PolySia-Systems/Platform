@@ -428,6 +428,11 @@ def run(
                     return result
                 tick_started = time.monotonic()
                 result = await session.tick(owner_entry=owner_entry)
+                if (
+                    owner_entry and prepared.opening.scope == "ORDER_LIFECYCLE_API"
+                    and session.lifecycle_complete()
+                ):
+                    return result
                 count += 1
                 delay = max(0, prepared.tick_interval_seconds - (time.monotonic() - tick_started))
                 if deadline is None:

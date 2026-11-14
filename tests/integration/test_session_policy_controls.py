@@ -358,6 +358,26 @@ def test_capability_missing_and_expired_are_not_ready() -> None:
     assert replace(item, state="VERIFIED").current_state(NOW + timedelta(minutes=2)) == "EXPIRED"
 
 
+def test_API_owner_test_uses_explicit_profile_and_preserves_independent_controls():
+    from polysia.monitoring.capabilities import CAPABILITIES
+
+    evidence = {
+        name: CapabilityEvidence(name, "VERIFIED", "fixture", NOW,
+                                 NOW + timedelta(minutes=1), "fixture", "run", "inspect")
+        for name in CAPABILITIES["new_entries"][0] if name not in {"source", "qualification"}
+    }
+
+    def status(profile):
+        result = capability_projection(evidence, now=NOW, enabled={"new_entries": True},
+                                       profile=profile)
+        return next(row for row in result["capabilities"] if row["capability"] == "new_entries")
+
+    assert status("ACCOUNT")["status"] == "BLOCKED"
+    assert status("ORDER_LIFECYCLE_API")["status"] == "READY"
+    del evidence["supervision"]
+    assert status("ORDER_LIFECYCLE_API")["status"] == "BLOCKED"
+
+
 def test_incident_dedup_failed_delivery_and_rate_limit_with_fake_sink(tmp_path: Path) -> None:
     current = [NOW]
     incidents = SessionIncidents(tmp_path / "incidents.sqlite3", clock=lambda: current[0])

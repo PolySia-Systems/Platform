@@ -12,7 +12,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -53,8 +53,8 @@ class SessionRuntimeConfig:
     custody_path: Path
     outbox_path: Path
     publication_path: Path
-    cohort_path: Path
-    follower_samples_path: Path
+    cohort_path: Path | None
+    follower_samples_path: Path | None
     cohort_file_digest: str
     follower_samples_file_digest: str
     source_wallets: tuple[tuple[str, str], ...]
@@ -89,19 +89,29 @@ class SessionRuntimeConfig:
     exact_entry: ExactSessionEntry | None = None
 
     def __post_init__(self) -> None:
+        api_test = self.opening.scope == "ORDER_LIFECYCLE_API"
         if (
             self.version != 1
             or not self.release
             or not self.host
             or not self.egress_allocation_receipt
             or not 1 <= self.maximum_pages <= 100
-            or not self.source_wallets
+            or (not api_test and not self.source_wallets)
             or not 0 < self.maximum_queued <= 16
             or not 0 < self.request_timeout_seconds <= 30
             or not 0 < self.maximum_response_bytes <= 4_000_000
             or self.minimum_free_disk_bytes <= 0
         ):
             raise SessionBlocked("invalid_operational_configuration")
+        if api_test and any((
+            self.source_wallets, self.rpc_url, self.cohort_path, self.follower_samples_path,
+            self.cohort_file_digest, self.follower_samples_file_digest,
+            self.historical_instruments, self.rpc_log_block_span, self.rpc_checkpoint_path,
+            self.rpc_bearer_token_reference,
+        )):
+            raise SessionBlocked("API_test_has_no_source_cohort_or_RPC_route")
+        if not api_test and (self.cohort_path is None or self.follower_samples_path is None):
+            raise SessionBlocked("full_session_requires_cohort_and_samples")
         if self.maximum_backup_age_seconds <= 0 or not 0 < self.checkpoint_handshake_seconds <= 5:
             raise SessionBlocked("bounded_supervision_configuration_required")
         if type(self.tick_interval_seconds) is not int or not 1 <= self.tick_interval_seconds <= 30:
@@ -130,7 +140,7 @@ class SessionRuntimeConfig:
         ):
             raise SessionBlocked("protected_secret_reference_names_required")
         rpc = urlsplit(self.rpc_url)
-        if (
+        if not api_test and (
             rpc.scheme != "https"
             or not rpc.hostname
             or rpc.username
@@ -153,11 +163,12 @@ class SessionRuntimeConfig:
             self.custody_path,
             self.outbox_path,
             self.publication_path,
-            self.cohort_path,
-            self.follower_samples_path,
             self.commands_path,
             self.incident_path,
             self.capacity_evidence_path,
+        ]
+        paths += [
+            path for path in (self.cohort_path, self.follower_samples_path) if path is not None
         ]
         if self.rpc_checkpoint_path is not None:
             paths.append(self.rpc_checkpoint_path)
@@ -204,6 +215,8 @@ class SessionRuntimeConfig:
             del value["rpc_bearer_token_reference"]
         if self.exact_entry is None:
             del value["exact_entry"]
+        elif self.exact_entry.order_expires_at is None:
+            del value["exact_entry"]["order_expires_at"]
         for key, item in value.items():
             if isinstance(item, Path):
                 value[key] = str(item)
@@ -310,17 +323,39 @@ def binding_for(config: SessionRuntimeConfig) -> RuntimeBinding:
 
 
 def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAuthorization) -> None:
-    if config.opening.scope == "ORDER_LIFECYCLE_API" and (
+    api_test = config.opening.scope == "ORDER_LIFECYCLE_API"
+    if api_test and (
         config.exact_entry is None
         or config.exact_entry.shares != Decimal(5)
         or config.exact_entry.price_ceiling > Decimal("0.50")
+        or config.exact_entry.order_expires_at is None
+        or not authority.expires_at < config.exact_entry.order_expires_at
+        < authority.protective_until - timedelta(
+            seconds=4 * config.request_timeout_seconds,
+        )
         or len(authority.instruments) != 1
-        or authority.max_attempts > 4
+        or authority.max_attempts != 4
+        or authority.max_requests > 1000
+        or authority.max_response_bytes > 64 * 1024 * 1024
+        or (authority.protective_until - authority.starts_at).total_seconds() > 7200
+        or config.request_timeout_seconds > 15
+        or config.tick_interval_seconds < 10
+        or authority.max_source_cost != 0
         or authority.max_total_loss > Decimal("2.675")
         or authority.max_order_all_in > Decimal("2.675")
         or authority.fee_rate != 0
         or config.opening.positions
         or config.opening.cumulative_fees
+        or config.account_mapping.signature_type != 3
+        or authority.wallets != frozenset({"owner-test"})
+        or authority.max_positions != 1
+        or authority.max_concurrent_orders != 1
+        or authority.protective_order_reserve != 0
+        or config.policy.reentry
+        or config.policy.maximum_holding_seconds is None
+        or config.policy.maximum_holding_seconds > authority.max_holding_seconds
+        or (authority.protective_until - authority.expires_at).total_seconds()
+        <= authority.max_holding_seconds + 4 * config.request_timeout_seconds
     ):
         raise SessionBlocked("API_lifecycle_run_contract_exceeds_OP1_scope")
     reconciliation = {
@@ -343,16 +378,16 @@ def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAut
         or config.policy.quantity_quantum != Decimal("0.01")
         or authority.strategy != config.policy.version
         or authority.exit_policy != config.policy.version
-        or authority.wallets != frozenset(dict(config.source_wallets))
+        or (not api_test and authority.wallets != frozenset(dict(config.source_wallets)))
         or config.opening.account != authority.binding.account
         or min(
             authority.protective_attempt_reserve,
             authority.protective_byte_reserve,
             authority.protective_storage_reserve,
             authority.protective_request_reserve,
-            authority.protective_order_reserve,
         )
         <= 0
+        or (not api_test and authority.protective_order_reserve <= 0)
         or authority.protective_turnover_reserve <= 0
     ):
         raise SessionBlocked("composed_scope_or_protective_headroom_missing")

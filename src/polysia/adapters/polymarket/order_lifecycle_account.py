@@ -17,10 +17,15 @@ from polysia.domain.financial_session import (
     InstrumentScope,
     SessionBlocked,
     digest,
+    utc,
 )
 from polysia.storage.financial_session import FinancialSessionJournal
 
 TERMINAL_TRADE = frozenset({"CONFIRMED", "FAILED"})
+
+
+class APISettlementPending(SessionBlocked):
+    """Read again within the same budget; no account or mutation clearance."""
 PENDING_TRADE = frozenset({"MATCHED", "MATCHED_NOT_BROADCASTED", "MINED", "RETRYING"})
 UNIT = Decimal(1_000_000)
 
@@ -81,11 +86,22 @@ class OrderLifecycleAccountReader(ClobSessionReads):
     def __init__(
         self, client: Any, mapping: ExactAccountMapping, *, maximum_pages: int,
         clock: Callable[[], datetime], maximum_age_seconds: int = 30,
+        trades_after: datetime | None = None,
     ) -> None:
         super().__init__(client, mapping, maximum_pages=maximum_pages)
         if mapping.signature_type != 3 or not 0 < maximum_age_seconds <= 30:
             raise SessionBlocked("owner_deposit_wallet_and_bounded_freshness_required")
         self.clock, self.maximum_age_seconds = clock, maximum_age_seconds
+        self.trades_after = None if trades_after is None else utc(trades_after)
+
+    async def _current_trades(self) -> list[Any]:
+        if self.trades_after is None:
+            return await self._walk(self.client.list_account_trades())
+        if self.trades_after > self.clock():
+            raise SessionBlocked("API_trade_baseline_in_future")
+        return await self._walk(self.client.list_account_trades(
+            after=str(int(self.trades_after.timestamp())),
+        ))
 
     async def observe(
         self, instrument: InstrumentScope, *, exchange: str,
@@ -98,7 +114,7 @@ class OrderLifecycleAccountReader(ClobSessionReads):
             raise SessionBlocked("lifecycle_instrument_binding_mismatch")
         started = self.clock()
         before = await self._matching_open_orders()
-        trades = await self._walk(self.client.list_account_trades())
+        trades = await self._current_trades()
         collateral = await self.client.get_balance_allowance(asset_type="COLLATERAL")
         position = await self.client.get_balance_allowance(
             asset_type="CONDITIONAL", asset_id=instrument.token,
@@ -112,7 +128,7 @@ class OrderLifecycleAccountReader(ClobSessionReads):
                     raise
                 details[identity] = None
         after = await self._matching_open_orders()
-        repeated_trades = await self._walk(self.client.list_account_trades()) if tracked else trades
+        repeated_trades = await self._current_trades() if tracked else trades
         finished = self.clock()
 
         def open_facts(rows: list[Any]) -> dict[str, tuple[str, ...]]:
@@ -209,6 +225,7 @@ class OrderLifecycleAccountReader(ClobSessionReads):
             "full_account_reconciled": False,
             "wallet_inventory": "UNASSESSED",
             "pending_trade_visibility": "AUTHENTICATED_CREDENTIAL",
+            "trade_window_start": self.trades_after,
             "observed_at": finished,
             "collateral_balance": cash,
             "collateral_allowance": allowance,
@@ -290,6 +307,22 @@ class OrderLifecycleAccountReader(ClobSessionReads):
         return fills, pending
 
 
+def scoped_opening(
+    evidence: dict[str, Any], *, account: str, explicit_zero_fee: bool,
+) -> AccountObservation | None:
+    """Fresh flat-token baseline, explicitly not full-wallet reconciliation."""
+    if (
+        not explicit_zero_fee or evidence["usable_collateral"] is None
+        or evidence["tested_token_balance"] != 0 or evidence["open_order_ids"]
+        or evidence["pending_trade_ids"] or evidence["confirmed_fills"]
+    ):
+        return None
+    return AccountObservation(
+        account, evidence["observed_at"], evidence["usable_collateral"], (),
+        frozenset(), Decimal(0), True, digest(evidence), scope="ORDER_LIFECYCLE_API",
+    )
+
+
 class OrderLifecycleSessionAccount:
     """Project only the frozen instrument and run-owned orders into session accounting."""
 
@@ -334,8 +367,10 @@ class OrderLifecycleSessionAccount:
         evidence = await self.reader.observe(
             instrument, exchange=self.exchange, tracked=tracked, explicit_zero_fee=True,
         )
-        if evidence["untracked_open_order_ids"] or evidence["pending_trade_ids"]:
-            raise SessionBlocked("API_lifecycle_unowned_order_or_pending_trade")
+        if evidence["untracked_open_order_ids"]:
+            raise SessionBlocked("API_lifecycle_unowned_order")
+        if evidence["pending_trade_ids"]:
+            raise APISettlementPending("API_lifecycle_pending_trade")
         fees = evidence["confirmed_run_fees"]
         allowance = evidence["collateral_allowance"]
         if allowance is None:

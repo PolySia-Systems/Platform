@@ -25,6 +25,7 @@ from polysia.domain.financial_session import (
     ConfirmedSessionFill,
     ExactSessionEntry,
     InstrumentScope,
+    OwnerTestIntent,
     RuntimeBinding,
     SessionAuthorization,
     SessionBlocked,
@@ -1406,7 +1407,7 @@ async def test_exact_unknown_submission_consumes_its_slot_once(tmp_path: Path) -
 
 async def test_API_cash_changes_never_create_run_PnL_and_lower_cash_blocks_entry(tmp_path: Path):
     harness = Harness(
-        tmp_path, exact_entry=ExactSessionEntry(D(5), D("0.5")),
+        tmp_path, owner_test_authorization(), exact_entry=ExactSessionEntry(D(5), D("0.5")),
         evidence_scope="ORDER_LIFECYCLE_API",
     )
     try:
@@ -1416,7 +1417,7 @@ async def test_API_cash_changes_never_create_run_PnL_and_lower_cash_blocks_entry
         harness.execution.cash = D("1")
         assert harness.coordinator.reconcile(harness.execution.account())
         with pytest.raises(SessionBlocked, match="aggregate_exposure_or_cash_limit"):
-            await harness.coordinator.submit(opportunity(shares=D(5)))
+            await harness.coordinator.submit(owner_test_opportunity())
         assert harness.execution.submissions == []
         with pytest.raises(SessionBlocked, match="account_evidence_incomplete"):
             harness.coordinator.reconcile(replace(harness.execution.account(), scope="ACCOUNT"))
@@ -1432,3 +1433,85 @@ def test_API_observation_cannot_provision_full_account_journal(tmp_path: Path):
     with pytest.raises(SessionBlocked, match="account_evidence_incomplete"):
         journal.provision(scoped)
     assert not journal.path.exists() and not journal.witness.exists()
+
+
+def owner_test_authorization(**changes):
+    values = dict(wallets=frozenset({"owner-test"}), max_attempts=4,
+                  max_total_loss=D("2.675"), max_order_all_in=D("2.675"),
+                  max_concurrent_orders=1, fee_rate=D(0))
+    values.update(changes)
+    return authorization(**values)
+
+
+def owner_test_opportunity(**changes):
+    event = OwnerTestIntent(
+        "fixture-run", BINDING.configuration, "owner-test", SCOPE,
+        NOW, NOW, NOW, "owner-command:fixture-run",
+    )
+    values = dict(event=event, shares=D(5), fair_price=None, uncertainty=None,
+                  cost_per_share=D(0), cohort_digest=None, qualification_evidence_id=None,
+                  policy_digest=BINDING.policy)
+    values.update(changes)
+    return opportunity(**values)
+
+
+async def test_owner_test_goes_through_Risk_without_fabricated_edge(tmp_path):
+    harness = Harness(
+        tmp_path, owner_test_authorization(), exact_entry=ExactSessionEntry(D(5), D("0.50")),
+        evidence_scope="ORDER_LIFECYCLE_API",
+    )
+    try:
+        request = owner_test_opportunity()
+        assert request.validate(harness.auth, now=NOW, scope="ORDER_LIFECYCLE_API") is None
+        identity = await harness.coordinator.submit(request)
+        await harness.coordinator.submit(request)
+        assert len(harness.execution.submissions) == 1
+        assert harness.execution.submissions[0].request.shares == 5
+        assert harness.journal.read()["decisions"][identity]["risk"]["approved"]
+    finally:
+        harness.journal.close()
+
+
+async def test_owner_entry_window_and_GTD_expiry_are_independent(tmp_path):
+    expiry = NOW + timedelta(seconds=195)
+    harness = Harness(
+        tmp_path, owner_test_authorization(expires_at=NOW + timedelta(seconds=10)),
+        exact_entry=ExactSessionEntry(D(5), D("0.50"), expiry),
+        evidence_scope="ORDER_LIFECYCLE_API",
+    )
+    try:
+        await harness.coordinator.submit(owner_test_opportunity())
+        assert harness.execution.submissions[0].request.expiration == int(expiry.timestamp())
+        harness.now += timedelta(seconds=11)
+        with pytest.raises(SessionBlocked, match="entry_authority_expired"):
+            harness.auth.assert_action(harness.auth.binding, harness.now, "ENTRY")
+        assert len(harness.execution.submissions) == 1
+    finally:
+        harness.journal.close()
+
+
+@pytest.mark.parametrize("gate", ["edge", "STOP", "scope", "run", "size"])
+async def test_owner_test_preserves_financial_gates(tmp_path, gate):
+    harness = Harness(
+        tmp_path, owner_test_authorization(), exact_entry=ExactSessionEntry(D(5), D("0.50")),
+        evidence_scope="ORDER_LIFECYCLE_API",
+    )
+    try:
+        request = owner_test_opportunity()
+        if gate == "edge":
+            harness.coordinator.risk = RiskEngine(
+                limits=replace(harness.risk.limits, min_edge_required=D("0.01"))
+            )
+        elif gate == "STOP":
+            harness.coordinator.set_mode(SessionMode.STOP)
+        elif gate == "scope":
+            request = replace(request, event=opportunity().event)
+        elif gate == "run":
+            request = replace(request, event=replace(request.event, run_id="other-run"))
+        else:
+            request = replace(request, shares=D(6))
+        with pytest.raises(SessionBlocked):
+            await harness.coordinator.submit(request)
+        assert not harness.execution.submissions
+    finally:
+        harness.journal.close()

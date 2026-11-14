@@ -29,6 +29,7 @@ from pydantic import TypeAdapter
 from polysia.adapters.polymarket.diagnostics import ReadRetryPolicy
 from polysia.adapters.polymarket.geoblock import GeoblockStatus
 from polysia.adapters.polymarket.mappers import PolymarketMarketMapper
+from polysia.adapters.polymarket.order_lifecycle_account import APISettlementPending
 from polysia.adapters.polymarket.secure import PolymarketSecureAdapter
 from polysia.adapters.polymarket.session_account import (
     ExactAccountMapping,
@@ -70,11 +71,13 @@ from polysia.domain.copytrading.continuous_shadow import calculate_verified_take
 from polysia.domain.copytrading.financial_allocation import pending_entry_debit
 from polysia.domain.financial_session import (
     ConfirmedSessionFill,
+    OwnerTestIntent,
     PositionTrigger,
     SessionAuthorization,
     SessionBlocked,
     SessionMode,
     SessionOpportunity,
+    SessionRateDeferred,
     digest,
 )
 from polysia.domain.wallet_intelligence.source_cohort import qualification_reasons
@@ -308,9 +311,9 @@ class OperationalSession:
         network: SessionNetwork,
         client: Any,
         http: httpx.AsyncClient,
-        account: ExactSessionAccountReader,
-        source: CorroboratedSessionSource,
-        selection: SharedCohortSelection,
+        account: Any,
+        source: CorroboratedSessionSource | None,
+        selection: SharedCohortSelection | None,
         samples: tuple[FollowerSample, ...],
         custody: SessionCustody,
         clock: Callable[[], datetime],
@@ -329,7 +332,8 @@ class OperationalSession:
         self.incidents.initialize()
         self.source_verified_at: datetime | None = None
         self.capacity_verified = False
-        self.qualification_verified = _qualification_ready(
+        self._initial_account_ready = False
+        self.qualification_verified = selection is not None and _qualification_ready(
             selection, samples, coordinator.authority, config.estimator_confidence
         )
         self.commands = ConsoleCommandStore(config.commands_path)
@@ -339,6 +343,7 @@ class OperationalSession:
 
     async def start(self) -> None:
         await self.reconcile()
+        self._initial_account_ready = True
         self._supervise()
         self.coordinator.set_mode(
             SessionMode.RUNNING
@@ -455,7 +460,20 @@ class OperationalSession:
         try:
             self.process_controls()
             self._supervise()
-            await self.reconcile()
+            initial = getattr(self, "_initial_account_ready", False)
+            self._initial_account_ready = False
+            if not (
+                initial and owner_entry and self.config.opening.scope == "ORDER_LIFECYCLE_API"
+                and not coordinator.journal.read()["orders"]
+                and self.account.last_observation is not None
+                and 0 <= (self.clock() - self.account.last_observation.observed_at).total_seconds()
+                <= coordinator.authority.max_evidence_age_seconds
+            ):
+                await self.reconcile()
+            # Entry still performs both coordinator and pre-wire account
+            # refreshes. Only the immediately preceding flat startup read is reused.
+            if self.config.opening.scope == "ORDER_LIFECYCLE_API":
+                self.input_status = "VERIFIED_API_LIFECYCLE"
             await self.cancel_draining_orders()
             # Protective work is examined before discovery and remains monitored
             # even when a leader is absent from new entry selection.
@@ -485,6 +503,14 @@ class OperationalSession:
                     self.discovery_failures = 0
                     self.discovery_retry_at = None
                     self.input_status = "VERIFIED"
+        except (APISettlementPending, SessionRateDeferred) as error:
+            # Preserve unknown settlement, drain entry and keep bounded reads
+            # alive. Never invent an interim fill or resend an uncertain order.
+            coordinator.set_mode(SessionMode.DRAIN)
+            self.input_status = (
+                "PENDING_SETTLEMENT_READ_ONLY" if isinstance(error, APISettlementPending)
+                else "RATE_DEFERRED_READ_ONLY"
+            )
         except Exception as error:
             self.source_verified_at = None
             with suppress(OSError, sqlite3.Error):
@@ -499,11 +525,27 @@ class OperationalSession:
             raise SessionBlocked("operational_tick_blocked:" + type(error).__name__) from error
         return self.publish()
 
+    def lifecycle_complete(self) -> bool:
+        if self.config.opening.scope != "ORDER_LIFECYCLE_API":
+            return False
+        state = self.coordinator.journal.read()
+        return bool(
+            state.get("exact_mutation_slots", {}).get("ENTRY")
+            and state["orders"]
+            and self.input_status in {"VERIFIED", "VERIFIED_API_LIFECYCLE"}
+            and state["reconciliation_ok"] and not state["incidents"]
+            and all(row["state"] in {"REJECTED", "CANCELLED", "FINALIZED"}
+                    for row in state["orders"].values())
+            and not any(position.size for position in session_ledger(state).positions.values())
+        )
+
     async def _source_entries(self, *, allow_entry: bool) -> None:
         if self.config.opening.scope == "ORDER_LIFECYCLE_API":
             if allow_entry:
-                raise SessionBlocked("API_lifecycle_owner_intent_entrypoint_pending")
+                await self._owner_test_entry()
             return
+        if self.selection is None or self.source is None:
+            raise SessionBlocked("source_cohort_missing")
         coordinator = self.coordinator
         now = self.clock()
         start = max(
@@ -539,15 +581,57 @@ class OperationalSession:
                         admit_cohort_opportunity(self.selection, opportunity, now=self.clock())
                     )
 
+    async def _owner_test_entry(self) -> None:
+        """Only an explicit --owner-entry reaches this exact test request."""
+        coordinator = self.coordinator
+        state = coordinator.journal.read()
+        if state["orders"] or state["decisions"]:
+            return
+        exact = self.config.exact_entry
+        if exact is None:
+            raise SessionBlocked("owner_test_requires_exact_entry")
+        instrument = coordinator.authority.instruments[0]
+        market, book = await self._market(instrument, protective=False)
+        fee = calculate_verified_taker_fee(market, price=book.best_ask.price, size=exact.shares)
+        if (
+            fee.amount != ZERO or book.best_ask.price > exact.price_ceiling
+            or book.minimum_order_size > exact.shares
+            or book.best_ask.size < exact.shares or book.best_bid.size < exact.shares
+        ):
+            raise SessionBlocked("owner_test_market_cost_size_or_depth_rejected")
+        now = self.clock()
+        event = OwnerTestIntent(
+            coordinator.authority.run_id, coordinator.binding.configuration,
+            "owner-test", instrument, now, now, now,
+            "owner-command:" + coordinator.authority.run_id,
+        )
+        await coordinator.submit(SessionOpportunity(
+            event, self.config.policy.version, self.config.policy.version,
+            book.best_ask.price, exact.shares, None, None, ZERO,
+            book.best_ask.size, book.best_bid.size, book.timestamp,
+            market.end_date, True, False, "Owner-operated bounded order lifecycle test",
+            policy_digest=self.config.policy.fingerprint,
+        ))
+
     async def _market(self, instrument: Any, *, protective: bool) -> tuple[Any, Any]:
         self.coordinator._charge("MARKET", protective=protective)
         with self.network.action("MARKET"):
-            raw_market = await self.client.get_market(id=instrument.market, include_tag=True)
+            raw_market = None
+            async for page in self.client.list_markets(
+                condition_ids=(instrument.market,), include_tag=True, page_size=2,
+            ):
+                if page.has_more or page.limit_reached or len(page.items) != 1:
+                    raise SessionBlocked("unique_condition_market_required")
+                raw_market = page.items[0]
+                break
+            if raw_market is None:
+                raise SessionBlocked("condition_market_missing")
             raw_book = await self.client.get_order_book(asset_id=instrument.token)
         market, book = self.mapper.to_details(raw_market), self.mapper.to_order_book(raw_book)
         if (
             market.condition_id != instrument.market
             or book.token_id != instrument.token
+            or book.market_id != instrument.market
             or market.active is not True
             or market.closed is not False
             or market.accepting_orders is not True
@@ -564,6 +648,8 @@ class OperationalSession:
         return market, book
 
     async def _entry_opportunity(self, event: Any) -> SessionOpportunity | None:
+        if self.selection is None:
+            raise SessionBlocked("source_cohort_missing")
         try:
             market, book = await self._market(event.instrument, protective=False)
         except (httpx.HTTPError, ValueError, KeyError, SessionBlocked) as error:
@@ -653,6 +739,13 @@ class OperationalSession:
         )
 
     async def position_triggers(self) -> None:
+        if self.config.opening.scope == "ORDER_LIFECYCLE_API" and any(
+            row["state"] not in {"REJECTED", "CANCELLED", "FINALIZED", "FILLED"}
+            for row in self.coordinator.journal.read()["orders"].values()
+        ):
+            # One simultaneous order. Confirm cancellation/finality of the entry
+            # before reserving the single protective exit slot.
+            return
         for owner in self.coordinator.allocation_view().values():
             if owner["quantity"] > 0:
                 instrument = next(
@@ -778,20 +871,22 @@ class OperationalSession:
             trading_mode=TradingMode.LIVE,
             latency=latency,
             discovery_counts={
-                "discovered": len(self.selection.candidates),
-                "qualified": len(self.selection.selected_wallet_ids),
+                "discovered": len(self.selection.candidates) if self.selection else 0,
+                "qualified": len(self.selection.selected_wallet_ids) if self.selection else 0,
                 "monitored": len(self.config.source_wallets) if self.source_verified_at else 0,
             },
             sources=[
                 {
-                    "source": "V2 discovery plus finalized CTF occurrences",
+                    "source": "Owner test command and official account APIs"
+                    if self.selection is None else "V2 discovery plus finalized CTF occurrences",
                     "status": self.input_status,
                     "phase": "BOUNDED_POLLING",
                     "age_seconds": None
                     if self.source_verified_at is None
                     else (self.clock() - self.source_verified_at).total_seconds(),
                     "gaps": [],
-                    "next_action": "Qualify retained follower evidence; "
+                    "next_action": "Inspect scoped test order IDs, fills and remaining inventory"
+                    if self.selection is None else "Qualify retained follower evidence; "
                     "missing edge remains unknown",
                 }
             ],
@@ -805,7 +900,10 @@ class OperationalSession:
         publication: dict[str, Any] = {
             "version": "operational-session-publication/v1",
             "financial_session": view,
-            "selection": self.selection.to_console_dict(),
+            "selection": self.selection.to_console_dict() if self.selection else {
+                "mode": "OWNER_TEST", "qualification": "NOT_APPLICABLE",
+                "edge": "UNKNOWN", "monitored_count": 0,
+            },
             "capacity": self.network.observation(),
             "process_resources": self.process_capacity.observation(
                 self.config.financial_path.parent
@@ -841,10 +939,11 @@ class OperationalSession:
                 capacity_observed_at=datetime.fromisoformat(self.capacity_evidence["observed_at"]),
                 capacity_expires_at=datetime.fromisoformat(self.capacity_evidence["expires_at"]),
                 qualification_verified=self.qualification_verified
+                and self.selection is not None
                 and self.selection.selection_policy is not None
                 and self.clock() - self.selection.selected_at
                 <= self.selection.selection_policy.freshness,
-                qualification_observed_at=self.selection.selected_at,
+                qualification_observed_at=self.selection.selected_at if self.selection else None,
             ),
             "active_account": {
                 "identity": self.coordinator.binding.account,
@@ -905,21 +1004,27 @@ async def create_live_session(
     if distribution_version("polymarket-client") != "0.13.0":
         raise SessionBlocked("composed_SDK_contract_requires_reviewed_0_13_0")
     mapping = ExactAccountMapping(**asdict(config.account_mapping))
+    api_test = config.opening.scope == "ORDER_LIFECYCLE_API"
     reconciliation_scope = config.reconciliation_scope(authority.instruments)
     require_sdk_scope(config, reconciliation_scope)
-    selection = SharedCohortSelection.from_dict(
-        read_bound_json(config.cohort_path, config.cohort_file_digest)
-    )
-    selection.require_integrity()
-    if frozenset(selection.selected_wallet_ids) != authority.wallets:
-        raise SessionBlocked("authority_cohort_mismatch")
-    sample_payload = read_bound_json(
-        config.follower_samples_path, config.follower_samples_file_digest
-    )
-    samples = TypeAdapter(tuple[FollowerSample, ...]).validate_python(
-        sample_payload.get("samples") if isinstance(sample_payload, dict) else sample_payload,
-        extra="forbid",
-    )
+    selection = None
+    samples: tuple[FollowerSample, ...] = ()
+    if not api_test:
+        if config.cohort_path is None or config.follower_samples_path is None:
+            raise SessionBlocked("source_cohort_paths_missing")
+        selection = SharedCohortSelection.from_dict(
+            read_bound_json(config.cohort_path, config.cohort_file_digest)
+        )
+        selection.require_integrity()
+        if frozenset(selection.selected_wallet_ids) != authority.wallets:
+            raise SessionBlocked("authority_cohort_mismatch")
+        sample_payload = read_bound_json(
+            config.follower_samples_path, config.follower_samples_file_digest
+        )
+        samples = TypeAdapter(tuple[FollowerSample, ...]).validate_python(
+            sample_payload.get("samples") if isinstance(sample_payload, dict) else sample_payload,
+            extra="forbid",
+        )
     journal = FinancialSessionJournal(config.financial_path, config.witness_root, authority)
     publisher = CheckpointPublisher(
         authority,
@@ -945,7 +1050,9 @@ async def create_live_session(
             custody.require_current(authority, now=clock(), checkpoint=journal.checkpoint())
 
         rpc = urlsplit(config.rpc_url)
-        if rpc.scheme != "https" or rpc.username or rpc.password or rpc.query:
+        if not api_test and (
+            rpc.scheme != "https" or rpc.username or rpc.password or rpc.query
+        ):
             raise SessionBlocked("explicit_nonsecret_HTTPS_RPC_required")
         origins = frozenset(
             {
@@ -953,7 +1060,7 @@ async def create_live_session(
                 "https://gamma-api.polymarket.com",
                 "https://clob.polymarket.com",
                 "https://polymarket.com",
-                f"https://{rpc.netloc}",
+                *(() if api_test else (f"https://{rpc.netloc}",)),
             }
         )
         network = SessionNetwork(
@@ -964,7 +1071,7 @@ async def create_live_session(
             timeout_seconds=config.request_timeout_seconds,
             guard=guard,
             clock=clock,
-            rpc_url=config.rpc_url,
+            rpc_url=None if api_test else config.rpc_url,
             minimum_free_disk_bytes=config.minimum_free_disk_bytes,
         )
         http = httpx.AsyncClient(
@@ -1000,35 +1107,8 @@ async def create_live_session(
             timeout=config.request_timeout_seconds,
             rpc_headers=rpc_headers,
         )
-        from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
-
-        checkpoint = (
-            FinalizedLogCheckpoint(config.rpc_checkpoint_path, config.rpc_url)
-            if config.rpc_checkpoint_path is not None else None
-        )
-        chain_rpc = ReadOnlyRPC(
-            http, config.rpc_url, log_block_span=config.rpc_log_block_span, checkpoint=checkpoint,
-            headers=rpc_headers,
-        )
-        chain = CTFChainReader(
-            chain_rpc,
-            exchange=config.exchange,
-            ctf=config.ctf,
-            collateral=mapping.collateral,
-            instruments=reconciliation_scope,
-        )
-        account: Any = ExactSessionAccountReader(
-            client,
-            chain,
-            mapping,
-            maximum_pages=config.maximum_pages,
-            maximum_age_seconds=authority.max_evidence_age_seconds,
-            executable_markets=frozenset(item.market for item in authority.instruments),
-            clock=clock,
-            collateral_adapter=config.collateral_adapter,
-            recognition_since=authority.starts_at,
-        )
-        if config.opening.scope == "ORDER_LIFECYCLE_API":
+        account: Any
+        if api_test:
             from polysia.adapters.polymarket.order_lifecycle_account import (
                 OrderLifecycleAccountReader,
                 OrderLifecycleSessionAccount,
@@ -1038,8 +1118,33 @@ async def create_live_session(
                 OrderLifecycleAccountReader(
                     client, mapping, maximum_pages=config.maximum_pages, clock=clock,
                     maximum_age_seconds=authority.max_evidence_age_seconds,
+                    trades_after=config.opening.observed_at - timedelta(
+                        seconds=authority.max_evidence_age_seconds,
+                    ),
                 ),
                 journal, authority.instruments[0], exchange=config.exchange, http=http,
+            )
+        else:
+            from polysia.adapters.polymarket.session_log_checkpoint import FinalizedLogCheckpoint
+
+            checkpoint = (
+                FinalizedLogCheckpoint(config.rpc_checkpoint_path, config.rpc_url)
+                if config.rpc_checkpoint_path is not None else None
+            )
+            chain = CTFChainReader(
+                ReadOnlyRPC(
+                    http, config.rpc_url, log_block_span=config.rpc_log_block_span,
+                    checkpoint=checkpoint, headers=rpc_headers,
+                ),
+                exchange=config.exchange, ctf=config.ctf, collateral=mapping.collateral,
+                instruments=reconciliation_scope,
+            )
+            account = ExactSessionAccountReader(
+                client, chain, mapping, maximum_pages=config.maximum_pages,
+                maximum_age_seconds=authority.max_evidence_age_seconds,
+                executable_markets=frozenset(item.market for item in authority.instruments),
+                clock=clock, collateral_adapter=config.collateral_adapter,
+                recognition_since=authority.starts_at,
             )
         account.require_identity()
         eligibility = _Eligibility(http, clock)
@@ -1130,7 +1235,7 @@ async def create_live_session(
             client,
             http,
             account,
-            CorroboratedSessionSource(
+            None if api_test else CorroboratedSessionSource(
                 SessionPublicJSON(http),
                 CTFChainReader(
                     ReadOnlyRPC(http, config.rpc_url, headers=rpc_headers),

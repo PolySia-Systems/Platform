@@ -22,7 +22,7 @@ import httpx
 from polysia.adapters.polymarket.request_scheduling import EndpointRequestScheduler
 from polysia.application.ports.copytrading import LeaderReadPurpose
 from polysia.application.ports.financial_session import RequestCharge
-from polysia.domain.financial_session import SessionBlocked, digest
+from polysia.domain.financial_session import SessionBlocked, SessionRateDeferred, digest
 from polysia.storage.financial_session import FinancialSessionJournal
 
 
@@ -154,6 +154,17 @@ class SessionNetwork:
         )
 
         def attempted(state: dict[str, Any]) -> None:
+            if state.get("opening", {}).get("scope") == "ORDER_LIFECYCLE_API":
+                # Durable across restarts and shared by all endpoint families.
+                # Deferral cannot reset the conservative port reservation.
+                recent = sum(
+                    0 <= (self.clock() - datetime.fromisoformat(
+                        row.get("transport_started_at", row["at"]),
+                    )).total_seconds() < 60
+                    for row in state.get("wire", {}).values()
+                )
+                if recent >= 60:
+                    raise SessionRateDeferred("API_test_60_attempts_per_minute")
             state.setdefault("wire", {})[identity] = {
                 "action": action,
                 "path": request.url.path,
@@ -164,7 +175,11 @@ class SessionNetwork:
                 "result": "IN_FLIGHT",
             }
 
-        self.journal.mutate("WIRE_REQUEST", {"request": identity, "action": action}, attempted)
+        try:
+            self.journal.mutate("WIRE_REQUEST", {"request": identity, "action": action}, attempted)
+        except BaseException:
+            self._queued -= 1
+            raise
         invoked = False
         try:
             purpose = (
@@ -177,6 +192,18 @@ class SessionNetwork:
                         raise SessionBlocked("financial_evidence_expired_in_queue")
                     if financial_action != "READ":
                         authority.assert_action(authority.binding, self.clock(), financial_action)
+                    if self.journal.read().get("opening", {}).get("scope") == "ORDER_LIFECYCLE_API":
+                        def before_wire(state: dict[str, Any]) -> None:
+                            recent = sum(
+                                key != identity and 0 <= (self.clock() - datetime.fromisoformat(
+                                    row.get("transport_started_at", row["at"]),
+                                )).total_seconds() < 60
+                                for key, row in state["wire"].items()
+                            )
+                            if recent >= 60:
+                                raise SessionRateDeferred("API_test_60_attempts_per_minute")
+                            state["wire"][identity]["transport_started_at"] = self.clock()
+                        self.journal.mutate("WIRE_ADMISSION", {"request": identity}, before_wire)
                     request.headers["Accept-Encoding"] = "identity"
                     invoked = True
                     response = await inner.handle_async_request(request)

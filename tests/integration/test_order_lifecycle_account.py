@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -42,6 +43,7 @@ class Client:
     def __init__(self, *, trades=(), details=None, live=(), allowance=2_700_000):
         self.trades, self.details, self.live = trades, details or {}, live
         self.allowance = allowance
+        self.trade_filters = []
         self.signer = self.wallet = WALLET
         self.wallet_type = "DEPOSIT_WALLET"
         self._ctx = SimpleNamespace(
@@ -55,7 +57,8 @@ class Client:
     async def list_open_orders(self):
         yield SimpleNamespace(items=self.live, has_more=False, limit_reached=False)
 
-    async def list_account_trades(self):
+    async def list_account_trades(self, *, after=None):
+        self.trade_filters.append(after)
         yield SimpleNamespace(items=self.trades, has_more=False, limit_reached=False)
 
     async def get_balance_allowance(self, *, asset_type, asset_id=None):
@@ -88,6 +91,21 @@ async def test_empty_wallet_order_view_limits_usable_balance_without_claiming_in
     assert snapshot["wallet_inventory"] == "UNASSESSED"
     assert snapshot["full_account_reconciled"] is False
     assert snapshot["confirmed_fills"] == []
+
+
+async def test_runtime_trade_window_is_frozen_while_opening_qualification_is_unfiltered():
+    client = Client()
+    await read(client)
+    assert client.trade_filters == [None]
+    start = NOW - timedelta(seconds=30)
+    reader = OrderLifecycleAccountReader(
+        client, SimpleNamespace(signer=WALLET, funder=WALLET, collateral=COLLATERAL,
+                                signature_type=3, settlement_route=INSTRUMENT.settlement_route),
+        maximum_pages=2, clock=lambda: NOW, trades_after=start,
+    )
+    result = await reader.observe(INSTRUMENT, exchange=EXCHANGE, tracked={}, explicit_zero_fee=True)
+    assert client.trade_filters[-1] == str(int(start.timestamp()))
+    assert result["trade_window_start"] == start
 
 
 async def test_pending_or_untracked_order_withholds_usable_balance():
@@ -195,9 +213,95 @@ async def test_session_adapter_projects_API_scope_and_exact_owned_fill_only():
 async def test_API_session_cannot_fall_back_to_chain_source_entries():
     from polysia.adapters.polymarket.session_composition import OperationalSession
 
+    calls = []
+
+    async def owner_entry():
+        calls.append("owner")
+
     session = SimpleNamespace(
         config=SimpleNamespace(opening=SimpleNamespace(scope="ORDER_LIFECYCLE_API")),
+        _owner_test_entry=owner_entry,
     )
     await OperationalSession._source_entries(session, allow_entry=False)
-    with pytest.raises(SessionBlocked, match="owner_intent_entrypoint_pending"):
-        await OperationalSession._source_entries(session, allow_entry=True)
+    assert calls == []
+    await OperationalSession._source_entries(session, allow_entry=True)
+    assert calls == ["owner"]
+
+
+async def test_scoped_opening_requires_flat_token_no_pending_and_explicit_costs():
+    from polysia.adapters.polymarket.order_lifecycle_account import scoped_opening
+
+    evidence = {**await read(Client()), "tested_token_balance": Decimal(0)}
+    opening = scoped_opening(evidence, account="account", explicit_zero_fee=True)
+    assert opening.scope == "ORDER_LIFECYCLE_API" and opening.positions == ()
+    assert opening.cash == Decimal("2.7")
+    for changes in ({"tested_token_balance": Decimal(1)}, {"pending_trade_ids": ["pending"]},
+                    {"usable_collateral": None}, {"open_order_ids": ["other"]}):
+        assert scoped_opening({**evidence, **changes}, account="account",
+                              explicit_zero_fee=True) is None
+    assert scoped_opening(evidence, account="account", explicit_zero_fee=False) is None
+
+
+async def test_pending_settlement_drains_entry_but_keeps_bounded_read_loop_alive():
+    from polysia.adapters.polymarket.order_lifecycle_account import APISettlementPending
+    from polysia.adapters.polymarket.session_composition import OperationalSession
+    from polysia.domain.financial_session import SessionMode
+
+    modes = []
+
+    async def reconcile():
+        raise APISettlementPending("fixture-pending")
+
+    session = SimpleNamespace(
+        coordinator=SimpleNamespace(set_mode=modes.append),
+        process_controls=lambda: None, _supervise=lambda: None, reconcile=reconcile,
+        publish=lambda: {"status": "PENDING_SETTLEMENT_READ_ONLY"},
+    )
+    for _ in range(2):
+        assert await OperationalSession.tick(session, owner_entry=True) == {
+            "status": "PENDING_SETTLEMENT_READ_ONLY",
+        }
+    assert modes == [SessionMode.DRAIN, SessionMode.DRAIN]
+
+
+async def test_owner_entry_builds_exact_request_and_never_calls_source():
+    from polysia.adapters.polymarket.session_composition import OperationalSession
+    from tests.integration.test_financial_session import owner_test_authorization
+
+    requests = []
+
+    async def submit(request):
+        requests.append(request)
+
+    async def market(instrument, *, protective):
+        assert not protective and instrument == INSTRUMENT
+        return SimpleNamespace(end_date=NOW + timedelta(hours=1), fee_schedule=SimpleNamespace(
+            enabled=False, taker_only=True,
+        )), SimpleNamespace(
+            best_ask=SimpleNamespace(price=Decimal("0.4"), size=Decimal(10)),
+            best_bid=SimpleNamespace(price=Decimal("0.39"), size=Decimal(10)),
+            minimum_order_size=Decimal(5), timestamp=NOW,
+        )
+
+    from polysia.domain.financial_session import ExactSessionEntry
+
+    authority = owner_test_authorization(instruments=(INSTRUMENT,))
+    session = SimpleNamespace(
+        coordinator=SimpleNamespace(
+            journal=SimpleNamespace(read=lambda: {"orders": {}, "decisions": {}}),
+            authority=authority, binding=authority.binding, submit=submit,
+        ),
+        config=SimpleNamespace(exact_entry=ExactSessionEntry(Decimal(5), Decimal("0.50")),
+                               policy=SimpleNamespace(version=authority.strategy,
+                                                      fingerprint=authority.binding.policy)),
+        clock=lambda: NOW, _market=market,
+    )
+    # Use a single policy version as the production binding requires.
+    session.coordinator.authority = replace(
+        authority, exit_policy=authority.strategy,
+    )
+    await OperationalSession._owner_test_entry(session)
+    assert len(requests) == 1 and requests[0].shares == 5 and requests[0].price == Decimal("0.4")
+    assert requests[0].fair_price is None and requests[0].cohort_digest is None
+    assert requests[0].validate(session.coordinator.authority, now=NOW,
+                                scope="ORDER_LIFECYCLE_API") is None

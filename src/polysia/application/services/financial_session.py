@@ -408,7 +408,9 @@ class FinancialSessionCoordinator:
             try:
                 if self.mode not in {TradingMode.PAPER, TradingMode.LIVE}:
                     raise SessionBlocked("DATA_ONLY_blocks_financial_session")
-                edge = opportunity.validate(self.authority, now=self.clock())
+                edge = opportunity.validate(
+                    self.authority, now=self.clock(), scope=self.evidence_scope,
+                )
                 self._decision_phase(identity, timely=True)
                 self.latency.record(
                     "source_to_observation",
@@ -441,9 +443,13 @@ class FinancialSessionCoordinator:
                     intent.size,
                     int(
                         min(
-                            self.authority.expires_at
+                            (self.exact_entry.order_expires_at
+                             if self.exact_entry is not None
+                             and self.exact_entry.order_expires_at is not None
+                             else self.authority.expires_at)
                             if intent.side == "BUY"
                             else self.authority.protective_until,
+                            self.authority.protective_until,
                             opportunity.market_expires_at,
                         ).timestamp()
                     ),
@@ -494,7 +500,9 @@ class FinancialSessionCoordinator:
                         raise SessionBlocked("duplicate_submit_claim")
                     if not refreshed:
                         raise SessionBlocked("final_account_refresh_required")
-                    opportunity.validate(self.authority, now=self.clock())
+                    opportunity.validate(
+                        self.authority, now=self.clock(), scope=self.evidence_scope,
+                    )
                     final_context = latest_snapshot.to_risk_context(
                         trading_mode=self.mode,
                         live_trading_enabled=self.mode is TradingMode.LIVE,
