@@ -122,6 +122,35 @@ reader with an independent AcquisitionPolicy, no financial custody or signing
 operation. Supply exact instrument scopes and already installed credential
 references. Keep the protected account evidence outside web paths.
 
+### OP1 owner-operated API order lifecycle
+
+This test has a narrower acceptance scope than continuous financial operation.
+Its evidence is available collateral and allowance, the selected token's CLOB
+balance, wallet-wide open orders, authenticated credential trade visibility,
+and order details and confirmed fills tied to the test's own order IDs.
+Complete wallet inventory and lifetime cash, fees and P&L are outside this
+test's evidence. Unknown fees, pending fills, absent details and unrelated
+positions are not inferred from wallet balance changes.
+
+The protected read-only entry point is `qualify-account --read-account
+--order-lifecycle`. Use one standard type-3 market and a separate finite
+allowance whose exact endpoints are the venue eligibility check, CLOB
+orders, wallet-open-orders, trades, balance-allowance, fee-rate and exact
+clob-markets path, plus the Gamma markets endpoint. Pass a protected
+`--lifecycle-orders` JSON mapping exact order IDs to BUY or SELL to include
+the corresponding order-detail paths. The qualification mode uses only GETs
+and never creates a complete-account opening receipt or financial authority.
+An absent order detail does not establish cancellation.
+
+A fee rate is not a charged fee. The scoped report recognizes zero fees only
+with explicit official market evidence. An unpriced fee leaves run fees and
+P&L unknown. A reported round-trip P&L uses only the confirmed run fills and
+requires a flat run inventory and verified order terminal evidence.
+
+This diagnostic is independent of the continuous Live composition. The
+existing Live session still requires its full-account evidence contract.
+Do not feed the scoped report to provision or treat it as approval to trade.
+
 The optional `historical_instruments` configuration adds account reconciliation
 scope. Bind each observed token to its exact supported condition, collateral and
 settlement route. Unmapped or incompatible history blocks qualification. Trading

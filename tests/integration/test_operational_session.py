@@ -438,8 +438,18 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             return httpx.Response(200, json={"condition_id": auth.instruments[0].market})
         if request.url.path.startswith("/clob-markets/"):
             return httpx.Response(
-                200, json={"nr": False, "mts": "0.01", "t": [{"t": SESSION_TOKEN}]}
+                200, json={
+                    "c": auth.instruments[0].market, "nr": False, "mts": "0.01",
+                    "t": [{"t": SESSION_TOKEN}],
+                },
             )
+        if request.url.path == "/fee-rate":
+            return httpx.Response(200, json={"base_fee": 0})
+        if request.url.host == "gamma-api.polymarket.com" and request.url.path == "/markets":
+            return httpx.Response(200, json=[{
+                "conditionId": auth.instruments[0].market, "feesEnabled": False,
+                "negRisk": False, "clobTokenIds": json.dumps([SESSION_TOKEN]),
+            }])
         if request.url.path == "/order" and request.method == "POST":
             state = session.coordinator.journal.read()
             assert any(row["state"] == "UNCERTAIN_SUBMIT" for row in state["orders"].values())
@@ -507,11 +517,13 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
         if request.url.path == "/balance-allowance":
             assert request.url.params["signature_type"] == str(signature_type)
+            if request.url.params["asset_type"] == "CONDITIONAL":
+                return httpx.Response(200, json={"balance": "0", "allowances": {}})
             return httpx.Response(
                 200,
                 json={
                     "balance": "98998766" if observed_fill["enabled"] else "100000000",
-                    "allowances": {},
+                    "allowances": {config.exchange: "100000000"},
                 },
             )
         if request.url.path == "/data/wallet-open-orders":
@@ -654,6 +666,26 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         assert qualified["opening"]["cash"] == 100 and qualified["opening"]["positions"] == ()
         assert qualified["financial_authority"] == "NOT_ISSUED"
         assert qualified["acquisition"]["requests_charged"] == len(requests) - before
+        if cancel:
+            api_policy = replace(
+                read_policy, policy_id="fixture-API-lifecycle",
+                endpoints=tuple(url for url in read_policy.endpoints if url != config.rpc_url) + (
+                    f"https://clob.polymarket.com/clob-markets/{auth.instruments[0].market}",
+                    "https://clob.polymarket.com/fee-rate",
+                    "https://gamma-api.polymarket.com/markets",
+                ),
+            )
+            api_allowance = AcquisitionAuthority(tmp_path / "api/allowance.sqlite3", api_policy)
+            previous_requests = len(requests)
+            scoped = await qualify_account(
+                config, auth.instruments, api_allowance,
+                read_account=True, clock=lambda: NOW, lifecycle_orders={},
+            )
+            assert scoped["status"] == "API_LIFECYCLE_OBSERVED"
+            assert scoped["lifecycle"]["usable_collateral"] == D(100)
+            assert scoped["lifecycle"]["full_account_reconciled"] is False
+            assert scoped["explicit_zero_fee"] is True and "opening" not in scoped
+            assert all(method == "GET" for method, _ in requests[previous_requests:])
         if historical is not None:
             assert "eth_getLogs" not in rpc_methods[warm_start:]
             assert rpc_methods[warm_start:].count("eth_call") == 2  # cash and one CTF batch
