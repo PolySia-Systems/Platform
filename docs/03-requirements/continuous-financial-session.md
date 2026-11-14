@@ -142,3 +142,30 @@ or reinterpretation is permitted. New optional Shadow policy fields preserve
 legacy consumers; scoped commands use additive tables. Changing a Live binding
 requires a new separately authorized run/receipt; staging does not alter active
 holdings. See the runbook for custody, qualification and rollback.
+
+
+## Owner-operated OP1 evidence contract
+
+Owner acceptance narrows this experiment to a single API-backed order lifecycle.
+A signed ORDER_LIFECYCLE_API opening identifies a separate scope from ACCOUNT.
+The scoped ledger accepts observations only in that same scope. It checks the
+selected token and run-owned orders, fills and fees. It uses current available
+collateral as an additional entry constraint. Differences between total-wallet
+cash and the run ledger neither create profit nor authorize additional spending.
+Complete wallet inventory and lifetime reconciliation remain outside this test.
+The continuous full-account session continues to require ACCOUNT observations.
+
+An exact run has one durable entry slot, one entry-cancellation slot, one exit
+slot and one exit-cancellation slot. Reservations and ambiguous mutations consume
+their slots. Recovery cannot reissue slots. Existing records are interpreted
+conservatively without rewriting original history.
+
+CURRENT engineering supports the scoped accounting carrier, API adapter and
+explicit owner-test intent through independent Risk and Execution. No source
+occurrence or alpha is invented. Full-account/source-following behavior retains
+its original requirements. Scoped commissioning requires a fresh flat-token
+API baseline, external signed exact binding, independent custody/supervision
+and recovery acceptance. Entry window, GTD expiry, holding limit and protective
+deadline are separate frozen facts. Source-driven entry and RPC configuration
+are excluded from this API profile. Pending settlement drains entry while bounded
+reads continue; ambiguity never authorizes a replacement or another cycle.

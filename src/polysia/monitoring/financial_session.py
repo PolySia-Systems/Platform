@@ -121,7 +121,11 @@ def financial_session_view(
             "configured_mode": trading_mode.value,
             "environment": "UNKNOWN",
         },
-        "scope": "bounded session library; publication does not activate execution",
+        "scope": (
+            "owner order lifecycle API; complete wallet reconciliation is unassessed"
+            if state["opening"].get("scope") == "ORDER_LIFECYCLE_API"
+            else "bounded session library; publication does not activate execution"
+        ),
         "activation": "NOT_COMMISSIONED",
         "trading_mode": trading_mode.value,
         "account_observed_at": account_at,
@@ -142,7 +146,10 @@ def financial_session_view(
             else "WITHIN_WINDOW",
             "expires_at": authority.expires_at.isoformat(),
             "protective_until": authority.protective_until.isoformat(),
-            "attempts": authority.max_attempts - state["attempts"],
+            "attempts": authority.max_attempts - (
+                len(state["exact_mutation_slots"])
+                if "exact_mutation_slots" in state else state["attempts"]
+            ),
             "turnover": str(authority.max_turnover - Decimal(state["turnover"])),
             "requests": authority.max_requests - state["requests"],
             "protective_actions": sorted(authority.protective_actions),

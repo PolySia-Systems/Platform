@@ -59,7 +59,82 @@ class ExactAccountMapping:
             raise SessionBlocked("unsupported_exact_account_mapping")
 
 
-class ExactSessionAccountReader:
+class ClobSessionReads:
+    """Identity and bounded order/trade reads shared by both evidence contracts."""
+
+    def __init__(self, client: Any, mapping: ExactAccountMapping, *, maximum_pages: int) -> None:
+        if not 0 < maximum_pages <= 100:
+            raise SessionBlocked("bounded_account_read_required")
+        self.client, self.mapping, self.maximum_pages = client, mapping, maximum_pages
+
+    def require_identity(self) -> None:
+        deposit_wallet = self.mapping.signature_type == 3
+        wallet_type = "DEPOSIT_WALLET" if deposit_wallet else "EOA"
+        if (
+            address(str(self.client.signer)) != address(self.mapping.signer)
+            or address(str(self.client.wallet)) != address(self.mapping.funder)
+            or str(self.client.wallet_type) != wallet_type
+            or (deposit_wallet and self.client._ctx.signer_type != "OWNER")
+        ):
+            raise SessionBlocked("authenticated_account_identity_changed")
+
+    async def _matching_open_orders(self) -> list[Any]:
+        orders = await self._walk(self.client.list_open_orders())
+        if self.mapping.signature_type == 3:
+            wallet_ids = await self._wallet_open_order_ids()
+            if wallet_ids != {str(field(row, "id")) for row in orders}:
+                raise SessionBlocked("wallet_and_credential_open_orders_disagree")
+        return orders
+
+    async def _wallet_open_order_ids(self) -> set[str]:
+        cursor = ""
+        seen: set[str] = set()
+        identities: set[str] = set()
+        for _ in range(self.maximum_pages):
+            page = await self.client._ctx.secure_clob.get_json(
+                WALLET_OPEN_ORDERS_PATH, params={"cursor": cursor} if cursor else {}
+            )
+            if (
+                not isinstance(page, dict)
+                or not isinstance(page.get("data"), list)
+                or not isinstance(page.get("next_cursor"), str)
+            ):
+                raise SessionBlocked("wallet_open_orders_page_malformed")
+            for row in page["data"]:
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(identity := row.get("id"), str)
+                    or not identity
+                    or identity in identities
+                    or str(row.get("maker_address", "")).lower() != self.mapping.funder.lower()
+                ):
+                    raise SessionBlocked("wallet_open_orders_identity_unverified")
+                identities.add(identity)
+            cursor = page["next_cursor"]
+            if not cursor:
+                return identities
+            if cursor in seen:
+                raise SessionBlocked("wallet_open_orders_cursor_repeated")
+            seen.add(cursor)
+        raise SessionBlocked("wallet_open_orders_page_budget_exhausted")
+
+    async def _walk(self, pages: Any) -> list[Any]:
+        rows, cursors = [], set()
+        count = 0
+        async for page in pages:
+            count += 1
+            if count > self.maximum_pages or page.limit_reached:
+                raise SessionBlocked("account_page_budget_exhausted")
+            rows.extend(page.items)
+            if not page.has_more:
+                return rows
+            if not page.next_cursor or page.next_cursor in cursors:
+                raise SessionBlocked("account_cursor_repeated_or_missing")
+            cursors.add(page.next_cursor)
+        raise SessionBlocked("account_terminal_page_missing")
+
+
+class ExactSessionAccountReader(ClobSessionReads):
     def __init__(
         self,
         client: Any,
@@ -73,10 +148,10 @@ class ExactSessionAccountReader:
         collateral_adapter: str | None = None,
         recognition_since: datetime | None = None,
     ) -> None:
-        if not 0 < maximum_pages <= 100 or maximum_age_seconds <= 0:
+        super().__init__(client, mapping, maximum_pages=maximum_pages)
+        if maximum_age_seconds <= 0:
             raise SessionBlocked("bounded_account_read_required")
-        self.client, self.chain, self.mapping = client, chain, mapping
-        self.maximum_pages, self.maximum_age, self.clock = maximum_pages, maximum_age_seconds, clock
+        self.chain, self.maximum_age, self.clock = chain, maximum_age_seconds, clock
         self.executable_markets = executable_markets
         self.last_fills: tuple[ChainFill, ...] = ()
         self.last_orders: dict[str, dict[str, Any]] = {}
@@ -86,15 +161,8 @@ class ExactSessionAccountReader:
         self.last_observation: AccountObservation | None = None
 
     def require_identity(self) -> None:
-        deposit_wallet = self.mapping.signature_type == 3
-        wallet_type = "DEPOSIT_WALLET" if deposit_wallet else "EOA"
-        if (
-            address(str(self.client.signer)) != address(self.mapping.signer)
-            or address(str(self.client.wallet)) != address(self.mapping.funder)
-            or str(self.client.wallet_type) != wallet_type
-            or (deposit_wallet and self.client._ctx.signer_type != "OWNER")
-            or self.chain.collateral != address(self.mapping.collateral)
-        ):
+        super().require_identity()
+        if self.chain.collateral != address(self.mapping.collateral):
             raise SessionBlocked("authenticated_account_identity_changed")
 
     async def observe(self, instrument: InstrumentScope) -> AccountObservation:
@@ -201,11 +269,7 @@ class ExactSessionAccountReader:
         return observation
 
     async def _clob_view(self) -> dict[str, Any]:
-        orders = await self._walk(self.client.list_open_orders())
-        if self.mapping.signature_type == 3:
-            wallet_ids = await self._wallet_open_order_ids()
-            if wallet_ids != {str(field(row, "id")) for row in orders}:
-                raise SessionBlocked("wallet_and_credential_open_orders_disagree")
+        orders = await self._matching_open_orders()
         trades = await self._walk(self.client.list_account_trades())
         order_rows = [
             extract(
@@ -291,52 +355,6 @@ class ExactSessionAccountReader:
                 raise SessionBlocked("unmapped_account_order_or_trade")
         return {"orders": sorted_unique(order_rows), "trades": sorted_unique(trade_rows)}
 
-    async def _wallet_open_order_ids(self) -> set[str]:
-        cursor = ""
-        seen: set[str] = set()
-        identities: set[str] = set()
-        for _ in range(self.maximum_pages):
-            page = await self.client._ctx.secure_clob.get_json(
-                WALLET_OPEN_ORDERS_PATH, params={"cursor": cursor} if cursor else {}
-            )
-            if (
-                not isinstance(page, dict)
-                or not isinstance(page.get("data"), list)
-                or not isinstance(page.get("next_cursor"), str)
-            ):
-                raise SessionBlocked("wallet_open_orders_page_malformed")
-            for row in page["data"]:
-                if (
-                    not isinstance(row, dict)
-                    or not isinstance(identity := row.get("id"), str)
-                    or not identity
-                    or identity in identities
-                    or str(row.get("maker_address", "")).lower() != self.mapping.funder.lower()
-                ):
-                    raise SessionBlocked("wallet_open_orders_identity_unverified")
-                identities.add(identity)
-            cursor = page["next_cursor"]
-            if not cursor:
-                return identities
-            if cursor in seen:
-                raise SessionBlocked("wallet_open_orders_cursor_repeated")
-            seen.add(cursor)
-        raise SessionBlocked("wallet_open_orders_page_budget_exhausted")
-
-    async def _walk(self, pages: Any) -> list[Any]:
-        rows, cursors = [], set()
-        count = 0
-        async for page in pages:
-            count += 1
-            if count > self.maximum_pages or page.limit_reached:
-                raise SessionBlocked("account_page_budget_exhausted")
-            rows.extend(page.items)
-            if not page.has_more:
-                return rows
-            if not page.next_cursor or page.next_cursor in cursors:
-                raise SessionBlocked("account_cursor_repeated_or_missing")
-            cursors.add(page.next_cursor)
-        raise SessionBlocked("account_terminal_page_missing")
 
 
 def field(value: Any, name: str) -> Any:

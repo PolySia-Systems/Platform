@@ -38,6 +38,8 @@ async def confine_sdk_http(
 ) -> None:
     rpc = client._ctx.rpc._transport
     await rpc._client.aclose()
+    # An empty URL is the explicit API-only configuration. The SDK's RPC
+    # transport is still confined, with no resolvable endpoint or network grant.
     rpc._base_url = rpc_url
     rpc._client = httpx.AsyncClient(
         transport=factory(), base_url=rpc_url, follow_redirects=False, timeout=timeout,

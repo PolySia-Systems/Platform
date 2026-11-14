@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -19,6 +19,7 @@ async def qualify_account(
     read_account: bool,
     clock: Callable[[], datetime],
     prime_history: bool = False,
+    lifecycle_orders: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     if not read_account:
         return {"status": "DISABLED", "account_read": "NOT_PERFORMED", "network": "NOT_CONSTRUCTED"}
@@ -26,5 +27,5 @@ async def qualify_account(
 
     return await read(
         config, instruments, acquisition, read_account=True, clock=clock,
-        prime_history=prime_history,
+        prime_history=prime_history, lifecycle_orders=lifecycle_orders,
     )

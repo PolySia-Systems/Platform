@@ -23,6 +23,7 @@ def operational_capabilities(
     qualification_observed_at: datetime | None = None,
 ) -> dict[str, object]:
     scope = authority.run_id
+    api_test = state["opening"].get("scope") == "ORDER_LIFECYCLE_API"
     evidence = {}
 
     def add(
@@ -100,9 +101,11 @@ def operational_capabilities(
     add(
         "account",
         bool(state["reconciliation_ok"]),
-        "exact-finalized-chain-and-authenticated-CLOB",
+        "official-CLOB-scoped-order-lifecycle" if api_test
+        else "exact-finalized-chain-and-authenticated-CLOB",
         observed_account,
-        "Exact account mapping and coherent complete evidence required",
+        "Exact account mapping and scoped API evidence; full wallet unassessed" if api_test
+        else "Exact account mapping and coherent complete evidence required",
         "Resolve financial uncertainty and re-read exact account",
         until=(observed_account or now) + timedelta(seconds=authority.max_evidence_age_seconds),
     )
@@ -175,6 +178,7 @@ def operational_capabilities(
     result = capability_projection(
         evidence,
         now=now,
+        profile="ORDER_LIFECYCLE_API" if api_test else "ACCOUNT",
         enabled={
             "startup": True,
             "liveness": True,

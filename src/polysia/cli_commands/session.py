@@ -158,7 +158,18 @@ def qualify_account_command(
     output: Annotated[Path, typer.Option()],
     read_account: bool = False,
     prime_history: bool = False,
+    order_lifecycle: bool = False,
+    lifecycle_orders: Path | None = None,
 ) -> None:
+    if lifecycle_orders is not None and not order_lifecycle:
+        raise typer.BadParameter("--lifecycle-orders requires --order-lifecycle")
+    tracked = None
+    if order_lifecycle:
+        tracked = {} if lifecycle_orders is None else TypeAdapter(
+            dict[str, Literal["BUY", "SELL"]]
+        ).validate_python(read_small_json(lifecycle_orders))
+        if len(tracked) > 2 or any(not order_id or len(order_id) > 128 for order_id in tracked):
+            raise typer.BadParameter("At most two exact order IDs are permitted.")
     prepared = load_runtime_config(config)
     if (
         not allowance_store.is_absolute()
@@ -196,6 +207,7 @@ def qualify_account_command(
                 read_account=read_account,
                 clock=lambda: datetime.now(UTC),
                 prime_history=prime_history,
+                lifecycle_orders=tracked,
             )
         )
         if read_account:
@@ -416,6 +428,11 @@ def run(
                     return result
                 tick_started = time.monotonic()
                 result = await session.tick(owner_entry=owner_entry)
+                if (
+                    owner_entry and prepared.opening.scope == "ORDER_LIFECYCLE_API"
+                    and session.lifecycle_complete()
+                ):
+                    return result
                 count += 1
                 delay = max(0, prepared.tick_interval_seconds - (time.monotonic() - tick_started))
                 if deadline is None:

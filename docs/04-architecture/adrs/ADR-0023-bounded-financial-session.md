@@ -182,3 +182,30 @@ physical egress, provider billing and unrelated processes require conservative
 shared or disjoint host allocations. Optional telemetry/publication has bounded
 resources and cannot bless financial readiness. Capacity probes and synthetic
 benchmarks do not establish MaximumVerified capacity.
+
+
+## Scoped OP1 API accounting extension
+
+The owner explicitly accepted an API-backed, owner-operated order-lifecycle
+experiment. Its ORDER_LIFECYCLE_API observations are typed separately from
+ACCOUNT observations. Scope is retained in the signed configuration and journal
+opening. The coordinator requires matching scope. The default full-account
+provisioning rejects the scoped observation.
+
+The same Risk, execution port, durable journal, custody, independent supervision
+and recovery owners remain mandatory. The adapter projects only the tested token
+and owned fills. Run P&L uses confirmed fill cashflows. Current collateral and
+allowance constrain spending without interpreting unexplained wallet cash changes
+as P&L. This experiment's four mutation slots include both cancellation slots.
+
+CURRENT code provides the scoped observation, adapter and explicit OwnerTestIntent
+admission through the same Risk and Execution owners. The owner command is not a
+SourceOccurrence, cohort qualification or alpha estimate. Unknown edge remains
+unknown; independently configured Risk may require it and reject the test.
+The signed API profile has no source-wallet, cohort or RPC configuration. The
+full ACCOUNT profile preserves its original requirements. The API capability
+projection retains account, authority, supervision, reconciliation, recovery,
+backup and capacity, while source-following evidence remains inapplicable to
+this owner-operated purpose. This extension does not authorize an uncommissioned
+financial run. Current host qualification, issuer signature, supervision and
+recovery acceptance remain operational evidence, not facts supplied by this ADR.
