@@ -123,7 +123,7 @@ def run_role(profile: dict[str, Any], role: str) -> None:
     command = container_command(profile, role)
     process = subprocess.Popen(command)
 
-    def terminate(*_: object) -> None:
+    def terminate(*signal_args: object) -> None:
         raise SystemExit(1)
 
     signal.signal(signal.SIGTERM, terminate)

@@ -83,7 +83,7 @@ def receiver(profile: dict[str, Any]) -> None:
     """Only this forced SSH command is authorized for the backup transport key."""
     import signal
 
-    def expired(*_: object) -> None:
+    def expired(*signal_args: object) -> None:
         raise TimeoutError("finite_backup_receive_deadline")
 
     signal.signal(signal.SIGALRM, expired)
