@@ -1,5 +1,12 @@
 # Delivery and Rollback
 
+Release image archives may use a Docker config identity or an OCI manifest/index
+identity, including nested indexes with BuildKit provenance. Bootstrap verifies
+descriptor sizes and SHA-256 hashes through the index to the single runnable
+image's config. Attached non-runnable attestations must refer to that image and
+are never accepted as runnable release identities. This format compatibility
+does not replace archive-digest, exact-commit or installed-release checks.
+
 ## Delivery contents
 
 - Canonical source is the current Git `main` branch.

@@ -10,6 +10,140 @@ from deploy.platform_bootstrap import container_command, service_text, verify_ar
 from scripts.release_manifest import manifest
 
 
+def image_archive(tmp_path, *, nested=0, corruption=None, legacy=False, attestation=False):
+    import hashlib
+    import io
+    import tarfile
+
+    config = b'{"architecture":"amd64","os":"linux"}'
+    config_id = "sha256:" + hashlib.sha256(config).hexdigest()
+    config_name = (config_id[7:] + ".json" if legacy else "blobs/sha256/" + config_id[7:])
+    files = {config_name: config}
+    docker = [{"Config": config_name, "RepoTags": ["polysia:ci"], "Layers": []}]
+    files["manifest.json"] = json.dumps(docker).encode()
+
+    def descriptor(value, kind):
+        raw = json.dumps(value).encode()
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        files["blobs/sha256/" + digest[7:]] = raw
+        return {"digest": digest, "size": len(raw), "mediaType": kind}
+
+    leaf = descriptor({"schemaVersion": 2, "config": {
+        "digest": config_id if corruption != "config-binding" else "sha256:" + "b" * 64,
+    }}, "application/vnd.oci.image.manifest.v1+json")
+    current = leaf
+    if attestation:
+        att = descriptor({"schemaVersion": 2, "config": {"digest": "sha256:" + "d" * 64}},
+                         "application/vnd.oci.image.manifest.v1+json")
+        att["platform"] = {"os": "unknown", "architecture": "unknown"}
+        att["annotations"] = {
+            "vnd.docker.reference.type": "attestation-manifest",
+            "vnd.docker.reference.digest": leaf["digest"],
+        }
+        if corruption == "attestation-reference":
+            att["annotations"]["vnd.docker.reference.digest"] = "sha256:" + "e" * 64
+        if corruption == "attestation-platform":
+            att["platform"]["os"] = "linux"
+        if corruption == "attestation-bytes":
+            files["blobs/sha256/" + att["digest"][7:]] = b" " * att["size"]
+        current = descriptor({"schemaVersion": 2, "manifests": [leaf, att]},
+                             "application/vnd.oci.image.index.v1+json")
+    for _ in range(nested):
+        current = descriptor({"schemaVersion": 2, "manifests": [current]},
+                             "application/vnd.oci.image.index.v1+json")
+    if not legacy:
+        if corruption == "descriptor-size":
+            current["size"] += 1
+        if corruption == "blob-digest":
+            files["blobs/sha256/" + current["digest"][7:]] = b" " * current["size"]
+        index = {"schemaVersion": 2, "manifests": [current]}
+        if corruption == "multiple":
+            index["manifests"].append(current)
+        files["index.json"] = json.dumps(index).encode()
+    if corruption == "config-digest":
+        files[config_name] = b"modified config"
+    with tarfile.open(tmp_path / "polysia-image.tar.gz", "w:gz") as archive:
+        for name, raw in files.items():
+            item = tarfile.TarInfo(name)
+            item.size = len(raw)
+            archive.addfile(item, io.BytesIO(raw))
+        if corruption == "duplicate":
+            item = tarfile.TarInfo(config_name)
+            item.size = len(config)
+            archive.addfile(item, io.BytesIO(config))
+    return config_id, current["digest"], leaf["digest"]
+
+
+@pytest.mark.parametrize("nested", [0, 1, 3])
+def test_archive_binds_config_and_nested_oci_identities(tmp_path, nested):
+    from deploy.platform_bootstrap import archive_image_ids
+
+    config, outer, leaf = image_archive(tmp_path, nested=nested)
+    for identity in (config, outer, leaf):
+        ids = archive_image_ids(tmp_path, {"image_id": identity})
+        assert config in ids and outer in ids and leaf in ids
+
+
+def test_legacy_docker_archive_remains_config_bound(tmp_path):
+    from deploy.platform_bootstrap import archive_image_ids
+
+    config, *_ = image_archive(tmp_path, legacy=True)
+    assert archive_image_ids(tmp_path, {"image_id": config}) == (config,)
+
+
+def test_archive_accepts_bound_non_runnable_buildkit_attestation(tmp_path):
+    import tarfile
+
+    from deploy.platform_bootstrap import archive_image_ids
+
+    config, outer, leaf = image_archive(tmp_path, attestation=True)
+    ids = archive_image_ids(tmp_path, {"image_id": outer})
+    assert ids == (config, outer, leaf)
+    with tarfile.open(tmp_path / "polysia-image.tar.gz", "r:gz") as archive:
+        nested = json.load(archive.extractfile("blobs/sha256/" + outer[7:]))
+        attestation_id = nested["manifests"][1]["digest"]
+    with pytest.raises(ValueError, match="not bound"):
+        archive_image_ids(tmp_path, {"image_id": attestation_id})
+
+
+@pytest.mark.parametrize("case", [
+    "attestation-reference", "attestation-platform", "attestation-bytes",
+])
+def test_attestations_cannot_weaken_single_image_binding(tmp_path, case):
+    from deploy.platform_bootstrap import archive_image_ids
+
+    _, outer, _ = image_archive(tmp_path, corruption=case, attestation=True)
+    with pytest.raises(ValueError):
+        archive_image_ids(tmp_path, {"image_id": outer})
+
+
+@pytest.mark.parametrize("case, reason", [
+    ("config-binding", "config identities differ"),
+    ("config-digest", "config digest mismatch"),
+    ("descriptor-size", "size or digest mismatch"),
+    ("blob-digest", "size or digest mismatch"),
+    ("multiple", "one platform descriptor"),
+    ("duplicate", "duplicate image metadata"),
+])
+def test_archive_rejects_inconsistent_or_ambiguous_identity(tmp_path, case, reason):
+    from deploy.platform_bootstrap import archive_image_ids
+
+    config, *_ = image_archive(tmp_path, nested=1, corruption=case)
+    with pytest.raises(ValueError, match=reason):
+        archive_image_ids(tmp_path, {"image_id": config})
+
+
+def test_archive_refuses_excessive_nesting_and_unbound_runner_identity(tmp_path):
+    from deploy.platform_bootstrap import archive_image_ids
+
+    config, *_ = image_archive(tmp_path, nested=8)
+    with pytest.raises(ValueError, match="nesting limit"):
+        archive_image_ids(tmp_path, {"image_id": config})
+    image_archive(tmp_path, nested=1)
+    with pytest.raises(ValueError, match="not bound"):
+        archive_image_ids(tmp_path, {"image_id": "sha256:" + "c" * 64})
+
+
 def test_backup_mounts_campaign_without_exposing_other_configuration(tmp_path, monkeypatch):
     from deploy import platform_backup as backup
 
