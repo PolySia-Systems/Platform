@@ -62,7 +62,7 @@ def native(
         "--user",
         user,
         "--cpus",
-        "0.25",
+        "1",
         "--memory-limit",
         "268435456",
         "--env",
