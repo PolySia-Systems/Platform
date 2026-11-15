@@ -80,6 +80,17 @@ def _amount(value: object) -> Decimal:
     return result
 
 
+def _exchange_allowance(value: Any, exchange: str, *, optional: bool = False) -> Decimal | None:
+    allowances = field(value, "allowances")
+    if allowances is None and optional:
+        return None
+    if not isinstance(allowances, dict):
+        raise SessionBlocked("CLOB_exchange_allowance_missing")
+    matching = [quantity for spender, quantity in allowances.items()
+                if str(spender).lower() == exchange.lower()]
+    return _atomic(matching[0]) if len(matching) == 1 else None
+
+
 class OrderLifecycleAccountReader(ClobSessionReads):
     """No full-account observation or venue mutation can originate here."""
 
@@ -156,12 +167,8 @@ class OrderLifecycleAccountReader(ClobSessionReads):
             ):
                 raise SessionBlocked("tracked_order_identity_mismatch")
 
-        allowances = field(collateral, "allowances")
-        if not isinstance(allowances, dict):
-            raise SessionBlocked("CLOB_exchange_allowance_missing")
-        matching = [quantity for spender, quantity in allowances.items()
-                    if str(spender).lower() == exchange.lower()]
-        allowance = _atomic(matching[0]) if len(matching) == 1 else None
+        allowance = _exchange_allowance(collateral, exchange)
+        conditional_allowance = _exchange_allowance(position, exchange, optional=True)
         cash = _atomic(field(collateral, "balance"))
         conditional = _atomic(field(position, "balance"))
         fills, pending = self._trade_facts(trades, instrument, tracked, explicit_zero_fee)
@@ -234,6 +241,7 @@ class OrderLifecycleAccountReader(ClobSessionReads):
                 else None
             ),
             "tested_token_balance": conditional,
+            "tested_token_allowance": conditional_allowance,
             "open_order_ids": sorted(open_orders),
             "untracked_open_order_ids": sorted(foreign_open),
             "pending_trade_ids": sorted(pending),
@@ -315,6 +323,8 @@ def scoped_opening(
         not explicit_zero_fee or evidence["usable_collateral"] is None
         or evidence["tested_token_balance"] != 0 or evidence["open_order_ids"]
         or evidence["pending_trade_ids"] or evidence["confirmed_fills"]
+        or evidence.get("tested_token_allowance") is None
+        or evidence["tested_token_allowance"] < 5
     ):
         return None
     return AccountObservation(
@@ -371,6 +381,15 @@ class OrderLifecycleSessionAccount:
             raise SessionBlocked("API_lifecycle_unowned_order")
         if evidence["pending_trade_ids"]:
             raise APISettlementPending("API_lifecycle_pending_trade")
+        if not any(row["order_id"] or row.get("state") not in {None, "RESERVED"}
+                   for row in rows.values()) and (
+            evidence["tested_token_allowance"] is None or evidence["tested_token_allowance"] < 5
+        ):
+            # Before entry, including the final refresh of a reserved buy,
+            # prove capacity to sell five run-created shares without an approval.
+            # After submission, a lost permission must not hide reconciliation
+            # evidence or prevent read-only investigation/cancellation.
+            raise SessionBlocked("API_lifecycle_protective_allowance_unknown_or_insufficient")
         fees = evidence["confirmed_run_fees"]
         allowance = evidence["collateral_allowance"]
         if allowance is None:

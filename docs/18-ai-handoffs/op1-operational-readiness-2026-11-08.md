@@ -331,3 +331,79 @@ artifact. OP1 documentation uses the changed-docs, Standards and secret gates.
 The #264 correction was verified against [attempt 2, installation-acceptance](https://github.com/PolySia-Systems/Platform/actions/runs/42472604797/job/128711442287?attempt=2).
 Backup replacement/nonempty recovery passed. The ACME step failed while reading
 the Pebble release download. The download timeout cause remains unknown.
+
+## API-backed owner test commissioning checkpoint - 2026-11-15
+
+This dated checkpoint supersedes the full-inventory/source-cohort acceptance
+criteria above only for the owner-approved bounded API order-lifecycle test.
+ACCOUNT operation retains its separate requirements. No full-wallet inventory,
+lifetime P&L, archival scan, Alchemy onboarding or direct-RPC development is
+required for this experiment. Unassessed inventory remains unassessed.
+
+- Engineering: [PR #287](https://github.com/PolySia-Systems/Platform/pull/287)
+  merged as `7b8298e4019d2dd7658e5eff63a1deaff01e5044`. Its exact-main
+  [CI 43649532836](https://github.com/PolySia-Systems/Platform/actions/runs/43649532836)
+  passed, including Windows. Explicit owner intent passes through independent
+  Risk, Execution, type-3 signing semantics, four durable mutation slots and
+  owned-order accounting. Synthetic transport proves partial fills, uncertain
+  submissions, cancellation and restart behavior; it does not prove a trade.
+- Deployment: native artifact `14135233159` passed ZIP, canonical manifest,
+  archive and installed commit checks. Image
+  `sha256:2473b9e713b87fb20ef58bd24b63190feba5e4181d767512351fc7d84a039f8c`
+  is installed in the existing `polysia-op1` containerd namespace under STOP.
+  Installed API/owner-intent imports and configuration-schema smoke passed.
+  Original shared N3 image was unchanged. The prior approved image is retained
+  as `docker.io/library/polysia:op1-rollback-38042e6`. No financial worker is active.
+  Receipt: `/var/lib/polysia-op1/releases/7b8298e4019d2dd7658e5eff63a1deaff01e5044/deployment-receipt.json`.
+- Current account observation: Helsinki GET-only API qualification at
+  `2026-11-15T01:28:34.146596Z` verified the designated type-3 signer/funder
+  mapping through the supported SDK and authenticated account path. Venue
+  eligibility returned FI/unblocked. Usable collateral was 10.213845 pUSD;
+  wallet-wide open orders, credential-visible pending trades and selected-token
+  balance were zero. This proves scoped account connectivity, not a complete
+  account verification or a trading result.
+- Protective permission: a separate affected GET-only check confirmed existing
+  conditional-token exchange allowance sufficient for five shares. No token
+  approval or wallet transaction was made. Follow-up engineering adds this fact
+  to the API evidence and blocks entry/final reserved-buy refresh if exit
+  permission is missing or insufficient, while preserving post-submit reads.
+- Technical candidate at that observation: exact instrument identity is retained
+  in `/var/lib/polysia-op1/api-read-20261115-r1-resume/proposal.json`.
+  Ask 0.08 with 1,482.35 shares; bid 0.07 with 2,712.12 shares; minimum five;
+  negative risk false; official zero-fee evidence matched. The technical
+  proposal is five shares at a limit of 0.08, gross 0.40 pUSD, with the original
+  2.675 pUSD total loss/debit ceiling and four mutation slots. It proposes a
+  60-second entry window, separate GTD expiry at T0+195 seconds, 120-second
+  holding limit and protective deadline at T0+600 seconds. These are dated
+  proposal inputs, not a signed active window or an alpha estimate. Recheck
+  current quotes, funds and permissions before freezing an owner packet.
+- Resource accounting: the single current-read campaign used 19 charged
+  attempts and 828,188 charged bytes, including one fully charged uncertain
+  connection failure from a container without network access. The changed
+  network configuration used Helsinki host networking; no other location,
+  proxy or endpoint bypass was used. Continuation ceilings deducted all prior
+  consumption; original stopped ledgers were not reopened. Its total ceiling
+  remains 32 attempts/12 MiB, 60 attempts/minute, 512 KiB/response and 15-second
+  sockets, within the original broader ceilings. Absolute maximum window ends
+  `2026-11-15T03:25:11.674433Z`. All child ledgers are stopped. Temporary credential
+  files were removed; API credentials and auth response bodies were not retained.
+  Final receipt: `/var/lib/polysia-op1/api-read-20261115-r1-permission/receipt.json`.
+- Independent controls: both original host fences remain. An offline live-WAL
+  OS-role probe proved read access and denied SQL mutation, replacement and
+  directory writes through a read-only control mount. Empty worker/supervisor
+  directories use distinct owners, shared read group 981 and no cross-role
+  directory write permission. Process umask 0027 and writer-owned mode-0640
+  journal/custody files are the prepared deployment contract. This is OS
+  preparation, not a commissioned real-run supervisor or recovery receipt.
+- One authorized redacted email test used the connected Gmail account whose
+  profile matched the verified owner mailbox. Provider message
+  `1a1dcdbacc250829` had SENT/INBOX/UNREAD evidence. Human receipt remains pending.
+  This manual transport test does not configure the Platform incident sink and
+  is not authority for another alert attempt.
+- Owner signing: the encrypted offline issuer tool is available at the owner's
+  local `artifacts/op1-type3-20261108/op1-owner-issuer.py`. No issuer private key
+  was installed in a worker or created on the owner's behalf. The owner public
+  registry was absent at this check. A trusted external owner signature, fresh
+  frozen opening and actual workload/custody/recovery commissioning evidence
+  remain prerequisites. Do not substitute a synthetic capacity PASS or fixture
+  signature. Real signing, submission and cancellation counts remain zero.
