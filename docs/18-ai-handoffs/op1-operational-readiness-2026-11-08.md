@@ -407,3 +407,104 @@ required for this experiment. Unassessed inventory remains unassessed.
   frozen opening and actual workload/custody/recovery commissioning evidence
   remain prerequisites. Do not substitute a synthetic capacity PASS or fixture
   signature. Real signing, submission and cancellation counts remain zero.
+
+### Final affected-release verification - 2026-11-15
+
+This addendum advances the dated checkpoint above; it grants no financial
+authority and does not report a real-money lifecycle test as completed.
+
+- [PR #288](https://github.com/PolySia-Systems/Platform/pull/288) merged as
+  `6ab9c08907c76ed20e893c657c67b9dc55d9f023`. It preserves the selected-token
+  exit allowance in scoped evidence and rejects entry when the existing
+  allowance cannot cover five shares. Fourteen affected Windows tests passed.
+  The exact release's full [CI 43665217457, attempt 2](https://github.com/PolySia-Systems/Platform/actions/runs/43665217457)
+  passed. Windows, container, installation, browser, quality and supply-chain
+  results were reused; only the failed dependency-health job was rerun.
+- Dependency-health repair used the supported scheduled producer/publication
+  workflow. Obsolete, behind-main bot PR #280 was closed without rewriting its
+  history. Fresh publication run `43665586907`, attempt 2, passed and
+  [PR #289](https://github.com/PolySia-Systems/Platform/pull/289) merged the
+  development-only filelock lock refresh. Runtime SDK and authentication
+  dependencies were unchanged. Other Dependabot proposals remain independent.
+- Verified artifact `14141766819` has ZIP SHA256
+  `34613db9544b764e5f06d87d02057cdc96d342b1ffb1b78fe3cb2be9a4ce049c`.
+  Helsinki and the fenced Nuremberg recovery namespace hold image
+  `sha256:b4123688105b86154b9c3408e4577bc8c3e32434da8a430680a71d6348963520`.
+  Installed package-tree digest is
+  `0813d30fda08759c1ccc6661f4fc5eb2f79bda1229b906ae634827cbd668c01e`.
+  Source release remains `6ab9c089`; later development-lock/documentation
+  commits are not represented as separately deployed runtime artifacts.
+  Helsinki receipt:
+  `/var/lib/polysia-op1/releases/6ab9c08907c76ed20e893c657c67b9dc55d9f023/deployment-receipt.json`.
+  Recovery receipt: `/var/lib/polysia-op1-recovery/preparation-receipt.json`.
+- A cross-host age-encrypted nonfinancial fixture was encrypted on Helsinki,
+  transferred and decrypted on Nuremberg with matching plaintext digest.
+  The recovery private key stayed root-only on Nuremberg; no wallet credential
+  was copied. This proves transport/decryption, not real financial restoration.
+  Receipt:
+  `/var/lib/polysia-op1-recovery/recovery-transport-probe-20261115/receipt.json`.
+- At `2026-11-15T02:44:15.941014Z`, a final GET-only continuation exercised the
+  installed SDK's actual Gamma keyset lookup, order book and scoped account
+  reader. All 13 HTTP responses were 200, largest 14,709 bytes. Under a fixed
+  0.25 CPU / 512 MiB allocation, the measured account/market sample took
+  0.809793 seconds; peak process RSS was 112,664,576 bytes. The host/workload
+  digest and bounded read-capacity record passed `validate_capacity_record`.
+  It has one actual sample and expires at `2026-11-15T03:14:15.940291Z`.
+  This qualifies only this limited read workload; it does not establish global
+  capacity, production readiness or financial-mutation performance.
+- Usable collateral remained 10.213845 pUSD. The selected token balance,
+  wallet-wide visible open orders and credential-visible pending trades were
+  zero; existing five-share exit permission remained sufficient. The selected
+  market still had a 0.08 ask, 0.07 bid, minimum five and explicit zero-fee
+  evidence. The observed quote was about 28.3 seconds old: this dated proposal
+  must not substitute for the runtime Risk freshness check or a fresh signed
+  opening. No full-account inventory or lifetime P&L claim is made.
+- The same read campaign is now closed at **32 charged attempts, 846,858 charged
+  bytes and one retained uncertain connection attempt**. No allowance was
+  reset. Final response cap was 64 KiB, stricter than the earlier 512 KiB cap;
+  15-second sockets and the original absolute campaign deadline remained.
+  Final receipt and limited capacity evidence are in
+  `/var/lib/polysia-op1/api-read-20261115-r1-capacity/`.
+- Final host checks found both original fences present, original services
+  inactive, no OP1 tasks, no temporary credentials and all read ledgers stopped.
+  Helsinki remains `STOP / UNISSUED`; Nuremberg remains recovery-only with a
+  financial writer forbidden. Original N3 history and financial state were not
+  provisioned, reset or modified. No unmanaged test was left running.
+
+### Concrete owner input and remaining commissioning
+
+The supported owner-entry CLI is implemented and tested. There is no issued,
+fresh, commissioned run packet to execute yet. The real prepared files are
+`/var/lib/polysia-op1/owner-packet-6ab9c089-inputs/read-config.json`,
+`authority-inert.json`, `scopes.json` and `readiness.json`. They deliberately
+retain an incomplete opening, false authority and pending capacity binding;
+do not run them in Live or interpret them as a signed action. Their older
+resource counters are dated inputs; any future frozen packet must retain the
+final aggregate consumption above. The observed capacity artifact is separate
+and expires; it must not be silently promoted or renewed.
+
+At the final check, both the owner's local issuer public file and the host
+trust registry were absent. The next actual owner action is local issuer
+initialization, with a passphrase typed only into the local terminal:
+
+```powershell
+& 'C:\Users\Siamak\Documents\PolySia\.venv\Scripts\python.exe' 'C:\Users\Siamak\Documents\PolySia\artifacts\op1-type3-20261108\op1-owner-issuer.py' init
+```
+
+This creates the encrypted authorization issuer under
+`C:\Users\Siamak\Documents\PolySia-Owner`; it does not create a wallet or place
+an order. The existing test-wallet key is not this independent issuer.
+After enrollment of its public key, a fresh exact packet must be generated,
+reviewed and signed with the same tool's `sign` action over the real
+`op1-owner-message.bin`. Do not invoke `sign` before that reviewed message
+exists. Existing `receipt-message`, `attach-receipt`, `validate`, `provision`,
+`verify-recovery` and independent `supervise` commands then perform the
+documented checks. Actual custody, financial restore, supervisor STOP release
+and a configured incident transport remain commissioning work bound to that
+real signed packet; the offline probes do not satisfy them.
+
+The owner's remaining inputs are the private local issuer/passphrase step,
+review/signature of the resulting exact bounded packet, and honest human
+receipt of the already-sent alert test. No second email test is authorized by
+this record. Real trading signatures, submissions, cancellations and observed
+trading P&L remain **not performed**.
