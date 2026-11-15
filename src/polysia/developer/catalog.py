@@ -274,7 +274,7 @@ def gates_for(change_map: object) -> tuple[dict[str, object], ...]:
     import sys
 
     if isinstance(change_map, dict):
-        from polysia.developer.context_packet import load_classify_paths
+        from polysia.developer.ci_loader import load_classify_paths
 
         module = sys.modules[load_classify_paths(Path(__file__).resolve().parents[3]).__module__]
         module.validate_projection(change_map)

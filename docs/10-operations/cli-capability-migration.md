@@ -104,7 +104,7 @@ Documentation abbreviations: `README`, `RUNBOOK` is `docs/OPERATOR_RUNBOOK.md`,
 `LIVE` is `docs/LIVE_CONNECTIVITY_SMOKE_TEST.md`, `SHADOW` is
 `docs/10-operations/shadow-control-kernel.md`, `SERVER` is
 `docs/10-operations/server-deployment.md`, and `HANDOFF` is
-`docs/FINAL_HANDOFF.md` plus `docs/RELEASE_HANDOFF.md`.
+`docs/FINAL_HANDOFF.md`.
 
 Safety abbreviations: `LOCAL` means no external mutation; `READ` means a
 public or authenticated read-only path with existing redaction/fail-closed

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from math import isfinite
 from typing import Any
 
 from polysia.monitoring.capabilities import CAPABILITIES
@@ -15,6 +14,7 @@ from polysia.monitoring.console_contract import (
     Workspace,
 )
 from polysia.monitoring.console_projection import ConsoleReadModel, component
+from polysia.monitoring.console_values import text
 
 
 def obj(value: Any) -> dict[str, Any]:
@@ -29,20 +29,6 @@ NON_FINANCIAL_METRICS = frozenset({
     "age_seconds", "p50_ns", "p95_ns", "p99_ns",
     "campaign.maximum_progress_gap_seconds", "campaign.maximum_tick_gap_seconds",
 })
-
-
-def text(value: Any, *, metric: bool = False) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return "YES" if value else "NO"
-    if isinstance(value, (str, int)):
-        return str(value) if len(str(value)) <= 2048 else "UNKNOWN_OVERSIZED_VALUE"
-    if metric and isinstance(value, float) and isfinite(value):
-        return str(value)
-    if isinstance(value, list):
-        return "; ".join(filter(None, (text(item) for item in value[:30])))[:2048] or None
-    return None
 
 
 def facts(raw: Any, fields: str) -> list[Fact]:

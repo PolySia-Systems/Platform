@@ -1,6 +1,6 @@
 # PolySia Roadmap
 
-## Delivered foundation
+## Delivered foundation (historical milestones)
 
 - Repository modernization: migration baseline, governance, canonical identity,
   venue-neutral boundaries, Polymarket adapter, modular-monolith decomposition,
@@ -72,9 +72,8 @@ remain separate promotion stages.
 
 ## Parallel maintenance gates
 
-- Keep Python 3.14.7, `polymarket-client==0.7.1`, Mypy 2.3.1, and Ruff 0.16.6
-  pinned until new contract, lock, security, and rollback evidence approves an
-  upgrade.
+- Use the current pins in `pyproject.toml`, `.python-version` and `locks/`;
+  changes require contract, lock, security and rollback evidence.
 - Preserve the legacy project, database, live evidence, and verified recovery
   package until a separate owner-approved retirement task. Current `main`
   supports only Python 3.14; older runtime support requires a deliberate
@@ -88,6 +87,7 @@ remain separate promotion stages.
 ## Explicitly deferred
 
 New strategies, additional venues, Web3/DeFi expansion, generalized or
-permanent Copy Trading, AI/ML, cloud deployment, microservices, Kubernetes,
-operator web UI, generalized OMS, multi-strategy capital allocation, and
+permanent Copy Trading, AI/ML, additional production infrastructure,
+microservices, Kubernetes,
+generalized OMS, multi-strategy capital allocation, and
 capital scaling are not immediate work.
