@@ -61,6 +61,10 @@ def native(
         "--read-only",
         "--user",
         user,
+        "--cpus",
+        "0.25",
+        "--memory-limit",
+        "268435456",
         "--env",
         "PYTHONDONTWRITEBYTECODE=1",
     ]
