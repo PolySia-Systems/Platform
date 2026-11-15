@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.32.4"]
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -28,7 +28,7 @@ dependencies = [
 dev = [
     "build==1.6.1",
     "cyclonedx-bom==7.5.0",
-    "hatchling==1.32.4",
+    "hatchling==1.33.0",
     "hypothesis==6.170.5",
     "mypy==2.4.0",
     "pip-audit==2.10.1",
@@ -38,7 +38,7 @@ dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "ruff==0.17.1",
-    "setuptools==84.1.0",
+    "setuptools==84.2.1",
 ]
 
 [project.scripts]
