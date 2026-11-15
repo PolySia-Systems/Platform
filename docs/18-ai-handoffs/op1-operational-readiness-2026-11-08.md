@@ -632,3 +632,104 @@ tasks, no trading-order signatures/submissions/cancellations by the agent.
 This milestone is receipt/STOP commissioning evidence, not a completed
 real-money test. The existing consumed receipt and its timestamps must never
 be deleted or reset to make a later entry appear authorized.
+
+### Finite owner startup and continuous-control commissioning - 2026-11-15
+
+Engineering merged in PR #295, runtime commit
+`ad7365871ed5da0d77024d59efe30a41ad04f215`. Exact-tree PR CI `43707298348`
+passed Linux quality, Windows, browser, native image and installation acceptance.
+Windows recorded 2,187 passed / 37 skipped. The main and reviewed Git trees are
+identical. Exact-main artifact `14160425111` from CI `43709494518` was downloaded
+directly to both hosts and its ZIP digest verified:
+`f937068bfd0d1b788f24931685ed1f76c4ea279179903bd8e26762c935c74122`.
+The installed image is
+`sha256:894b2a3772100a465df1593c86f607e427077df983b94012b91376ed15dabe99`;
+package digest is `e9161d12c56e6554702f418e5b0028bc824830c1ef1f99699b91f1662ae28870`.
+Both installations remain under STOP; retained rollback tag is
+`docker.io/library/polysia:op1-rollback-5732aad`. Original Docker image inventories
+and fences were preserved. Exact-main CI `43709494518` subsequently completed
+successfully, including Windows, before this handoff closed. The separate
+reviewed-tree and exact-main observations are retained as distinct evidence.
+
+Actual commissioning exposed a timing defect: quarter-CPU backup helper startup
+made one serial cycle take about 70 seconds, incompatible with the unchanged
+60-second backup freshness gate. PR #296 merged the measured correction as
+`c0f474d61da155ee759a16d3ec9693e11fa66509`; its required incremental CI
+`43710145503` passed. The native runtime is unchanged. Existing Windows/image
+evidence was reused under the supported change classifier. Twenty-five focused
+controls tests passed. Both existing hosts have two CPUs and low observed load;
+backup helpers now have a one-CPU / 256 MiB ceiling. A real snapshot/encryption
+probe took 3.893 seconds. Financial worker limits remain quarter-CPU / 512 MiB;
+no hardware, subscription, freshness exception or financial authority was added.
+
+Four actual financial generations were encrypted, transferred through the
+pinned-host-key forced-command receiver, decrypted and verified in isolated
+Nuremberg restores. The final three observations were
+`2026-11-15T11:46:51.522621Z`, `11:47:10.552724Z` and `11:47:29.966793Z`;
+their intervals were 19.030103 and 19.414069 seconds. Every generation retained
+the genuine old receipt's sequence-1 checkpoint. The same durable transport
+ledger retained all four confirmed transfers and 394,080 reserved bytes,
+including the initial slow cycle. No uncertain transfer was resent. The finite
+backup-only process ended; no surrogate heartbeat or financial worker ran.
+These observations qualify the backup mechanism, not a future Live grant.
+
+Actual installed-container permission probes passed: UID 999 can write only
+the worker slice; custody and commands are read-only. UID 995 can write custody
+and commands but cannot write the financial journal. Neither role sees the
+backup transport identity. The external issuer stays on the owner's laptop;
+the existing recovery private key remains root-only on Nuremberg. Its original
+owner SSH keys were preserved; the added key permits only the bounded receiver.
+Both recovery fences and the inactive recovery financial service were verified.
+Genuine expired receipt signature verification passed; ENTRY and CANCEL were
+correctly denied without custody mutation or fabricated authority.
+
+At 11:50 UTC, financial and custody file digests exactly matched the before
+observation. The original receipt remained STOP, with zero mutation attempts,
+orders and fills; no new receipt or read renewal was issued. No new Polymarket
+request was made during this technical completion. Closed consumption remains
+32 requests / 846,858 bytes in the first campaign, and 53 requests / 361,724 bytes
+including carried attempts in the later campaign. Current account facts require
+the fresh scoped API read in the owner workflow; this is not full-account or
+lifetime reconciliation and is not a completed real-money test.
+
+Protected host receipts:
+
+- Helsinki: `/var/lib/polysia-op1/releases/ad7365871ed5da0d77024d59efe30a41ad04f215/continuous-control-commissioning.json`.
+- Nuremberg: `/var/lib/polysia-op1-recovery/releases/ad7365871ed5da0d77024d59efe30a41ad04f215/continuous-restore-commissioning.json`.
+- Financial generations and unchanged transport ledger:
+  `/var/lib/polysia-op1/recovery/owner-packet-r2-reviewed-refresh-20261115/continuous-commissioning-ad736587/`.
+
+The exact installed helper hashes and package/account/instrument bindings are
+in the local `owner-commission-profile.continuous.json`. Both local wrappers
+were parsed without execution. The owner-operated action is:
+
+```powershell
+& 'C:\Users\Siamak\Documents\PolySia\artifacts\op1-type3-20261108\Start-OP1OwnerTest.ps1'
+```
+
+This is a real financial start interface, not the old receipt-only script.
+It requires honest `RECEIVED` attestation for the existing redacted alert,
+explicit `READ100` for the finite GET-only renewal including all carried
+consumption, local issuer passphrase, exact proposal review, then
+`SIGN AND START`. It retires only the expired unused receipt with custody
+history retained. After genuine signing and matching fresh API qualification,
+the owner invocation warms up three new actual offsite generations and starts
+finite independent supervision and the genuine financial worker. Only that
+worker's fresh publication and exact independent ACK can release commissioning
+STOP. Fault/operator STOP cannot be cleared by healthy observations. The N3
+fence and all original financial caps remain unchanged.
+
+Inspect the result without resubmitting:
+
+```powershell
+& 'C:\Users\Siamak\Documents\PolySia\artifacts\op1-type3-20261108\Inspect-OP1OwnerTest.ps1'
+```
+
+The inspection reports the actual run's orders, fills, equity, reconciliation,
+uncertainty, resource counters and control/service state. Absent provisioning is
+reported as absent, not an empty successful trade. Prior start markers, unknown
+responses or residual inventory require inspection, never blind repetition.
+The owner must still provide the genuine fresh signature and any uncompleted
+human receipt. Continuous positive Live admission and actual trade outcomes
+remain owner-operated observations; preparation and balance reads do not prove
+that a trade occurred.
