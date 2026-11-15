@@ -647,8 +647,9 @@ The installed image is
 package digest is `e9161d12c56e6554702f418e5b0028bc824830c1ef1f99699b91f1662ae28870`.
 Both installations remain under STOP; retained rollback tag is
 `docker.io/library/polysia:op1-rollback-5732aad`. Original Docker image inventories
-and fences were preserved. Exact-main CI status remains independently queryable;
-the passed reviewed-tree Windows evidence is not an invented main-CI result.
+and fences were preserved. Exact-main CI `43709494518` subsequently completed
+successfully, including Windows, before this handoff closed. The separate
+reviewed-tree and exact-main observations are retained as distinct evidence.
 
 Actual commissioning exposed a timing defect: quarter-CPU backup helper startup
 made one serial cycle take about 70 seconds, incompatible with the unchanged
