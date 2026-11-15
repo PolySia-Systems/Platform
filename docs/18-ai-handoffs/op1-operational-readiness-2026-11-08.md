@@ -508,3 +508,46 @@ review/signature of the resulting exact bounded packet, and honest human
 receipt of the already-sent alert test. No second email test is authorized by
 this record. Real trading signatures, submissions, cancellations and observed
 trading P&L remain **not performed**.
+
+### Owner enrollment and explicitly renewed read - 2026-11-15
+
+The owner created the encrypted issuer locally. Its public key was enrolled as
+`op1-owner-v1`; the raw public-key SHA256 is
+`99ead818b2eeb2f0fd1ed81cc0b1dab374d24dcb8a44f1a7a7d85a796c8666dc`.
+No issuer private key or passphrase was read by the commissioning agent or
+copied to a host. The host remained STOP / UNISSUED.
+
+After the previous read deadline elapsed, the owner expressly authorized a new
+GET-only qualification with at most 100 requests in two hours. Its initial
+sample at `2026-11-15T05:29:29.184735Z` used 14 requests / 305,378 bytes,
+zero uncertainty. Usable collateral remained 10.213845 pUSD; selected-token
+balance, visible open orders and credential-visible pending trades remained
+zero. The selected standard-market ask remained 0.08, bid 0.07, minimum five,
+with explicit zero-fee and existing exit-allowance evidence. Full wallet
+inventory remains unassessed and no trade is inferred.
+
+The new absolute deadline is `2026-11-15T07:28:59.663412Z`; the prior closed
+32-attempt / 846,858-byte campaign is preserved separately. Root-only evidence:
+`/var/lib/polysia-op1/api-read-20261115-r2-initial/receipt.json`.
+The 14 consumed attempts must be deducted from any continuation, not reset.
+
+The one-session owner receipt tools are `scripts/op1_owner_commission.py`,
+`scripts/op1_packet_host.py` and `scripts/op1_bounded_read.py`. They address the
+concrete 30-second fresh-opening handoff gap without weakening freshness or
+using a fixture issuer. The protected local profile is
+`C:\Users\Siamak\Documents\PolySia\artifacts\op1-type3-20261108\owner-commission-profile.json`.
+Once the reviewed helpers are installed, the owner's actual command is:
+
+```powershell
+& 'C:\Users\Siamak\Documents\PolySia\.venv\Scripts\python.exe' 'C:\Users\Siamak\Documents\PolySia\scripts\op1_owner_commission.py' --profile 'C:\Users\Siamak\Documents\PolySia\artifacts\op1-type3-20261108\owner-commission-profile.json'
+```
+
+The owner enters the local issuer passphrase, reviews the exact proposal and
+types `SIGN` within its displayed deadline. The proposal has a 20-minute entry
+window and 30-minute protective deadline, fixed five-share / 0.08 price and
+unchanged monetary/mutation limits. It remains a proposal until that real
+signature exists. Successful invocation returns `PROVISIONED_STOPPED` under
+`/var/lib/polysia-op1/owner-packet-r2-20261115`; it places no order. The remaining
+independent supervision, real financial recovery and incident acceptance must
+then be completed before the owner's separate financial entry. Neither these
+tools nor their offline fixture tests constitute a completed real-money test.
