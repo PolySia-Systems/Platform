@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from polysia.deployment.financial_session_runtime import capacity_workload
+from polysia.deployment.financial_session_runtime import capacity_workload, provision_session
 from polysia.domain.copytrading.copy_policy import CopyPolicy
 from polysia.domain.financial_session import AccountObservation, SessionBlocked, canonical_json
-from polysia.security.session_authority import SessionReceiptVerifier
+from polysia.security.session_authority import SessionCustody, SessionReceiptVerifier
 from scripts import op1_bounded_read as bounded
 from scripts import op1_owner_commission as owner
 from scripts import op1_packet_host as host
@@ -152,7 +152,7 @@ def packet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             {
                 "config": config_body,
                 "message": base64.b64encode(message).decode(),
-                "review_deadline": NOW + timedelta(seconds=25),
+                "review_deadline": NOW + timedelta(minutes=5),
                 "read_consumption": receipt["aggregate_campaign"],
             }
         )
@@ -172,8 +172,8 @@ def packet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_external_receipt_preserves_consumption_and_STOP(packet):
     config, authority, message, review, profile, *_ = packet
-    assert authority.max_requests == 941
-    assert authority.max_response_bytes == 64 * 1024 * 1024 - 846858 - 320000
+    assert authority.max_requests == 927
+    assert authority.max_response_bytes == 64 * 1024 * 1024 - 846858 - 320000 - 14 * 65536
     assert owner.validate_review(review, profile, now=NOW) == message
     assert owner.config_digest(review["config"]) == config.fingerprint
     assert not config.financial_path.exists()
@@ -225,7 +225,7 @@ def test_owner_refuses_modified_scope_even_with_canonical_message(packet, change
 def test_owner_refuses_stale_or_changed_config(packet):
     _, _, _, review, profile, *_ = packet
     with pytest.raises(ValueError, match="fresh_review"):
-        owner.validate_review(review, profile, now=NOW + timedelta(seconds=25))
+        owner.validate_review(review, profile, now=NOW + timedelta(minutes=5))
     review = copy.deepcopy(review)
     review["config"]["exact_entry"]["shares"] = "6"
     with pytest.raises(ValueError, match="binding"):
@@ -354,6 +354,58 @@ def test_authorization_files_cannot_be_overwritten(tmp_path):
     with pytest.raises(FileExistsError):
         host.write_new(path, b"replay")
     assert path.read_bytes() == b"first"
+
+
+@pytest.mark.parametrize(
+    "change", [None, "cash", "orders", "scope", "stale", "future", "incomplete"]
+)
+def test_post_review_refresh_preserves_signed_state_and_actual_freshness(packet, change):
+    import sqlite3
+
+    config, authority, message, review, profile, *_ = packet
+    assert owner.validate_review(review, profile, now=NOW + timedelta(minutes=2)) == message
+    key = Ed25519PrivateKey.generate()
+    signed = replace(
+        authority,
+        owner_receipt=canonical_json(
+            {
+                "key_id": owner.KEY_ID,
+                "receipt_id": authority.run_id,
+                "signature": base64.b64encode(key.sign(message)).decode(),
+            }
+        ),
+    )
+    verifier = SessionReceiptVerifier({owner.KEY_ID: key.public_key().public_bytes_raw()})
+    custody = SessionCustody(config.custody_path)
+    custody.initialize()
+    now = NOW + timedelta(minutes=2)
+    fresh = replace(config.opening, observed_at=now, evidence_id="fresh-official-API-fixture")
+    if change == "cash":
+        fresh = replace(fresh, cash=D("10.20"))
+    if change == "orders":
+        fresh = replace(fresh, open_order_ids=("unrelated-order",))
+    if change == "scope":
+        fresh = replace(fresh, scope="ACCOUNT")
+    if change == "stale":
+        fresh = replace(fresh, observed_at=now - timedelta(seconds=31))
+    if change == "future":
+        fresh = replace(fresh, observed_at=now + timedelta(seconds=1))
+    if change == "incomplete":
+        fresh = replace(fresh, complete=False)
+    if change is None:
+        with pytest.raises(SessionBlocked, match="stale"):
+            provision_session(config, signed, verifier, custody, now=now)
+        provision_session(config, signed, verifier, custody, now=now, commissioning_opening=fresh)
+        assert config.financial_path.exists()
+        assert custody.snapshot(signed.fingerprint)["stopped"] == 1
+    else:
+        with pytest.raises(SessionBlocked):
+            provision_session(
+                config, signed, verifier, custody, now=now, commissioning_opening=fresh
+            )
+        assert not config.financial_path.exists()
+        with sqlite3.connect(custody.path) as db:
+            assert db.execute("SELECT COUNT(*) FROM grants").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("change", ["account", "price", "stale", "capacity"])

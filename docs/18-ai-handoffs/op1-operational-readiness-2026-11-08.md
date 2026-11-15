@@ -551,3 +551,23 @@ signature exists. Successful invocation returns `PROVISIONED_STOPPED` under
 independent supervision, real financial recovery and incident acceptance must
 then be completed before the owner's separate financial entry. Neither these
 tools nor their offline fixture tests constitute a completed real-money test.
+
+### Human review timeout correction - 2026-11-15
+
+The first owner invocation reached review at 06:17:27 UTC, but its 25-second
+window expired before signature upload. Inspection found no uploaded signature,
+signed authority, custody database or financial journal. Repeated invocations
+stopped at exclusive directory creation without additional provider reads.
+This was an operator-tool design defect, not missing wallet access or a venue
+401. Existing directories and the local review copy remain intact. The renewed
+grant has consumed 27 attempts / 324,118 bytes with zero uncertainty; its
+original absolute deadline is unchanged.
+
+The corrected protocol gives five minutes for exact owner review, then performs
+an official-API qualification after the signature. All financial opening facts
+must match the signed baseline and the actual commissioning opening must still
+meet the 30-second freshness gate. Fourteen requests and their full byte reserve
+are subtracted before signing. The new isolated attempt continues from the
+retained 27-attempt receipt; no ledger or failed packet is reopened or replaced.
+The amendment requires a verified new runtime artifact, because the core
+commissioning contract changed. No financial action was performed.

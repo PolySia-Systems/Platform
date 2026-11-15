@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from polysia.domain.financial_session import SessionAuthorization
 
 BASE = Path("/var/lib/polysia-op1")
-INITIAL = BASE / "api-read-20261115-r2-initial"
-PROBE = BASE / "api-read-20261115-r2-owner"
-TEMPLATE = BASE / "owner-packet-6ab9c089-inputs/read-config.json"
+INITIAL = BASE / "api-read-20261115-r2-owner"
+PROBE = BASE / "api-read-20261115-r2-owner2"
+TEMPLATE = BASE / "owner-packet-reviewed-refresh-inputs/read-config.json"
 TRUST = Path("/etc/polysia-op1/trust/owner-public-keys.json")
 SCRIPT = Path("/etc/polysia-op1/op1_packet_host.py")
 READER = Path("/etc/polysia-op1/op1_bounded_read.py")
@@ -135,18 +135,19 @@ def launch() -> None:
             command += ["--mount", f"type=bind,src={source},dst={target},options=rbind:{access}"]
         command += [
             "docker.io/library/polysia:ci",
-            "op1-owner-packet-r2",
+            "op1-owner-packet-r2-v2",
             "python",
             "/packet-host.py",
             "container",
         ]
-        subprocess.run(command, check=True, timeout=200)
+        subprocess.run(command, check=True, timeout=600)
     finally:
         (PROBE / "credentials.json").unlink(missing_ok=True)
+        (PROBE / "commissioning-read/credentials.json").unlink(missing_ok=True)
         # This bridge cannot run financial orders. Do not leave its read/sign
         # waiter alive if the controlling transport failed.
         tasks = subprocess.check_output(["ctr", "-n", "polysia-op1", "tasks", "list"], text=True)
-        if any(row.split()[0] == "op1-owner-packet-r2" for row in tasks.splitlines()[1:]):
+        if any(row.split()[0] == "op1-owner-packet-r2-v2" for row in tasks.splitlines()[1:]):
             subprocess.run(
                 [
                     "ctr",
@@ -156,7 +157,7 @@ def launch() -> None:
                     "kill",
                     "--signal",
                     "SIGKILL",
-                    "op1-owner-packet-r2",
+                    "op1-owner-packet-r2-v2",
                 ],
                 check=True,
                 timeout=10,
@@ -235,7 +236,9 @@ def build_packet(
     validate_capacity_record(config, now=now)
     spent = receipt["aggregate_campaign"]
     # Retain the earlier closed campaign as well as every current GET attempt.
-    past_attempts, past_bytes = 32 + spent["requests_charged"], 846858 + spent["bytes_charged"]
+    # Reserve the entire bounded post-signature qualification before signing.
+    past_attempts = 32 + spent["requests_charged"] + 14
+    past_bytes = 846858 + spent["bytes_charged"] + 14 * 65536
     from polysia.deployment.financial_session_runtime import load_authority
 
     inert = load_authority(TEMPLATE.parent / "authority-inert.json")
@@ -273,9 +276,10 @@ def container() -> None:
     spec.loader.exec_module(module)
     import asyncio
 
+    secret = json.loads(Path("/probe/credentials.json").read_text())
     asyncio.run(module.main())
     receipt = json.loads(Path("/probe/receipt.json").read_text())
-    root = BASE / "owner-packet-r2-20261115"
+    root = BASE / "owner-packet-r2-reviewed-refresh-20261115"
     root.mkdir(mode=0o700)
     template = load_runtime_config(Path("/capacity-config.json"))
     config, authority, message = build_packet(template, receipt, root)
@@ -287,7 +291,7 @@ def container() -> None:
     write_new(root / "config.json", canonical_json(config_body).encode())
     write_new(root / "authority-unsigned.json", canonical_json(asdict(authority)).encode())
     write_new(root / "owner-message.bin", message)
-    deadline = config.opening.observed_at + timedelta(seconds=25)
+    deadline = config.opening.observed_at + timedelta(minutes=5)
     print(
         canonical_json(
             {
@@ -326,11 +330,40 @@ def container() -> None:
         }
     )
     verifier.verify_signature(signed)
+    fresh_root = Path("/probe/commissioning-read")
+    fresh_root.mkdir(mode=0o700)
+    for name in ("grant.json", "capacity-mode.json", "packet-mode"):
+        write_new(fresh_root / name, (Path("/probe") / name).read_bytes())
+    continuation = dict(receipt["aggregate_campaign"])
+    continuation.update(
+        starts_at=receipt["explicit_read_grant"]["starts_at"], parent_receipt="/probe/receipt.json"
+    )
+    write_new(fresh_root / "continuation.json", json.dumps(continuation).encode())
+    write_new(fresh_root / "credentials.json", json.dumps(secret).encode())
+    del secret
+    module.ROOT = fresh_root
+    asyncio.run(module.main())
+    fresh_receipt = json.loads((fresh_root / "receipt.json").read_text())
+    from pydantic import TypeAdapter
+
+    from polysia.domain.financial_session import AccountObservation
+
+    fresh = TypeAdapter(AccountObservation).validate_python(fresh_receipt["scoped_opening"])
+    if (
+        fresh_receipt["account_mapping"] != receipt["account_mapping"]
+        or fresh_receipt["aggregate_campaign"]["requests_charged"]
+        > receipt["aggregate_campaign"]["requests_charged"] + 14
+        or fresh_receipt["aggregate_campaign"]["bytes_charged"]
+        > receipt["aggregate_campaign"]["bytes_charged"] + 14 * 65536
+    ):
+        raise ValueError("post_signature_read_exceeds_frozen_reserve")
     write_new(root / "authority-signed.json", canonical_json(asdict(signed)).encode())
     custody = SessionCustody(config.custody_path)
     os.umask(0o027)
     custody.initialize()
-    provision_session(config, signed, verifier, custody, now=datetime.now(UTC))
+    provision_session(
+        config, signed, verifier, custody, now=datetime.now(UTC), commissioning_opening=fresh
+    )
     journal = FinancialSessionJournal(config.financial_path, config.witness_root, signed)
     try:
         journal.open()

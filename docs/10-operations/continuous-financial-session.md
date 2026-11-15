@@ -109,9 +109,12 @@ profile binds the enrolled public key, installed helper hashes, exact account,
 instrument, release and unchanged config/authority controls. The issuer is
 decrypted locally before the bounded fresh GET sample; neither its private key
 nor passphrase enters SSH. The owner then reviews the canonical receipt and
-types `SIGN` before its 25-second review deadline. The host verifies the real
-signature and calls the same `provision_session` workflow before the existing
-30-second opening freshness limit. No freshness check is relaxed.
+types `SIGN` before its five-minute review deadline. The host verifies the real
+signature and performs a second bounded official-API read. Every financial fact
+must exactly match the signed baseline; only observation time and evidence
+identity may differ. The actual commissioning opening must satisfy the original
+30-second freshness gate. A full post-signature read reserve is deducted before
+signing; signed limits and entry/protective times are not renewed.
 
 This particular proposal freezes five shares at 0.08 pUSD, zero fee, the original
 2.675 pUSD loss/debit ceiling and four mutation slots. For human commissioning,

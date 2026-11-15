@@ -103,12 +103,20 @@ class SessionRuntimeConfig:
             or self.minimum_free_disk_bytes <= 0
         ):
             raise SessionBlocked("invalid_operational_configuration")
-        if api_test and any((
-            self.source_wallets, self.rpc_url, self.cohort_path, self.follower_samples_path,
-            self.cohort_file_digest, self.follower_samples_file_digest,
-            self.historical_instruments, self.rpc_log_block_span, self.rpc_checkpoint_path,
-            self.rpc_bearer_token_reference,
-        )):
+        if api_test and any(
+            (
+                self.source_wallets,
+                self.rpc_url,
+                self.cohort_path,
+                self.follower_samples_path,
+                self.cohort_file_digest,
+                self.follower_samples_file_digest,
+                self.historical_instruments,
+                self.rpc_log_block_span,
+                self.rpc_checkpoint_path,
+                self.rpc_bearer_token_reference,
+            )
+        ):
             raise SessionBlocked("API_test_has_no_source_cohort_or_RPC_route")
         if not api_test and (self.cohort_path is None or self.follower_samples_path is None):
             raise SessionBlocked("full_session_requires_cohort_and_samples")
@@ -152,8 +160,10 @@ class SessionRuntimeConfig:
         if self.rpc_bearer_token_reference is not None and (
             self.rpc_url != "https://polygon-mainnet.g.alchemy.com/v2"
             or re.fullmatch(r"POLYSIA_[A-Z0-9_]{1,80}", self.rpc_bearer_token_reference) is None
-            or self.rpc_bearer_token_reference in (
-                self.private_key_reference, self.api_credentials_reference,
+            or self.rpc_bearer_token_reference
+            in (
+                self.private_key_reference,
+                self.api_credentials_reference,
             )
         ):
             raise SessionBlocked("exact_Alchemy_RPC_and_dedicated_secret_reference_required")
@@ -238,8 +248,10 @@ def package_tree_digest(root: Path | None = None) -> str:
     root = root or Path(__file__).parents[1]
     hasher = hashlib.sha256()
     for path in sorted(root.rglob("*")):
-        if path.is_file() and (path.suffix in {".py", ".sql", ".html", ".js", ".css"}
-                               or "human_console_assets" in path.parts):
+        if path.is_file() and (
+            path.suffix in {".py", ".sql", ".html", ".js", ".css"}
+            or "human_console_assets" in path.parts
+        ):
             hasher.update(path.relative_to(root).as_posix().encode())
             hasher.update(hashlib.sha256(path.read_bytes()).digest())
     return hasher.hexdigest()
@@ -329,8 +341,10 @@ def validate_runtime_binding(config: SessionRuntimeConfig, authority: SessionAut
         or config.exact_entry.shares != Decimal(5)
         or config.exact_entry.price_ceiling > Decimal("0.50")
         or config.exact_entry.order_expires_at is None
-        or not authority.expires_at < config.exact_entry.order_expires_at
-        < authority.protective_until - timedelta(
+        or not authority.expires_at
+        < config.exact_entry.order_expires_at
+        < authority.protective_until
+        - timedelta(
             seconds=4 * config.request_timeout_seconds,
         )
         or len(authority.instruments) != 1
@@ -433,22 +447,49 @@ def provision_session(
     custody: SessionCustody,
     *,
     now: datetime,
+    commissioning_opening: AccountObservation | None = None,
 ) -> None:
     """Privileged local commissioning step, never called by the worker/browser.
 
     The opening read is a protected, signed-config observation acquired under a
     separate explicit account-read run. Provisioning cannot create that evidence.
+    In scoped API commissioning only, the privileged post-signature reader may
+    supply an identical financial opening with a fresh observation time and
+    evidence identity. The actual commissioning opening must remain fresh.
     A claimed receipt remains consumed if this step crashes or fails.
     """
     validate_runtime_binding(config, authority)
     receipt = verifier.verify(authority, binding_for(config), now=now)
-    config.opening.require_complete(
-        authority.binding.account, now=now, max_age=authority.max_evidence_age_seconds,
+    opening = config.opening
+    if commissioning_opening is not None:
+        from dataclasses import replace
+
+        opening.require_complete(
+            authority.binding.account,
+            now=opening.observed_at,
+            max_age=authority.max_evidence_age_seconds,
+            scope=opening.scope,
+        )
+        if opening.scope != "ORDER_LIFECYCLE_API" or (
+            commissioning_opening.observed_at < opening.observed_at
+            or replace(
+                commissioning_opening,
+                observed_at=opening.observed_at,
+                evidence_id=opening.evidence_id,
+            )
+            != opening
+        ):
+            raise SessionBlocked("commissioning_refresh_must_match_signed_API_baseline")
+        opening = commissioning_opening
+    opening.require_complete(
+        authority.binding.account,
+        now=now,
+        max_age=authority.max_evidence_age_seconds,
         scope=config.opening.scope,
     )
     custody.claim(receipt, authority)
     journal = FinancialSessionJournal(config.financial_path, config.witness_root, authority)
-    journal.provision(config.opening, scope=config.opening.scope)
+    journal.provision(opening, scope=config.opening.scope)
     ConsoleCommandStore(config.commands_path).initialize()
 
 
