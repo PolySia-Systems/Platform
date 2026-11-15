@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -77,11 +78,9 @@ def main() -> None:
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                try:
+                # Navigation/HMR may abort a local read before it finishes.
+                with suppress(ConnectionError):
                     self.wfile.write(body)
-                except ConnectionError:
-                    # Navigation/HMR may abort a local read before it finishes.
-                    pass
 
             def do_POST(self) -> None:
                 self.send_error(405, "Synthetic preview is read-only")
