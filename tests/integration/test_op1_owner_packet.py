@@ -415,7 +415,7 @@ def test_builder_rejects_unusable_evidence_without_consuming_custody(packet, tmp
     if change == "account":
         receipt["account_mapping"]["funder"] = "another-account"
     if change == "price":
-        receipt["candidate"]["best_ask"] = "0.09"
+        receipt["candidate"]["best_ask"] = "0.51"
     if change == "stale":
         receipt["scoped_opening"]["observed_at"] = NOW - timedelta(seconds=31)
     if change == "capacity":
@@ -425,3 +425,16 @@ def test_builder_rejects_unusable_evidence_without_consuming_custody(packet, tmp
     with pytest.raises((ValueError, SessionBlocked)):
         host.build_packet(template, receipt, root)
     assert not (tmp_path / "control/custody.sqlite3").exists()
+
+
+def test_builder_uses_reviewed_current_price_within_original_owner_cap(packet, tmp_path):
+    *_, template, receipt = packet
+    receipt = copy.deepcopy(receipt)
+    receipt["candidate"]["best_ask"] = "0.09"
+    root = tmp_path / "repriced"
+    root.mkdir()
+    config, authority, _ = host.build_packet(template, receipt, root)
+    assert config.exact_entry.shares == D("5")
+    assert config.exact_entry.price_ceiling == D("0.09")
+    assert authority.max_total_loss == D("2.675")
+    assert authority.max_attempts == 4

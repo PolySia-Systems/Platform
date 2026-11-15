@@ -226,3 +226,23 @@ This narrow privileged commissioning amendment introduces no worker refresh,
 unsigned authority or new platform architecture. A full post-signature read
 reserve is deducted before signing; failures and uncertainty remain charged to
 the same finite grant. It requires review and verified release deployment.
+
+### Finite owner startup and continuous independent controls
+
+CURRENT engineering adds finite host orchestration around the existing Python
+composition, not another platform architecture. The real worker alone publishes
+liveness. A separate OS identity owns custody and continuous supervision. Fresh
+offsite restore evidence is mandatory before its explicit commissioning STOP
+release. An armed controller does not acknowledge a nonexistent worker. All
+units have a signed absolute deadline, no restart and exact task cleanup.
+The financial worker retains its original Risk, execution, durable budget and
+unknown-response contracts. Healthy ACKs cannot clear fault/operator STOP.
+
+The backup-only root host helper uses existing host SSH and the installed
+native image's snapshot/encryption/restore primitives. A dedicated transport key
+has only a forced bounded receiver command; issuer and wallet keys are excluded.
+Nuremberg remains fenced and never receives financial execution authority.
+The owner-only `SIGN AND START` operation is distinct from receipt-only STOP
+provisioning. Deterministic tests establish engineering, not a live test result.
+Fresh genuine owner authority and actual deployed-control evidence remain
+separate operational prerequisites. No historical allowance or receipt is reset.

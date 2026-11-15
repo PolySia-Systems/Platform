@@ -30,6 +30,32 @@ TEMPLATE = BASE / "owner-packet-reviewed-refresh-inputs/read-config.json"
 TRUST = Path("/etc/polysia-op1/trust/owner-public-keys.json")
 SCRIPT = Path("/etc/polysia-op1/op1_packet_host.py")
 READER = Path("/etc/polysia-op1/op1_bounded_read.py")
+BOOTSTRAP_PROFILE = Path("/etc/polysia-op1/owner-bootstrap-profile.json")
+
+
+def bootstrap_profile() -> dict[str, Any]:
+    return json.loads(BOOTSTRAP_PROFILE.read_text()) if BOOTSTRAP_PROFILE.is_file() else {}
+
+
+def configure_bootstrap() -> None:
+    global INITIAL, PROBE, TEMPLATE
+    profile = bootstrap_profile()
+    if not profile:
+        return
+    for key in ("initial_receipt", "template", "previous_packet"):
+        path = Path(profile[key])
+        if not path.is_absolute() or not path.resolve().is_relative_to(BASE.resolve()):
+            raise ValueError("protected_OP1_bootstrap_paths_required")
+    for key in ("attempt_name", "packet_name"):
+        value = profile[key]
+        if not value or any(
+            x not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for x in value
+        ):
+            raise ValueError("isolated_bootstrap_names_required")
+    INITIAL = Path(profile["initial_receipt"]).parent
+    PROBE = BASE / profile["attempt_name"]
+    TEMPLATE = Path(profile["template"])
 
 
 def write_new(path: Path, body: bytes) -> None:
@@ -65,7 +91,9 @@ def launch() -> None:
         if old["status"] != "API_ACCOUNT_OBSERVED" or not old["acquisition"]["stopped"]:
             raise ValueError("completed_initial_read_required")
         grant = old["explicit_read_grant"]
-        renewal_path = Path("/etc/polysia-op1/owner-read-renewal.json")
+        renewal_path = Path(
+            bootstrap_profile().get("renewal_path", "/etc/polysia-op1/owner-read-renewal.json")
+        )
         if renewal_path.exists():
             renewal = json.loads(renewal_path.read_text())
             if (
@@ -144,6 +172,11 @@ def launch() -> None:
             (READER, Path("/reader.py"), "ro"),
         ):
             command += ["--mount", f"type=bind,src={source},dst={target},options=rbind:{access}"]
+        if BOOTSTRAP_PROFILE.is_file():
+            command += [
+                "--mount",
+                f"type=bind,src={BOOTSTRAP_PROFILE},dst={BOOTSTRAP_PROFILE},options=rbind:ro",
+            ]
         command += [
             "docker.io/library/polysia:ci",
             "op1-owner-packet-r2-v2",
@@ -210,7 +243,7 @@ def build_packet(
         raise ValueError("observed_account_must_match_signed_config")
     if not receipt["candidate"]["technically_eligible_at_observation"]:
         raise ValueError("eligible_market_required")
-    if not 0 < Decimal(receipt["candidate"]["best_ask"]) <= Decimal("0.08"):
+    if not 0 < Decimal(receipt["candidate"]["best_ask"]) <= Decimal("0.50"):
         raise ValueError("selected_market_exceeds_frozen_price_ceiling")
     opening = TypeAdapter(AccountObservation).validate_python(receipt["scoped_opening"])
     now = datetime.now(UTC)
@@ -242,7 +275,9 @@ def build_packet(
         commands_path=BASE / "commands" / run_id / "commands.sqlite3",
         capacity_evidence_path=capacity,
         capacity_evidence_digest=hashlib.sha256(capacity.read_bytes()).hexdigest(),
-        exact_entry=ExactSessionEntry(Decimal(5), Decimal("0.08"), at + timedelta(seconds=1335)),
+        exact_entry=ExactSessionEntry(
+            Decimal(5), Decimal(receipt["candidate"]["best_ask"]), at + timedelta(seconds=1335)
+        ),
     )
     validate_capacity_record(config, now=now)
     spent = receipt["aggregate_campaign"]
@@ -290,7 +325,9 @@ def container() -> None:
     secret = json.loads(Path("/probe/credentials.json").read_text())
     asyncio.run(module.main())
     receipt = json.loads(Path("/probe/receipt.json").read_text())
-    root = BASE / "owner-packet-r2-reviewed-refresh-20261115"
+    root = BASE / bootstrap_profile().get(
+        "packet_name", "owner-packet-r2-reviewed-refresh-20261115"
+    )
     root.mkdir(mode=0o700)
     template = load_runtime_config(Path("/capacity-config.json"))
     config, authority, message = build_packet(template, receipt, root)
@@ -347,13 +384,20 @@ def container() -> None:
         write_new(fresh_root / name, (Path("/probe") / name).read_bytes())
     continuation = dict(receipt["aggregate_campaign"])
     continuation.update(
-        starts_at=receipt["explicit_read_grant"]["starts_at"], parent_receipt="/probe/receipt.json"
+        starts_at=receipt["explicit_read_grant"]["starts_at"],
+        parent_receipt=str(PROBE / "receipt.json"),
     )
     write_new(fresh_root / "continuation.json", json.dumps(continuation).encode())
     write_new(fresh_root / "credentials.json", json.dumps(secret).encode())
     del secret
     module.ROOT = fresh_root
-    asyncio.run(module.main())
+    credential_values: dict[str, str] = {}
+
+    def retain_credentials(private: str, credentials: str) -> None:
+        credential_values[config.private_key_reference] = private
+        credential_values[config.api_credentials_reference] = credentials
+
+    asyncio.run(module.main(credential_sink=retain_credentials))
     fresh_receipt = json.loads((fresh_root / "receipt.json").read_text())
     from pydantic import TypeAdapter
 
@@ -401,6 +445,55 @@ def container() -> None:
             os.chown(path, uid, 981)
             path.chmod(0o2750 if path.is_dir() else 0o640)
     config.commands_path.chmod(0o660)
+    if set(credential_values) != {config.private_key_reference, config.api_credentials_reference}:
+        raise ValueError("verified_worker_credentials_required")
+    credential_path = config.financial_path.parents[1] / "credentials.json"
+    write_new(credential_path, json.dumps(credential_values).encode())
+    os.chown(credential_path, 999, 981)
+    credential_path.chmod(0o600)
+    credential_values.clear()
+    os.chown(root, 0, 981)
+    root.chmod(0o2750)
+    for file in root.iterdir():
+        if file.is_file():
+            os.chown(file, 0, 981)
+            file.chmod(0o640)
+    boot = bootstrap_profile()
+    if boot.get("transport_profile"):
+        profile = dict(boot["transport_profile"])
+        run_id = signed.run_id
+        worker = config.financial_path.parents[1]
+        supervisor = config.custody_path.parent
+        generations = BASE / "recovery" / run_id / "automatic"
+        publication = supervisor / "backup-publication"
+        (BASE / "recovery").mkdir(mode=0o711, exist_ok=True)
+        for directory in (generations.parent, generations, publication):
+            directory.mkdir(mode=0o750)
+            os.chown(directory, 995, 981)
+        import hashlib
+
+        prefix = "polysia-op1-" + hashlib.sha256(run_id.encode()).hexdigest()[:12] + "-backup"
+        profile.update(
+            base=str(BASE),
+            packet=str(root),
+            run_id=run_id,
+            authority_fingerprint=signed.fingerprint,
+            config=str(root / "config.json"),
+            authority=str(root / "authority-signed.json"),
+            financial_path=str(config.financial_path),
+            custody_path=str(config.custody_path),
+            worker_directory=str(worker),
+            supervisor_directory=str(supervisor),
+            commands_directory=str(config.commands_path.parent),
+            generations=str(generations),
+            publication=str(publication),
+            task_prefix=prefix,
+            budget_path=str(supervisor / "backup-transport.jsonl"),
+            qualification_last_read_at=fresh_receipt["observed_at"],
+            entry_until=signed.expires_at.isoformat(),
+            until=signed.protective_until.isoformat(),
+        )
+        write_new(root / "host-run-profile.json", canonical_json(profile).encode())
     # The independent supervisor must still verify recovery and release STOP.
     result = {
         "stage": "PROVISIONED_STOPPED",
@@ -421,12 +514,141 @@ def accept_signature() -> None:
     write_new(PROBE / "owner-signature.bin", signature)
 
 
+def renew_read() -> None:
+    if os.geteuid() != 0 or sys.stdin.read().strip() != "READ100":
+        raise ValueError("explicit_owner_READ100_required")
+    boot = bootstrap_profile()
+    previous = Path(boot["previous_packet"])
+    old_authority = json.loads((previous / "authority-signed.json").read_text())
+    if datetime.now(UTC) < datetime.fromisoformat(old_authority["protective_until"]):
+        raise ValueError("previous_signed_financial_window_still_active")
+    import sqlite3
+
+    old_config = json.loads((previous / "config.json").read_text())
+    with sqlite3.connect(Path(old_config["financial_path"]).as_uri() + "?mode=ro", uri=True) as db:
+        state = json.loads(db.execute("SELECT state FROM session").fetchone()[0])
+    if (
+        state["attempts"]
+        or state["orders"]
+        or state["fills"]
+        or state["mode"] != "STOP"
+        or state.get("quarantined_fills")
+        or state.get("quarantined_finality")
+    ):
+        raise ValueError("prior_activity_must_be_reconciled_no_second_entry_authority")
+    path = Path(boot["renewal_path"])
+    if path.exists():
+        value = json.loads(path.read_text())
+        print(json.dumps({"existing": True, "starts_at": value["starts_at"]}), flush=True)
+        return
+    # Retire only the expired unused OP1 receipt. History and all counters stay.
+    code = """
+import json
+from pathlib import Path
+from polysia.deployment.financial_session_runtime import load_runtime_config,load_authority
+from polysia.deployment.session_supervision import committed_checkpoint
+from polysia.security.session_authority import SessionCustody
+p=Path('PREVIOUS_PACKET')
+c=load_runtime_config(p/'config.json');a=load_authority(p/'authority-signed.json')
+from polysia.storage.financial_session import FinancialSessionJournal
+j=FinancialSessionJournal(c.financial_path,c.witness_root,a)
+committed_checkpoint(j.path,j.witness)
+receipt=json.loads(a.owner_receipt)['receipt_id']
+SessionCustody(c.custody_path).revoke(receipt_id=receipt)
+print('EXPIRED_RECEIPT_RETIRED_WITH_HISTORY')
+""".replace("PREVIOUS_PACKET", str(previous))
+    result = subprocess.check_output(
+        [
+            "ctr",
+            "-n",
+            "polysia-op1",
+            "run",
+            "--rm",
+            "--read-only",
+            "--user",
+            "995:981",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "--mount",
+            f"type=bind,src={BASE},dst={BASE},options=rbind:ro",
+            "--mount",
+            f"type=bind,src={Path(old_config['custody_path']).parent},dst={Path(old_config['custody_path']).parent},options=rbind:rw",
+            "docker.io/library/polysia:ci",
+            "op1-retire-expired-receipt",
+            "python",
+            "-c",
+            code,
+        ],
+        text=True,
+        timeout=30,
+    )
+    if "EXPIRED_RECEIPT_RETIRED_WITH_HISTORY" not in result:
+        raise ValueError("prior_receipt_retirement_not_confirmed")
+    old = json.loads(Path(boot["initial_receipt"]).read_text())
+    grant = dict(old["explicit_read_grant"])
+    grant.update(
+        id=boot["attempt_name"] + "-explicit-renewal",
+        starts_at=datetime.now(UTC).isoformat(),
+        carried_receipt=boot["initial_receipt"],
+        owner_authorization="Manual owner READ100; finite GET-only renewal with carried history",
+    )
+    write_new(path, json.dumps(grant).encode())
+    marker = Path("/etc/polysia-op1/commissioning-stop.json")
+    write_new(
+        marker.with_name("stop-before-" + boot["attempt_name"] + ".json"), marker.read_bytes()
+    )
+    pending = marker.with_suffix(".renewed")
+    write_new(pending, json.dumps({"state": "STOP", "authority": "UNISSUED"}).encode())
+    pending.replace(marker)
+    print(
+        json.dumps(
+            {
+                "status": "READ100_APPROVED",
+                "starts_at": grant["starts_at"],
+                "carried_requests": old["aggregate_campaign"]["requests_charged"],
+            }
+        ),
+        flush=True,
+    )
+
+
+def ack_alert() -> None:
+    if os.geteuid() != 0 or sys.stdin.read().strip() != "RECEIVED":
+        raise ValueError("honest_owner_alert_receipt_required")
+    boot = bootstrap_profile()
+    path = Path(boot["transport_profile"]["alert_receipt"])
+    if path.exists():
+        if json.loads(path.read_text())["message_id"] != boot["alert_message_id"]:
+            raise ValueError("existing_alert_receipt_identity_changed")
+        return
+    write_new(
+        path,
+        json.dumps(
+            {
+                "message_id": boot["alert_message_id"],
+                "human_reported_received": True,
+                "observed_at": datetime.now(UTC).isoformat(),
+            }
+        ).encode(),
+    )
+    print("OWNER_ALERT_RECEIPT_RECORDED")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("launch", "container", "accept-signature"))
+    parser.add_argument(
+        "mode", choices=("launch", "container", "accept-signature", "renew-read", "ack-alert")
+    )
     mode = parser.parse_args().mode
+    configure_bootstrap()
     try:
-        {"launch": launch, "container": container, "accept-signature": accept_signature}[mode]()
+        {
+            "launch": launch,
+            "container": container,
+            "accept-signature": accept_signature,
+            "renew-read": renew_read,
+            "ack-alert": ack_alert,
+        }[mode]()
     except Exception as error:
         # No credential values, HTTP bodies or arbitrary exception text.
         known = {

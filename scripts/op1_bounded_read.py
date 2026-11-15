@@ -9,6 +9,7 @@ import os
 import shutil
 import socket
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -59,6 +60,17 @@ def private_write(path: Path, value: object) -> None:
         f.write(canonical_json(value) + "\n")
 
 
+def credential_json(credentials: ApiKeyCreds) -> str:
+    """Use the SDK's validation alias; default model dumping does not round-trip it."""
+    return json.dumps(
+        {
+            "apiKey": credentials.key,
+            "secret": credentials.secret,
+            "passphrase": credentials.passphrase,
+        }
+    )
+
+
 def read_bounds(
     grant: dict[str, Any],
     continuation: dict[str, Any] | None,
@@ -96,7 +108,7 @@ def read_bounds(
     )
 
 
-async def main() -> None:
+async def main(*, credential_sink: Callable[[str, str], None] | None = None) -> None:
     now = datetime.now(UTC)
     if not CONDITION or not TOKEN:
         raise ValueError("Explicit frozen instrument required before provider reads")
@@ -265,6 +277,8 @@ async def main() -> None:
             derived = await http.get(ENDPOINTS[2], headers=headers)
             derived.raise_for_status()
             credentials = ApiKeyCreds.model_validate(derived.json())
+            if credential_sink is not None:
+                credential_sink(private, credential_json(credentials))
             client = await AsyncSecureClient._create(
                 private_key=private,
                 wallet=funder,

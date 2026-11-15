@@ -348,6 +348,57 @@ def supervise(
     )
 
 
+@session_app.command("control")
+def control(
+    config: ConfigPath,
+    authority: Annotated[Path, typer.Option(exists=True)],
+    trust: Annotated[Path, typer.Option(exists=True)],
+    backup: Annotated[Path, typer.Option()],
+    ticks: Annotated[int, typer.Option(min=1, max=200000)] = 100000,
+    release_stop: bool = False,
+) -> None:
+    """Finite independent control with mandatory fresh verified offsite backup."""
+    from polysia.deployment.continuous_session_controls import ContinuousSessionSupervisor
+
+    c, a = load_runtime_config(config), load_authority(authority)
+    validate_runtime_binding(c, a)
+    now = datetime.now(UTC)
+    _verifier(trust).verify(
+        a, binding_for(c), now=now, action="ENTRY" if now < a.expires_at else "CANCEL"
+    )
+    custody = SessionCustody(c.custody_path)
+    journal = FinancialSessionJournal(c.financial_path, c.witness_root, a)
+    incidents = SessionIncidents(
+        c.custody_path.with_suffix(".incidents.sqlite3"), clock=lambda: datetime.now(UTC)
+    )
+    incidents.initialize()
+    supervisor = SessionSupervisor(
+        a,
+        custody,
+        journal=journal.path,
+        witness=journal.witness,
+        outbox=c.outbox_path,
+        backup_receipt=backup,
+        policy=SupervisionPolicy(
+            c.minimum_free_disk_bytes, c.maximum_backup_age_seconds, c.checkpoint_handshake_seconds
+        ),
+        clock=lambda: datetime.now(UTC),
+        commands=ConsoleCommandStore(c.commands_path),
+        incidents=incidents,
+    )
+    with ExclusiveWriterLock(c.custody_path.with_suffix(".supervisor")):
+        runtime = ContinuousSessionSupervisor(
+            a,
+            custody,
+            supervisor,
+            clock=lambda: datetime.now(UTC),
+            wait=time.sleep,
+            release_stop=release_stop,
+            status_path=c.custody_path.parent / "continuous-status.json",
+        )
+        typer.echo(canonical_json(runtime.run(maximum_ticks=ticks)))
+
+
 @session_app.command("stop")
 def stop(config: ConfigPath, authority: Annotated[Path, typer.Option(exists=True)]) -> None:
     prepared, envelope = load_runtime_config(config), load_authority(authority)
