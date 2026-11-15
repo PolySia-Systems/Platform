@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'nod
 import { resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAst } from 'rolldown/parseAst';
-import { escapeTemplateWhitespace } from './vite.config.mjs';
+import { assertCanonicalSource, escapeTemplateWhitespace } from './vite.config.mjs';
 process.chdir(fileURLToPath(new URL('.', import.meta.url)));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const root = resolve('..');
@@ -22,7 +22,9 @@ const sources = [...walk('src'), ...walk('licenses'), ...['package.json', 'packa
   });
 const sourceHash = createHash('sha256');
 for (const path of sources) {
-  sourceHash.update(relative(root,path).replaceAll('\\','/')); sourceHash.update(Buffer.from(hash(readFileSync(path)), 'hex'));
+  const bytes = readFileSync(path);
+  assertCanonicalSource(path, bytes);
+  sourceHash.update(relative(root,path).replaceAll('\\','/')); sourceHash.update(Buffer.from(hash(bytes), 'hex'));
 }
 const source = sourceHash.digest('hex');
 if (process.argv.includes('--check')) {
