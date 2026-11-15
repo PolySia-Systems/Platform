@@ -571,3 +571,26 @@ are subtracted before signing. The new isolated attempt continues from the
 retained 27-attempt receipt; no ledger or failed packet is reopened or replaced.
 The amendment requires a verified new runtime artifact, because the core
 commissioning contract changed. No financial action was performed.
+
+The corrected core merged in PR #292 as
+`5732aad254117f47e3506d13bcf26d1428623f61`; its exact-main CI `43687409499`
+passed. Verified native artifact `14150138491` was installed on Helsinki and
+the fenced recovery namespace. Image identity is
+`sha256:2fb0a7fc7804136cb04b19ac38c598570c2e292ed57e9468ce774b2940fc378b`;
+package digest is `149df8300b807b0466b7e4cc99fc4e4c9b0efdef388478cdb08cf5f921c87e57`.
+Installation receipts remain under each host's `releases/5732aad254117f47e3506d13bcf26d1428623f61/`.
+The disabled refreshed template is
+`/var/lib/polysia-op1/owner-packet-reviewed-refresh-inputs/read-config.json`.
+Both original fences and STOP remain; no financial worker was started.
+
+The read window elapsed while required CI completed. The owner then explicitly
+renewed the bounded GET-only qualification. The protected renewal file is
+`/etc/polysia-op1/owner-read-renewal.json`; it must name the retained prior
+campaign and carried 27-attempt receipt. Its 100-request ceiling includes those
+carried attempts, so at most 73 additional requests are admitted, with a new
+explicit two-hour window. No stopped allowance is reopened or overwritten.
+The new owner attempt is `api-read-20261115-r2-owner2`, and its future packet
+is `owner-packet-r2-reviewed-refresh-20261115`. Historical failed paths are
+preserved. The new local profile is `owner-commission-profile.v2.json`; only
+the owner's genuine local signature can advance this prepared path to STOP
+provisioning. Real-run recovery and supervision remain dependent on that receipt.
