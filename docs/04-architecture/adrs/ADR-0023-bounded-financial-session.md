@@ -209,3 +209,20 @@ backup and capacity, while source-following evidence remains inapplicable to
 this owner-operated purpose. This extension does not authorize an uncommissioned
 financial run. Current host qualification, issuer signature, supervision and
 recovery acceptance remain operational evidence, not facts supplied by this ADR.
+
+### API owner review and commissioning refresh
+
+The owner may review the exact scoped baseline and authority for up to five
+minutes. This does not relax account freshness. After the external signature,
+the privileged commissioning operator performs a new bounded official-API read.
+Provisioning accepts it only in ORDER_LIFECYCLE_API scope and only when account,
+cash, positions, orders, cumulative fees, scope and completeness exactly match
+the signed baseline. Only observation time and evidence identity may differ.
+The refresh must be current, not future, and not older than the signed baseline.
+A mismatch rejects before custody claim. The journal retains the actual fresh
+opening; signed configuration, entry/GTD, protection and monetary limits stay
+immutable. ACCOUNT and the default no-refresh path preserve their requirements.
+This narrow privileged commissioning amendment introduces no worker refresh,
+unsigned authority or new platform architecture. A full post-signature read
+reserve is deducted before signing; failures and uncertainty remain charged to
+the same finite grant. It requires review and verified release deployment.

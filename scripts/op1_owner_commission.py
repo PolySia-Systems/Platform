@@ -96,7 +96,7 @@ def validate_review(review: dict[str, Any], profile: dict[str, Any], *, now: dat
     exact, opening = config["exact_entry"], config["opening"]
     at = datetime.fromisoformat(opening["observed_at"])
     ends = datetime.fromisoformat(review["review_deadline"])
-    if not at <= now < ends <= at + timedelta(seconds=25):
+    if not at <= now < ends <= at + timedelta(minutes=5):
         raise ValueError("fresh_review_window_required")
     if (
         body["key_id"] != KEY_ID
@@ -156,8 +156,9 @@ def validate_review(review: dict[str, Any], profile: dict[str, Any], *, now: dat
     spent = review["read_consumption"]
     if (
         not 0 < spent["requests_charged"] <= 100
-        or authority["max_requests"] != 1000 - 32 - spent["requests_charged"]
-        or authority["max_response_bytes"] != 64 * 1024 * 1024 - 846858 - spent["bytes_charged"]
+        or authority["max_requests"] != 1000 - 32 - spent["requests_charged"] - 14
+        or authority["max_response_bytes"]
+        != 64 * 1024 * 1024 - 846858 - spent["bytes_charged"] - 14 * 65536
         or datetime.fromisoformat(authority["starts_at"]) != at
         or datetime.fromisoformat(authority["expires_at"]) != at + timedelta(minutes=20)
         or datetime.fromisoformat(authority["protective_until"]) != at + timedelta(minutes=30)
@@ -288,7 +289,7 @@ def main() -> None:
     finally:
         # The remote bridge has its own finite wait and never starts a worker.
         if process.poll() is None:
-            process.wait(timeout=200)
+            process.wait(timeout=620)
 
 
 if __name__ == "__main__":
