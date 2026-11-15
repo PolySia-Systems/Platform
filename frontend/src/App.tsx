@@ -251,6 +251,7 @@ export default function App() {
         <div className={s.identity}><span className={validIdentity ? s.dot : s.dotBad} />
           <span>{session?.role === 'reader' ? m.readOnly : validIdentity ? m.valid : m.unknown}</span>{identifier(session?.actor)}</div>
       </header>
+      <details className={s.contextDetails}><summary>{m.scope} · {snapshot?.context.scope.run ?? m.unknown} · {snapshot?.context.configured_mode ?? m.unknown} / {snapshot?.context.observed_mode ?? m.unknown} · {snapshot?.context.dataset ?? m.unknown}</summary>
       <section className={s.context} aria-label={m.scope}>
         <div><small>{m.run}</small>{identifier(snapshot?.context.scope.run)}</div>
         <div><small>{m.account}</small>{identifier(snapshot?.context.scope.account)}</div>
@@ -258,7 +259,7 @@ export default function App() {
         <div><small>{m.observed}</small><Badge>{snapshot?.context.observed_mode ?? m.unknown}</Badge></div>
         <div><small>{m.dataset}</small><strong>{snapshot?.context.dataset ?? m.unknown}</strong></div>
         <div><small>{m.environment}</small><strong>{snapshot?.context.environment ?? m.unknown}</strong></div>
-      </section>
+      </section></details>
       <div className={s.protective} role="region" aria-label={m.protective}>
         <span>{m.protective}</span>{actions.filter(a => a.protective && a.operation !== 'acquisition.drain').map(a =>
           <Button key={a.operation + a.target} variant="outline" disabled={!validIdentity || ['sending', 'uncertain', 'absent'].includes(commandState)}
@@ -272,7 +273,7 @@ export default function App() {
           <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>
         </div>
         {(authFailure || failure) && <div className={s.error} role="alert">{authFailure || failure}
-          {authFailure && <Button onClick={() => void refresh()}>{m.renew}</Button>}</div>}
+          {authFailure && <Button disabled={refreshBusy} onClick={() => void refresh()}>{m.renew}</Button>}</div>}
         {clockSkew && <p className={s.muted} role="status">{m.clockSkew}</p>}
         {example && <p role="status">{m.exampleNotice}</p>}
         {tab === 'overview' && <>
@@ -364,7 +365,7 @@ export default function App() {
         {tab === 'evaluate' && <section className={s.panel} aria-label={m.exports}><h2>{m.exports}</h2>
           {example ? <p>{m.exampleNoExports} <a href="/">{m.retained}</a></p> : <><p><a href="/api/report">{m.reportDownload}</a></p><p><a href="/download/comparison.csv">{m.comparisonDownload}</a></p></>}</section>}
         {tab === 'evaluate' && history?.items.filter(row => (row.tables ?? []).length > 0).map(row => <ReceiptView key={row.idempotency_key} receipt={row} />)}
-        <footer className={s.footer}><Button variant="outline" onClick={() => setColorScheme(colorScheme === 'dark' ? 'light' : 'dark')}>Switch to {colorScheme === 'dark' ? 'light' : 'dark'} theme</Button><span>{m.permit}</span><label>{m.locale} <input type="checkbox" checked={rtl} onChange={e => setRtl(e.target.checked)} /> fa-IR / RTL</label>
+        <footer className={s.footer}><Button variant="outline" onClick={() => setColorScheme(colorScheme === 'dark' ? 'light' : 'dark')}>Switch to {colorScheme === 'dark' ? 'light' : 'dark'} theme</Button><span>{m.permit}</span>{import.meta.env.DEV && <label>{m.locale} <input type="checkbox" checked={rtl} onChange={e => setRtl(e.target.checked)} /> fa-IR / RTL</label>}
           {rtl && <span lang="fa" dir="rtl">{m.persianFixture}</span>}</footer>
       </main>
     </div>

@@ -139,3 +139,35 @@ def test_sdk_declaration_cannot_trigger_unreviewed_lock_generation(monkeypatch):
     )
     assert decision["status"] == "noop"
     assert decision["decision"] == "human_review"
+
+
+def test_npm_discovery_and_publication_remain_review_only(monkeypatch):
+    config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
+    npm = next(item for item in config["updates"] if item["package-ecosystem"] == "npm")
+    assert npm["directory"] == "/frontend"
+    assert npm["schedule"]["interval"] == "weekly"
+    assert npm["open-pull-requests-limit"] == 3
+    assert all(group["applies-to"] == "version-updates" for group in npm["groups"].values())
+    monkeypatch.setattr(dependency_locks, "_pr_changed_files", lambda *_: (
+        "frontend/package.json", "frontend/package-lock.json"))
+    decision = dependency_locks.evaluate_lock_sync(
+        repository="PolySia-Systems/Platform", number=300, actor="dependabot[bot]",
+        base_branch="main", head_branch="dependabot/npm_and_yarn/frontend/test",
+        base_sha="a" * 40, head_sha="b" * 40,
+    )
+    assert decision["status"] == "noop"
+    assert decision["ecosystem"] == "npm"
+    assert decision["decision"] == "human_review"
+    assert dependency_locks.classify_lock_sync_intent((
+        "frontend/package.json", "scripts/dependency_publication.py")) == "reject"
+
+
+def test_publication_skips_unrelated_pull_request_runners():
+    value = yaml.safe_load((ROOT / ".github/workflows/dependency-publish.yml").read_text())
+    assert "startsWith(github.head_ref, 'dependabot/pip/')" in workflow()["jobs"]["generate"]["if"]
+    for name in ("publish", "merge"):
+        condition = value["jobs"][name]["if"]
+        assert "startsWith(github.event.workflow_run.head_branch, 'dependabot/pip/')" in condition
+        assert ("startsWith(github.event.workflow_run.head_branch, "
+                "'codex/scheduled-lock-refresh-')") in condition
+        assert "github.event.workflow_run.event != 'pull_request'" in condition

@@ -178,7 +178,8 @@ def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
             assert audit == [], (workspace, audit)
         page.get_by_role("button", name="Overview", exact=True).click()
         page.set_viewport_size({"width": 390, "height": 844})
-        page.get_by_label("Direction fixture", exact=False).check()
+        page.goto(origin + "?locale=fa-IR")
+        expect(page.locator("html")).to_have_attribute("dir", "rtl")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.screenshot(path=str(output / "design-mobile-rtl.png"), full_page=True)
         assert page.evaluate("localStorage.length + sessionStorage.length") == 0
@@ -243,4 +244,27 @@ def test_open_tab_bundle_change_preserves_uncertain_request(rich_console):  # no
         assert page.locator('meta[name="bundle-source"]').get_attribute("content") == source
         assert len(sends) == 1
         assert page.evaluate("localStorage.length + sessionStorage.length") == 0
+        browser.close()
+
+
+def test_auth_loss_clears_evidence_and_recovers_without_replay(rich_console):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, *_ = rich_console
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, token)
+        page = context.new_page()
+        posts = []
+        page.on("request", lambda request: posts.append(request.url)
+                if request.method == "POST" else None)
+        page.goto(origin)
+        expect(page.get_by_label("Exact financial amounts")).to_contain_text("99.49")
+        page.route("**/api/console/v1/session", lambda route: route.fulfill(status=403))
+        page.get_by_role("button", name="Refresh evidence", exact=False).click()
+        expect(page.get_by_role("alert")).to_contain_text("Authentication changed or expired")
+        page.unroute("**/api/console/v1/session")
+        page.get_by_role("button", name="Refresh identity", exact=False).click()
+        expect(page.get_by_role("alert")).to_have_count(0)
+        expect(page.get_by_label("Exact financial amounts")).to_contain_text("99.49")
+        assert posts == []
         browser.close()

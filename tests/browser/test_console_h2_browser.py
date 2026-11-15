@@ -121,7 +121,7 @@ def test_eight_journeys_visual_accessibility_and_rtl(rich_console, width):  # no
             )
             page.screenshot(path=str(OUTPUT / "h2-command-critical.png"), full_page=True)
             page.keyboard.press("Escape")
-            page.get_by_label("Direction fixture", exact=False).check()
+            page.goto(origin + "?locale=fa-IR")
             page.set_viewport_size({"width": 640, "height": 900})
             expect(page.locator("html")).to_have_attribute("dir", "rtl")
             expect(page.locator("[lang=fa]")).to_contain_text("شناسه‌ها")

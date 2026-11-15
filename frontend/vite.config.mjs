@@ -1,4 +1,12 @@
 import { defineConfig } from 'vite';
+// Custody hashes exact bytes. Git checks these source inputs out with LF;
+// refuse a local CRLF build rather than publish a hash CI cannot reproduce.
+export function assertCanonicalSource(path, bytes) {
+  if (/(\.(?:ts|tsx|css|json|mjs|py|txt)|\/(?:\.npmrc|\.node-version))$/.test(path.replaceAll('\\', '/'))
+      && bytes.includes(Buffer.from('\r\n'))) {
+    throw Error(`Noncanonical CRLF source input: ${path}; restore LF before building Console assets`);
+  }
+}
 // Preserve exact template values while keeping generated files valid under git's
 // whitespace gate. Tagged templates observe raw bytes, so refuse that case.
 export function escapeTemplateWhitespace(code, ast) {

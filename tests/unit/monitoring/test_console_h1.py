@@ -18,6 +18,30 @@ from tests.fixtures.console_h1 import write_publication
 from tests.unit.monitoring.test_console import application
 
 
+def test_source_custody_separates_test_evidence_from_runtime_inputs(tmp_path):
+    from polysia.monitoring.console_bundle import source_digest
+
+    root = Path(__file__).resolve().parents[3]
+    for folder in ("src", "licenses"):
+        shutil.copytree(root / "frontend" / folder, tmp_path / "frontend" / folder)
+    for name in (
+        "package.json", "package-lock.json", "tsconfig.json", "vite.config.mjs",
+        "build.mjs", ".npmrc", ".node-version",
+    ):
+        shutil.copyfile(root / "frontend" / name, tmp_path / "frontend" / name)
+    contract = tmp_path / "src/polysia/monitoring/console_contract.py"
+    contract.parent.mkdir(parents=True)
+    shutil.copyfile(root / "src/polysia/monitoring/console_contract.py", contract)
+    expected = source_digest(tmp_path)
+    tests = tmp_path / "frontend/tests"
+    tests.mkdir()
+    (tests / "new-case.mjs").write_text("test-only evidence")
+    assert source_digest(tmp_path) == expected
+    runtime = tmp_path / "frontend/src/messages.ts"
+    runtime.write_bytes(runtime.read_bytes() + b"\n// runtime edit\n")
+    assert source_digest(tmp_path) != expected
+
+
 def call(app, path: str, *, payload: dict | None = None, cookie: str = "", token="verified"):
     state: list[Any] = []
     route, _, query = path.partition("?")

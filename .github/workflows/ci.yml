@@ -132,7 +132,7 @@ jobs:
         if: needs.changes.outputs.python == 'true'
         run: python -m pip check
       - name: Dependency lock check
-        if: needs.changes.outputs.python == 'true'
+        if: needs.changes.outputs.dependencies == 'true'
         run: python scripts/dependency_locks.py check
       - name: Build package
         if: needs.changes.outputs.package == 'true'
@@ -174,14 +174,12 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Compile
         run: python -m compileall -q src tests
-      - name: Operational composition preflight
-        run: python -m pytest -q -x --tb=short tests/integration/test_operational_session.py
-      - name: Full Pytest
-        run: python -m pytest -q -x --tb=short --durations=25 --junitxml=artifacts/windows-pytest.xml
+      - name: Selected Windows behavior (full for broad or periodic inputs)
+        env:
+          CI_POLICY: ${{ needs.changes.outputs.policy }}
+        run: python scripts/windows_validation.py
       - name: Environment integrity
         run: python -m pip check
-      - name: Dependency lock check
-        run: python scripts/dependency_locks.py check
       - name: Build package
         run: python -m build
       - name: CLI smoke
@@ -192,7 +190,7 @@ jobs:
         with:
           name: windows-timing
           path: artifacts/windows-pytest.xml
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
   container:
@@ -324,6 +322,9 @@ jobs:
           "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install --upgrade pip
       - run: |
           "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip install -r locks/requirements-dev-py314.txt
+      - name: Canonical lock check for dependency-only dispatch
+        if: needs.changes.outputs.quality != 'true'
+        run: '"$RUNNER_TEMP/polysia-audit-venv/bin/python" scripts/dependency_locks.py check'
       - run: |
           "$RUNNER_TEMP/polysia-audit-venv/bin/python" -m pip_audit --strict --vulnerability-service osv
       - name: Generate SBOM

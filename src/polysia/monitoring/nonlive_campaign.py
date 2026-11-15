@@ -13,6 +13,7 @@ from typing import Any
 
 from polysia.domain.copytrading.native_run_limits import NativeRunLimits
 from polysia.storage.acquisition_authority import AcquisitionAuthority
+from polysia.storage.atomic_json import atomic_json
 from polysia.storage.continuous_shadow import ContinuousShadowRepository
 
 READINESS_MARGIN_SECONDS = 1800
@@ -398,8 +399,6 @@ def supervise_campaign(
 ) -> dict[str, Any] | None:
     if not value.get("campaign"):
         return None
-    from polysia.cli_commands.platform_worker import atomic_json
-
     plan_path = Path(value["campaign"])
     state = database.with_name("nonlive-campaign-status.json")
     try:

@@ -496,7 +496,7 @@ class ConsoleReadModel:
             raise KeyError("record_missing")
         record = self._records[kind][identity]
         if kind == "wallet":
-            from polysia.monitoring.console_workspaces import text
+            from polysia.monitoring.console_values import text
 
             raw = self._wallet_rows[identity]
             links = self._wallet_links.get(identity, [])

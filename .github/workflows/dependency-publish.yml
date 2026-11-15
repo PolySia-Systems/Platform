@@ -41,7 +41,7 @@ jobs:
         run: python scripts/dependency_publication.py --report-scan --artifact "$RUNNER_TEMP/scan/dependency-scan.json" --run "$SOURCE_RUN"
 
   publish:
-    if: github.event.workflow_run.name == 'Dependency automation' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    if: github.event.workflow_run.name == 'Dependency automation' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request') && (startsWith(github.event.workflow_run.head_branch, 'dependabot/pip/') || startsWith(github.event.workflow_run.head_branch, 'codex/scheduled-lock-refresh-') || github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -101,7 +101,7 @@ jobs:
         run: python scripts/dependency_publication.py --artifact "$RUNNER_TEMP/proposal" --run "$SOURCE_RUN"
 
   merge:
-    if: github.event.workflow_run.name == 'CI' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    if: github.event.workflow_run.name == 'CI' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request') && (startsWith(github.event.workflow_run.head_branch, 'dependabot/pip/') || startsWith(github.event.workflow_run.head_branch, 'codex/scheduled-lock-refresh-') || github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

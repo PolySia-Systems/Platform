@@ -32,3 +32,9 @@ generates the operator runbook, and writes `release-artifacts/final-handoff.md`.
 - Live submit and cancel paths remain protected by explicit acknowledgement flags.
 - Generated handoff files must not contain secrets, wallet addresses, token
   values, or transaction hashes.
+
+## Stop conditions
+
+Stop when strict Git cleanliness, required quality checks, readiness or release
+integrity fails, or any generated output contains sensitive values. This local
+procedure does not publish packages, deploy a host or authorize live orders.

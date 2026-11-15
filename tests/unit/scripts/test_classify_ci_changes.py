@@ -177,3 +177,78 @@ def test_browser_document_asset_is_executable_not_editorial() -> None:
 )
 def test_frontend_cannot_skip_native_package_browser_container_and_supply_chain(path):
     assert classify_paths((path,)) == ChangeMap.full()
+
+
+@pytest.mark.parametrize("path", [
+    "src/polysia/control/local_identity.py",
+    "src/polysia/monitoring/process_capacity.py",
+    "src/polysia/application/services/dynamic_live_handoff.py",
+    "src/polysia/application/services/persistent_prospective_collector.py",
+    "src/polysia/cli_commands/wallet_intelligence_workflow.py",
+    "src/polysia/monitoring/wallet_intelligence_health.py",
+    "tests/unit/application/test_dynamic_live_handoff.py",
+    "tests/unit/application/test_persistent_prospective_collector.py",
+    "src/polysia/adapters/polymarket/bounded_transport.py",
+    "src/polysia/adapters/polymarket/native_discovery.py",
+    "src/polysia/adapters/polymarket/research_rpc.py",
+    "src/polysia/cli_commands/platform_worker.py",
+    "src/polysia/cli_support/wallet_intelligence_workflow.py",
+    "tests/integration/test_operational_session.py",
+    "tests/integration/test_native_drain_transport.py",
+    "tests/unit/adapters/test_native_discovery.py",
+    "tests/unit/monitoring/test_technical_health.py",
+    "scripts/op1_backup_transport.py",
+])
+def test_native_behavior_and_its_regression_cases_select_windows(path: str) -> None:
+    assert classify_paths((path,)).windows
+
+
+def test_complete_presentation_diff_keeps_package_browser_without_install_recovery() -> None:
+    paths = (
+        "frontend/src/design/tokens.css",
+        "src/polysia/monitoring/human_console_assets/main-old.js",
+        "src/polysia/monitoring/human_console_assets/main-new.js",
+        "src/polysia/monitoring/human_console_assets/manifest.json",
+        "docs/04-architecture/product-design-system.md",
+    )
+    result = classify_paths(paths)
+    assert result.python and result.package and result.browser
+    assert not result.windows and not result.container and not result.dependencies
+    # A mixed logic/recipe/native diff cannot borrow this exception.
+    for extra in (
+        "frontend/src/App.tsx", "frontend/build.mjs", "AGENTS.md",
+        "frontend/src/assets/helper.tsx", "frontend/src/assets/AGENTS.md",
+    ):
+        assert classify_paths((*paths, extra)) == ChangeMap.full()
+    assert classify_paths(paths[1:4]).windows  # output-only is not presentation proof
+
+
+def test_presentation_rename_into_unknown_file_fails_closed() -> None:
+    assert classify_paths(("frontend/src/theme.css", "new-system/theme.css")).comprehensive
+
+
+def test_real_rename_and_deleted_control_keep_both_sides_of_complete_diff(tmp_path) -> None:
+    import subprocess
+
+    from scripts.classify_ci_changes import actual_diff
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-q")
+    (tmp_path / "frontend/src").mkdir(parents=True)
+    (tmp_path / "frontend/src/theme.css").write_text("body { color: black }")
+    (tmp_path / "frontend/build.mjs").write_text("// trusted recipe")
+    git("add", ".")
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-qm", "fixture")
+    base = git("rev-parse", "HEAD")
+    git("mv", "frontend/src/theme.css", "frontend/src/theme.ts")
+    policy = actual_diff(tmp_path, base=base, local=True)
+    assert set(policy["paths"]) == {"frontend/src/theme.css", "frontend/src/theme.ts"}
+    assert policy["flags"]["comprehensive"]
+    git("reset", "--hard", "HEAD")
+    (tmp_path / "frontend/src/theme.css").write_text("body { color: white }")
+    (tmp_path / "frontend/build.mjs").unlink()
+    policy = actual_diff(tmp_path, base=base, local=True)
+    assert policy["flags"]["comprehensive"]

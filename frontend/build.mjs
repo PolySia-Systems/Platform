@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'nod
 import { resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAst } from 'rolldown/parseAst';
-import { escapeTemplateWhitespace } from './vite.config.mjs';
+import { assertCanonicalSource, escapeTemplateWhitespace } from './vite.config.mjs';
 process.chdir(fileURLToPath(new URL('.', import.meta.url)));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const root = resolve('..');
@@ -14,7 +14,7 @@ if (!output.startsWith(resolve(root, 'src/polysia/monitoring') + sep)) throw Err
 const walk = dir => readdirSync(dir, { withFileTypes: true })
   .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).flatMap(e =>
   e.isDirectory() ? walk(resolve(dir, e.name)) : [resolve(dir, e.name)]);
-const sources = [...walk('src'), ...walk('tests'), ...walk('licenses'), ...['package.json', 'package-lock.json',
+const sources = [...walk('src'), ...walk('licenses'), ...['package.json', 'package-lock.json',
   'tsconfig.json', 'vite.config.mjs', 'build.mjs', '.npmrc', '.node-version'].map(p => resolve(p)),
   resolve('../src/polysia/monitoring/console_contract.py')].sort((a,b) => {
     const x = relative(root,a).replaceAll('\\','/'), y = relative(root,b).replaceAll('\\','/');
@@ -22,7 +22,9 @@ const sources = [...walk('src'), ...walk('tests'), ...walk('licenses'), ...['pac
   });
 const sourceHash = createHash('sha256');
 for (const path of sources) {
-  sourceHash.update(relative(root,path).replaceAll('\\','/')); sourceHash.update(Buffer.from(hash(readFileSync(path)), 'hex'));
+  const bytes = readFileSync(path);
+  assertCanonicalSource(path, bytes);
+  sourceHash.update(relative(root,path).replaceAll('\\','/')); sourceHash.update(Buffer.from(hash(bytes), 'hex'));
 }
 const source = sourceHash.digest('hex');
 if (process.argv.includes('--check')) {

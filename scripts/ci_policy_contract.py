@@ -45,6 +45,16 @@ class PolicyContracts(unittest.TestCase):
             ),
             (("scripts/report_fixture.py",), {"behavior", "lint"}, {"windows", "image"}),
             (
+                ("frontend/src/design/tokens.css",
+                 "src/polysia/monitoring/human_console_assets/manifest.json"),
+                {"behavior", "package", "wheel-install", "browser"},
+                {"windows", "image", "install-recovery", "locks"},
+            ),
+            (
+                ("src/polysia/control/local_identity.py",),
+                {"windows", "behavior"}, set(),
+            ),
+            (
                 ("locks/requirements-dev-py314.txt",),
                 {"windows", "image", "install-recovery", "audit", "package", "browser"},
                 set(),
@@ -187,6 +197,8 @@ class PolicyContracts(unittest.TestCase):
     def test_gate_acceptance_and_rejection(self):
         for paths in (
             ("README.md",), ("docs/00-governance/PROJECT_STATUS.md",),
+            ("frontend/src/design/tokens.css",
+             "src/polysia/monitoring/human_console_assets/manifest.json"),
             (".github/workflows/ci.yml",),
         ):
             policy = project_policy(paths)
@@ -199,6 +211,13 @@ class PolicyContracts(unittest.TestCase):
             for job, flag in JOB_FLAGS.items():
                 needs[job] = {"result": "success" if policy["flags"][flag] else "skipped"}
             verify_gate(policy, needs, policy)
+            for job, flag in JOB_FLAGS.items():
+                if policy["flags"][flag]:
+                    for failed in ("skipped", "failure", "cancelled"):
+                        broken = copy.deepcopy(needs)
+                        broken[job]["result"] = failed
+                        with self.assertRaises(ValueError):
+                            verify_gate(policy, broken)
             if not policy["flags"]["windows"]:
                 broken = copy.deepcopy(needs)
                 broken["windows-compatibility"]["result"] = "success"

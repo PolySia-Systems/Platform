@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -27,6 +26,7 @@ from polysia.developer.catalog import (
     gates_for,
     posix,
 )
+from polysia.developer.ci_loader import load_classify_paths
 from polysia.developer.dependency_preflight import dependency_preflight
 from polysia.developer.git_state import (
     DeveloperContextError,
@@ -235,25 +235,6 @@ def render_text(packet: Mapping[str, object]) -> str:
             ]
         )
     return "\n".join(lines) + "\n"
-
-
-def load_classify_paths(root: Path) -> ClassifyPaths:
-    path = root / "scripts" / "classify_ci_changes.py"
-    if not path.is_file():
-        raise DeveloperContextError("CI change classifier is missing")
-    spec = importlib.util.spec_from_file_location(
-        "polysia_developer_classify_ci_changes",
-        path,
-    )
-    if spec is None or spec.loader is None:
-        raise DeveloperContextError("CI change classifier could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    classifier = getattr(module, "classify_paths", None)
-    if not callable(classifier):
-        raise DeveloperContextError("CI change classifier is invalid")
-    return classifier
 
 
 def _assemble(

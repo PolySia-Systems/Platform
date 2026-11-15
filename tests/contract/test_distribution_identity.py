@@ -37,7 +37,6 @@ def test_active_implementation_has_no_legacy_identity() -> None:
         ROOT / "docs" / "FINAL_HANDOFF.md",
         ROOT / "docs" / "LIVE_CONNECTIVITY_SMOKE_TEST.md",
         ROOT / "docs" / "OPERATOR_RUNBOOK.md",
-        ROOT / "docs" / "RELEASE_HANDOFF.md",
     ]
 
     findings = {

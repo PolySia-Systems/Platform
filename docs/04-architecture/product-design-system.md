@@ -158,3 +158,19 @@ Console theme/provider. Restore a complete compatible release through the
 protected operator procedure for rollback; do not hot-swap assets during a bound
 financial run, downgrade financial stores or renew financial authority. This
 change authorizes no deployment or external account mutation.
+
+## Fast local iteration
+
+Run `npm run dev --prefix frontend` after installing the pinned frontend and
+Python development dependencies. Set `POLYSIA_PREVIEW_PYTHON` only when the local
+`.venv` is elsewhere. Open `http://127.0.0.1:5173/?preview=fresh`; the preview
+bar selects fresh, stale, unknown or request-failure scenarios and RTL. It uses
+the real components, wire validator and canonical synthetic financial producer.
+It never reads credentials or contacts a venue; its gateway rejects POST.
+Vite updates source edits without package installation or backup commissioning.
+The installed protected bundle still owns release acceptance and production CSP.
+
+Workspace tables disclose detailed evidence on demand, with state/count visible
+in keyboard-accessible summaries. Freshness and protective guidance remain
+visible even when a table is closed. Mobile context spacing puts the financial
+summary closer to the task; exact amounts and authority ownership are unchanged.

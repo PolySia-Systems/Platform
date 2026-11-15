@@ -177,3 +177,17 @@ def test_target_exposure_replay_has_no_live_or_sqlite_authority() -> None:
         for path in files
     }
     assert {path: imports for path, imports in findings.items() if imports} == {}
+
+
+def test_shared_helpers_do_not_depend_on_their_consumers() -> None:
+    boundaries = {
+        "monitoring/console_values.py": (
+            "polysia.monitoring.console_projection",
+            "polysia.monitoring.console_workspaces",
+        ),
+        "storage/atomic_json.py": ("polysia.cli_commands", "polysia.monitoring"),
+        "developer/ci_loader.py": ("polysia.developer.catalog", "polysia.developer.context_packet"),
+        "monitoring/nonlive_campaign.py": ("polysia.cli_commands",),
+    }
+    for relative, forbidden in boundaries.items():
+        assert not any(name.startswith(forbidden) for name in _imports(PACKAGE / relative))

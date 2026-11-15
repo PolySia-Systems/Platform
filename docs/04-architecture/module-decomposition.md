@@ -73,3 +73,12 @@ move models, persistence, and rendering to focused modules when each area is
 next changed; this is tracked debt, not a reason for a high-risk rewrite.
 The hidden flat aliases are separate compatibility debt with their removal
 condition recorded in the CLI capability migration.
+
+## Shared support boundaries
+
+Console projections and workspaces share bounded display conversion in
+`monitoring/console_values.py`. Durable worker/campaign JSON publication lives
+in `storage/atomic_json.py`, below CLI composition and monitoring. Developer
+catalog and context generation load the canonical CI selector through
+`developer/ci_loader.py`; neither owns a second applicability table.
+Architecture tests prevent these helpers from importing their consumers.

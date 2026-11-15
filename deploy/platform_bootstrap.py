@@ -168,19 +168,38 @@ def container_command(
 
 
 def archive_image_ids(directory: Path, manifest: dict[str, Any]) -> tuple[str, ...]:
-    """Docker stores may address the same archive by config or OCI manifest ID."""
+    """Bind config and nested OCI identities to one verified release image."""
     with tarfile.open(directory / "polysia-image.tar.gz", "r:gz") as archive:
+        members = archive.getmembers()
 
-        def read_json(name: str) -> Any:
-            member = archive.getmember(name)
+        def read_bytes(name: str) -> bytes:
+            matches = [member for member in members if member.name == name]
+            if len(matches) != 1:
+                raise ValueError("missing or duplicate image metadata member")
+            member = matches[0]
             if not member.isfile() or member.size > 1_048_576:
                 raise ValueError("invalid image metadata member")
             stream = archive.extractfile(member)
             if stream is None:
                 raise ValueError("missing image metadata")
-            return json.load(stream)
+            return stream.read()
 
-        docker_manifest = read_json("manifest.json")
+        def read_descriptor(descriptor: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            digest = descriptor.get("digest", "")
+            size = descriptor.get("size")
+            if (not isinstance(digest, str)
+                    or re.fullmatch(r"sha256:[a-f0-9]{64}", digest) is None
+                    or type(size) is not int or not 0 <= size <= 1_048_576):
+                raise ValueError("invalid OCI manifest identity")
+            raw = read_bytes("blobs/sha256/" + digest.removeprefix("sha256:"))
+            if len(raw) != size or "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError("OCI descriptor size or digest mismatch")
+            blob = json.loads(raw)
+            if not isinstance(blob, dict) or blob.get("schemaVersion") != 2:
+                raise ValueError("invalid OCI manifest")
+            return digest, blob
+
+        docker_manifest = json.loads(read_bytes("manifest.json"))
         if not isinstance(docker_manifest, list) or len(docker_manifest) != 1:
             raise ValueError("release archive must contain one image")
         config_path = docker_manifest[0]["Config"]
@@ -188,19 +207,43 @@ def archive_image_ids(directory: Path, manifest: dict[str, Any]) -> tuple[str, .
         if match is None:
             raise ValueError("invalid image config identity")
         config_digest = "sha256:" + match[1]
+        if hashlib.sha256(read_bytes(config_path)).hexdigest() != match[1]:
+            raise ValueError("image config digest mismatch")
         identities = [config_digest]
         if "index.json" in archive.getnames():
-            index = read_json("index.json")
-            descriptors = index.get("manifests", [])
-            if len(descriptors) != 1:
-                raise ValueError("release archive must have one platform descriptor")
-            descriptor = descriptors[0]["digest"]
-            if re.fullmatch(r"sha256:[a-f0-9]{64}", descriptor) is None:
-                raise ValueError("invalid OCI manifest identity")
-            blob = read_json("blobs/sha256/" + descriptor.removeprefix("sha256:"))
-            if blob.get("config", {}).get("digest") != config_digest:
-                raise ValueError("OCI and Docker image config identities differ")
-            identities.append(descriptor)
+            index = json.loads(read_bytes("index.json"))
+            # OCI indexes can nest and carry non-runnable BuildKit attestations.
+            # Exactly one runnable image is allowed at each bounded level.
+            for _ in range(8):
+                descriptors = index.get("manifests", [])
+                if (not isinstance(descriptors, list) or not 1 <= len(descriptors) <= 8
+                        or not all(isinstance(item, dict) for item in descriptors)):
+                    raise ValueError("release archive must have one platform descriptor")
+                runnable = [item for item in descriptors if item.get("annotations", {}).get(
+                    "vnd.docker.reference.type") != "attestation-manifest"]
+                if len(runnable) != 1:
+                    raise ValueError("release archive must have one platform descriptor")
+                digest, blob = read_descriptor(runnable[0])
+                for item in descriptors:
+                    if item is runnable[0]:
+                        continue
+                    platform = item.get("platform", {})
+                    if (platform.get("os") != "unknown"
+                            or platform.get("architecture") != "unknown"
+                            or item["annotations"].get("vnd.docker.reference.digest") != digest):
+                        raise ValueError("unbound or runnable OCI attestation")
+                    _, attestation = read_descriptor(item)
+                    if "manifests" in attestation or "config" not in attestation:
+                        raise ValueError("invalid OCI attestation manifest")
+                identities.append(digest)
+                if "manifests" in blob:
+                    index = blob
+                    continue
+                if blob.get("config", {}).get("digest") != config_digest:
+                    raise ValueError("OCI and Docker image config identities differ")
+                break
+            else:
+                raise ValueError("OCI index nesting limit exceeded")
         if manifest["image_id"] not in identities:
             raise ValueError("source runner image ID is not bound by the archive")
         return tuple(identities)
