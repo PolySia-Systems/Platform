@@ -270,6 +270,10 @@ def start(profile: dict[str, Any], path: Path, *, execute_owner_test: bool) -> N
         raise ValueError("protected_owner_operator_required")
     if not Path("/etc/polysia-platform/restart-fenced").is_file():
         raise ValueError("original_N3_fence_required")
+    if subprocess.run(
+        ["systemctl", "is-active", "--quiet", "polysia-platform"], check=False
+    ).returncode == 0:
+        raise ValueError("original_N3_financial_service_must_remain_inactive")
     ack_path = Path(profile["alert_receipt"])
     ack = json.loads(ack_path.read_text())
     if (
