@@ -91,6 +91,25 @@ DEPENDENCY_PATTERNS = (
     ".github/actions/supply-chain/**",
 )
 WINDOWS_PATTERNS = (
+    "src/polysia/control/**",
+    "src/polysia/monitoring/process_capacity.py",
+    "src/polysia/adapters/polymarket/bounded_transport.py",
+    "src/polysia/adapters/polymarket/native_*.py",
+    "src/polysia/adapters/polymarket/research_rpc.py",
+    "src/polysia/cli_commands/platform_*.py",
+    "src/polysia/cli_support/wallet_intelligence_workflow.py",
+    "tests/integration/test_operational_session.py",
+    "tests/integration/test_continuous_session_controls.py",
+    "tests/integration/test_native_*.py",
+    "tests/integration/test_wallet_intelligence_local.py",
+    "tests/unit/control/**",
+    "tests/unit/cli/test_platform_worker_boundaries.py",
+    "tests/unit/adapters/test_native_health_transport.py",
+    "tests/unit/adapters/test_native_discovery.py",
+    "tests/unit/monitoring/test_technical_health.py",
+    "tests/unit/monitoring/test_nonlive_readiness.py",
+    "tests/integration/test_nonlive_n1.py",
+    "scripts/op1_*.py",
     "src/polysia/monitoring/nonlive_campaign.py",
     "src/polysia/monitoring/technical_health.py",
     "Dockerfile",
@@ -119,6 +138,7 @@ WINDOWS_PATTERNS = (
 )
 COMPREHENSIVE_PATTERNS = (
     "frontend/**",
+    "src/polysia/monitoring/human_console_assets/**",
     "hatch_build.py",
     "scripts/check_changed_docs.py",
     ".python-version",
@@ -133,6 +153,8 @@ COMPREHENSIVE_PATTERNS = (
     ".gitattributes",
     "scripts/fast_check.py",
     "scripts/ci_policy_contract.py",
+    "scripts/windows_validation.py",
+    "tests/unit/scripts/test_windows_validation.py",
     "scripts/windows_health.py",
     "scripts/validate_standards.py",
     "src/polysia/security/secret_scan.py",
@@ -141,6 +163,15 @@ COMPREHENSIVE_PATTERNS = (
     "scripts/classify_ci_changes.py",
     "tests/unit/scripts/test_classify_ci_changes.py",
 )
+# Only a complete diff containing a presentation source can use this exception.
+# Logic, dependency, build-recipe and output-only changes remain comprehensive.
+PRESENTATION_SOURCES = (
+    "frontend/src/**/*.css", "frontend/src/*.css", "frontend/src/assets/**",
+)
+PRESENTATION_OUTPUTS = ("src/polysia/monitoring/human_console_assets/**",)
+PRESENTATION_SUFFIXES = frozenset({".css", ".png", ".svg", ".woff", ".woff2"})
+
+
 DOCUMENT_ASSET_PATTERNS = (
     "docs/03-requirements/**",
     "docs/04-architecture/adrs/**",
@@ -204,6 +235,13 @@ def _matches(path: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def _presentation_source(path: str) -> bool:
+    return (
+        _matches(path, PRESENTATION_SOURCES)
+        and PurePosixPath(path).suffix in PRESENTATION_SUFFIXES
+    )
+
+
 def _known_path(path: str) -> bool:
     return _matches(path, (
         *PYTHON_PATTERNS, *PACKAGE_PATTERNS, *CONTAINER_PATTERNS, *DEPENDENCY_PATTERNS,
@@ -218,6 +256,21 @@ def classify_paths(paths: Iterable[str]) -> ChangeMap:
         return ChangeMap.full()
     if not changed:
         return ChangeMap.full()
+
+    if (
+        any(_presentation_source(path) for path in changed)
+        and all(
+            _presentation_source(path) or _matches(path, PRESENTATION_OUTPUTS)
+            or (path.endswith(".md") and not _matches(path, COMPREHENSIVE_PATTERNS))
+            for path in changed
+        )
+    ):
+        # The package job regenerates and compares every shipped output, so an
+        # unrelated generated JS edit cannot pass as a trusted presentation edit.
+        return ChangeMap(
+            quality=True, python=True, package=True, container=False,
+            dependencies=False, windows=False, comprehensive=False, browser=True,
+        )
 
     # Prose about a control is not an executable control. AGENTS and actual
     # trust inputs still match independently; non-Markdown document assets
@@ -294,7 +347,7 @@ CHECKS = (
     ("types", "python", "portable", ("python", "-m", "mypy", "src")),
     ("behavior", "python", "linux", ("python", "-m", "pytest", "-q")),
     ("integrity", "python", "portable", ("python", "-m", "pip", "check")),
-    ("locks", "python", "portable", ("python", "scripts/dependency_locks.py", "check")),
+    ("locks", "dependencies", "portable", ("python", "scripts/dependency_locks.py", "check")),
     ("package", "package", "portable", ("python", "-m", "build")),
     ("wheel-install", "package", "linux-ci", ()),
     ("browser", "browser", "linux-ci", ()),
