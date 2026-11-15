@@ -182,7 +182,12 @@ remain owner-managed exposure; it never authorizes a replacement order.
 
 The GET-only qualification emits scoped_opening only when the selected token is
 flat, collateral/allowance are usable, no order or pending trade is present and
-zero costs are explicitly established. It never emits a complete-account
+zero costs are explicitly established. Its conditional-token exchange allowance
+must already cover five shares so the potential exit requires no token approval.
+The runtime rechecks that permission before entry and in the final reserved-buy
+refresh. Missing or insufficient permission blocks entry; after submission it
+does not hide accounting evidence or prevent investigation/cancellation.
+No token approval is created. This never emits a complete-account
 opening. Bind that exact scoped_opening into the signed configuration and
 validate freshness during commissioning. During a pending settlement the
 foreground worker drains entry and continues bounded reads; it grants no interim

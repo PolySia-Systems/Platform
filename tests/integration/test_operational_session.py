@@ -571,7 +571,9 @@ async def test_actual_sdk_account_reader_and_independent_custody_are_composed(
         if request.url.path == "/balance-allowance":
             assert request.url.params["signature_type"] == str(signature_type)
             if request.url.params["asset_type"] == "CONDITIONAL":
-                return httpx.Response(200, json={"balance": "0", "allowances": {}})
+                return httpx.Response(200, json={
+                    "balance": "0", "allowances": {config.exchange: "100000000"},
+                })
             return httpx.Response(
                 200,
                 json={

@@ -40,9 +40,11 @@ def fill(order_id, side, *, price="0.5", matched_at=NOW, **changes):
 
 
 class Client:
-    def __init__(self, *, trades=(), details=None, live=(), allowance=2_700_000):
+    def __init__(self, *, trades=(), details=None, live=(), allowance=2_700_000,
+                 conditional_allowance=100_000_000):
         self.trades, self.details, self.live = trades, details or {}, live
         self.allowance = allowance
+        self.conditional_allowance = conditional_allowance
         self.trade_filters = []
         self.signer = self.wallet = WALLET
         self.wallet_type = "DEPOSIT_WALLET"
@@ -64,7 +66,8 @@ class Client:
     async def get_balance_allowance(self, *, asset_type, asset_id=None):
         if asset_type == "CONDITIONAL":
             assert asset_id == INSTRUMENT.token
-            return {"balance": 2_000_000, "allowances": {}}
+            return {"balance": 2_000_000, "allowances": {} if self.conditional_allowance is None
+                    else {EXCHANGE: self.conditional_allowance}}
         assert asset_type == "COLLATERAL"
         return {"balance": 10_000_000, "allowances": {EXCHANGE: self.allowance}}
 
@@ -236,10 +239,43 @@ async def test_scoped_opening_requires_flat_token_no_pending_and_explicit_costs(
     assert opening.scope == "ORDER_LIFECYCLE_API" and opening.positions == ()
     assert opening.cash == Decimal("2.7")
     for changes in ({"tested_token_balance": Decimal(1)}, {"pending_trade_ids": ["pending"]},
-                    {"usable_collateral": None}, {"open_order_ids": ["other"]}):
+                    {"usable_collateral": None}, {"open_order_ids": ["other"]},
+                    {"tested_token_allowance": None}, {"tested_token_allowance": Decimal(4)}):
         assert scoped_opening({**evidence, **changes}, account="account",
                               explicit_zero_fee=True) is None
     assert scoped_opening(evidence, account="account", explicit_zero_fee=False) is None
+
+
+@pytest.mark.parametrize("allowance", [None, 0, 4_999_999, 5_000_000])
+@pytest.mark.parametrize("phase", ["BEFORE_ENTRY", "RESERVED", "UNCERTAIN_SUBMIT"])
+async def test_exit_permission_is_required_before_entry_but_does_not_hide_post_submit_reads(
+    allowance, phase,
+):
+    mapping = SimpleNamespace(
+        account_id="account", signer=WALLET, funder=WALLET, collateral=COLLATERAL,
+        signature_type=3, settlement_route=INSTRUMENT.settlement_route,
+    )
+    client = Client(conditional_allowance=allowance)
+    reader = OrderLifecycleAccountReader(client, mapping, maximum_pages=2, clock=lambda: NOW)
+    rows = {} if phase == "BEFORE_ENTRY" else {"intent": {"state": phase, "order_id": None}}
+    journal = SimpleNamespace(read=lambda: {
+        "opening": {"scope": "ORDER_LIFECYCLE_API"}, "orders": rows,
+    })
+
+    def respond(request):
+        return httpx.Response(200, json={
+            "c": "market", "t": [{"t": "123"}], "fd": {"r": "0", "to": True},
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        account = OrderLifecycleSessionAccount(reader, journal, INSTRUMENT,
+                                              exchange=EXCHANGE, http=http)
+        if phase != "UNCERTAIN_SUBMIT" and (allowance is None or allowance < 5_000_000):
+            with pytest.raises(SessionBlocked, match="protective_allowance"):
+                await account.observe(INSTRUMENT)
+        else:
+            observation = await account.observe(INSTRUMENT)
+            assert observation.cash == Decimal("2.7")
 
 
 async def test_pending_settlement_drains_entry_but_keeps_bounded_read_loop_alive():
