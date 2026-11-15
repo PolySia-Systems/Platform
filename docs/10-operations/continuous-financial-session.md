@@ -103,6 +103,35 @@ OWNER_KEY -in MESSAGE -out SIGNATURE`. Attach the 64-byte signature with
 This verifies the signature. Use `validate` for the exact host binding and time
 window before provisioning under STOP.
 
+For the dated OP1 owner-operated API test, `scripts/op1_owner_commission.py`
+wraps this existing workflow in one interactive terminal session. Its protected
+profile binds the enrolled public key, installed helper hashes, exact account,
+instrument, release and unchanged config/authority controls. The issuer is
+decrypted locally before the bounded fresh GET sample; neither its private key
+nor passphrase enters SSH. The owner then reviews the canonical receipt and
+types `SIGN` before its 25-second review deadline. The host verifies the real
+signature and calls the same `provision_session` workflow before the existing
+30-second opening freshness limit. No freshness check is relaxed.
+
+This particular proposal freezes five shares at 0.08 pUSD, zero fee, the original
+2.675 pUSD loss/debit ceiling and four mutation slots. For human commissioning,
+the proposed entry window is T0+20 minutes, separate GTD T0+1335 seconds, holding
+limit 120 seconds and protective deadline T0+30 minutes. The owner approves
+these exact times by signing; these are not an already active authority.
+The remaining read allowance deducts both the earlier closed campaign and the
+new qualification. The new qualification is capped at 100 requests/two hours,
+with stopped child ledgers retained. Its overall deadline cannot be extended
+by retry or a new packet directory.
+
+The helper provisions **STOP only**. It never signs a trading order, calls an
+order mutation endpoint, launches a financial worker or releases STOP.
+Independent recovery, supervision and incident acceptance still apply after
+the real receipt exists. A stale confirmation or uncertain transport requires
+inspection of the existing receipt/custody; never rerun or delete its one-shot
+directory to refund consumption. Rollback retains STOP and all consumed
+records. The deployed financial image remains the previously verified release;
+these are operator tools, not a replacement runtime architecture.
+
 For a reviewed single-entry run, bind config "exact_entry" to the fixed share
 quantity and price ceiling. In ACCOUNT scope the regular strategy and fresh
 qualified source supply the candidate. In ORDER_LIFECYCLE_API scope the explicit
