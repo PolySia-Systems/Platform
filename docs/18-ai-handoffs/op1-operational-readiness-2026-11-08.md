@@ -594,3 +594,41 @@ is `owner-packet-r2-reviewed-refresh-20261115`. Historical failed paths are
 preserved. The new local profile is `owner-commission-profile.v2.json`; only
 the owner's genuine local signature can advance this prepared path to STOP
 provisioning. Real-run recovery and supervision remain dependent on that receipt.
+
+### Genuine owner receipt and STOP commissioning observations
+
+The owner successfully signed and provisioned
+`owner-packet-r2-reviewed-refresh-20261115`. The post-signature API read matched
+the reviewed baseline and satisfied freshness. Custody consumed the genuine
+receipt; the financial journal remains STOP with zero mutation attempts,
+orders and fills. The signature/failed packet history was not replaced.
+Entry authority expires at `2026-11-15T10:06:15.299385Z`; protection expires at
+`2026-11-15T10:16:15.299385Z`. No implicit renewal is permitted.
+
+- Actual financial backup and isolated primary restore passed for checkpoint
+  sequence 1 under the supervisor OS identity. Receipts are in
+  `/var/lib/polysia-op1/recovery/owner-packet-r2-reviewed-refresh-20261115/`.
+- A single worker-role commissioning publication and independent supervisor
+  inspection passed at `2026-11-15T09:51:09.021255Z`, without STOP release.
+  This was a one-shot control check, not a running financial worker or ongoing
+  supervision. No surrogate heartbeat process was left alive. Continuous
+  supervision and fresh backup maintenance are still required for entry.
+- The actual financial backup was age-encrypted, transferred and decrypted
+  on fenced Nuremberg. Installed `verify_recovery` passed artifact checksums,
+  logical restored content and the same sequence-1 checkpoint. Receipt:
+  `/var/lib/polysia-op1-recovery/owner-packet-r2-reviewed-refresh-20261115/offsite-restore-receipt.json`,
+  observed `2026-11-15T09:55:23.973704Z`. Custody was excluded, authority was
+  not reissued and no restored witness was installed as active authority.
+  The recovery private key stayed on Nuremberg. This is a genuine financial
+  snapshot/restore check, not the earlier nonfinancial transport fixture.
+- The renewed read campaign totals 53 charged requests / 361,724 bytes,
+  including the carried 27 attempts. It has zero uncertainty and stopped
+  child ledgers. The earlier closed 32-request campaign remains separate.
+  The financial image remains verified release `5732aad`; operator tooling
+  additionally includes the protected read-renewal fix from PR #293.
+
+Final observation: both original host fences retained, no active financial
+tasks, no trading-order signatures/submissions/cancellations by the agent.
+This milestone is receipt/STOP commissioning evidence, not a completed
+real-money test. The existing consumed receipt and its timestamps must never
+be deleted or reset to make a later entry appear authorized.
