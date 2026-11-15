@@ -186,6 +186,13 @@ and is inaccessible to the worker. A lost upload response permits a read-only
 query, not a repeated upload. Durable reservations retain uncertainty; byte,
 storage, socket and absolute-time limits are finite.
 
+Backup-only native helpers have a one-CPU / 256 MiB ceiling. Actual commissioning
+on the existing two-CPU hosts showed that a quarter-CPU startup allowance made
+the serial snapshot, restore verification and publication exceed the 60-second
+maintenance cadence. The one-CPU bound addresses measured import/startup cost;
+the financial worker's separate quarter-CPU / 512 MiB limit and all freshness,
+authority, storage and byte gates remain intact. No host or paid capacity is added.
+
 `polysia ops session control` does not synthesize a worker heartbeat. Its
 default ARMED state retains STOP. Explicit owner startup admits only a fresh
 publication from the real worker, an exact current independent ACK and a

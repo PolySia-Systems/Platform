@@ -292,6 +292,30 @@ def test_authentication_credentials_round_trip_supported_SDK_alias():
     assert ApiKeyCreds.model_validate_json(credential_json(creds)) == creds
 
 
+def test_backup_helpers_have_finite_compute_and_no_financial_network(monkeypatch):
+    calls = []
+
+    def checked(command, **kwargs):
+        calls.append(command)
+        return "checked"
+
+    monkeypatch.setattr(transport.subprocess, "check_output", checked)
+    assert (
+        transport.native(
+            {"namespace": "polysia-op1", "image": "fixture-image"},
+            "fixture-backup",
+            ["python", "-c", "pass"],
+            [],
+            user="995:981",
+        )
+        == "checked"
+    )
+    command = calls[0]
+    assert 0 < int(command[command.index("--cpus") + 1]) <= 1
+    assert int(command[command.index("--memory-limit") + 1]) <= 268435456
+    assert "--read-only" in command and "--net-host" not in command
+
+
 def test_owner_execution_default_is_disabled_before_any_host_access(tmp_path):
     with pytest.raises(ValueError, match="explicit_manual_owner"):
         host.start({}, tmp_path / "missing", execute_owner_test=False)
