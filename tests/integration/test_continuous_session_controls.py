@@ -297,6 +297,16 @@ def test_owner_execution_default_is_disabled_before_any_host_access(tmp_path):
         host.start({}, tmp_path / "missing", execute_owner_test=False)
 
 
+def test_owner_start_rejects_active_legacy_writer_before_loading_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(host.Path, "is_file", lambda p: True)
+    monkeypatch.setattr(host.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0))
+    with pytest.raises(ValueError, match="original_N3_financial_service"):
+        host.start({}, tmp_path / "missing", execute_owner_test=True)
+
+
 def test_role_container_mounts_protect_independent_custody():
     p = {
         "base": "/var/lib/polysia-op1",
