@@ -91,6 +91,14 @@ the [architecture documentation](docs/04-architecture/README.md).
 
 ## Requirements and installation
 
+For UI work after installing the development dependencies, run
+`npm run dev --prefix frontend` and open
+`http://127.0.0.1:5173/?preview=fresh`. The loopback preview uses the real Console
+with synthetic fresh/stale/unknown/error cases and rapid source updates; it
+requires no server installation, credentials or backup commissioning. Its gateway
+is read-only. See [Console iteration rules](docs/04-architecture/product-design-system.md#fast-local-iteration)
+for the production-build and acceptance boundary.
+
 - CPython `3.14.8` (`>=3.14,<3.15` supported)
 - Git
 - A local virtual environment or the existing `PolySia` Conda environment

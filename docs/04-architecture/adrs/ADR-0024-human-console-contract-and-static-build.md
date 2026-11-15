@@ -56,6 +56,21 @@ warning at its browser-only build boundary.
 
 ## Static artifact custody
 
+Development uses `npm run dev --prefix frontend`: a loopback Vite server and
+GET-only synthetic gateway reuse the canonical producer fixtures. No credentials,
+venue reads, financial worker, install or recovery commissioning are involved.
+Fresh/stale/unknown/error scenarios are explicit. The development HTML and
+`frontend/dev/` entry are outside the explicit production build input. They
+provide no production authentication route. The direction switch is development
+only; production RTL remains exercisable through the locale query and tests.
+
+Production source identity binds runtime sources, licences, dependency locks,
+compiler/build configuration and the Python wire model. Frontend tests are
+validation evidence, rather than shipped input: changing a test alone does not
+require new installed bytes. Relevant test checks still run. Both Python and
+JavaScript custody verification use the same input set; whole-package financial
+binding and fail-closed source/asset verification remain in place.
+
 `npm ci --ignore-scripts --prefix frontend` and `npm run build --prefix frontend`
 are the only asset recipe. Generated HTML/JS/CSS/notices/manifest are checked in
 under `src/polysia/monitoring/human_console_assets`. The manifest hashes all

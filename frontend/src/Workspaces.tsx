@@ -33,21 +33,27 @@ export function EvidenceWorkspace({ panel, generation, identity, clock, onIdenti
     {value?.sections.map(section => {
       const expired = section.validity.valid_until !== null && clock >= Date.parse(section.validity.valid_until);
       const state = expired ? m.stale : section.validity.state;
+      const nextAction = section.tables.flatMap(table => {
+        const column = table.columns.indexOf('next action');
+        return column < 0 ? [] : table.rows.map(row => row[column]);
+      }).find(action => action && action !== m.unknown);
       return <section className={s.panel} key={section.title} aria-label={section.title}>
         <div className={s.panelHeading}><h2>{section.title}</h2><Badge>{state}</Badge></div>
+        {nextAction && <p><strong>Next recorded action:</strong> {nextAction}</p>}
         <p className={s.muted}>{m.observedAt}: <bdi dir="ltr">{section.validity.observed_at ?? m.unknown}</bdi>
           {' · '}{m.validUntil}: <bdi dir="ltr">{section.validity.valid_until ?? m.unknown}</bdi></p>
-        <dl className={s.facts}>{section.facts.map(fact => <div key={fact.label}>
-          <dt>{fact.label}</dt><dd><bdi dir={valueDirection(fact.value)}>{fact.value ?? m.unknown}</bdi></dd></div>)}</dl>
-        {section.tables.map(table => <div key={table.title}>
-          <h3>{table.title} <Badge>{table.state}</Badge></h3>
+        <details open={section === value.sections[0]}><summary>Recorded details</summary><dl className={s.facts}>{section.facts.map(fact => <div key={fact.label}>
+          <dt>{fact.label}</dt><dd><bdi dir={valueDirection(fact.value)}>{fact.value ?? m.unknown}</bdi></dd></div>)}</dl></details>
+        {section.tables.map(table => <details key={table.title}
+          open={panel === 'system' && section === value.sections[0] && table === section.tables[0]}>
+          <summary>{table.title} <Badge>{table.state}</Badge> · {table.total ?? m.unknown} {m.observations}</summary>
           <div className={s.tableRegion} tabIndex={0} role="region" aria-label={table.title}>
             <table><thead><tr>{table.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
               <tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}><bdi dir={valueDirection(cell)}>{cell ?? m.unknown}</bdi></td>)}</tr>)}</tbody></table>
           </div>
           <p className={s.muted}>{table.rows.length} / {table.total ?? m.unknown} {m.observations}{(table.total ?? 0) > table.rows.length ? ' · ' + m.boundedView : ''}</p>
           {table.total === 0 && <p>{m.noPublishedRows}</p>}
-        </div>)}
+        </details>)}
         <p>{section.guidance}</p>
       </section>;
     })}

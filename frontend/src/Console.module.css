@@ -71,3 +71,11 @@
   .brand { direction: ltr; justify-content: center; gap: 10px; }
   .wordmark { inline-size: 120px; }
 }
+
+.panel details { border-block-start: 1px solid var(--console-border); margin-block-start: 12px; padding-block: 12px; }
+.panel summary { cursor: pointer; font-weight: 600; }
+.panel summary:focus-visible { outline: 2px solid var(--console-accent); outline-offset: 4px; }
+@media (max-width: 760px) { .context { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 12px; padding-block: 8px; }.pageHeading > div > p { margin-block: 4px; }.pageHeading h1 { margin-block: 6px; }.main { padding-block-start: 12px; } }
+
+.contextDetails > summary { padding: 12px 24px; cursor: pointer; font-size: var(--console-font-meta); border-block-end: 1px solid var(--console-border); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .sidebar nav { display: flex; overflow-x: auto; }.navButton,.navActive { flex: 0 0 auto; inline-size: auto; }.contextDetails > summary { padding: 9px 18px; }.sidebar { padding-block-end: 4px; } }

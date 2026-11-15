@@ -100,7 +100,6 @@ def source_digest(root: Path) -> str:
     frontend = root / "frontend"
     paths = [
         *frontend.joinpath("src").rglob("*"),
-        *frontend.joinpath("tests").rglob("*"),
         *frontend.joinpath("licenses").rglob("*"),
     ]
     paths += [
