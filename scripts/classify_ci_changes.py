@@ -91,6 +91,12 @@ DEPENDENCY_PATTERNS = (
     ".github/actions/supply-chain/**",
 )
 WINDOWS_PATTERNS = (
+    "src/polysia/application/services/dynamic_live_handoff.py",
+    "src/polysia/application/services/persistent_prospective_collector.py",
+    "src/polysia/cli_commands/wallet_intelligence_workflow.py",
+    "src/polysia/monitoring/wallet_intelligence_health.py",
+    "tests/unit/application/test_dynamic_live_handoff.py",
+    "tests/unit/application/test_persistent_prospective_collector.py",
     "src/polysia/control/**",
     "src/polysia/monitoring/process_capacity.py",
     "src/polysia/adapters/polymarket/bounded_transport.py",
