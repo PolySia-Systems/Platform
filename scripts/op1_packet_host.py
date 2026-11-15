@@ -65,6 +65,17 @@ def launch() -> None:
         if old["status"] != "API_ACCOUNT_OBSERVED" or not old["acquisition"]["stopped"]:
             raise ValueError("completed_initial_read_required")
         grant = old["explicit_read_grant"]
+        renewal_path = Path("/etc/polysia-op1/owner-read-renewal.json")
+        if renewal_path.exists():
+            renewal = json.loads(renewal_path.read_text())
+            if (
+                renewal["scope"] != "GET_ONLY"
+                or renewal["maximum_requests"] != 100
+                or renewal["previous_campaign_receipt"] != grant["previous_campaign_receipt"]
+                or renewal["carried_receipt"] != str(INITIAL / "receipt.json")
+            ):
+                raise ValueError("explicit_deductive_read_renewal_required")
+            grant = renewal
         previous = json.loads(Path(grant["previous_campaign_receipt"]).read_text())
         if (
             not previous["acquisition"]["stopped"]
