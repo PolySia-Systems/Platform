@@ -158,6 +158,54 @@ references. Keep the protected account evidence outside web paths.
 
 ### OP1 owner-operated API order lifecycle
 
+The owner-operated commissioning wrapper now supports an explicit `--start`.
+Without it, receipt signing still stops at `PROVISIONED_STOPPED`. With it, the
+owner must honestly attest `RECEIVED` for the existing alert, approve the finite
+GET-only window with `READ100` when renewal is requested, unlock the issuer
+locally, review the exact packet, then type `SIGN AND START`. This last action
+can submit the one bounded real test. The issuer private key stays outside the
+worker and server. Actual wallet/API credentials are installed only after the
+genuine signature and matching post-signature read, worker-owned mode 0600.
+
+`scripts/op1_session_host.py` runs three finite, non-restarting systemd units
+inside the existing isolated namespace: encrypted backup, independent control
+and the real financial worker. The original N3 fence is retained. Each unit
+ends by the signed protective deadline, has exact task cleanup, and is stopped
+when the owner invocation finishes. A prior start marker or financial activity
+requires inspection, never blind restart. Missing controls fail closed.
+
+Backup warmup requires three actual generations. Each generation snapshots the
+financial journal and witness, verifies an isolated primary restore, encrypts
+for the existing recovery recipient, and uses a dedicated forced-command SSH
+transport to Nuremberg. The recovery private key stays there. The receiver
+requires both recovery fences and an inactive financial service; it verifies
+the decrypted archive and logical restored checkpoint before acknowledging.
+Custody and wallet/issuer keys are excluded. The transport key is separate from
+all financial and issuer keys, permits only bounded upload/query operations,
+and is inaccessible to the worker. A lost upload response permits a read-only
+query, not a repeated upload. Durable reservations retain uncertainty; byte,
+storage, socket and absolute-time limits are finite.
+
+`polysia ops session control` does not synthesize a worker heartbeat. Its
+default ARMED state retains STOP. Explicit owner startup admits only a fresh
+publication from the real worker, an exact current independent ACK and a
+matching offsite restore proof. It then continuously checks liveness, checkpoint,
+storage and backup age. Revocation, clock regression, failure or process end
+latches STOP; healthy observations never clear an explicit or fault STOP.
+The genuine worker waits for this admission before loading credentials or
+entering the existing Risk/Execution path. No deployment or ordinary test
+invokes `--execute-owner-test`.
+
+An expired unused receipt is retired with append-only custody history before
+a new manual owner review. Its journal, consumed claim, budgets and N3 history
+are retained. A renewal uses exclusive files, carries prior read consumption
+and does not reset an existing renewal window. The final owner profile binds
+all installed helper hashes, exact release/package and account/instrument.
+The installation-specific PowerShell wrapper/profile are protected local
+artifacts, delivered only after exact-release deployment verification. Inspect
+the host-run profile with the same host helper's `inspect` mode and the worker
+journal/publication for confirmed outcome; service exit alone proves no trade.
+
 This test has a narrower acceptance scope than continuous financial operation.
 Its evidence is available collateral and allowance, the selected token's CLOB
 balance, wallet-wide open orders, authenticated credential trade visibility,
