@@ -288,21 +288,20 @@ def check_pip_locks(root: Path | None = None) -> None:
     with tempfile.TemporaryDirectory(prefix="polysia-lock-check-") as raw:
         temp = Path(raw)
         work = temp / "src"
-        shutil.copytree(
-            base,
-            work,
-            ignore=shutil.ignore_patterns(
-                ".git",
-                ".venv",
-                ".mypy_cache",
-                ".pytest_cache",
-                ".ruff_cache",
-                "artifacts",
-                "dist",
-                "build",
-            ),
-            dirs_exist_ok=True,
-        )
+        # pip-compile reads this project's static metadata, not runtime source or
+        # the wheel hook. Stage explicit metadata inputs; never copy a checkout
+        # containing untracked credentials, databases, node_modules or caches.
+        project = tomllib.loads(_read_text(base / PYPROJECT))["project"]
+        if project.get("dynamic"):
+            raise RuntimeError("lock verification requires explicit static project metadata")
+        for relative in (Path(PYPROJECT), Path("README.md"), Path("hatch_build.py"),
+                         Path(RUNTIME_LOCK), Path(DEV_LOCK)):
+            source = base / relative
+            if source.is_symlink() or not source.is_file():
+                raise RuntimeError(f"required regular lock input missing: {relative.as_posix()}")
+            target = work / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
         generate_pip_locks(work, upgrade=False)
         for relative in (RUNTIME_LOCK, DEV_LOCK):
             committed = _read_text(base / relative)
@@ -425,6 +424,9 @@ def classify_lock_sync_intent(files: Sequence[str]) -> str:
         return "reject"
     if all(is_github_actions_path(path) for path in normalized):
         return "actions"
+    if all(path in {"frontend/package.json", "frontend/package-lock.json"}
+           for path in normalized):
+        return "npm"
     if any(path not in ALLOWED_PR_FILES for path in normalized):
         return "reject"
     if PYPROJECT in normalized and not (
@@ -459,6 +461,12 @@ def evaluate_lock_sync(
             "status": "noop",
             "reason": "GitHub Actions update does not require pip lock-sync",
             "ecosystem": "github_actions",
+            "files": files,
+        }
+    if intent == "npm":
+        return {
+            "status": "noop", "ecosystem": "npm", "decision": "human_review",
+            "reason": "npm updates require reviewed lock, generated assets and frontend checks",
             "files": files,
         }
     pyproject_changed = PYPROJECT in files

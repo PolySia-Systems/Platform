@@ -100,7 +100,7 @@ gh workflow run dependency-automation.yml --ref main
 ```
 
 Both scan and proposal are retained as GitHub run artifacts (30 and 14 days).
-Failures/partial scans exit nonzero; `noop` only registers events and never
+Failures/partial scans exit nonzero; registration-only push runners are removed. A skipped job never
 counts as freshness. Task/backlog disposition lives in
 [Issue #202](https://github.com/PolySia-Systems/Platform/issues/202).
 Each material hold records source time, owner, reason, next action and trigger.
@@ -383,3 +383,35 @@ locks through `scripts/dependency_locks.py`; never hand-edit rows. Removing the
 new composition and its direct declarations reverts this reachability; preserve
 financial state, witness, consumed receipt custody and STOP. Existing SDK/PyJWT
 transitive requirements remain and are not removed as part of rollback.
+
+
+## Isolated lock verification and frontend maintenance
+
+Ordinary unit tests exercise lock comparison and failure isolation using a
+bounded temporary workspace and a fake resolver. They never regenerate tracked
+locks. The authoritative `python scripts/dependency_locks.py check` still runs
+real pinned pip-compile resolution in dependency/full validation. Its workspace
+contains only static project metadata (`pyproject.toml`, README and the build
+hook) plus the two canonical locks. Dynamic metadata or missing/non-regular
+inputs fail explicitly; credentials, local data, caches and node_modules are
+never copied. Metadata changes require revalidating that input set with the real
+resolver. Package build/custody checks remain separate required validation.
+
+Dependabot discovers `/frontend` npm updates weekly with at most three open
+version-update PRs. Runtime and tooling patch/minor updates are grouped
+separately; majors and security updates retain separate review. An npm proposal
+is a human-review no-op for Python lock synchronization and auto-merge. Reviewers
+must regenerate and validate the npm lock and shipped Console assets, run the
+frontend tests/build and required supply-chain checks, and assess compatibility
+before merging. Discovery alone does not make a manifest/lock-only PR releasable.
+
+Dependency generation no longer allocates registration-only runners for pushes
+or ordinary PRs, and only pip Dependabot PRs enter lock generation. Actions and
+npm proposals remain on their ordinary CI/human-review route. Publication jobs reject unrelated PR branches before allocating
+a runner; trusted-main scripts still validate actor, artifact provenance, exact
+head, policy and permissions. Scheduled/manual callbacks remain supported.
+No `pull_request_target` execution or new write credential is introduced.
+
+Configuration semantics follow the official
+[Dependabot reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
+and [workflow-run reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).

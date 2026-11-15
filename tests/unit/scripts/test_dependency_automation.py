@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from yaml import safe_load
 
+from scripts import dependency_locks
 from scripts.dependency_locks import (
     approved_sdk_versions,
     assert_sdk_pins_synchronized,
     check_pip_locks,
     classify_lock_sync_intent,
     declared_sdk_version,
-    generate_pip_locks,
     repository_root,
 )
 from scripts.dependency_policy import (
@@ -43,14 +46,43 @@ def test_runtime_lock_excludes_development_tools_and_local_project() -> None:
     assert development["pip-tools"] == "7.6.2"
 
 
-def test_committed_locks_are_deterministic() -> None:
-    check_pip_locks()
+@pytest.mark.parametrize("failure", [False, True])
+def test_lock_check_isolated_and_preserves_checkout(tmp_path, monkeypatch, failure) -> None:
     root = repository_root()
-    first = (root / RUNTIME_LOCK).read_text(encoding="utf-8")
-    second = (root / DEV_LOCK).read_text(encoding="utf-8")
-    generate_pip_locks(root, upgrade=False)
-    assert (root / RUNTIME_LOCK).read_text(encoding="utf-8") == first
-    assert (root / DEV_LOCK).read_text(encoding="utf-8") == second
+    for name in ("pyproject.toml", "README.md", "hatch_build.py", RUNTIME_LOCK, DEV_LOCK,
+                 *dependency_locks.APPROVED_SDK_FILES):
+        destination = tmp_path / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((root / name).read_bytes())
+    (tmp_path / ".env").write_text("private local sentinel")
+    (tmp_path / "frontend/node_modules").mkdir(parents=True)
+    (tmp_path / "frontend/node_modules/sentinel").write_text("do not copy")
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+    def generate(work: Path, *, upgrade: bool) -> None:
+        assert work != tmp_path and not upgrade
+        assert {p.relative_to(work).as_posix() for p in work.rglob("*") if p.is_file()} == {
+            "pyproject.toml", "README.md", "hatch_build.py", RUNTIME_LOCK, DEV_LOCK,
+        }
+        if failure:
+            (work / RUNTIME_LOCK).write_text("changed==1\n")
+
+    monkeypatch.setattr(dependency_locks, "generate_pip_locks", generate)
+    if failure:
+        with pytest.raises(RuntimeError, match="deterministic pip-compile output"):
+            check_pip_locks(tmp_path)
+    else:
+        check_pip_locks(tmp_path)
+    after = {p.relative_to(tmp_path): p.read_bytes()
+             for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_lock_check_rejects_missing_metadata_input(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(dependency_locks, "assert_sdk_pins_synchronized", lambda _: None)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="1"\n')
+    with pytest.raises(RuntimeError, match="README.md"):
+        check_pip_locks(tmp_path)
 
 
 def test_pyproject_only_dependency_pr_is_rejected() -> None:
@@ -243,21 +275,21 @@ def test_lock_sync_intent_is_adaptive_and_fail_closed() -> None:
     assert classify_lock_sync_intent(("src/polysia/cli.py",)) == "reject"
 
 
-def test_dependency_automation_workflow_registers_push_and_dispatch() -> None:
+def test_dependency_automation_avoids_registration_runners() -> None:
     path = repository_root() / ".github/workflows/dependency-automation.yml"
     text = path.read_text(encoding="utf-8")
     assert text.startswith("name: Dependency automation\n")
-    assert "\n  push:\n" in text
+    assert "\n  push:\n" not in text
     assert "\n  pull_request:\n" in text
-    assert "noop:" in text
-    assert "github.event_name == 'push'" in text
+    assert "noop:" not in text
+    assert "github.event_name == 'push'" not in text
     assert not any(line.startswith("- ") for line in text.splitlines()), (
         "unindented YAML sequence items break GitHub workflow parsing"
     )
     loaded = safe_load(text)
     assert loaded["name"] == "Dependency automation"
     events = loaded.get("on", loaded.get(True))
-    assert "push" in events and "pull_request" in events
+    assert "push" not in events and "pull_request" in events
     assert "workflow_dispatch" in events
     assert "publish" not in loaded["jobs"]
 
