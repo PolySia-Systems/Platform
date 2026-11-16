@@ -1,6 +1,6 @@
 # Wallet Intelligence Stage 2 — Candidate Intelligence v1
 
-- **Status:** APPROVED FOR IMPLEMENTATION; deployment remains a separate owner action
+- **Status:** IMPLEMENTED; see [delivery evidence](../18-ai-handoffs/wallet-intelligence-stage2.md). Deployment remains a separate owner action
 - **Scope:** canonical identity, historical features, readiness, policy evaluation,
   deterministic ranking, and a stable candidate-pool query
 - **External mutation:** none; the only permitted network operation is the existing

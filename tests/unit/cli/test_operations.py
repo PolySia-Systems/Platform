@@ -151,118 +151,6 @@ def test_observability_snapshot_command_writes_sanitized_artifacts(
     assert "token-1" not in combined
 
 
-def test_production_gap_audit_command_writes_reports(monkeypatch, tmp_path: Path) -> None:
-    output_dir = tmp_path / "production-gap"
-
-    def fake_write_production_gap_audit_reports(config):
-        config.output_dir.mkdir(parents=True, exist_ok=True)
-        (config.output_dir / "production-gap-audit.json").write_text(
-            json.dumps({"status": "ready"}),
-            encoding="utf-8",
-        )
-        (config.output_dir / "production-gap-audit.md").write_text(
-            "# PolySia — Polymarket Adapter — Production Gap Audit\n",
-            encoding="utf-8",
-        )
-        (config.output_dir / "phase-31-freeze-summary.md").write_text(
-            "# Phase 31 Release Freeze Summary\n",
-            encoding="utf-8",
-        )
-        return SimpleNamespace(status="ready")
-
-    monkeypatch.setattr(
-        "polysia.cli_commands.operations.write_production_gap_audit_reports",
-        fake_write_production_gap_audit_reports,
-    )
-
-    result = runner.invoke(
-        app,
-        ["ops", "production-gap-audit", "--output-dir", str(output_dir)],
-    )
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "ok"
-    assert payload["audit_status"] == "ready"
-    assert (output_dir / "production-gap-audit.json").is_file()
-    assert (output_dir / "production-gap-audit.md").is_file()
-    assert (output_dir / "phase-31-freeze-summary.md").is_file()
-
-
-def test_main_merge_review_command_writes_reports(monkeypatch, tmp_path: Path) -> None:
-    output_dir = tmp_path / "main-merge"
-
-    def fake_write_main_merge_review_reports(config):
-        config.output_dir.mkdir(parents=True, exist_ok=True)
-        (config.output_dir / "main-merge-review.json").write_text(
-            json.dumps({"status": "ready"}),
-            encoding="utf-8",
-        )
-        (config.output_dir / "main-merge-review.md").write_text(
-            "# PolySia — Polymarket Adapter — Main Merge Review\n",
-            encoding="utf-8",
-        )
-        (config.output_dir / "tag-and-merge-checklist.md").write_text(
-            "# Tag and Merge Checklist\n",
-            encoding="utf-8",
-        )
-        return SimpleNamespace(status="ready")
-
-    monkeypatch.setattr(
-        "polysia.cli_commands.operations.write_main_merge_review_reports",
-        fake_write_main_merge_review_reports,
-    )
-
-    result = runner.invoke(
-        app,
-        ["ops", "main-merge-review", "--output-dir", str(output_dir)],
-    )
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "ok"
-    assert payload["review_status"] == "ready"
-    assert (output_dir / "main-merge-review.json").is_file()
-    assert (output_dir / "main-merge-review.md").is_file()
-    assert (output_dir / "tag-and-merge-checklist.md").is_file()
-
-
-def test_local_release_closeout_command_writes_reports(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    output_dir = tmp_path / "local-closeout"
-
-    def fake_write_local_release_closeout_reports(config):
-        config.output_dir.mkdir(parents=True, exist_ok=True)
-        (config.output_dir / "local-release-closeout.json").write_text(
-            json.dumps({"status": "ready"}),
-            encoding="utf-8",
-        )
-        (config.output_dir / "local-release-closeout.md").write_text(
-            "# PolySia — Polymarket Adapter — Final Local Release Closeout\n",
-            encoding="utf-8",
-        )
-        return SimpleNamespace(status="ready")
-
-    monkeypatch.setattr(
-        "polysia.cli_commands.operations.write_local_release_closeout_reports",
-        fake_write_local_release_closeout_reports,
-    )
-
-    result = runner.invoke(
-        app,
-        ["ops", "local-release-closeout", "--output-dir", str(output_dir)],
-    )
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "ok"
-    assert payload["closeout_status"] == "ready"
-    assert (output_dir / "local-release-closeout.json").is_file()
-    assert (output_dir / "local-release-closeout.md").is_file()
-
-
 def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -> None:
     output_dir = tmp_path / "reconciliation"
 
@@ -407,9 +295,9 @@ def test_deployment_automation_command_writes_artifacts(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
     payload = json.loads(result.stdout)
-    assert payload["status"] == "ready"
+    assert payload["status"] == "prepared_unverified"
     assert payload["summary"] == {"fail": 0, "pass": 0, "skipped": 3}
     assert (output_dir / "release-manifest.json").is_file()
     assert (output_dir / "operator-runbook.md").is_file()
@@ -430,10 +318,10 @@ def test_final_handoff_command_writes_markdown(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
-    assert payload["handoff_status"] == "ready"
+    assert payload["handoff_status"] == "prepared_unverified"
     assert (output_dir / "deployment-automation.json").is_file()
     assert (output_dir / "release-manifest.json").is_file()
     assert (output_dir / "operator-runbook.md").is_file()
@@ -685,3 +573,14 @@ def test_tiny_live_readiness_command_writes_sanitized_reports(monkeypatch, tmp_p
     combined = result.stdout + "".join(path.read_text(encoding="utf-8") for path in reports)
     assert "not-for-output" not in combined
     assert "No live order was placed" in combined
+
+
+def test_retired_reports_never_generate_current_evidence(tmp_path):
+    for command in ("production-gap-audit", "main-merge-review", "local-release-closeout"):
+        for prefix in ([], ["ops"]):
+            result = runner.invoke(
+                app, [*prefix, command, "--output-dir", str(tmp_path / "absent")]
+            )
+            assert result.exit_code == 2
+            assert json.loads(result.stdout)["status"] == "retired"
+            assert not (tmp_path / "absent").exists()

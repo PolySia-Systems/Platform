@@ -18,6 +18,26 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def test_text_and_fragment_checks_preserve_unicode_and_code(tmp_path):
+    from scripts.check_changed_docs import _validate_links
+
+    source = tmp_path / "source.md"
+    target = tmp_path / "target.md"
+    target.write_text(
+        '# Hello\n# Hello\n# فارسی\n<a id="explicit"></a>\n'
+        '```md\n# fake\n```\n', encoding="utf-8",
+    )
+    source.write_text(
+        '[one](target.md#hello-1) [fa](target.md#فارسی) [id](target.md#explicit)\n'
+        '```md\n[ignored](missing.md)\n```\n', encoding="utf-8",
+    )
+    assert _validate_links(tmp_path, source) == []
+    source.write_text('[bad](target.md#fake)', encoding="utf-8")
+    assert "missing section" in _validate_links(tmp_path, source)[0]
+    source.write_text("bad \u00e2\u20ac\u201d", encoding="utf-8")
+    assert "corrupted UTF-8" in _validate_links(tmp_path, source)[0]
+
+
 def _architecture_repository(tmp_path: Path) -> Path:
     root = tmp_path / "repository"
     visual = root / "docs/04-architecture/visual-system"

@@ -1,6 +1,6 @@
 # AGENTS.md - PolySia Repository Operating Instructions
 
-- **Version:** 1.2
+- **Version:** 1.3
 - **Scope:** Entire repository
 - **Audience:** Codex and other coding agents
 - **Technical artifact language:** English
@@ -81,42 +81,17 @@ Codex's default project-guidance budget is 32 KiB for the combined instruction
 chain. Keep this root file for universal rules. Add a nested `AGENTS.md` only
 when unique local MUST/NEVER rules exist. Nested files must stay short.
 
-## 3. Required Start-of-Task Protocol
+## 3. Working method
 
-For a tiny, clearly scoped edit, state a one- or two-sentence plan and edit.
-
-For every non-trivial task:
-
-1. Confirm the repository root, branch, and `HEAD`.
-2. Read only nested `AGENTS.md` files on the path to the files in scope.
-3. Resume ordinary work from the Issue or PR. Do not rebuild context from chat
-   or from `PROJECT_STATUS` runtime rows.
-4. Read the smallest authoritative set of code, tests, ADRs, and evidence.
-5. Identify the goal, in-scope files, constraints, acceptance criteria, and
-   prohibited changes, then state a concise plan.
-6. Do not repeat completed discovery, migration, tests, or audits unless current
-   evidence or a new change requires revalidation.
-
-Do not create planning files or handoff files solely for ceremony.
-
-## 4. Efficiency and Context Discipline
-
-Token and tool usage are project resources. Optimize them without sacrificing
-correctness or safety.
-
-- Search with `rg` or targeted inventories before opening large files.
-- Read the smallest authoritative set of files that can resolve the task.
-- Reuse verified findings from the current task.
-- Prefer focused tests. Escalate to broader gates according to the files and
-  behavior changed.
-- For documentation-only changes, do not run the full runtime suite unless the
-  documentation changes executable configuration, commands that require a
-  smoke check, or repository policy explicitly requires it.
-- Do not spawn reviewers, subagents, or duplicate analysis unless the task asks
-  for them, applicable instructions require them, or independent work materially
-  reduces risk and the active environment permits it.
-- Never save tokens by skipping a required safety gate, source check, or evidence
-  needed to support a material claim.
+For tiny edits, state the change and edit. Otherwise confirm root, branch and
+HEAD, preserve dirty/untracked user work, and read only root-to-scope guidance
+and the smallest authoritative source set. Resume from the Issue/PR; state goal,
+scope, constraints and acceptance briefly. Use targeted searches and focused
+tests. Reuse applicable verified results; do not repeat completed discovery,
+audits or tests without new evidence. No ceremonial planning/handoff files.
+Reviewers/subagents require task authorization or applicable instructions and
+must be permitted by the environment. Never omit required safety evidence to
+save time/tokens. Keep combined guidance within the configured 32 KiB budget.
 
 ## 5. Project Identity
 
@@ -133,6 +108,8 @@ explicit removal task.
 Keep generic runtime configuration under `POLYSIA_` names and Polymarket-specific
 configuration under `POLYMARKET_` names, following existing tested migration
 rules.
+
+<!-- polysia-safety:start -->
 
 ## 6. Architectural Invariants
 
@@ -228,30 +205,19 @@ and report.
   not successful validation.
 - Preserve unrelated user changes and pre-existing untracked files.
 
-## 9. Python Engineering Standards
+<!-- polysia-safety:end -->
 
-Follow `pyproject.toml`, repository tooling, and existing conventions.
+## 9. Engineering
 
-- Supported Python is `>=3.14,<3.15`; CI verifies Python 3.14. Change the
-  supported minor line only through an explicit compatibility decision with
-  synchronized metadata, tooling, CI, and documentation updates.
-- Use clear type annotations for public interfaces and non-trivial internal
-  boundaries.
-- Prefer small cohesive modules and explicit dependency injection over hidden
-  global state.
-- Keep pure domain logic independent from I/O.
-- Use dataclasses, protocols, enums, and typed value objects where they clarify
-  contracts; do not introduce abstractions without concrete value.
-- Preserve deterministic behavior in tests.
-- Handle errors explicitly and retain actionable context without leaking
-  sensitive values.
-- Use existing structured logging and correlation identifiers where available.
-- Avoid broad exception swallowing and implicit timezone conversions.
-- Keep CLI parsing/wiring separate from business logic, rendering, persistence,
-  and network clients.
-- Keep comments focused on intent, constraints, or non-obvious reasoning.
-- Use English for code, identifiers, comments, schemas, documents, commits, PRs,
-  dashboards, and alerts.
+Follow pyproject.toml and existing conventions. Python is `>=3.14,<3.15`;
+changing the minor requires an explicit compatibility decision and synchronized
+metadata, tooling, CI and docs. Use typed public/nontrivial interfaces, cohesive
+modules, explicit injection and pure domain logic. Dataclasses/protocols/enums
+must justify their complexity. Separate CLI wiring from business logic,
+rendering, persistence and clients. Preserve deterministic tests/clocks,
+structured logging/correlation and actionable redacted errors. Avoid swallowed
+exceptions, hidden global state and implicit timezone conversion. Comments
+explain intent. Technical artifacts, code, docs, alerts and Git messages use English.
 
 ## 10. Test and Validation Policy
 
@@ -303,147 +269,47 @@ Validation rules:
 - Distinguish environment/tooling failure from a product defect.
 - Never weaken a test assertion unless expected behavior was explicitly changed.
 
-## 11. Documentation, Decisions, and Continuity
+## 11. Documentation, Git and completion
 
-Update documentation when behavior, contracts, architecture, operating
-procedures, configuration, or user-facing commands change.
+[docs/README.md](docs/README.md) is the sole documentation entrance. ADRs own
+material decisions, RFCs major proposals, requirements required behavior and
+runbooks operational procedures. Update affected docs/contracts when behavior
+changes. Label Fact, Assumption, Decision, Recommendation, Risk, Open Question
+and Experimental Idea where relevant. Ordinary continuity belongs in Issue/PR;
+only major operational/safety/deployment/incident/compliance evidence belongs in
+`docs/18-ai-handoffs/`. PROJECT_STATUS is durable dated evidence, never live host
+truth. Do not create a parallel wiki or instruction forest.
 
-- The canonical documentation entrance is [`docs/README.md`](docs/README.md).
-  Do not add a parallel Start Here, Wiki, or vendor instruction forest.
-- ADRs own material architecture decisions. RFCs own major proposals before
-  implementation. Requirements own required behavior. Runbooks own operational
-  actions.
-- Ordinary in-progress work resumes from the Issue or PR. Create or update a
-  file under `docs/18-ai-handoffs/` only for major operational, safety,
-  deployment, incident, or compliance evidence that must outlive the PR.
-- `docs/00-governance/PROJECT_STATUS.md` owns durable status. It must not
-  present Markdown as live host truth.
+Use a focused `codex/<task>` branch for edits; no branch for read-only review.
+No direct main commit without explicit authority/workflow. Review diffs and stage
+only task files. No force-push without authority; use lease when approved.
+Conventional Commits in English; no model/tool attribution in subjects. Draft
+PRs by default when requested. Never merge failing required checks.
 
-Documents and diagrams must distinguish Fact, Assumption, Decision,
-Recommendation, Risk, Open Question, Experimental Idea, CURRENT, TARGET,
-FUTURE, and EXTERNAL as applicable.
+Before completion, skeptically review scope, architecture, safety, state,
+idempotency, Decimal, recovery, credentials, compatibility, tests and docs as
+relevant. Resolve blocking findings. Deliberately review a second time for
+Risk/execution/live controls/auth/signing/ledger/reconciliation/schemas/supply
+chain/architecture boundaries. A separate reviewer is conditional, not automatic.
+Completion requires satisfied acceptance, preserved behavior/invariants, relevant
+tests, required validation or explicit unavailable results, no unrelated diff,
+updated docs and coherent rollback/migration where relevant. Report outcome,
+actual checks/limitations, remaining work, branch/commit/PR and Git status
+concisely. CI does not prove deployment, production readiness or owner acceptance.
 
-Repository code and approved artifacts are authoritative; chat memory is not.
+Stop the affected action on wrong project identity, conflicts/unexpected
+destruction, material safety/source conflict, bypassed financial controls,
+unauthorized external mutation, missing essential access, unassessed consumer
+breakage, contradictory official documentation or unreliable critical gates.
+Preserve evidence and report. Resolve non-critical ambiguity through the safest
+reversible assumption and continue independent work; never invent evidence.
 
-## 12. Git and Pull Request Workflow
+## 12. Scoped guidance and presentation
 
-Unless the task or active environment specifies otherwise:
-
-- Work on a focused branch named `codex/<short-task-slug>` for changes intended
-  for review. Do not create a branch for read-only inspection.
-- Do not commit directly to `main` unless the owner explicitly authorizes it or
-  an established repository workflow requires it.
-- Keep the working tree understandable and review diffs before committing.
-- Preserve unrelated changes; stage only task files.
-- Do not force push unless explicitly authorized; if required, use
-  `--force-with-lease`.
-- Use Conventional Commits in English:
-
-```text
-<type>(<scope>): <concise imperative summary>
-```
-
-Allowed types include `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `ci`,
-`chore`, `perf`, and `security`.
-
-- Do not mention AI or Codex in commit subjects.
-- Prefer small, meaningful commits at verified milestones.
-- Create draft pull requests by default when a PR is requested.
-- Never merge with failing required checks or invent repository history.
-
-For substantial changes, PR descriptions should cover objective, summary,
-affected modules, validation, architecture/risk impact, compatibility,
-limitations, rollback, and reviewer focus. Omit empty boilerplate for tiny
-documentation-only changes. The PR is the default resume artifact.
-
-## 13. Review Standard
-
-Before declaring completion, review the final diff as a skeptical independent
-reviewer. Check requirement compliance, architecture boundaries, safety,
-state transitions, idempotency, Decimal behavior, data leakage, defaults,
-external mutation paths, reconciliation, error handling, compatibility, tests,
-documentation, unrelated changes, and credential exposure as relevant.
-
-Classify material findings as blocking or non-blocking and resolve blocking
-findings before completion. For changes affecting risk, execution, live
-controls, authentication/signing, ledger, reconciliation, schemas, supply
-chain, or architecture boundaries, perform a deliberate second-pass review.
-Use a separate reviewer or subagent only when explicitly requested, required by
-applicable instructions, materially justified, and permitted by the active
-environment.
-
-## 14. Definition of Done
-
-A task is complete only when:
-
-1. The requested scope and acceptance criteria are satisfied.
-2. Existing working behavior is preserved unless explicitly changed.
-3. Architecture and safety invariants remain intact.
-4. Relevant tests are added or updated when behavior changed.
-5. Required checks pass, or unavailable checks are explicitly documented.
-6. The final diff contains no unrelated changes.
-7. Documentation, decisions, migrations, and runbooks are updated when needed.
-8. Compatibility and rollback are addressed when relevant.
-9. Current versus target/future status is represented honestly.
-10. A concise delivery summary exists. Ordinary work uses the PR. Major
-    operational evidence may use `docs/18-ai-handoffs/`.
-
-## 15. Stop and Escalation Conditions
-
-Stop the affected action and report clearly when:
-
-- The repository root or expected project identity is wrong.
-- Git contains unresolved conflicts or unexpected destructive changes.
-- A source-of-truth conflict materially changes architecture or safety.
-- A requested change would bypass risk, emergency, geoblock, allowlist,
-  acknowledgement, or reconciliation controls.
-- A state-changing external action lacks explicit authorization for that run.
-- Required credentials, permissions, environment, or external access are
-  unavailable.
-- Current official documentation contradicts the requested implementation.
-- A migration would break an unassessed external consumer.
-- Completion requires inventing data, test results, commits, links, or
-  operational evidence.
-- A critical test or safety check cannot be made reliable.
-
-For non-critical ambiguity, make the safest reversible assumption, record it,
-and continue.
-
-## 16. Final Response
-
-Default to a concise delivery report containing:
-
-- outcome and files changed;
-- validation performed and skipped checks with reasons;
-- architecture, safety, compatibility, or rollback impact when relevant;
-- known limitations or remaining work;
-- branch, commit, and final Git status when applicable.
-
-For major migrations or high-risk work, expand the report to include assumptions,
-decisions, exact commands/results, acceptance-criteria status, configuration or
-migration actions, rollback instructions, and reviewer focus. Do not emit empty
-sections or repeat information solely to satisfy a template. Never claim work
-that was not performed.
-
-## 17. Nested Instructions
-
-This root file contains universal rules. Add a nested `AGENTS.md` only when a
-directory has stable, unique local MUST/NEVER rules that are not already
-stated here. Current nested files:
-
-- `src/polysia/adapters/polymarket/AGENTS.md`
-- `docs/04-architecture/AGENTS.md`
-- `tests/AGENTS.md`
-
-Do not add nested files for Risk or Execution solely because those directories
-exist; their universal invariants remain in this root file. Nested files must
-not duplicate or weaken root safety. Use `AGENTS.override.md` only for a
-deliberate same-directory replacement. Keep the combined instruction chain
-within the configured guidance budget.
-
-## Product presentation
-
-For Console/UI changes, follow
-[`docs/04-architecture/product-design-system.md`](docs/04-architecture/product-design-system.md).
-Reuse semantic tokens and presentation primitives; preserve exact financial
-strings, command ownership and static asset custody. Validate rendered output.
+Keep nested guides short and unique. Current guides: adapter, architecture docs
+and tests. Do not add Risk/Execution guides that duplicate universal rules.
+Use AGENTS.override.md only for deliberate same-directory replacement.
+For Console/UI follow
+[product design](docs/04-architecture/product-design-system.md): reuse semantic
+tokens/primitives, preserve exact financial strings, command ownership and static
+asset custody, and validate rendered output.

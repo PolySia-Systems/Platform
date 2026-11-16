@@ -72,7 +72,7 @@ remain separate promotion stages.
 
 ## Parallel maintenance gates
 
-- Use the current pins in `pyproject.toml`, `.python-version` and `locks/`;
+- Use the current pins in `pyproject.toml`, `.github/workflows/ci.yml` and `locks/`;
   changes require contract, lock, security and rollback evidence.
 - Preserve the legacy project, database, live evidence, and verified recovery
   package until a separate owner-approved retirement task. Current `main`

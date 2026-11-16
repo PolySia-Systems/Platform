@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import html
 import re
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -164,14 +166,40 @@ def _local_link_target(repository: Path, markdown: Path, raw_target: str) -> Pat
     return (markdown.parent / path).resolve()
 
 
+def _heading_anchors(text: str) -> set[str]:
+    text = FENCED_CODE.sub("", text)
+    anchors = set(re.findall(r"(?:id|name)=[\"']([^\"']+)", text))
+    counts: dict[str, int] = {}
+    for heading in re.findall(r"(?m)^ {0,3}#{1,6} +(.+?) *#* *$", text):
+        heading = html.unescape(re.sub(r"<[^>]+>", "", heading)).lower()
+        heading = re.sub(r"!?\[([^\]]+)\]\([^)]+\)", r"\1", heading)
+        slug = "".join(c for c in heading if c in " _-" or unicodedata.category(c)[0] in "LN")
+        slug = slug.replace(" ", "-")
+        candidate = slug
+        suffix = counts.get(slug, 0)
+        while candidate in anchors:
+            suffix += 1
+            candidate = f"{slug}-{suffix}"
+        counts[slug] = suffix
+        anchors.add(candidate)
+    return anchors
+
+
 def _validate_links(repository: Path, markdown: Path) -> list[str]:
     errors: list[str] = []
     text = markdown.read_text(encoding="utf-8")
+    # High-confidence corruption only; legitimate non-ASCII prose remains valid.
+    markers = ("\u00e2\u20ac", "\u00c3\u00a2", "\ufffd", "\u00ef\u00bb\u00bf")
+    if any(marker in text for marker in markers):
+        errors.append(f"{markdown.relative_to(repository)}: corrupted UTF-8 text")
     link_text = INLINE_CODE.sub("", FENCED_CODE.sub("", text))
     for pattern in (MARKDOWN_LINK, REFERENCE_LINK):
         for match in pattern.finditer(link_text):
             raw_target = match.group("target")
+            parsed = urlsplit(raw_target.strip("<>"))
             target = _local_link_target(repository, markdown, raw_target)
+            if target is None and raw_target.startswith("#"):
+                target = markdown
             if target is None:
                 continue
             try:
@@ -189,6 +217,12 @@ def _validate_links(repository: Path, markdown: Path) -> list[str]:
                 errors.append(
                     f"{markdown.relative_to(repository)}: link target has wrong case: {raw_target}"
                 )
+            elif parsed.fragment and target.is_file() and target.suffix.lower() == ".md":
+                anchors = _heading_anchors(target.read_text(encoding="utf-8"))
+                if unquote(parsed.fragment) not in anchors:
+                    errors.append(
+                        f"{markdown.relative_to(repository)}: missing section: {raw_target}"
+                    )
     return errors
 
 

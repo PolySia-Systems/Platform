@@ -7,6 +7,7 @@ import hashlib
 import json
 from contextlib import suppress
 from datetime import datetime, timedelta
+from threading import Lock
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -103,11 +104,16 @@ class ConsoleReadModel:
         )
         self._records: dict[str, dict[str, Record]] = {"wallet": {}, "order": {}, "position": {}}
         self._indexed = False
+        self._index_lock = Lock()
         self._wallet_rows: dict[str, dict[str, Any]] = {}
         self._wallet_links: dict[str, list[RecordLink]] = {}
         self._search_text: dict[tuple[str, str], str] = {}
 
     def _index(self) -> None:
+        with self._index_lock:
+            self._build_index()
+
+    def _build_index(self) -> None:
         if self._indexed:
             return
         self._records = {"wallet": {}, "order": {}, "position": {}}

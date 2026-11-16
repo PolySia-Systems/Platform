@@ -1,6 +1,6 @@
 # Wallet Intelligence Stage 3 — Copyability Selection v0.1
 
-- **Status:** APPROVED FOR IMPLEMENTATION; deployment remains a separate owner action
+- **Status:** IMPLEMENTED; see [delivery evidence](../18-ai-handoffs/wallet-intelligence-stage3.md). Deployment remains a separate owner action
 - **Scope:** deterministic, versioned, auditable selection-only pools derived from
   Stage 2 Candidate Intelligence
 - **External mutation:** none; the only permitted network operation remains the

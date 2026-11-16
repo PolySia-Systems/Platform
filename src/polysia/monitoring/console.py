@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -14,6 +15,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
+from threading import Lock
 from typing import Any, cast
 from urllib.parse import urlsplit
 
@@ -102,7 +104,8 @@ class ConsoleApplication:
             raise ValueError("unsupported identity boundary")
         self._identity_header = identity_header
         self._host = parsed.netloc
-        self._cache_key: tuple[int, int] | None = None
+        self._publication_lock = Lock()
+        self._cache_key: tuple[int, int, int, int, int] | None = None
         self._cache: dict[str, Any] = {}
         self._publication_generation = ""
         self._gateway = ConsoleGateway(self)
@@ -408,20 +411,24 @@ class ConsoleApplication:
         ).hexdigest()
 
     def _read_publication(self) -> dict[str, Any]:
-        stat = self._publication.stat()
-        if stat.st_size > MAX_PUBLICATION_BYTES:
-            raise ValueError("publication_size_limit")
-        key = stat.st_mtime_ns, stat.st_size
-        if self._cache_key != key:
-            with self._publication.open("rb") as stream:
-                raw = stream.read(MAX_PUBLICATION_BYTES + 1)
-            if len(raw) > MAX_PUBLICATION_BYTES:
+        return self._read_publication_snapshot()[0]
+
+    def _read_publication_snapshot(self) -> tuple[dict[str, Any], str]:
+        # Keep bytes, digest and parsed publication together across atomic replacement.
+        with self._publication_lock, self._publication.open("rb") as stream:
+            stat = os.fstat(stream.fileno())
+            key = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+            if stat.st_size > MAX_PUBLICATION_BYTES:
                 raise ValueError("publication_size_limit")
-            result = json.loads(raw)
-            if not isinstance(result, dict):
-                raise ValueError("invalid_publication")
-            if "report" in result:
-                verify_analytical_digest(result["report"])
-            self._cache, self._cache_key = result, key
-            self._publication_generation = hashlib.sha256(raw).hexdigest()
-        return self._cache
+            if self._cache_key != key:
+                raw = stream.read(MAX_PUBLICATION_BYTES + 1)
+                if len(raw) > MAX_PUBLICATION_BYTES:
+                    raise ValueError("publication_size_limit")
+                result = json.loads(raw)
+                if not isinstance(result, dict):
+                    raise ValueError("invalid_publication")
+                if "report" in result:
+                    verify_analytical_digest(result["report"])
+                self._cache, self._cache_key = result, key
+                self._publication_generation = hashlib.sha256(raw).hexdigest()
+            return self._cache, self._publication_generation

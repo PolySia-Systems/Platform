@@ -1895,6 +1895,7 @@ class ContinuousShadowRepository:
             raise ValueError("limit must be within [1, 10000]")
         connection = self._connect(read_only=True)
         try:
+            connection.execute("BEGIN")
             experiment_row = connection.execute(
                 "SELECT * FROM continuous_shadow_experiments WHERE experiment_id = ?",
                 (experiment_id,),
