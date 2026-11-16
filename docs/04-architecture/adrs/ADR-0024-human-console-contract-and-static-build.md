@@ -10,7 +10,7 @@
 
 ## Decision and CURRENT boundary
 
-Use React 19.3.1, strict TypeScript 7.0.2, Vite 8.3.5 and Mantine 9.7.4 with
+Use React 19.3.1, strict TypeScript 7.0.2, Vite 8.3.8 and Mantine 9.7.5 with
 CSS modules and a small PolySia token layer. Build with Node 24.22.1 and npm
 11.19.1; `frontend/package-lock.json` is the sole JavaScript lock. The existing
 protected WSGI application serves static assets. No Node production runtime,
