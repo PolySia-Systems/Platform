@@ -15,11 +15,7 @@ ROOT_AGENTS = "AGENTS.md"
 ADR_DIRECTORY = "docs/04-architecture/adrs"
 REQUIREMENTS_DIRECTORY = "docs/03-requirements"
 MAX_NON_SAFETY_EXCERPT_CHARS = 4_000
-SAFETY_SECTION_MARKERS = (
-    "## 6. Architectural Invariants",
-    "## 7. Runtime and Trading Safety",
-    "## 8. Scope and Change Discipline",
-)
+SAFETY_SECTION_MARKERS = ("<!-- polysia-safety:start -->", "<!-- polysia-safety:end -->")
 
 
 @dataclass(frozen=True, slots=True)

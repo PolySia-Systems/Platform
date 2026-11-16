@@ -10,7 +10,7 @@ first venue adapter, not the product identity.
 
 **What exists today:** one Python modular monolith with independent Risk,
 paper/shadow execution, reconciliation, a SHADOW-only Control Kernel slice,
-and DATA_ONLY Wallet Intelligence Stages 1â€“4B. Stage 4B accounting fails closed
+and DATA_ONLY Wallet Intelligence Stages 1–4B. Stage 4B accounting fails closed
 before publication; Live-capable paths require verified state and an exact
 Risk-approved request. Live trading stays disabled by default. No new Live
 authorization exists.
@@ -41,7 +41,7 @@ The earlier frozen Stage 4B backup remains documented in
 
 ## Durable project truth
 
-- [Project status](00-governance/PROJECT_STATUS.md) â€” capabilities, limits,
+- [Project status](00-governance/PROJECT_STATUS.md) — capabilities, limits,
   safety posture, and dated runtime snapshots. Not a live dashboard.
 - [Roadmap](22-roadmap/roadmap.md)
 
@@ -83,10 +83,10 @@ Previous runtime receipts are historical after the owner's server reset.
 
 ## Evidence
 
-- [Current evidence index](18-ai-handoffs/README.md) â€” major operational,
+- [Current evidence index](18-ai-handoffs/README.md) — major operational,
   safety, and delivery evidence. Ordinary work resumes from the Issue or PR.
 - [Immutable baseline audit](13-ai-handoffs/BASELINE_AUDIT.md)
-- [Archived documentation](99-archive/) â€” provenance only, not current
+- [Archived documentation](99-archive/) — provenance only, not current
   instructions.
 
 ## Baseline inventory

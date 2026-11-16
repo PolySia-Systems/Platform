@@ -67,7 +67,7 @@ if (process.argv.includes('--check')) {
   const document = html.replace('<title>', `<meta name="bundle-source" content="${source}"><title>`);
   writeFileSync(resolve(output,'index.html'),document); files['index.html'] = hash(document);
   writeFileSync(resolve(output,'manifest.json'), JSON.stringify({
-    version: 1, api: 'console/v1', release: '0.4.0', source, files,
+    version: 1, api: 'console/v1', release: JSON.parse(readFileSync('package.json', 'utf8')).version, source, files,
   }, null, 2)+'\n');
 }
 

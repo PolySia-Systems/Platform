@@ -24,11 +24,10 @@
 
 ## Authority order
 
-1. `master-operating-charter.md`
-2. Approved decisions and ADRs
-3. Verified current code and tests
-4. Current official Polymarket documentation and repositories
-5. Historical project documents
+Use the single instruction hierarchy in [AGENTS.md](../../AGENTS.md).
+Fact ownership remains independent from instruction precedence. The current
+[charter](master-operating-charter.md) links its historical startup protocol;
+that protocol is not an instruction to restart discovery.
 
 The approved governance and delivery records preserve the modernization
 history. Where legacy directory numbering conflicts with the charter, the
@@ -39,7 +38,7 @@ current authority.
 
 | Document | Status | Purpose |
 |---|---|---|
-| Master Operating Charter | Baseline | Project constitution |
+| Master Operating Charter | Active | Compact principles; original preserved in Git |
 | Project Charter | Active | Current bounded mission and scope |
 | Naming Pack | Active | Canonical project identity |
 | ADRs | Active | Material technical decisions |

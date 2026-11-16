@@ -23,6 +23,25 @@ NOW = datetime(2026, 9, 20, 9, 0, tzinfo=UTC)
 HEAD = "adc5f9b62cd75a6ffd4d478d53f68c0b0107ab2d"
 
 
+@pytest.mark.parametrize("damage", ["missing", "duplicate", "reversed", "incomplete"])
+def test_safety_boundaries_fail_closed(tmp_path, damage):
+    from polysia.developer.context_packet import _safety_excerpt
+
+    text = (Path(__file__).resolve().parents[3] / "AGENTS.md").read_text(encoding="utf-8")
+    start, end = "<!-- polysia-safety:start -->", "<!-- polysia-safety:end -->"
+    if damage == "missing":
+        text = text.replace(start, "")
+    elif damage == "duplicate":
+        text += start
+    elif damage == "reversed":
+        text = text.replace(start, "PLACEHOLDER").replace(end, start).replace("PLACEHOLDER", end)
+    else:
+        text = text.replace("Decimal", "float")
+    (tmp_path / "AGENTS.md").write_text(text, encoding="utf-8")
+    with pytest.raises(DeveloperContextError):
+        _safety_excerpt(tmp_path)
+
+
 def _git(root: Path, dirty: str = ""):
     def run(_cwd: Path, command: tuple[str, ...]) -> str:
         joined = " ".join(command)

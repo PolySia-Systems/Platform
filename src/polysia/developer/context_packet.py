@@ -411,17 +411,23 @@ def _document(
 
 def _safety_excerpt(root: Path) -> str:
     text = (root / ROOT_AGENTS).read_text(encoding="utf-8")
-    start = min(
-        (text.find(marker) for marker in SAFETY_SECTION_MARKERS if marker in text),
-        default=-1,
+    start_marker, end_marker = SAFETY_SECTION_MARKERS
+    if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+        raise DeveloperContextError("root safety boundaries are missing or duplicated")
+    start, end = text.index(start_marker) + len(start_marker), text.index(end_marker)
+    if end <= start:
+        raise DeveloperContextError("root safety boundaries are reversed")
+    retained = text[start:end]
+    required = (
+        "Strategy", "Risk", "Execution", "Adapter", "Decimal", "UTC",
+        "TRADING_MODE=DATA_ONLY", "LIVE_TRADING_ENABLED=false", "reconciliation",
+        "explicit owner authorization", "geographic", "allowlists", "one-attempt",
+        "redaction", "fail-closed", "emergency", "untracked", "production dependency",
     )
-    if start < 0:
-        raise DeveloperContextError("root safety instructions are missing")
-    end = text.find("## 9. Python Engineering Standards", start)
-    retained = text[start:end] if end > start else text[start:]
-    if "TRADING_MODE=DATA_ONLY" not in retained or "LIVE_TRADING_ENABLED" not in retained:
+    if any(value not in retained for value in required):
         raise DeveloperContextError("root safety instructions are incomplete")
     return retained.strip() + "\n"
+
 
 
 def _fit_excerpts(
