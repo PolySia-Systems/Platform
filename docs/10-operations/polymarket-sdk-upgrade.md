@@ -4,7 +4,7 @@
 
 - Distribution/import: `polymarket-client==0.13.0` / `polymarket`.
 - Runtime: CPython `3.14.8`, supported `>=3.14,<3.15`; host Python is unchanged.
-- Frozen validation stack: Pydantic `2.14.1`, core `2.50.1`,
+- Current source stack: Pydantic `2.14.3`, core `2.50.4`,
   pydantic-settings `2.15.0`, WebSockets `15.0.1`.
 - Migration and exact-source delivery evidence:
   [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
@@ -58,7 +58,7 @@ balance/allowance reads remain distinct and are covered by actual SDK transport
 tests. Perps, analytics extras, wallet setup and other unused SDK surfaces are
 not integrated.
 
-## Dependency decision
+## Original SDK migration dependency decision (2026-10-19)
 
 Pydantic 2.14.1/core 2.50.1 have cp314 Linux/Windows wheels. Financial/config,
 SDK model, serialization and settings regressions determine acceptance; exact
@@ -67,6 +67,12 @@ a justified update. WebSockets 15.0.1 is retained because SDK 0.13 requires
 `>=13,<16`; 17.2 is outside that contract. This is a resolved compatible hold.
 Only SDK, Pydantic and core changed in the generated runtime/development locks.
 No Python upgrade or repeat 3.15 assessment is part of this migration.
+
+The later patch maintenance updates Pydantic/core to 2.14.3/2.50.4 while
+retaining SDK 0.13.0, settings 2.15.0 and the existing signing stack. Current
+locks own exact source versions; the original migration receipt above remains
+historical. Full final-source validation is required before claiming the new
+stack is installed or deployed.
 
 The image reports its actual Python and five reviewed package versions in
 `runtime-packages.json`. Release-manifest generation compares them with the

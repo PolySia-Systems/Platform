@@ -209,7 +209,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-@mantine/core@9.7.4 (MIT)
+@mantine/core@9.7.5 (MIT)
 MIT License
 
 Copyright (c) 2021 Vitaly Rtishchev
@@ -233,7 +233,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-@mantine/hooks@9.7.4 (MIT)
+@mantine/hooks@9.7.5 (MIT)
 MIT License
 
 Copyright (c) 2021 Vitaly Rtishchev

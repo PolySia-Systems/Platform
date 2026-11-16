@@ -1,14 +1,24 @@
 # Console dependency decision
 
-## Human Console static frontend, 2026-10-27
+## Human Console static frontend
 
 The scoped owner activation selects React/React DOM 19.3.1, Mantine core/hooks
-9.7.4, TypeScript 7.0.2 and Vite 8.3.5. Node 24.22.1/npm 11.19.1 and one npm
+9.7.5, TypeScript 7.0.2 and Vite 8.3.8. Node 24.22.1/npm 11.19.1 and one npm
 lockfile pin development builds; production has no Node process or asset fetch.
 Registry peer/engine metadata and the current official React, Vite and Mantine
 documentation were checked before selection. Strict TypeScript and a generated
 Python-owned schema provide checked boundary types; no runtime framework or
 Python dependency was added.
+
+The 2026-11-16 maintenance update retains the original 2026-10-27 stack and
+applies patch releases: Mantine core/hooks 9.7.4 → 9.7.5, Vite 8.3.5 → 8.3.8
+and Rolldown 1.2.15 → 1.2.18. Mantine's patch fixes focus, timer and input
+handling; Vite's patch improves Windows path startup and build behavior.
+Rolldown stays on Vite's declared `~1.2.18` line, avoiding a parallel 1.3.x
+bundler graph. The proposed Mantine 9.8 feature update is not adopted.
+See [Mantine fixes](https://github.com/mantinedev/mantine/releases/tag/9.7.5),
+[Vite release](https://github.com/vitejs/vite/releases/tag/v8.3.8) and
+[Rolldown maintenance release](https://github.com/rolldown/rolldown/releases/tag/v1.2.18).
 
 H2 adds exact development-only `axe-core@4.14.0` (MPL-2.0), maintained by
 Deque, for automated accessibility checks of the installed protected Console.
@@ -22,7 +32,7 @@ Rollback removes this development dependency and its audit fixture together;
 it has no production runtime or financial behavior. See the
 [official engine and license](https://github.com/dequelabs/axe-core).
 
-Rolldown 1.2.15 (MIT), already Vite's locked bundler, is also declared as an
+Rolldown 1.2.18 (MIT), already Vite's locked bundler, is also declared as an
 exact direct development dependency because the final-byte recipe uses its
 published AST parser. The recipe escapes whitespace in ordinary template
 literals without changing their runtime string values; tagged raw templates
@@ -115,7 +125,7 @@ backup service and retains existing encrypted generations and the protected key.
 See [Debian package](https://packages.debian.org/trixie/age) and
 [upstream](https://github.com/FiloSottile/age).
 
-Playwright 1.64.0 is a development-only browser acceptance dependency with its
+Playwright 1.65.0 is a development-only browser acceptance dependency with its
 upstream Apache-2.0 notices and pinned transitive dependencies in the development
 lock. CI installs Chromium for an explicit synthetic localhost HTTPS fixture;
 certificate exceptions and test identities never enter the production Console.
