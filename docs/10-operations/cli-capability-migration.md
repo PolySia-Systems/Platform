@@ -131,9 +131,9 @@ the `control` group is unchanged.
 | `deployment-automation` | Preserve release workflow options | Make and final handoff | Local release artifact orchestration | O, CON | HANDOFF | `Makefile` | LOCAL | R1 |
 | `final-handoff` | Preserve current handoff entry point | Make and handoff docs | Consolidated release handoff | O, CON | HANDOFF | `Makefile` | LOCAL | R1 |
 | `acceptance-audit` | Preserve no-Live fail-closed behavior | Readiness evidence and tests | Acceptance and Shadow simulation audit | O, S, CON | HANDOFF | None tracked | SHADOW | R1 |
-| `production-gap-audit` | Preserve historical evidence generator | Release evidence and tests | Gap and release-freeze report | O, CON | HANDOFF | None tracked | LOCAL | R1 |
-| `main-merge-review` | Preserve historical review generator | Release evidence and tests | Human merge-review package | O, CON | HANDOFF | None tracked | LOCAL | R1 |
-| `local-release-closeout` | Preserve historical closeout evidence | Release evidence and tests | Local closeout package | O, CON | HANDOFF | None tracked | LOCAL | R1 |
+| `production-gap-audit` | Retired engine; explicit compatibility response | Release evidence and tests | Gap and release-freeze report | O, CON | HANDOFF | None tracked | LOCAL | R1 |
+| `main-merge-review` | Retired engine; explicit compatibility response | Release evidence and tests | Human merge-review package | O, CON | HANDOFF | None tracked | LOCAL | R1 |
+| `local-release-closeout` | Retired engine; explicit compatibility response | Release evidence and tests | Local closeout package | O, CON | HANDOFF | None tracked | LOCAL | R1 |
 | `reconcile-account` | Preserve authenticated read-only gates | Operator handoff and tests | Account reconciliation and pause evidence | O, CON | HANDOFF | None tracked | READ | R1 |
 | `shadow-run` | Preserve Control integration and no-Live gate | Control vertical slice and readiness | Deterministic paper-only Shadow report | R, S, K, CON | SHADOW | None tracked | SHADOW | R1 |
 | `shadow-run-real-data` | Preserve public-data-only behavior | Evaluation and handoff workflows | Public-data paper Shadow simulation | R, CON | HANDOFF | None tracked | READ | R1 |

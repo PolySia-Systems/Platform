@@ -429,7 +429,6 @@ def _safety_excerpt(root: Path) -> str:
     return retained.strip() + "\n"
 
 
-
 def _fit_excerpts(
     documents: list[dict[str, object]],
 ) -> tuple[list[dict[str, object]], list[str]]:

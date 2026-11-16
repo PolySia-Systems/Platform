@@ -426,12 +426,6 @@ def acceptance_audit(
         raise typer.Exit(code=1)
 
 
-
-
-
-
-
-
 def reconcile_account(
     output_dir: Annotated[
         Path,

@@ -151,12 +151,6 @@ def test_observability_snapshot_command_writes_sanitized_artifacts(
     assert "token-1" not in combined
 
 
-
-
-
-
-
-
 def test_reconcile_account_command_writes_reports(monkeypatch, tmp_path: Path) -> None:
     output_dir = tmp_path / "reconciliation"
 

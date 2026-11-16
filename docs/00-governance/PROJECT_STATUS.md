@@ -1,219 +1,36 @@
 # PolySia Project Status
 
-## Document control
+Reviewed against repository source: 2026-11-16. This is durable engineering
+status, not a live runtime dashboard. Current operational SHA, health and account
+state must be queried through the [server runbook](../10-operations/server-deployment.md#current-operational-truth).
 
-| Field | Value |
-|---|---|
-| Reference review | 2026-10-19; later entries retain their own evidence dates |
-| Source-of-truth branch | `main` |
-| Repository | `https://github.com/PolySia-Systems/Platform.git` |
-| Engineering runtime baseline | CPython `3.14.8`; deployed patch requires a dated host receipt |
-| Supported CI runtime | Python `3.14.8` (`>=3.14,<3.15`) |
-| Polymarket SDK | `polymarket-client==0.13.0` |
-| Conformance status | `STANDARDS_V1_0_0_SELECTED_PROFILES_ENFORCED` |
+## Current delivery
 
-Standards adoption updated 2026-10-24: immutable v1.0.0 at
-`ccc3f4f69dbb9bdb94fefa10fc6bc22bd5f9bead`, PRF-BASE/PRF-PYS only;
-[consumer review](standards-conformance-v1.0.0.md). This adoption does not
-change the dated runtime/deployment evidence below.
+- Development preview, proportional CI/Windows selection, dependency maintenance
+  and recoverable branch cleanup were delivered in PRs #298 and #301.
+- Historical report engines are retired; unverified preparation is explicit.
+  Console reads and multi-query operational reports retain coherent snapshots.
+- Current versions belong to [package declarations](../../pyproject.toml),
+  [resolved locks](../../locks/), [CI](../../.github/workflows/ci.yml) and
+  [image configuration](../../Dockerfile), not copied status-table numbers.
+- Selected Standards adoption is recorded in [adoption](../../standards/adoption.toml),
+  [conformance](../../standards/conformance.toml) and the
+  [consumer review](standards-conformance-v1.0.0.md). No additional profiles apply.
+- Engineering checks do not establish real-host commissioning, human usability,
+  financial-account verification or Live authority. Those require their own
+  applicable receipts and permissions.
 
-This document is durable repository status. It is not a live runtime
-dashboard. Git HEAD is implementation truth. Current operational SHA, health,
-and restart counts must be queried on the host.
+## Dated operational evidence
 
-OP1 review, 2026-11-08: **PREPARATION_COMPLETE_WITH_LISTED_DEPENDENCIES**.
-Owner-authenticated public Console, API and exact assets were verified against
-the installed N3-R1 bundle. Private HTTPS rollback was verified and the unused
-deep-hostname A record removed. A separate bounded public diagnostic stopped
-after four read-only requests. The sampled book had no ask and retained N3 history
-provided no complete canonical follower pair. Actual financial account,
-capacity, custody, recovery, human and alert acceptance remain uncommissioned.
-No real trade occurred and no new campaign remains active. See
-[OP1 operational readiness and unsigned Live proposal](../18-ai-handoffs/op1-operational-readiness-2026-11-08.md).
+The November 8 OP1 preparation and N3 incident closure remain dated evidence;
+this review did not query a host, deploy, start a campaign or execute a trade.
+See [OP1 readiness](../18-ai-handoffs/op1-operational-readiness-2026-11-08.md) and
+[N3 incident closure](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md#n3-r1-incident-closure).
+Earlier observation outcomes, timings, blockers and snapshot tables are preserved
+in the [original status at 4f0a596](https://github.com/PolySia-Systems/Platform/blob/4f0a596b598d65c50fc1a44e531f11b0ffb7e186/docs/00-governance/PROJECT_STATUS.md)
+and the evidence owners below. They must not be interpreted as current host state.
 
-N3-R1 closure, 2026-11-08 06:13 UTC: **INCIDENT ENGINEERING CLOSED;
-ORIGINAL N3 48H_NOT_QUALIFIED**. The original run stopped after 19h 17m 06s
-when backup failed. [PR #272](https://github.com/PolySia-Systems/Platform/pull/272)
-corrected terminal settlement reporting, isolated backup from analytical
-calculation failures and added redacted job diagnostics. Exact runtime-main
-CI `42452378743` passed and source `96ddb5d887003423c10d9b118f6a9c0f1b53f0d7`
-was installed under STOP. Actual publisher, encrypted transfer and independent
-fenced restore passed with matching financial snapshot, report digest and
-consumed authority. Helsinki remains STOPped and restart-fenced with the
-acquisition timer inactive. Publisher and recovery schedules remain active.
-No new grant or observation was started. See the
-[incident closure evidence](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md#n3-r1-incident-closure).
-DATA_ONLY and `LIVE_NOT_AUTHORIZED / NOT_PERFORMED` apply.
 
-N3 canary review, 2026-11-06 07:19 UTC: **TWO-HOUR CANARY PASS;
-48-HOUR OBSERVATION RUNNING**. The server recorded the canary pass at 06:58:29
-UTC; protected current receipts confirmed 128 successful post-anchor complete
-polls, 100% slot coverage, zero failed polls/retries and zero uncertainty.
-Total grant use at that review was 131 requests/11,135 bytes; prospective
-events/evaluations/fills remained zero under complete quiet responses.
-No runtime change, new grant or acceptance restart was needed. This does not
-complete the 48-hour trial or qualify the old N1/N2 economic-flow criteria.
-The same app follow-up `platform-sol-1` was verified for final review on
-2026-11-08 at 05:10 UTC / 08:40 Asia/Tehran, after the actual 48-hour end.
-The [single N3 record](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md)
-contains the measured canary result and remaining limitations.
-
-N3 engineering handoff, 2026-11-06 04:59 UTC: **ENGINEERING_CLOSED /
-HEALTH_OBSERVATION_RUNNING**. #258/#259/#260 and exact-main CI42163180551
-passed; runtime `74406cb8751ec396588f810ef1e25cf9e6363b34` was installed
-and commissioned on the actual CONTINUOUS worker with private controls,
-exact-image isolated captured replay and independent encrypted STOPPED recovery.
-One separately accounted finite grant expires 2026-11-09 03:44:45 UTC;
-initial actual use was four requests/340 bytes with zero uncertainty. Quiet
-complete reads now count for this versioned technical-health purpose while
-entry eligibility, Risk, Decimal accounting and all safety limits remain separate.
-Real health collection began 2026-11-06 04:57:39 UTC; the first two-hour canary
-is inside the 48-hour period ending no earlier than 2026-11-08 04:57:39 UTC.
-Neither empirical verdict has passed yet. The stock server scheduler and root
-safety watcher own progress/STOP; existing app follow-up `platform-sol-1` was
-verified for the canary review at 07:10 UTC. No owner action is required.
-Actual prospective event/fill coverage is not exercised by the initial quiet
-reads; replay has no prospective/time credit. N1/N2 history and grants remain
-unchanged. All seven verdicts, frozen identities, measured limits and final-review
-instructions are in the single [N3 record](../18-ai-handoffs/nonlive-n3-health-2026-11-06.md).
-DATA_ONLY and Live disabled remain mandatory; human acceptance/Live are
-`NOT_PERFORMED / LIVE_NOT_AUTHORIZED`.
-
-N2 final review, 2026-11-05 18:37 UTC: **ATTEMPT CLOSED; SUSTAINED_NONLIVE
-NOT_QUALIFIED**. #256 and exact-main CI passed; runtime
-`086a7d7b362ca7d04911b7ee2c3e8613e1a2717b` was installed with verified old
-simulated state quarantined. None of five bounded candidates met the frozen
-activity/recency profile; no cohort, actual CONTINUOUS smoke, canary or 48-hour
-period was established. One new grant spent six requests/429,332 bytes with zero
-uncertainty. Actual private STOP-only controls and exact independent encrypted
-spent-state recovery passed; historical state, private access and unrelated
-services remain preserved. Acquisition is durably STOPped and restart-fenced,
-the worker timer disabled and task units retired; normal publisher/backup/fenced
-recovery timers remain enabled. No grant or criterion was changed to obtain a
-pass, and `ENGINEERING_COMPLETE` is not declared without real commissioning.
-All nine verdicts, measured limitations and the terminal receipts are in the single
-[N2 record](../18-ai-handoffs/nonlive-n2-qualification-2026-11-05.md).
-
-N1 work, 2026-10-29: the retained native public-data/Shadow session is preserved
-through a journaled release/admission transition; telemetry persistence, bounded
-identity reuse and rolling-budget scheduling have focused regression coverage.
-The finite campaign and real 48-hour observation remain separate operational
-gates. See the [dated N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md)
-for candidate/integrated/deployed identities and the eventual observation verdict.
-This paragraph is not a statement that an acquisition timer is presently useful
-or that qualification has completed. DATA_ONLY and Live-disabled defaults remain.
-
-N1 resumption, 2026-11-04 09:12 UTC: protected host reads confirmed no finite grant or real
-observation had started; the retained predecessor remains STOPped and fenced.
-Mount fixes integrated through #241/#242, and current predecessor encrypted
-recovery was independently refreshed with its timer restored. Final review added
-retained native telemetry-fault evidence across healthy oneshot restarts. Exact
-corrected-source CI, installation and the real canary/48-hour observation remain
-operational gates in the same [N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
-Idle time does not satisfy qualification; financial authority remains absent.
-
-N1 installed state, 2026-11-04 10:48 UTC: exact release
-`b051940aa5ce707c927b627e66a7da9cd85fdce5` passed native CI and the supported
-retained-state installation. Its encrypted generation was independently restored
-with acquisition false and network none. The single finite grant was issued, but
-the retained cohort returned a complete empty five-minute activity window.
-Qualification is **OBSERVATION_BLOCKED**: the campaign failed its useful-flow
-gate, durable STOP and the OS fence are retained, and useful observation is zero
-hours. Consumption grew by one request / 85 response bytes; no grant was reset
-or renewed. The required real canary, 48-hour observation and final review remain
-outstanding. Current controls, receipts and all eight verdicts are in the same
-[N1 handoff](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
-
-N1 repair candidate, 2026-11-04: owner-requested engineering separates bounded
-readiness from useful acceptance under the single consumed finite grant. The
-original plan, cohort, consumption, expiry and numerical acceptance criteria are
-preserved. Protected CI, exact artifact commissioning and the real observation
-remain outstanding; candidate code is not a change in current host state. See
-the same dated operational record for the explicit repair receipt and gates.
-
-N1 repair installation, 2026-11-04 13:19 UTC: PR #251 and exact-main CI passed;
-release `783954f9c9fb1ffef3905c2536f503df71f3f43b` was installed through the
-supported retained-session transition with STOP and the OS fence preserved.
-An isolated installed-copy repair proof and exact independent encrypted recovery
-passed. The original single grant, plan, expiry, cohort, accounting and adverse
-evidence remain. PREPARING earns no observation credit; actual controls, real
-canary and 48-hour useful observation remain separate operational gates in the
-same [N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md).
-
-N1 server readiness, 2026-11-04 13:26 UTC: actual attempt-bound private controls,
-fresh native qualification telemetry/process observations and independent exact
-encrypted recovery passed. The existing scheduler now owns bounded PREPARING
-under the original single grant; the retained cohort still returns complete
-quiet activity. Useful canary/observation time is zero. The unchanged two real
-windows and 48 useful hours remain mandatory, with an automatic follow-up and
-the original finite expiry. This dated readiness receipt is not completed
-qualification; consult protected current host evidence and the same N1 record.
-
-N1 terminal attempt, 2026-11-04 22:27 UTC: **SUSTAINED_NONLIVE NOT_QUALIFIED**.
-The server independently STOPped at 19:56:10 UTC when insufficient original
-authority time remained; all 244 finite-campaign responses were complete empty
-activity windows. No accepted canary or useful observation period occurred.
-The final measured review preserves 454 cumulative requests / 66,678,249 bytes,
-zero uncertainty, the single grant and all virtual inventory. Acquisition is
-durably STOPped, the OS restart fence restored and the worker timer inactive.
-Exact final encrypted spent-state recovery passed independently. Engineering,
-controls, integration and deployment evidence remain valid within their scope;
-human acceptance and Pre-Live remain blocked. The same
-[N1 record](../18-ai-handoffs/nonlive-n1-qualification-2026-10-29.md) contains all
-eight verdicts, measurements and limitations. The required real period was not
-achieved or waived; successful qualification remains unmet.
-
-N1-F bounded diagnostic, 2026-11-05 09:08 UTC: **DIAGNOSTIC COMPLETE;
-READY_FOR_SUSTAINED_TRIAL BLOCKED**. The original wallet's paired public windows
-were complete empty; a separate control produced four matching activity/trade
-occurrences, all normalized identically through the installed adapter and its
-identity-cache modes. Current control eligibility could not be established:
-the captured market had closed/book HTTP 404, then its final current window was
-empty. No prospective native experiment or virtual fill was claimed. Separate
-diagnostic usage is 18 attempts / 4,626,777 accounted bytes, including one full
-failed-response reservation; both scopes are STOPped. Original 454-request
-accounting, nine positions, failure and OS fence are unchanged. No executable
-defect or deployment change was demonstrated. The
-[N1-F evidence and nine verdicts](../18-ai-handoffs/nonlive-n1-functional-diagnostic-2026-11-05.md)
-record the precise current-input gate; no new sustained run is active.
-
-N1-F2 prospective functional proof, 2026-11-05 13:34 UTC: **FINITE NATIVE PATH
-PASSED; SUSTAINED TRIAL NOT STARTED**. The separately accounted installed native
-engine recorded 32 genuine post-start events, 27 virtual postings and actual
-authenticated Console report/evaluation projection. A second container continued
-the same store and suppressed seven duplicates. Final usage: 103 requests /
-1,798,565 bytes / uncertainty 0; temporary worker, gateway and Console are stopped.
-Old N1/N1-F scopes and nine original positions are unchanged. Current valuation
-is partially marked. A demonstrated lower-second activity-boundary rejection
-has a focused correction; production activation remains gated by protected
-retained-state bindings. The same [canonical N1-F/F2 record](../18-ai-handoffs/nonlive-n1-functional-diagnostic-2026-11-05.md)
-contains seven scoped verdicts and an inactive sustained proposal addressing
-request cost, period caps, three/four-hour eligibility and useful-flow gaps.
-
-Dated D1 delivery, 2026-10-28: dependency PRs #229, #230 and #233 are merged.
-Private exact-source build `8faa568ba3d2e03bac7cc758260b3e67626b23c4` passed
-full exact-main CI and was installed on the owner-confirmed Helsinki target in
-DATA_ONLY, with financial activation fenced. Independent Nuremberg recovery,
-protected access and bounded commissioning have a dated
-[D1 receipt](../18-ai-handoffs/console-d1-deployment-2026-10-28.md).
-Real financial custody, source/account qualification, human acceptance, external
-alert delivery and Live remain separate gates. No new public release was published.
-The older installation observations below remain historical evidence.
-
-The immutable `v0.4.0` release at source
-`4f3b611adae17defbcc6e24b4f9f917b466d5ad8` passed full exact-main CI 39274691513.
-It retains Python 3.14.8 and advances the consumed SDK boundary to 0.13.0 with
-Pydantic 2.14.1/core 2.50.1. [PR #200](https://github.com/PolySia-Systems/Platform/pull/200)
-records the complete impact map and dependency decisions.
-
-The owner's clean-server decision supersedes the historical pending-observation
-activation blocker. Fresh private HTTPS activation on Helsinki and independent
-cold recovery on Nuremberg have a dated [clean-install receipt](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#19-october-2026-sdk-013-and-clean-install-closeout).
-Acquisition/admission/manifest remain absent, browser STOP was applied and an
-independent OS restart fence leaves the worker inactive. Gateway/publication and
-bounded backup/recovery jobs operate separately. The fresh installation has no
-financial session or economic result; automated engineering/browser acceptance
-is distinct from human/public-domain acceptance and new economic observation.
 ## Truth ownership
 
 Engineering addition, 2026-10-26: [bounded financial-session requirements](../03-requirements/continuous-financial-session.md)
@@ -307,119 +124,6 @@ Generalized intent aggregation, capital allocation, OMS/Transaction Manager,
 generalized ledger, execution router, adapter registry,
 additional venues, AI/ML, and production Live automation remain TARGET or
 FUTURE unless an approved document proves otherwise.
-
-## Independent Platform increment (2026-10-16)
-
-The 18 October engineering patch v0.2.1 addresses native persistent
-session/revalidation, durable cadence and control priority, authority continuation,
-Console aging, retained-export recovery and scoped dependency tooling. Dated
-18 October receipts record source `d14094d57d76575e2b3bcd78f27f431c5a7ee8bc`
-deployed on Helsinki and retained/tested for cold recovery on Nuremberg with
-acquisition disabled and STOP/charges preserved. The fresh isolated drill measured
-RPO 64.171 seconds and RTO 41.746 seconds. See the
-[completion report](https://github.com/PolySia-Systems/Platform/pull/195) and
-[dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md#engineering-patch-commissioning---18-october-2026).
-Engineering completion and disabled deployment are achieved within tested scope;
-observation sufficiency and product acceptance remain unclaimed. These dated
-receipts are not perpetual live-host truth.
-
-CURRENT code provides a bounded private Console, native research profile,
-Platform-owned durable acquisition authority, provider-free financial snapshot and
-supported interval reports, and encrypted isolated recovery tooling. The new
-runtime is contained in the Platform release. See the [operating procedure](../10-operations/independent-platform-shadow.md)
-and [ADR-0021](../04-architecture/adrs/ADR-0021-independent-platform-shadow.md).
-Release v0.2.0 at `e0ad838d78c42739bff9dcce64d391e99bf57ffe` passed the full
-hosted release matrix. Dated 2026-10-16 receipts establish private Helsinki
-supervision and independent Nuremberg encrypted cold recovery of that artifact,
-with STOP and consumed authority preserved. Later same-day receipts establish
-owner-only Access/Tunnel serving at `https://console.movafegh.com`, normal TLS,
-anonymous/origin denial, actual owner login and protected frontend cold-start
-inputs. The original requested DNS record is unchanged. Real observations have
-not established nonempty numerical usefulness; owner comprehension and recorded
-credential rotation remain OPEN. The
-[dated execution record](../18-ai-handoffs/platform-independent-shadow-2026-10-16.md)
-tracks separate acceptance verdicts and exact artifacts. Current host state still
-requires a runtime query; this release grants no acquisition or Live authority.
-
-## Historical focus and blockers (dated September evidence)
-
-The 2026-09-27 owner authorization reactivated Helsinki for a bounded
-`DATA_ONLY` source benchmark, Canary, Continuous Shadow worker, and four-hour
-exploratory Research run. The [dated acceptance
-record](../18-ai-handoffs/shared-data-shadow-acceptance-2026-09-27.md) owns
-their evidence and explicit unmet gates. This Markdown is not live host state
-or authorization for another run. Query SHA, health, restarts, and final
-experiment state through the [server deployment
-runbook](../10-operations/server-deployment.md#current-operational-truth)
-only within an authorized task. Nuremberg remains outside this scope.
-The [2026-09-28 dated release and readiness
-record](../18-ai-handoffs/research-shadow-readiness-2026-09-28.md) documents
-the subsequently approved code SHA, Shadow v1 three-wallet cutover, backup
-and restore checks, and a five-wallet preflight failure. It is not live host
-truth or approval for a new experiment.
-
-Blockers and limitations:
-
-- The Canary, four-hour Main failure archive, and two three-store bundles
-  were encrypted off-host and recovery-checked on 2026-09-27. Recurring
-  transfer and external alert delivery are unfinished; DPAPI recovery depends
-  on the same Windows user profile.
-- The 20-minute Canary did not meet the activity or executable-evidence gates.
-  The owner-directed four-hour run closed with 24 valid but empty windows and
-  a `FAILURE_ARCHIVED` unverified bundle. Its technical gate is `FAIL` and
-  economics is `INSUFFICIENT_DATA`; it cannot retroactively make that Canary
-  `PASS`. The dated acceptance record has the exact evidence.
-- The 2026-09-28 five-wallet candidate-only probe had complete available-page
-  empty Wallet reads and no market token subscription. The active preflight
-  still lacked five eligible candidates. No v2 host capacity was certified,
-  and no new Canary or four-hour evaluation began. See the dated record for
-  bounded scope and limitations.
-- Branch-protection policy remains governance debt.
-- Risk/Execution and Stage 4B accounting hardening are merged in Git. That is
-  a repository fact, not a claim about a live host.
-- One bounded profitable LIVE-004 round trip is statistically meaningless.
-- Modeled Stage 4B P&L remains negative on Current Control and is not a
-  promotion decision. Target Exposure v1 is a PARTIAL research Replay with
-  UNKNOWN marks, not Alpha and not Live readiness.
-- No production Live host or real order is authorized. Helsinki's dated
-  `DATA_ONLY` acceptance is not Live readiness.
-
-Next milestones: investigate the selected-wallet activity and market evidence
-needed for a fresh standard Canary, continue explicit Shadow health checks,
-and address recurring backup/alert delivery and branch protection separately.
-The four-hour failure archive and deterministic empty-sample analyses are
-preserved off-host. The Stage 1–3 daily timer was re-enabled after Main closed;
-Stage 4B continued through its first period rollover. Any new experiment
-requires its own authorized scope; do not access Nuremberg.
-
-## Audited runtime snapshot
-
-Audited as of 2026-09-04.
-
-This snapshot is historical operational evidence copied from the Stage 4B
-data-lifecycle 24-hour closeout. It is not a claim about the host at read time.
-
-| Field | Audited value |
-|---|---|
-| Audited repository / release commit | `6743f7464f94d3fb76edc057834e8219ca7ebfe0` |
-| Release path | `/opt/polysia-releases/6743f7464f94d3fb76edc057834e8219ca7ebfe0` |
-| Archive SHA-256 | `83a827d6137cf4a3bf9997c89928fe5c191bbc67df9b956529b214f3991f7d8f` |
-| Image ID | `sha256:98df02069c471e5e71aabcd31448a9a4862510f9e735ad9a3fe62c073855d3ee` |
-| Wallet Intelligence modes | `TRADING_MODE=DATA_ONLY`, `LIVE_TRADING_ENABLED=false` |
-| Stage 4B worker start after compact cutover | `2026-09-02T23:48:37Z`, `NRestarts=0` |
-| Stage 4B schema | 6 |
-| 3x-ui identity (unrelated) | `ab567d6d...`, started `2026-08-21T10:33:56Z` |
-
-PR `#112` made change-driven mark history and bounded recovery CURRENT.
-Helsinki 24-hour storage acceptance against `stage4b-data-lifecycle-v1` is
-recorded as PASS in the lifecycle handoff (80.7% fewer history rows than the
-old per-poll path in the T0 window; rotating keep-three restore-tested).
-
-Query the host for anything newer. Full delivery, checksums, canary, T0, and
-24-hour evidence:
-[Stage 4B data lifecycle v1](../18-ai-handoffs/stage4b-data-lifecycle-v1.md).
-The preceding schema-v5 ownership closeout remains
-[Stage 4B ownership cutover](../18-ai-handoffs/stage4b-data-ownership-cutover.md).
 
 ## Historical evidence owners
 
