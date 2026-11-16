@@ -42,6 +42,7 @@ class DeploymentAutomationStep:
             "command": list(self.command),
             "name": self.name,
             "returncode": self.returncode,
+            "next_action": ("Rerun: " + " ".join(self.command)) if self.status != "pass" else None,
             "status": self.status,
         }
 
@@ -50,7 +51,7 @@ class DeploymentAutomationStep:
 class DeploymentAutomationResult:
     """Sanitized deployment automation result."""
 
-    status: Literal["ready", "blocked"]
+    status: Literal["ready", "prepared_unverified", "blocked"]
     timestamp: datetime
     quality_gates: tuple[DeploymentAutomationStep, ...]
     readiness: DeploymentReadinessReport
@@ -109,12 +110,12 @@ def run_deployment_automation(
     )
     automation_path = output_dir / "deployment-automation.json"
     artifacts = {**artifacts, "deployment_automation": str(automation_path)}
-    status: Literal["ready", "blocked"] = (
+    status: Literal["ready", "prepared_unverified", "blocked"] = (
         "blocked"
         if release_manifest.status == "blocked"
         or readiness.status == "blocked"
         or any(gate.status == "fail" for gate in gates)
-        else "ready"
+        else "prepared_unverified" if any(gate.status != "pass" for gate in gates) else "ready"
     )
     result = DeploymentAutomationResult(
         status=status,
@@ -156,7 +157,10 @@ def _quality_gates(
 
     steps: list[DeploymentAutomationStep] = []
     for name, command in commands:
-        returncode = command_runner(project_root, command)
+        try:
+            returncode = command_runner(project_root, command)
+        except OSError:
+            returncode = -1  # Tool unavailable; rerun command is retained, raw errors are not.
         steps.append(
             DeploymentAutomationStep(
                 name=name,

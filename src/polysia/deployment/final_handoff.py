@@ -71,12 +71,6 @@ def render_final_handoff_markdown(result: DeploymentAutomationResult) -> str:
             "- `python -m polysia.cli live controlled-second-attempt --auto-btc-5m "
             "--side BUY --outcome YES --max-notional 1.00 --order-type FOK "
             "--dry-run --output-dir .\\release-artifacts`",
-            "- `python -m polysia.cli ops production-gap-audit --output-dir "
-            ".\\release-artifacts`",
-            "- `python -m polysia.cli ops main-merge-review --output-dir "
-            ".\\release-artifacts`",
-            "- `python -m polysia.cli ops local-release-closeout --output-dir "
-            ".\\release-artifacts`",
             "- `python -m polysia.cli ops reconcile-account --output-dir "
             ".\\release-artifacts`",
             "- `python -m polysia.cli live manual-intervention-test --auto-btc-5m "

@@ -48,16 +48,6 @@ from polysia.monitoring.live_round_trip import (
     monitor_live_round_trip,
     write_live_round_trip_monitor_reports,
 )
-from polysia.monitoring.local_release_closeout import (
-    LocalReleaseCloseoutConfig,
-    local_release_closeout_filename,
-    write_local_release_closeout_reports,
-)
-from polysia.monitoring.main_merge_review import (
-    MainMergeReviewConfig,
-    main_merge_review_filename,
-    write_main_merge_review_reports,
-)
 from polysia.monitoring.metrics import build_operator_status
 from polysia.monitoring.observability import (
     ObservabilitySnapshotConfig,
@@ -68,11 +58,6 @@ from polysia.monitoring.post_live_reconciliation import (
     PostLiveReconciliationConfig,
     post_live_reconciliation_filename,
     write_post_live_reconciliation_reports,
-)
-from polysia.monitoring.production_gap_audit import (
-    ProductionGapAuditConfig,
-    production_gap_audit_filename,
-    write_production_gap_audit_reports,
 )
 from polysia.monitoring.readiness import build_deployment_readiness
 from polysia.monitoring.report import render_operator_report
@@ -295,8 +280,8 @@ def deployment_automation(
         run_quality_checks=run_quality_checks,
     )
     typer.echo(json.dumps(result.to_dict(), sort_keys=True))
-    if result.status == "blocked":
-        raise typer.Exit(code=1)
+    if result.status != "ready":
+        raise typer.Exit(code=1 if result.status == "blocked" else 2)
 
 
 def final_handoff(
@@ -348,8 +333,8 @@ def final_handoff(
         "status": "ok",
     }
     typer.echo(json.dumps(payload, sort_keys=True))
-    if result.status == "blocked":
-        raise typer.Exit(code=1)
+    if result.status != "ready":
+        raise typer.Exit(code=1 if result.status == "blocked" else 2)
 
 
 def acceptance_audit(
@@ -441,99 +426,10 @@ def acceptance_audit(
         raise typer.Exit(code=1)
 
 
-def production_gap_audit(
-    output_dir: Annotated[
-        Path,
-        typer.Option("--output-dir", help="Directory for production gap audit reports."),
-    ] = Path("release-artifacts"),
-) -> None:
-    """Write a read-only production gap audit and release-freeze summary."""
-    settings = AppSettings()
-    configure_logging(settings)
-
-    report = write_production_gap_audit_reports(
-        ProductionGapAuditConfig(
-            settings=settings,
-            project_root=Path("."),
-            output_dir=output_dir,
-        )
-    )
-    artifacts = {
-        "freeze_summary": str(output_dir / production_gap_audit_filename("freeze")),
-        "json": str(output_dir / production_gap_audit_filename("json")),
-        "markdown": str(output_dir / production_gap_audit_filename("markdown")),
-    }
-    payload = {
-        "artifacts": artifacts,
-        "audit_status": report.status,
-        "status": "ok" if report.status != "blocked" else "blocked",
-    }
-    typer.echo(json.dumps(payload, sort_keys=True))
-    if report.status == "blocked":
-        raise typer.Exit(code=1)
 
 
-def main_merge_review(
-    output_dir: Annotated[
-        Path,
-        typer.Option("--output-dir", help="Directory for main merge review reports."),
-    ] = Path("release-artifacts"),
-) -> None:
-    """Write a local human release review package for controlled main merge."""
-    settings = AppSettings()
-    configure_logging(settings)
-
-    report = write_main_merge_review_reports(
-        MainMergeReviewConfig(
-            settings=settings,
-            project_root=Path("."),
-            output_dir=output_dir,
-        )
-    )
-    artifacts = {
-        "checklist": str(output_dir / main_merge_review_filename("checklist")),
-        "json": str(output_dir / main_merge_review_filename("json")),
-        "markdown": str(output_dir / main_merge_review_filename("markdown")),
-    }
-    payload = {
-        "artifacts": artifacts,
-        "review_status": report.status,
-        "status": "ok" if report.status != "blocked" else "blocked",
-    }
-    typer.echo(json.dumps(payload, sort_keys=True))
-    if report.status == "blocked":
-        raise typer.Exit(code=1)
 
 
-def local_release_closeout(
-    output_dir: Annotated[
-        Path,
-        typer.Option("--output-dir", help="Directory for final local closeout reports."),
-    ] = Path("release-artifacts"),
-) -> None:
-    """Write the final local release closeout package."""
-    settings = AppSettings()
-    configure_logging(settings)
-
-    report = write_local_release_closeout_reports(
-        LocalReleaseCloseoutConfig(
-            settings=settings,
-            project_root=Path("."),
-            output_dir=output_dir,
-        )
-    )
-    artifacts = {
-        "json": str(output_dir / local_release_closeout_filename("json")),
-        "markdown": str(output_dir / local_release_closeout_filename("markdown")),
-    }
-    payload = {
-        "artifacts": artifacts,
-        "closeout_status": report.status,
-        "status": "ok" if report.status != "blocked" else "blocked",
-    }
-    typer.echo(json.dumps(payload, sort_keys=True))
-    if report.status == "blocked":
-        raise typer.Exit(code=1)
 
 
 def reconcile_account(
@@ -1013,3 +909,15 @@ async def _read_actual_reconciliation_state(
         )
     finally:
         await adapter.close()
+
+
+def retired_release_report(
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("release-artifacts"),
+) -> None:
+    """Retired historical report route; no current verification is performed."""
+    typer.echo(json.dumps({
+        "status": "retired",
+        "reason": "Historical generators cannot verify the current revision.",
+        "next_action": "Use exact-revision CI and ops release-manifest; see docs/FINAL_HANDOFF.md.",
+    }, sort_keys=True))
+    raise typer.Exit(code=2)

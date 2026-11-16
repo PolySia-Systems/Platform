@@ -165,11 +165,15 @@ the `control` group is unchanged.
 
 ## Retirement result
 
-No command is deleted. The three HISTORICAL commands remain available under
-`ops` or `live` because their report/evidence behavior is unique and no
-replacement has been proven. Future retirement must update this matrix and
-handle code, tests, documents, scripts, safety implications, and rollback in
-one focused pull request.
+The three historical report engines (`production-gap-audit`, `main-merge-review`,
+`local-release-closeout`) are retired: their fixed historical classifications
+cannot verify current code. Both namespaced and hidden flat routes return
+`retired`, exit 2 and create no files. This minimal compatibility response remains
+until external wrapper migration is confirmed; no new report engine replaces it.
+Use exact-revision CI and `ops release-manifest` for their distinct purposes.
+Historical original reports remain evidence, not current verification. Other CLI
+aliases keep their existing migration conditions. This supersedes the three
+historical-generator retention rows above.
 
 ## Migration and rollback
 

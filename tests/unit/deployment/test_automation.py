@@ -68,7 +68,7 @@ def test_deployment_automation_can_skip_quality_gates(tmp_path) -> None:
         git_runner=clean_git,
     )
 
-    assert result.status == "ready"
+    assert result.status == "prepared_unverified"
     assert {gate.status for gate in result.quality_gates} == {"skipped"}
     automation_payload = json.loads(
         (tmp_path / "release-artifacts" / "deployment-automation.json").read_text(
@@ -76,6 +76,23 @@ def test_deployment_automation_can_skip_quality_gates(tmp_path) -> None:
         )
     )
     assert automation_payload["summary"] == {"fail": 0, "pass": 0, "skipped": 3}
+    assert all(gate["next_action"].startswith("Rerun: ")
+               for gate in automation_payload["quality_gates"])
+
+
+def test_unavailable_quality_tool_is_blocking_and_has_safe_rerun(tmp_path):
+    def unavailable(_root, _command):
+        raise FileNotFoundError("sensitive environment detail")
+
+    result = run_deployment_automation(
+        settings=AppSettings(), project_root=ready_project(tmp_path),
+        output_dir=tmp_path / "artifacts", command_runner=unavailable, git_runner=clean_git,
+    )
+    assert result.status == "blocked"
+    payload = result.to_dict()
+    assert payload["summary"] == {"fail": 3, "pass": 0, "skipped": 0}
+    assert "sensitive environment" not in json.dumps(payload)
+    assert all(gate["next_action"] for gate in payload["quality_gates"])
 
 
 def ready_project(tmp_path):

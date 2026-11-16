@@ -38,3 +38,12 @@ generates the operator runbook, and writes `release-artifacts/final-handoff.md`.
 Stop when strict Git cleanliness, required quality checks, readiness or release
 integrity fails, or any generated output contains sensitive values. This local
 procedure does not publish packages, deploy a host or authorize live orders.
+
+## Verification status
+
+`ops deployment-automation` and `ops final-handoff --skip-quality-checks`
+prepare artifacts as `prepared_unverified` and exit 2. Only completed passing
+local quality gates permit `ready`; failure stays `blocked` (exit 1). These local
+gates do not replace exact-revision release CI or host commissioning. Each failed
+or skipped gate includes its explicit rerun command. Retired historical report
+commands exit 2 without creating evidence; consult current CI and release manifests.

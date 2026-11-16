@@ -160,9 +160,9 @@ ops_app.command("release-manifest")(operations.release_manifest)
 ops_app.command("deployment-automation")(operations.deployment_automation)
 ops_app.command("final-handoff")(operations.final_handoff)
 ops_app.command("acceptance-audit")(operations.acceptance_audit)
-ops_app.command("production-gap-audit")(operations.production_gap_audit)
-ops_app.command("main-merge-review")(operations.main_merge_review)
-ops_app.command("local-release-closeout")(operations.local_release_closeout)
+ops_app.command("production-gap-audit")(operations.retired_release_report)
+ops_app.command("main-merge-review")(operations.retired_release_report)
+ops_app.command("local-release-closeout")(operations.retired_release_report)
 ops_app.command("reconcile-account")(operations.reconcile_account)
 ops_app.command("post-live-reconciliation")(operations.post_live_reconciliation)
 ops_app.command("reconcile-live-round-trip")(operations.reconcile_live_round_trip_command)
@@ -198,9 +198,9 @@ LEGACY_COMMAND_ALIASES: dict[str, Callable[..., object]] = {
     "deployment-automation": operations.deployment_automation,
     "final-handoff": operations.final_handoff,
     "acceptance-audit": operations.acceptance_audit,
-    "production-gap-audit": operations.production_gap_audit,
-    "main-merge-review": operations.main_merge_review,
-    "local-release-closeout": operations.local_release_closeout,
+    "production-gap-audit": operations.retired_release_report,
+    "main-merge-review": operations.retired_release_report,
+    "local-release-closeout": operations.retired_release_report,
     "reconcile-account": operations.reconcile_account,
     "shadow-run": research.shadow_run,
     "shadow-run-real-data": research.shadow_run_real_data,
