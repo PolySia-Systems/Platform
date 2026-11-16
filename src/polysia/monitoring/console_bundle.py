@@ -154,14 +154,13 @@ def verify_bundle(
         ):
             raise ValueError("invalid_console_asset_path")
         asset = directory / name
-        if (
-            asset.is_symlink()
-            or not asset.is_file()
-            or asset.stat().st_size > 2_000_000
-            or hashlib.sha256(asset.read_bytes()).hexdigest() != expected
-        ):
+        if asset.is_symlink() or not asset.is_file() or asset.stat().st_size > 2_000_000:
             raise ValueError("console_asset_missing_or_changed")
-        validate_media(name, asset.read_bytes())
+        with asset.open("rb") as stream:
+            data = stream.read(2_000_001)
+        if len(data) > 2_000_000 or hashlib.sha256(data).hexdigest() != expected:
+            raise ValueError("console_asset_missing_or_changed")
+        validate_media(name, data)
     actual = {p.name for p in directory.iterdir() if p.is_file() and p.name != "manifest.json"}
     if set(files) != actual or any(p.is_dir() for p in directory.iterdir()):
         raise ValueError("unlisted_console_asset")

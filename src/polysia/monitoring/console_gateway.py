@@ -6,6 +6,7 @@ import base64
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlencode
 
@@ -128,6 +129,7 @@ class ConsoleGateway:
     def __init__(self, app: ConsoleApplication) -> None:
         self.app = app
         self._model: ConsoleReadModel | None = None
+        self._model_lock = Lock()
 
     def session(self, subject: str, role: str, now: datetime) -> Session:
         csrf = self.app._csrf(subject)
@@ -151,11 +153,11 @@ class ConsoleGateway:
             return None
 
     def model(self) -> ConsoleReadModel:
-        raw = self.app._read_publication()
-        generation = self.app._publication_generation
-        if self._model is None or self._model.generation != generation:
-            self._model = ConsoleReadModel(raw, generation)
-        return self._model
+        raw, generation = self.app._read_publication_snapshot()
+        with self._model_lock:
+            if self._model is None or self._model.generation != generation:
+                self._model = ConsoleReadModel(raw, generation)
+            return self._model
 
     def action(
         self, subject: str, role: str, operation: str, target: str, *, bundle: str | None = None
