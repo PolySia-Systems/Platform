@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-28
-- Last amended: 2026-10-25
+- Last amended: 2026-11-17
 - Supersedes: ADR-0005
 
 ## Context
@@ -29,9 +29,13 @@ runtime without redundant compatibility jobs.
   Application metadata remains `>=3.14,<3.15`. Standalone root host utilities
   remain compatible with Ubuntu's Python 3.12+; they do not replace OS Python.
 - Configure canonical Linux quality validation for Python 3.14 only. Keep full
-  Windows compatibility validation weekly, manually dispatchable, and
-  conditional on verified Windows-sensitive changes rather than on ordinary
-  pull requests.
+  Windows compatibility validation manual-only, OFF by default for every automatic
+  event. Full native coverage requires explicit `run_windows=true`; full non-Windows
+  selection alone does not enable it. Formal releases retain successful exact-SHA
+  full manual Windows evidence. Later detection of native-only defects is accepted
+  to remove the measured Windows bottleneck from routine development. This
+  owner-approved amendment supersedes weekly/native-sensitive automatic selection
+  and its nine-day health obligation; Linux and other risk-based gates remain.
 - Pin the official unified Polymarket SDK to `0.13.0`.
 - Pin direct development tools and the portable transitive lock to versions
   verified by repository quality and supply-chain gates.

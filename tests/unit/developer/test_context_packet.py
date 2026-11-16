@@ -114,7 +114,7 @@ def test_document_scope_cannot_remove_actual_dirty_validation_paths() -> None:
     validation = packet["validation"]
     assert set(validation["classified_paths"]) == {"README.md", "locks/requirements-dev-py314.txt"}
     assert validation["policy"]["flags"]["container"] is True
-    assert validation["policy"]["flags"]["windows"] is True
+    assert validation["policy"]["flags"]["windows"] is False
     assert packet["evidence"]["verified"] == []
     assert packet["evidence"]["unknown_or_unavailable"]
 

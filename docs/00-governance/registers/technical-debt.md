@@ -2,7 +2,7 @@
 
 | ID | Debt | Priority | Status / next point |
 |---|---|---:|---|
-| TD-001 | Root CLI composition is 137 lines after responsibility decomposition and capability grouping; operations/live command modules retain broad orchestration pending explicit service and dependency-injection seams. | High | Partial; facade decomposition and grouping complete, orchestration extraction remains incremental follow-up |
+| TD-001 | Root CLI composes capability groups after responsibility decomposition; operations/live command modules retain broad orchestration pending explicit service and dependency-injection seams. | High | Partial; facade decomposition and grouping complete, orchestration extraction remains incremental follow-up |
 | TD-002 | Core imported Polymarket adapter models. | Critical | Closed in Phase D; architecture tests enforce the boundary |
 | TD-003 | Tests were concentrated under `tests/unit`. | High | Closed in Phase G; property, integration, architecture, contract, migration, and characterization layers exist |
 | TD-004 | Acceptance models/renderers and manual-intervention renderers extracted; other oversized monitoring/live services remain incremental debt. | Medium | Open; extract when each service changes |

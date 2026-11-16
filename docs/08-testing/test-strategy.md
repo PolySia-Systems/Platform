@@ -29,7 +29,7 @@ redaction, SDK contracts, and negative proofs for live gates.
 `scripts/classify_ci_changes.py` owns applicability for the complete diff;
 `ci_policy_contract.py` verifies projection and required-job failure/skip behavior.
 Unknown paths, policy/build changes and mixed risky inputs retain conservative
-coverage. Scheduled weekly and explicit full runs retain all gates.
+coverage. Scheduled weekly and explicit full runs retain all non-Windows gates.
 
 A diff limited to CSS/brand source, its generated Console assets and editorial
 documentation runs package custody/regeneration, installed-wheel smoke, Python
@@ -38,15 +38,14 @@ ACME or restore regression. Output-only changes and frontend logic, contract,
 toolchain or recipe changes cannot use this exception. Regeneration must match
 all committed outputs, including JS and the manifest, before CI can pass.
 
-Windows identity, locking, SQLite/replacement, process transport/supervision and
-their regression cases select native validation. `scripts/windows_validation.py`
-runs a bounded transport/native-lifecycle/session set only for its explicitly
-mapped inputs. Storage, identity, dependencies, packaging, unknown native impact
-and full/periodic requests still run full pytest. Extend a narrower mapping only
-with evidence that it covers the affected callers and real native behavior.
-The operational-session module runs once, rather than a preflight and then a
-second time inside full pytest. Failures retain JUnit evidence where available;
-missing JUnit after an early infrastructure failure does not hide that failure.
+Windows is OFF on all automatic events, including native-sensitive changes,
+unknown scope, schedules and dependency dispatches. Only an explicit manual
+`run_windows=true` request selects full native validation. `validation_scope=full`
+alone leaves it OFF. The full suite retains real SQLite, locking, transport,
+identity and recovery coverage; native defects can therefore be discovered later.
+A formal release requires successful manual full CI on main with Windows enabled.
+There is no periodic Windows freshness obligation or overdue alert. Requested
+failures retain JUnit evidence where available; missing JUnit does not hide failure.
 
 Canonical resolver determinism runs in Linux quality for dependency/full inputs;
 Windows retains locked installation, environment integrity, package and CLI

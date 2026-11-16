@@ -88,8 +88,9 @@ is not behavior evidence.
    existing gated execution/reconciliation, stream and financial/config tests.
 3. Synchronize SDK pin, reviewed Tiny Live version constants, generated locks,
    version/configuration metadata and current guidance as one change.
-4. Run the required PR and exact-main CI, including full Linux/Windows,
-   supply-chain, container, browser and installation/recovery gates. Verify the
+4. Run required PR/Linux checks, supply-chain, container, browser and
+   installation/recovery gates. Before formal publication explicitly dispatch full
+   CI on main with `run_windows=true`; Windows remains OFF for automatic runs. Verify the
    actual installed wheel/image versions and review trust/accounting boundaries.
 5. Publish retained immutable artifacts and use the shipped administrative
    lifecycle. Keep acquisition/admission absent and durable STOP. Actual venue

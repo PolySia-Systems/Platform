@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      run_windows:
+        description: Explicitly request the full Windows suite (otherwise OFF)
+        required: false
+        type: boolean
+        default: false
       validation_scope:
         description: Validation breadth for a manual run
         required: false
@@ -52,9 +57,10 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           VALIDATION_SCOPE: ${{ inputs.validation_scope || 'auto' }}
+          RUN_WINDOWS: ${{ inputs.run_windows && 'true' || 'false' }}
         run: |
           python scripts/ci_policy_contract.py
-          python scripts/classify_ci_changes.py --repository . --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$GITHUB_EVENT_NAME" --validation-scope "$VALIDATION_SCOPE" --format github-output >> "$GITHUB_OUTPUT"
+          python scripts/classify_ci_changes.py --repository . --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$GITHUB_EVENT_NAME" --validation-scope "$VALIDATION_SCOPE" --run-windows "$RUN_WINDOWS" --format github-output >> "$GITHUB_OUTPUT"
 
   quality:
     needs: changes
@@ -149,7 +155,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: needs.changes.outputs.package == 'true'
         with:
-          name: polysia-wheel
+          name: polysia-wheel-attempt-${{ github.run_attempt }}
           path: dist/*
           retention-days: 30
           if-no-files-found: error
@@ -157,7 +163,7 @@ jobs:
   windows-compatibility:
     name: Windows Compatibility
     needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.run_windows == true && needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -174,7 +180,7 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Compile
         run: python -m compileall -q src tests
-      - name: Selected Windows behavior (full for broad or periodic inputs)
+      - name: Full Windows suite (explicit manual opt-in)
         env:
           CI_POLICY: ${{ needs.changes.outputs.policy }}
         run: python scripts/windows_validation.py
@@ -267,7 +273,7 @@ jobs:
           python scripts/release_manifest.py --image release-image/polysia-image.tar.gz --image-id-file release-image/image-id.txt --commit "$GITHUB_SHA" --output release-image/manifest.json --os-packages-file release-image/os-packages.txt --runtime-packages-file release-image/runtime-packages.json
       - uses: actions/upload-artifact@v7
         with:
-          name: polysia-release-image
+          name: polysia-release-image-attempt-${{ github.run_attempt }}
           path: release-image/*
           retention-days: 30
           if-no-files-found: error
@@ -344,7 +350,7 @@ jobs:
           "$RUNNER_TEMP/polysia-compat-venv/bin/python" -m polysia.cli --help
       - uses: actions/upload-artifact@v7
         with:
-          name: polysia-sbom
+          name: polysia-sbom-attempt-${{ github.run_attempt }}
           path: artifacts/sbom.json
           retention-days: 14
 
@@ -360,7 +366,7 @@ jobs:
           python-version: "3.14.8"
       - uses: actions/download-artifact@v8
         with:
-          name: polysia-release-image
+          name: polysia-release-image-attempt-${{ github.run_attempt }}
           path: release-image
       - name: Fresh supervised installation and trusted private HTTPS
         id: private_install
@@ -463,6 +469,12 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           VALIDATION_SCOPE: ${{ inputs.validation_scope || 'auto' }}
+          RUN_WINDOWS: ${{ inputs.run_windows && 'true' || 'false' }}
         run: |
           python scripts/ci_policy_contract.py
-          python scripts/classify_ci_changes.py --repository . --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$GITHUB_EVENT_NAME" --validation-scope "$VALIDATION_SCOPE" --verify-gate
+          python scripts/classify_ci_changes.py --repository . --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$GITHUB_EVENT_NAME" --validation-scope "$VALIDATION_SCOPE" --run-windows "$RUN_WINDOWS" --verify-gate --receipt ci-policy.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-policy-attempt-${{ github.run_attempt }}
+          path: ci-policy.json
+          if-no-files-found: error

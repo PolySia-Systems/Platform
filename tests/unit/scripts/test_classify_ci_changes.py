@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from scripts.classify_ci_changes import ChangeMap, classify_event, classify_paths
@@ -102,19 +104,21 @@ def test_shared_or_unknown_configuration_fails_closed() -> None:
 
 
 def test_scheduled_and_manual_auto_events_run_periodic_gates() -> None:
-    assert classify_event("schedule") == ChangeMap.full()
+    assert classify_event("schedule") == replace(ChangeMap.full(), windows=False)
     manual = classify_event("workflow_dispatch")
-    assert manual.dependencies and manual.windows
+    assert manual.dependencies and not manual.windows
     assert not manual.quality and not manual.container
 
 
 def test_manual_full_and_unknown_events_fail_closed() -> None:
-    assert classify_event("workflow_dispatch", validation_scope="full") == ChangeMap.full()
-    assert classify_event("unexpected") == ChangeMap.full()
+    assert classify_event("workflow_dispatch", validation_scope="full") == replace(
+        ChangeMap.full(), windows=False,
+    )
+    assert classify_event("unexpected") == replace(ChangeMap.full(), windows=False)
 
 
 def test_empty_pull_request_diff_fails_closed() -> None:
-    assert classify_event("pull_request") == ChangeMap.full()
+    assert classify_event("pull_request") == replace(ChangeMap.full(), windows=False)
 
 
 @pytest.mark.parametrize("path", [
