@@ -11,7 +11,7 @@ from scripts.fast_check import Check, build_checks, run_checks, scoped_checks
 def test_scoped_commands_follow_shared_policy_and_keep_native_contexts_pending() -> None:
     policy = project_policy(["pyproject.toml"])
     checks, pending = scoped_checks(policy, "python-test")
-    assert "windows" in pending and "image" in pending and "install-recovery" in pending
+    assert "windows" not in pending and "image" in pending and "install-recovery" in pending
     assert "ci-gate" in pending
     required_portable = {
         item["id"]

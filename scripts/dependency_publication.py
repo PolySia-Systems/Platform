@@ -319,7 +319,7 @@ def publish(directory: Path, run_id: str) -> dict:
         for r in ci_runs["workflow_runs"]
     ):
         command("workflow", "run", "ci.yml", "--repo", EXPECTED_REPOSITORY,
-                "--ref", branch, "-f", "validation_scope=full")
+                "--ref", branch, "-f", "validation_scope=full", "-f", "run_windows=false")
     if main_head() != base or api(f"pulls/{pr['number']}")["head"]["sha"] != head:
         raise ValueError("base or proposal changed before merge decision")
     return dict(

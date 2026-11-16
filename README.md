@@ -178,15 +178,17 @@ python scripts/fast_check.py --mode scoped --plan
 
 The plan includes the complete committed, staged, unstaged and relevant untracked
 diff. Missing comparison refs select full validation. Commands use vetted argument
-lists. Native Linux, Windows, browser, image/install and final CI authority remain
+lists. Native Linux, browser, image/install and final CI authority remain
 `PENDING` when unavailable locally; exit 2 means local checks passed with native
 contexts pending. No dependencies are installed by this checker.
 
 Automatic CI treats ordinary Markdown in requirements, ADR, governance, security
 and operations directories as documentation. Actual instruction/control inputs
 (including AGENTS), executable/unknown assets and mixed risky changes keep their
-required gates. Windows needs no routine manual disable: auto selection follows
-actual inputs; explicit full validation and weekly/release coverage remain.
+required gates. Windows is OFF for every automatic event, including dependency dispatches and
+weekly CI. Only an explicit manual `run_windows=true` request runs its full suite.
+`validation_scope=full` alone does not enable Windows. Formal releases require
+manual full CI on main with Windows enabled; ordinary green CI is not release evidence.
 An empty or unavailable comparison selects conservative full work; inspect the
 plan against the actual base before interpreting a clean-tree result.
 

@@ -153,8 +153,7 @@ records require the full schema/pin/applicability/fact/evidence validator and
 consumer contracts; unsupported record schemas or meanings fail validation.
 Executable Python/tooling requires the complete canonical Linux behavior/safety
 suite plus compile/lint/type/integrity and applicable package checks. Console,
-API, assets and transitive browser inputs add browser acceptance. Dependency,
-bootstrap and supported OS-sensitive changes add full Windows; Docker's
+API, assets and transitive browser inputs add browser acceptance. Docker's
 development lock also selects image and real install/recovery validation.
 Release-manifest implementation retains image/install checks. Unknown scope,
 workflow/classifier/Gate/trust changes and weekly CI select comprehensive work.
@@ -163,7 +162,7 @@ source-bound artifacts; no dispatch result or equal-tree claim replaces native
 final-head PR checks or another commit's artifacts.
 
 `fast_check.py --mode scoped` runs applicable portable commands without installing
-anything. `--mode full-local` selects all checks; `--plan` prints the policy.
+anything. `--mode full-local` selects all applicable non-Windows checks; `--plan` prints the policy.
 Required native contexts remain pending with exit 2 after successful local work.
 
 Use `python scripts/fast_check.py --mode scoped --base origin/main --plan`
@@ -172,9 +171,12 @@ and reasons without executing them. A clean tree compared with identical main
 has no classified change: empty/missing/ambiguous inputs deliberately select full
 validation. When assessing a completed change, use its actual base revision;
 do not interpret an empty comparison as proof of a cheap documentation diff.
-Auto/full are selection modes, not a global Windows-off bypass. Dependency,
-Python/bootstrap, packaging and supported OS-sensitive changes still require
-Windows; weekly, explicit full and exact-commit release coverage remain.
+Windows CI is OFF by default for PRs, pushes, schedules, dependency automation
+and ordinary manual runs, including conservative unknown/full fallbacks.
+Only `workflow_dispatch` with explicit `run_windows=true` selects its full suite.
+Local plans/Context Packets do not require Windows or mark it PENDING. Linux
+checks do not establish Windows compatibility; native bugs may be found later.
+Formal release evidence requires manual full CI on main with Windows enabled.
 
 The no-argument legacy command is unchanged except for an accurate label: it
 omits Pytest/build and is not comprehensive. A local Windows run never proves the

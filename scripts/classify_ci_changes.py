@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
 
 
@@ -160,8 +160,9 @@ COMPREHENSIVE_PATTERNS = (
     "scripts/fast_check.py",
     "scripts/ci_policy_contract.py",
     "scripts/windows_validation.py",
+    "scripts/release_evidence.py",
+    "tests/unit/scripts/test_release_evidence.py",
     "tests/unit/scripts/test_windows_validation.py",
-    "scripts/windows_health.py",
     "scripts/validate_standards.py",
     "src/polysia/security/secret_scan.py",
     "src/polysia/developer/**",
@@ -310,13 +311,14 @@ def classify_event(
     paths: Iterable[str] = (),
     *,
     validation_scope: str = "auto",
+    run_windows: str = "false",
 ) -> ChangeMap:
     if validation_scope not in {"auto", "full"}:
         raise ValueError("invalid validation scope")
     if validation_scope == "full" or event == "schedule":
-        return ChangeMap.full()
-    if event == "workflow_dispatch":
-        return ChangeMap(
+        flags = ChangeMap.full()
+    elif event == "workflow_dispatch":
+        flags = ChangeMap(
             quality=False,
             python=False,
             package=False,
@@ -325,12 +327,20 @@ def classify_event(
             windows=True,
             comprehensive=False,
         )
-    if event not in {"pull_request", "push"}:
-        return ChangeMap.full()
-    return classify_paths(paths)
+    elif event not in {"pull_request", "push"}:
+        flags = ChangeMap.full()
+    else:
+        flags = classify_paths(paths)
+    return replace(flags, windows=windows_requested(event, run_windows))
 
 
-POLICY_VERSION = 1
+def windows_requested(event: str, value: str) -> bool:
+    if type(value) is not str or value not in {"true", "false"}:
+        raise ValueError("run_windows must be true or false")
+    return event == "workflow_dispatch" and value == "true"
+
+
+POLICY_VERSION = 2
 # Commands are data, never shell fragments. Applicability belongs only here.
 # Contexts denote authority; running pytest on Windows cannot certify Linux.
 CHECKS = (
@@ -434,6 +444,7 @@ def project_policy(
     base: str = "",
     head: str = "",
     validation_scope: str = "auto",
+    run_windows: str = "false",
     diagnostics: Iterable[str] = (),
 ) -> dict:
     actual = list(dict.fromkeys(paths))
@@ -450,9 +461,12 @@ def project_policy(
         "push" if event == "local" else event,
         actual,
         validation_scope=validation_scope,
+        run_windows=run_windows,
     )
     if problems:
         flags = ChangeMap.full()
+    # Consent is independent of breadth, including every conservative fallback.
+    flags = replace(flags, windows=windows_requested(event, run_windows))
     values = asdict(flags)
     return {
         "version": POLICY_VERSION,
@@ -462,6 +476,7 @@ def project_policy(
             "base": base,
             "head": head,
             "validation_scope": validation_scope,
+            "run_windows": run_windows,
         },
         "paths": actual,
         "diagnostics": problems,
@@ -476,7 +491,9 @@ def checks_for(flags: ChangeMap, paths: Iterable[str] = ()) -> list[dict]:
     checks = []
     for check_id, flag, context, command in CHECKS:
         required = flag == "always" or values[flag]
-        if flag in {"always", "quality"}:
+        if flag == "windows":
+            reason = "explicit manual opt-in; full suite" if required else "Windows not requested"
+        elif flag in {"always", "quality"}:
             reason = "baseline contract"
         elif required:
             examples = [path for path, selected in per_path if selected[flag]][:3]
@@ -512,6 +529,7 @@ def validate_projection(value: object) -> dict:
             "base",
             "head",
             "validation_scope",
+            "run_windows",
         }
         or not all(isinstance(v, str) for v in source.values())
     ):
@@ -550,6 +568,7 @@ def actual_diff(
     local: bool = False,
     event: str = "push",
     validation_scope: str = "auto",
+    run_windows: str = "false",
 ) -> dict:
     diagnostics: list[str] = []
     paths: list[str] = []
@@ -593,6 +612,7 @@ def actual_diff(
         base=resolved_base,
         head=resolved_head,
         validation_scope=validation_scope,
+        run_windows=run_windows,
         diagnostics=diagnostics,
     )
 
@@ -617,6 +637,8 @@ def verify_gate(policy: object, needs: object, expected: dict | None = None) -> 
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Classify CI work from changed paths.")
     parser.add_argument("--event", required=True)
+    parser.add_argument("--run-windows", choices=("true", "false"), default="false")
+    parser.add_argument("--receipt", type=Path)
     parser.add_argument(
         "--validation-scope",
         choices=("auto", "full"),
@@ -645,12 +667,14 @@ def main() -> int:
             local=arguments.local,
             event=arguments.event,
             validation_scope=arguments.validation_scope,
+            run_windows=arguments.run_windows,
         )
     else:
         projection = project_policy(
             sys.stdin.read().splitlines(),
             event=arguments.event,
             validation_scope=arguments.validation_scope,
+            run_windows=arguments.run_windows,
         )
     if arguments.verify_gate:
         if not arguments.repository:
@@ -658,6 +682,23 @@ def main() -> int:
         needs = json.loads(os.environ["NEEDS_JSON"])
         policy = json.loads(needs["changes"]["outputs"]["policy"])
         verify_gate(policy, needs, projection)
+        if arguments.receipt:
+            arguments.receipt.write_text(json.dumps({
+                "repository": os.environ["GITHUB_REPOSITORY"],
+                "run_id": int(os.environ["GITHUB_RUN_ID"]),
+                "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                "policy": policy,
+            }, sort_keys=True), encoding="utf-8")
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a", encoding="utf-8") as stream:
+                stream.write(
+                    f"Revision: `{policy['source']['head']}`\n\n"
+                    f"Event: {arguments.event}; scope: {arguments.validation_scope}; "
+                    f"Windows opt-in: {arguments.run_windows}; "
+                    f"Windows result: {needs['windows-compatibility']['result']} "
+                    f"({'full suite' if policy['flags']['windows'] else 'not requested'}).\n"
+                )
         print("All required CI jobs and policy contracts succeeded.")
         return 0
     values = projection["flags"]

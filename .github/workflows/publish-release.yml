@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ci_run_id:
-        description: Successful full CI push run on main containing release artifacts
+        description: Successful manual full CI on main with run_windows=true
         required: true
       tag:
         description: New immutable release tag
@@ -31,6 +31,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify run and retain tested artifacts
         shell: bash
         run: |
@@ -38,43 +39,23 @@ jobs:
           [[ "$GITHUB_REF" == refs/heads/main ]]
           [[ "$CI_RUN_ID" =~ ^[0-9]+$ ]]
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          gh run view "$CI_RUN_ID" --json conclusion,event,headBranch,headSha,workflowName,jobs > run.json
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          run = json.loads(Path('run.json').read_text())
-          assert run['conclusion'] == 'success'
-          assert run['event'] in ('push', 'workflow_dispatch') and run['headBranch'] == 'main'
-          assert run['workflowName'] == 'CI'
-          jobs = {job['name']: job['conclusion'] for job in run['jobs']}
-          for name in ('quality', 'container', 'Windows Compatibility', 'supply-chain', 'browser-acceptance', 'installation-acceptance', 'CI Gate'):
-              assert jobs.get(name) == 'success', (name, jobs.get(name))
-          PY
-          gh run download "$CI_RUN_ID" -n polysia-release-image -D release
-          gh run download "$CI_RUN_ID" -n polysia-wheel -D release
-          gh run download "$CI_RUN_ID" -n polysia-sbom -D release
+          python scripts/release_evidence.py
       - name: Verify archive and publish retained release
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, json
+          import json
           from pathlib import Path
-          run = json.loads(Path('run.json').read_text())
-          manifest = json.loads(Path('release/manifest.json').read_text())
-          assert manifest['commit'] == run['headSha']
-          assert manifest['archive_name'] == 'polysia-image.tar.gz'
-          assert hashlib.sha256(Path('release/platform_backup.py').read_bytes()).hexdigest() == manifest['backup_job_sha256']
-          assert hashlib.sha256(Path('release/platform_bootstrap.py').read_bytes()).hexdigest() == manifest['bootstrap_sha256']
-          assert hashlib.sha256(Path('release/platform_admin.py').read_bytes()).hexdigest() == manifest['admin_sha256']
-          assert hashlib.sha256(Path('release/os-packages.txt').read_bytes()).hexdigest() == manifest['os_packages_sha256']
-          with Path('release/polysia-image.tar.gz').open('rb') as stream:
-              assert hashlib.file_digest(stream, 'sha256').hexdigest() == manifest['archive_sha256']
+          from scripts.release_evidence import validate_archive
+          run = json.loads(Path('run.json').read_text(encoding='utf-8'))
+          validate_archive(Path('release'), run['head_sha'])
           Path('release-notes.md').write_text(
-              'Tested DATA_ONLY artifact from commit `' + run['headSha'] + '`.\n\n'
+              'Tested DATA_ONLY artifact from commit `' + run['head_sha'] + '`.\n\n'
               'Source, image and archive identities are in manifest.json. '
               'Commissioning and observational acceptance require separate receipts.\n'
           )
-          Path('commit.txt').write_text(run['headSha'])
+          Path('commit.txt').write_text(run['head_sha'])
           PY
+          python scripts/release_evidence.py --recheck
           gh release create "$RELEASE_TAG" release/* --target "$(cat commit.txt)" --title "$RELEASE_TAG" --notes-file release-notes.md --fail-on-no-commits

@@ -389,6 +389,7 @@ def test_scheduled_publication_recovers_and_reruns_without_duplicate_proposals(
 
     def command(*args, body=None):
         if args[:2] == ("workflow", "run"):
+            assert "run_windows=false" in args
             state["dispatches"] += 1
         elif args[3].endswith("/git/refs"):
             state["branch"] = body["ref"].removeprefix("refs/heads/")

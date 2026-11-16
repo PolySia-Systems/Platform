@@ -271,8 +271,8 @@ The cached file is disposable `artifacts/dependency-scan.json`, never authority.
 CI supports Python 3.14 only and keeps DATA_ONLY safety overrides. Pull requests
 always run diff, local path/link, Standards, and tracked-file secret checks.
 Executable Python changes run complete quality validation on canonical Linux,
-including deterministic lock verification; full Windows compatibility runs
-weekly, manually, and for verified Windows-sensitive changes. The container job
+including deterministic lock verification. Windows is manual-only and OFF by
+default, including weekly CI and dependency-driven dispatches. The container job
 runs for Docker, deployment, runtime/development-lock, entrypoint, health, backup,
 state-path, or related executable configuration changes. The supply-chain job
 performs a strict OSV audit and publishes a CycloneDX SBOM on canonical Linux
@@ -288,7 +288,7 @@ run unrelated jobs.
 
 The [shared validation policy](../03-requirements/developer-context-packet.md#validation-policy-and-local-preflight)
 owns applicability for native CI, scoped/full local checking and disposable context
-packets. Weekly CI is comprehensive. Workflow, classifier, Gate and trust-control
+packets. Weekly CI is comprehensive for non-Windows checks. Workflow, classifier, Gate and trust-control
 changes select comprehensive validation. Known control records are validated
 against their schema, immutable pin, applicability and consumer evidence without
 requiring the full development environment. The complete historical P2 diff also
@@ -302,38 +302,39 @@ product matrix merely through its directory. It retains document/link, full
 Standards, secret, policy-contract and CI Gate checks. Actual instruction/control
 inputs (including AGENTS/overrides), executable/non-Markdown document assets,
 unknown inputs and mixed risky changes retain their required coverage. No skip
-label or Windows-off switch can cancel a mandatory check. Gate verifies the
+label can cancel a mandatory check. Windows requires explicit manual opt-in. Gate verifies the
 explicit skipped outcome for unselected jobs as well as success for required jobs.
 A lightweight documentation run produces no replacement release image; later
 release publication still requires full exact-source validation and artifacts.
 
-### Full Windows health observation
+### Manual Windows validation and formal releases
 
-`windows-health.yml` observes trusted-main CI daily at 06:43 UTC. It runs only the
-stdlib `scripts/windows_health.py` with the existing `contents:read`, `actions:read`
-and `issues:write` permissions. It installs no product, dispatches no tests and
-executes no PR code. Weekly full CI remains the producer of periodic evidence.
-GitHub schedule configuration does not prove future clock execution or independent
-monitoring; see [GitHub's schedule semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+In Actions, select **CI → Run workflow** on the intended branch, then enable
+`run_windows` to run the full native Windows suite. Leave it unchecked for normal
+validation. Monthly use is optional and human initiated; no periodic Windows
+schedule, freshness obligation or overdue Issue remains. Other risk-based checks
+continue normally. Delayed Windows-specific defect discovery is an accepted cost.
 
-Qualifying evidence must come from CI push/schedule/manual runs on this repository's
-main, with exact source SHA/attempt, Windows runner, complete successful install,
-compile, full Pytest, integrity, lock, build and CLI steps. The observer records
-workflow/Windows-job and dependency/metadata input hashes; timing retention is
-required when present in that source's contract. Failed/partial runs and nine-day
-overdue execution are actionable. Unrelated lightweight green runs and in-progress
-attempts cannot clear a failure. Only later complete qualifying Windows evidence
-can recover it.
+For a formal release, deliberately run full CI on main:
 
-Observation is bounded to 100 main CI run summaries, 30 job queries and 12 meaningful
-source candidates, stopping at a verified success boundary. Insufficient history,
-unsupported source contracts, API denials and notification errors remain visible.
-One marker-identified health Issue is created/reopened/updated only on meaningful
-state changes and closed on recovery. While healthy it stays quiet. Inspect that
-Issue and the observer workflow on failure, repair the native CI cause, and let a
-qualifying full Windows run establish recovery. Do not expand permissions or copy
-PR statuses. Rollback is revert of the validation-efficiency merge; disable only
-this observer if it is the failing route, retaining weekly CI and main protections.
+```bash
+gh workflow run ci.yml --ref main -f validation_scope=full -f run_windows=true
+```
+
+Pass that successful run ID to `publish-release.yml`. Publication does not run
+tests. It requires the trusted CI workflow, manual full Windows opt-in, successful
+required jobs from the same SHA/attempt, and the Gate's validated policy receipt.
+Attempt-qualified artifact names prevent mixing reruns. The selected SHA must be
+in main's history; main may advance after the tested run. The publisher rejects
+expired, missing or inconsistent evidence and retains manifest/archive identity
+checks. A run under a different policy implementation must be revalidated; stale
+policy receipts are not silently accepted. Automatic green CI and a Windows-only
+run cannot qualify. No release, deployment or financial authority is implied by CI.
+
+The obsolete Windows health observer and nine-day alert obligation are removed.
+Use normal Actions failure diagnostics when manually requested tests fail.
+Reverting the policy change restores automatic Windows execution and must be an
+explicit decision. Main's CI Gate protection remains in force.
 
 ## Rollback
 

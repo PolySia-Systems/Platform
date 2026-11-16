@@ -23,9 +23,42 @@ from scripts.classify_ci_changes import (  # noqa: E402
 
 
 class PolicyContracts(unittest.TestCase):
+    def test_manual_windows_consent_and_gate(self):
+        for event in (
+            "pull_request", "push", "schedule", "workflow_run", "local", "workflow_dispatch",
+        ):
+            for paths in (("README.md",), ("frontend/src/App.tsx",),
+                          ("src/polysia/storage/atomic_files.py",), ("new/unknown.xyz",), ()):
+                for scope in ("auto", "full"):
+                    for opt_in in ("false", "true"):
+                        policy = project_policy(paths, event=event, validation_scope=scope,
+                                                run_windows=opt_in)
+                        requested = event == "workflow_dispatch" and opt_in == "true"
+                        self.assertEqual(policy["flags"]["windows"], requested)
+                        validate_projection(policy)
+                        needs = {"changes": {"result": "success", "outputs": {
+                            key: str(value).lower() for key, value in policy["flags"].items()
+                        }}}
+                        for job, flag in JOB_FLAGS.items():
+                            needs[job] = {
+                                "result": "success" if policy["flags"][flag] else "skipped"
+                            }
+                        verify_gate(policy, needs, policy)
+                        for result in (
+                            None, "failure", "cancelled",
+                            "skipped" if requested else "success",
+                        ):
+                            broken = copy.deepcopy(needs)
+                            broken["windows-compatibility"]["result"] = result
+                            with self.assertRaises(ValueError):
+                                verify_gate(policy, broken, policy)
+        for bad in ("", "FALSE", "no", True, False, None, 1):
+            with self.assertRaises(ValueError):
+                project_policy(["README.md"], event="workflow_dispatch", run_windows=bad)
+
     def test_dependency_free_runner_python_compatibility(self):
         root = Path(__file__).resolve().parents[1]
-        for path in ("classify_ci_changes.py", "ci_policy_contract.py", "windows_health.py"):
+        for path in ("classify_ci_changes.py", "ci_policy_contract.py", "release_evidence.py"):
             ast.parse((root / "scripts" / path).read_text(encoding="utf-8"),
                       filename=path, feature_version=(3, 12))
 
@@ -78,7 +111,8 @@ class PolicyContracts(unittest.TestCase):
             with self.subTest(paths=paths):
                 policy = project_policy(paths)
                 selected = {c["id"] for c in policy["checks"] if c["required"]}
-                self.assertTrue(required <= selected, required - selected)
+                self.assertTrue((required - {"windows"}) <= selected, required - selected)
+                self.assertNotIn("windows", selected)
                 self.assertFalse(omitted & selected, omitted & selected)
                 validate_projection(policy)
                 if policy["flags"]["package"]:
@@ -184,7 +218,7 @@ class PolicyContracts(unittest.TestCase):
             with self.subTest(paths=paths):
                 self.assertTrue(project_policy(paths)["flags"]["comprehensive"])
         for event in ("schedule", "unexpected"):
-            self.assertTrue(project_policy(["README.md"], event=event)["flags"]["windows"])
+            self.assertFalse(project_policy(["README.md"], event=event)["flags"]["windows"])
         policy = project_policy(["README.md"])
         for key, bad in (("version", 999), ("flags", {}), ("checks", []), ("source", {})):
             broken = copy.deepcopy(policy)
