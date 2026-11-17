@@ -19,7 +19,7 @@ from polysia.monitoring.console_contract import (
     LeaderboardWallet,
     Validity,
 )
-from polysia.storage.leaderboard import LeaderboardStore, digest, latest_attempt
+from polysia.storage.leaderboard import LeaderboardStore, digest, latest_attempt, next_refresh_at
 
 
 def page(
@@ -93,17 +93,14 @@ def page(
             "refresh_in_progress": running is not None,
             "generation": current_generation,
         }
+        retry = next_refresh_at(db, board, attempt)
+        if retry is not None:
+            patch["next_retry_at"] = retry.isoformat()
         if attempt is not None:
-            interval = (
-                timedelta(hours=6) if attempt["outcome"] == "complete" else timedelta(minutes=15)
-            )
             patch.update(
                 attempted_at=attempt["fetched_at"],
                 outcome=attempt["outcome"],
                 reason=attempt["reason"],
-                next_retry_at=(
-                    datetime.fromisoformat(attempt["fetched_at"]) + interval
-                ).isoformat(),
             )
         state: Validity = "UNAVAILABLE"
         snapshot_id = -1

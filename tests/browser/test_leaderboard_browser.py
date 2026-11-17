@@ -75,6 +75,12 @@ def test_leaderboard_journey(console_fixture, tmp_path, width):  # noqa: F811
         output.mkdir(parents=True, exist_ok=True)
         if width in {360, 1280}:
             page.screenshot(path=str(output / f"leaderboard-{width}-light.png"))
+        if width == 360:
+            toggle = page.get_by_role("button", name="Search and filters", exact=False)
+            expect(toggle).to_have_attribute("aria-expanded", "false")
+            expect(page.get_by_label("Search wallet bank")).to_be_hidden()
+            toggle.click()
+            expect(toggle).to_have_attribute("aria-expanded", "true")
         wallet = table.get_by_role("button", name="Wallet details for Trader 02", exact=True)
         wallet.click()
         dialog = page.get_by_role("dialog", name="Wallet detail")
@@ -126,4 +132,16 @@ def test_leaderboard_journey(console_fixture, tmp_path, width):  # noqa: F811
                 "async () => (await axe.run({ runOnly: ['wcag2a', 'wcag2aa'] })).violations"
             )
             assert audit == []
+            route = "**/api/console/v1/leaderboard?*"
+            page.route(route, lambda request: request.fulfill(json={"incompatible": True}))
+            page.get_by_role("button", name="Reload data").click()
+            mismatch = page.get_by_text("Leaderboard data is incompatible", exact=False)
+            expect(mismatch).to_be_visible()
+            expect(table).to_have_count(0)
+            page.unroute(route)
+            page.get_by_role("button", name="Reload data").click()
+            expect(table).to_be_visible()
+            page.route(route, lambda request: request.fulfill(status=401))
+            page.get_by_role("button", name="Reload data").click()
+            expect(page.get_by_role("region", name="Polymarket leaderboard")).to_have_count(0)
         browser.close()

@@ -19,15 +19,24 @@ class Board:
     period: Period
     ranking: Ranking
     category: str = "overall"
+    discovery_only: bool = False
 
     def __post_init__(self) -> None:
         if self.period not in PERIODS or self.ranking not in RANKINGS:
             raise ValueError("unsupported_board")
         if self.category not in CATEGORIES:
             raise ValueError("unsupported_category")
+        if self.discovery_only and (
+            self.category != "overall"
+            or self.ranking != "PNL"
+            or self.period not in ("month", "all")
+        ):
+            raise ValueError("unsupported_discovery_scope")
 
     @property
     def depth(self) -> int:
+        if self.discovery_only:
+            return 3000
         if self.category == "overall" and self.ranking == "PNL" and self.period in ("month", "all"):
             return 1000
         return 100
@@ -57,6 +66,7 @@ class Observation:
     has_more: bool | None
     request_count: int
     byte_count: int
+    retry_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

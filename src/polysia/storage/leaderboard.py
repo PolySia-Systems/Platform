@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS leaderboard_lease (
     token TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS leaderboard_retry (
+    scope TEXT PRIMARY KEY,
+    retry_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS leaderboard_attempts (
     id INTEGER PRIMARY KEY,
     board TEXT NOT NULL,
@@ -130,6 +134,10 @@ class LeaderboardStore:
             for statement in _SCHEMA.split(";"):
                 if statement.strip():
                     db.execute(statement)
+            if "compared_at" not in {
+                row["name"] for row in db.execute("PRAGMA table_info(leaderboard_references)")
+            }:
+                db.execute("ALTER TABLE leaderboard_references ADD COLUMN compared_at TEXT")
 
     def acquire(self, now: datetime) -> str | None:
         token = uuid4().hex
@@ -156,13 +164,20 @@ class LeaderboardStore:
 
     def should_refresh(self, board: Board, now: datetime, *, force: bool = False) -> bool:
         with self.read() as db:
-            last = latest_attempt(db, board)
-        if last is None:
-            return True
-        interval = timedelta(minutes=15)
-        if last["outcome"] == "complete" and not force:
-            interval = timedelta(hours=6)
-        return now - datetime.fromisoformat(last["fetched_at"]) >= interval
+            deadline = next_refresh_at(db, board, latest_attempt(db, board), force=force)
+            return deadline is None or now >= deadline
+
+    def defer_provider(self, token: str, until: datetime) -> None:
+        with self._write() as db:
+            self._require_lease(db, token)
+            _defer(db, "provider", until)
+
+    def provider_retry_at(self) -> datetime | None:
+        with self.read() as db:
+            row = db.execute(
+                "SELECT retry_at FROM leaderboard_retry WHERE scope='provider'"
+            ).fetchone()
+            return datetime.fromisoformat(row[0]) if row else None
 
     def publish(self, item: Observation, token: str) -> None:
         if item.outcome == "complete" and (
@@ -176,6 +191,8 @@ class LeaderboardStore:
         mapped = [(r.wallet, r.name, r.rank, str(r.pnl), str(r.volume)) for r in item.rows]
         with self._write() as db:
             self._require_lease(db, token)
+            if item.retry_at is not None:
+                _defer(db, source, item.retry_at)
             record_id = db.execute(
                 """INSERT INTO leaderboard_attempts
                 (board, started_at, fetched_at, outcome, reason, continuation, row_count,
@@ -242,13 +259,20 @@ class LeaderboardStore:
     def import_reference(self, capture: ReferenceCapture, *, now: datetime) -> tuple[int, bool]:
         # Lock the bank generation only for this short, local comparison.
         with self._write() as db:
-            bank = {str(row[0]) for row in db.execute("SELECT wallet FROM leaderboard_bank")}
+            cutoff = capture.captured_at.astimezone(UTC).isoformat()
+            bank = {
+                str(row[0])
+                for row in db.execute(
+                    "SELECT wallet FROM leaderboard_bank WHERE first_seen <= ?", (cutoff,)
+                )
+            }
             reference = sorted(set(capture.wallets))
             bank_hash = digest(sorted(bank))
             capture_hash = digest(
                 [
+                    "membership-as-of-capture-v2",
                     capture.source,
-                    capture.captured_at.isoformat(),
+                    cutoff,
                     capture.scope,
                     capture.method,
                     capture.complete,
@@ -259,20 +283,22 @@ class LeaderboardStore:
             result = db.execute(
                 """INSERT INTO leaderboard_references
                 (source, captured_at, scope, method, complete, bank_frozen_at, bank_count,
-                 bank_digest, overlap, denominator, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 bank_digest, overlap, denominator, digest, compared_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(digest) DO NOTHING""",
                 (
                     capture.source,
-                    capture.captured_at.isoformat(),
+                    cutoff,
                     capture.scope,
                     capture.method,
                     capture.complete,
-                    now.isoformat(),
+                    cutoff,
                     len(bank),
                     bank_hash,
                     len(bank.intersection(reference)),
                     len(reference),
                     capture_hash,
+                    now.astimezone(UTC).isoformat(),
                 ),
             )
             if result.rowcount:
@@ -306,6 +332,34 @@ class LeaderboardStore:
                 )""",
                 ((now - timedelta(days=365)).isoformat(), (now - timedelta(days=30)).isoformat()),
             ).rowcount
+
+
+def _defer(db: sqlite3.Connection, scope: str, until: datetime) -> None:
+    db.execute(
+        """INSERT INTO leaderboard_retry VALUES (?, ?) ON CONFLICT(scope) DO UPDATE
+        SET retry_at=max(leaderboard_retry.retry_at, excluded.retry_at)""",
+        (scope, until.astimezone(UTC).isoformat()),
+    )
+
+
+def next_refresh_at(
+    db: sqlite3.Connection, board: Board, attempt: sqlite3.Row | None, *, force: bool = False
+) -> datetime | None:
+    deadlines = []
+    if attempt is not None:
+        interval = timedelta(minutes=15)
+        if attempt["outcome"] == "complete" and not force:
+            interval = timedelta(hours=24 if board.discovery_only else 6)
+        deadlines.append(datetime.fromisoformat(attempt["fetched_at"]) + interval)
+    # A read-only Console may open a retained database before the writer upgrades it.
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='leaderboard_retry'").fetchone():
+        hint = db.execute(
+            "SELECT max(retry_at) FROM leaderboard_retry WHERE scope IN ('provider', ?)",
+            (board.key,),
+        ).fetchone()[0]
+        if hint is not None:
+            deadlines.append(datetime.fromisoformat(hint))
+    return max(deadlines, default=None)
 
 
 def latest_attempt(

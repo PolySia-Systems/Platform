@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 
@@ -25,13 +26,12 @@ Database = Annotated[Path, typer.Option("--database", dir_okay=False)]
 
 
 @app.command("refresh")
-def refresh(database: Database, force: bool = False) -> None:
+def refresh(database: Database, force: bool = False, discovery_only: bool = False) -> None:
     """Refresh due public boards and bounded wallet details."""
     store = LeaderboardStore(database)
     now = datetime.now(UTC)
     token = None
     results: dict[str, str] = {}
-    reads = PublicReads()
     enriched = 0
     try:
         store.initialize()
@@ -39,16 +39,27 @@ def refresh(database: Database, force: bool = False) -> None:
         if token is None:
             typer.echo('{"status":"refresh_in_progress"}')
             return
-        boards = [
-            Board("polymarket", period, ranking)
-            for period in ("month", "all", "week", "day")
-            for ranking in RANKINGS
-        ]
-        boards.extend(
-            Board("polymarket", "month", ranking, category)
-            for category in CATEGORIES[1:]
-            for ranking in RANKINGS
-        )
+        until = store.provider_retry_at()
+        if until is not None and until > now:
+            typer.echo(json.dumps({"status": "provider_deferred", "retry_at": until.isoformat()}))
+            return
+        reads = PublicReads(on_rate_limit=partial(store.defer_provider, token))
+        if discovery_only:
+            boards = [
+                Board("polymarket", period, "PNL", discovery_only=True)
+                for period in ("month", "all")
+            ]
+        else:
+            boards = [
+                Board("polymarket", period, ranking)
+                for period in ("month", "all", "week", "day")
+                for ranking in RANKINGS
+            ]
+            boards.extend(
+                Board("polymarket", "month", ranking, category)
+                for category in CATEGORIES[1:]
+                for ranking in RANKINGS
+            )
         shortlist: set[str] = set()
         for board in boards:
             if not store.should_refresh(board, now, force=force):
@@ -58,12 +69,14 @@ def refresh(database: Database, force: bool = False) -> None:
             results[board.key] = item.outcome if item.reason is None else item.reason
             if item.outcome == "complete" and board == Board("polymarket", "month", "PNL"):
                 shortlist.update(row.wallet for row in item.rows[:12])
-        if results:
+        if results and not discovery_only and reads.deferred_until is None:
             computed = source_health(reads)
             store.health(datetime.now(UTC), computed, token)
         through = int(now.timestamp())
         since = int((now - timedelta(days=7)).timestamp())
         for wallet in sorted(shortlist):
+            if reads.deferred_until is not None:
+                break
             activity = wallet_activity(wallet, reads, since, through)
             if activity.complete or activity.trade_count:
                 store.activities((activity,), token)
@@ -87,6 +100,9 @@ def refresh(database: Database, force: bool = False) -> None:
                 "requests": reads.requests,
                 "received_bytes": reads.bytes,
                 "enriched_wallets": enriched,
+                "provider_retry_at": reads.deferred_until.isoformat()
+                if reads.deferred_until
+                else None,
             }
         )
     )

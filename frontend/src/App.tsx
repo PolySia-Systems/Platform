@@ -268,9 +268,9 @@ export default function App() {
         {!actions.some(a => a.protective) && <span>{m.unavailable}</span>}
       </div>
       <main id="main" tabIndex={-1} className={s.main} aria-busy={refreshBusy}>
-        <div className={s.pageHeading}><div><p className={s.eyebrow}>{m.eyebrow}</p>
+        <div className={s.pageHeading}><div>{tab !== 'leaderboard' && <p className={s.eyebrow}>{m.eyebrow}</p>}
           <h1>{tab === 'overview' ? m.heading : tab === 'leaderboard' ? 'Leaderboard' : tab === 'investigate' ? m.investigateTitle : tab === 'operate' ? m.operateTitle : tab === 'evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
-          <p>{tab === 'overview' ? m.subtitle : tab === 'leaderboard' ? 'Explore Polymarket performance, wallet history and reference coverage.' : tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p></div>
+          {tab !== 'leaderboard' && <p>{tab === 'overview' ? m.subtitle : tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p>}</div>
           {tab !== 'leaderboard' && <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>}
         </div>
         {(authFailure || (failure && tab !== 'leaderboard')) && <div className={s.error} role="alert">{authFailure || failure}

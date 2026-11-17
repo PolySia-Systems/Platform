@@ -5,9 +5,15 @@ import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from email.message import Message
+from io import BytesIO
+from urllib.error import HTTPError
 
 import pytest
+from typer.testing import CliRunner
 
+from polysia.adapters.polymarket.leaderboard import PublicReads
+from polysia.cli_commands.leaderboard import app
 from polysia.domain.leaderboard import Board, Observation, ReferenceCapture, Standing
 from polysia.monitoring.console import ConsoleApplication
 from polysia.monitoring.leaderboard import benchmarks, comparison, page, wallet_detail
@@ -99,12 +105,112 @@ def test_benchmark_is_frozen_and_does_not_write_bank(storage):
     assert created
     assert store.import_reference(imported, now=now) == (identifier, False)
     assert page(store.path, Board("polymarket", "month", "PNL"), now, "", 0, None).bank_count == 1
-    store.publish(observation(now, original, other), token)
+    later = now + timedelta(days=1)
+    store.publish(observation(later, original, other), token)
     old = benchmarks(store.path, now).items[1]
     assert (old.shared, old.denominator, old.bank_count) == (1, 2, 1)
     assert [row.shared for row in comparison(store.path, identifier, 0).items] == [False, True]
-    assert store.import_reference(imported, now=now)[1]
-    assert benchmarks(store.path, now).items[1].shared == 2
+    assert store.import_reference(imported, now=later) == (identifier, False)
+    assert benchmarks(store.path, later).items[1].shared == 1
+    assert store.import_reference(replace(imported, captured_at=later), now=later)[1]
+    assert benchmarks(store.path, later).items[1].shared == 2
+    empty = replace(imported, source="PolyIntel", captured_at=now - timedelta(seconds=1))
+    store.import_reference(empty, now=later)
+    assert benchmarks(store.path, later).items[2].bank_count == 0
+
+
+def test_provider_and_board_retry_deadlines_survive_restart_and_force(storage):
+    store, now, token = storage
+    board = Board("polymarket", "month", "PNL")
+    other = Board("polymarket", "week", "PNL")
+    until = now + timedelta(hours=2)
+    store.publish(observation(now - timedelta(days=1), standing(1, 1)), token)
+    store.publish(
+        replace(
+            observation(now), outcome="failed", reason="http_503", has_more=None, retry_at=until
+        ),
+        token,
+    )
+    reopened = LeaderboardStore(store.path)
+    assert not reopened.should_refresh(board, now + timedelta(hours=1), force=True)
+    assert reopened.should_refresh(other, now)
+    store.defer_provider(token, until + timedelta(hours=1))
+    store.defer_provider(token, until)
+    store.release(token)
+    for scope in (board, other):
+        assert not reopened.should_refresh(scope, until, force=True)
+        assert reopened.should_refresh(scope, until + timedelta(hours=1))
+    retained = page(store.path, board, now, "", 0, None)
+    assert retained.next_retry_at == (until + timedelta(hours=1)).isoformat()
+    assert retained.items[0].wallet == standing(1, 1).wallet
+
+
+def test_discovery_depth_keeps_visible_board_and_increases_searchable_bank(storage):
+    store, now, token = storage
+    board = Board("polymarket", "month", "PNL")
+    deeper = replace(board, discovery_only=True)
+    store.publish(observation(now, standing(1, 1)), token)
+    original = page(store.path, board, now, "", 0, None)
+    store.publish(observation(now, standing(1, 1), standing(2, 1002), board=deeper), token)
+    kept = page(store.path, board, now, "", 0, original.generation)
+    assert (board.depth, deeper.depth, kept.board_count, kept.bank_count) == (1000, 3000, 1, 2)
+    assert page(store.path, board, now, "Trader 2", 0, None).items[0].rank is None
+    assert store.should_refresh(board, now + timedelta(hours=6))
+    assert not store.should_refresh(deeper, now + timedelta(hours=6))
+    assert store.should_refresh(deeper, now + timedelta(days=1))
+
+
+def test_refresh_cli_shares_provider_cooldown_across_discovery_and_visible_boards(
+    tmp_path, monkeypatch
+):
+    def limited(request, **_):
+        headers = Message()
+        headers["Retry-After"] = "3600"
+        raise HTTPError(request.full_url, 429, "limited", headers, BytesIO())
+
+    def transport(**options):
+        reads = PublicReads(**options)
+        monkeypatch.setattr(reads, "_open", limited)
+        return reads
+
+    monkeypatch.setattr("polysia.cli_commands.leaderboard.PublicReads", transport)
+    runner = CliRunner()
+    args = ["refresh", "--database", str(tmp_path / "bank.sqlite3")]
+    first = runner.invoke(app, [*args, "--discovery-only"])
+    assert first.exit_code == 1
+    assert json.loads(first.stdout)["requests"] == 1
+    retry_at = json.loads(first.stdout)["provider_retry_at"]
+    second = runner.invoke(app, [*args, "--force"])
+    assert second.exit_code == 0
+    assert json.loads(second.stdout) == {"status": "provider_deferred", "retry_at": retry_at}
+
+
+def test_legacy_database_is_readable_before_and_after_upgrade(storage):
+    store, now, token = storage
+    wallet = standing(1, 1)
+    store.publish(observation(now, wallet), token)
+    board = Board("polymarket", "month", "PNL")
+    capture = ReferenceCapture("Rivo", now, "Visible", "Public table", (wallet.wallet,), True)
+    identifier, _ = store.import_reference(capture, now=now)
+    with store._write() as db:
+        db.execute("DROP TABLE leaderboard_retry")
+        db.execute("ALTER TABLE leaderboard_references DROP COLUMN compared_at")
+        db.execute(
+            "UPDATE leaderboard_references SET digest='legacy-digest' WHERE id=?", (identifier,)
+        )
+    before = page(store.path, board, now, "", 0, None)
+    assert before.board_count == 1 and benchmarks(store.path, now).items[1].shared == 1
+    store.initialize()
+    store.initialize()
+    assert page(store.path, board, now, "", 0, None) == before
+    assert store.import_reference(capture, now=now)[1]
+    with store.read() as db:
+        assert [
+            tuple(r)
+            for r in db.execute(
+                "SELECT digest,compared_at FROM leaderboard_references WHERE id=?", (identifier,)
+            )
+        ] == [("legacy-digest", None)]
 
 
 def test_bank_search_pagination_is_bound_to_the_independent_generation(storage):

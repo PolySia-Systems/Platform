@@ -28,11 +28,26 @@ to the same CLI.
 Schedule that command through the existing operator job runner at 15-minute
 intervals if prompt retry is required, or at the normal six-hour cadence.
 The command skips boards that succeeded within six hours. Failed or partial
-boards become eligible after 15 minutes. A first manual run may use
+boards become eligible after at least 15 minutes. A provider rate limit applies
+to every collector using this evidence file, including forced runs and restarts.
+The next eligible time respects a longer provider retry deadline. A service
+error with a retry deadline defers its affected board. A manual run may use
 `--force` to request an early read after the 15-minute minimum.
 One SQLite lease serializes collection. It expires after 12 minutes so an
 interrupted worker can recover. Use the same database path for every invocation.
 Schedule configuration and host activation are release operations.
+
+For broader wallet discovery, schedule a separate daily invocation off the
+normal refresh slot. It collects up to 3,000 monthly and 3,000 all-time P&L
+rows from Polymarket, typically 60 public reads. It shares the database lease
+and provider cooldown, skips recent successful discovery, and leaves the visible
+board depths, ranks and last successful captures intact. Discoveries become
+searchable after each complete scope. Run this command after the first ordinary
+collection. The default board refresh has its own six-hour cadence.
+
+```text
+polysia leaderboard refresh --discovery-only --database ./leaderboard.sqlite3
+```
 
 The Console reloads the current retained view automatically about once a minute
 while visible on the first page. **Reload data** reads the latest retained
@@ -89,8 +104,13 @@ Accepted sources are `PolyCop`, `Rivo` and `PolyIntel`. Use an offset-aware
 capture time, the exact filters and observed table bounds, and at most 5,000
 unique hexadecimal addresses. Set `complete` only when the declared scope
 was captured completely. Run the official collection before importing
-references. An import freezes membership, count and digest of the independent
-bank in its write transaction and produces a reproducible comparison. It never
+references. A new comparison freezes the independent bank known by the reference
+capture time (`first_seen <= captured_at`). Later discoveries cannot increase
+historical coverage. The database records the comparison time separately in
+`compared_at`. Earlier comparisons keep their original import-time bank and
+digest, with a null `compared_at`. Their bank timestamp remains visible.
+Reimporting a legacy capture creates an as-of-capture comparison and retains
+the original record. An import never
 admits reference members into discovery. An empty denominator or absent
 official bank has no coverage percentage. Differences can reflect rank
 criteria, scope, timing or missing discovery evidence. The Console displays

@@ -1,7 +1,9 @@
 """Frozen public envelopes and transport fault behavior."""
 
 from collections import deque
+from datetime import UTC, datetime, timedelta
 from email.message import Message
+from email.utils import format_datetime
 from io import BytesIO
 from urllib.error import HTTPError, URLError
 
@@ -104,10 +106,15 @@ def test_transport_retries_and_caps_attempts(monkeypatch, failure):
     assert len(pauses) == 2 and pauses[0] < pauses[1]
 
 
-def test_invalid_schema_and_rate_hint_do_not_loop(monkeypatch):
-    reads = PublicReads(sleep=lambda _: pytest.fail("Must defer this long wait"))
+@pytest.mark.parametrize("http_date", [False, True])
+def test_invalid_schema_and_rate_hint_do_not_loop(monkeypatch, http_date):
+    deadlines = []
+    reads = PublicReads(
+        sleep=lambda _: pytest.fail("Must defer this long wait"), on_rate_limit=deadlines.append
+    )
+    expected = datetime.now(UTC).replace(microsecond=0) + timedelta(hours=1)
     headers = Message()
-    headers["Retry-After"] = "180"
+    headers["Retry-After"] = format_datetime(expected, usegmt=True) if http_date else "3600"
 
     def limited(request, **_):
         raise HTTPError(request.full_url, 429, "limited", headers, BytesIO())
@@ -118,6 +125,7 @@ def test_invalid_schema_and_rate_hint_do_not_loop(monkeypatch):
     with pytest.raises(ReadFailure, match="http_429"):
         reads.get("/v2/status", {})
     assert reads.requests == 1
+    assert len(deadlines) == 1 and abs((deadlines[0] - expected).total_seconds()) < 2
     supply(monkeypatch, reads, {"error": "invalid"})
     item = board_observation(Board("polymarket", "month", "PNL"), reads)
     assert item.outcome == "failed" and item.reason == "invalid_data_envelope"

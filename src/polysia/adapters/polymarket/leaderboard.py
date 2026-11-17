@@ -7,7 +7,7 @@ import random
 import re
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException
@@ -25,6 +25,10 @@ _ALLOWED = frozenset({"/v2/leaderboard", "/v2/status", "/v2/trades"})
 
 class ReadFailure(ValueError):
     """A sanitized reason suitable for the retained attempt record."""
+
+    def __init__(self, reason: str, retry_at: datetime | None = None) -> None:
+        super().__init__(reason)
+        self.retry_at = retry_at
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -44,6 +48,7 @@ class PublicReads:
         max_bytes: int = 50 * 1024 * 1024,
         seconds: float = 600,
         sleep: Callable[[float], None] = time.sleep,
+        on_rate_limit: Callable[[datetime], None] | None = None,
     ) -> None:
         self.requests = 0
         self.bytes = 0
@@ -52,13 +57,14 @@ class PublicReads:
         self._deadline = time.monotonic() + seconds
         self._open = build_opener(_NoRedirect()).open
         self._sleep = sleep
-        self._rate_limited = False
+        self._on_rate_limit = on_rate_limit
+        self.deferred_until: datetime | None = None
 
     def get(self, path: str, params: dict[str, str | int]) -> object:
         if path not in _ALLOWED:
             raise ReadFailure("endpoint_not_allowed")
-        if self._rate_limited:
-            raise ReadFailure("http_429")
+        if self.deferred_until is not None:
+            raise ReadFailure("http_429", self.deferred_until)
         url = DATA_API_BASE_URL + path
         if params:
             url += "?" + urlencode(params)
@@ -72,6 +78,7 @@ class PublicReads:
                 raise ReadFailure("budget_exhausted")
             self.requests += 1
             wait = 2**attempt + random.uniform(0, 0.5)
+            retry_at = None
             try:
                 with self._open(request, timeout=min(20, elapsed_left)) as response:
                     payload = response.read(byte_limit + 1)
@@ -91,25 +98,43 @@ class PublicReads:
                 if error.code != 429 and not 500 <= error.code <= 599:
                     raise ReadFailure(reason) from None
                 if retry_after:
-                    wait = max(wait, _retry_after_seconds(retry_after))
+                    observed_at = datetime.now(UTC)
+                    retry_at = _retry_deadline(retry_after, observed_at)
+                    if retry_at is not None:
+                        wait = max(wait, (retry_at - observed_at).total_seconds())
             except OSError, HTTPException:
                 reason = "network_unavailable"
-            if attempt == 2 or wait > 20 or time.monotonic() + wait >= self._deadline:
+            if (
+                attempt == 2
+                or wait > 20
+                or time.monotonic() + wait >= self._deadline
+                or self.requests >= self._max_requests
+            ):
                 if reason == "http_429":
-                    self._rate_limited = True
-                raise ReadFailure(reason)
+                    minimum = datetime.now(UTC) + timedelta(minutes=15)
+                    self.deferred_until = max(minimum, retry_at or minimum)
+                    if self._on_rate_limit is not None:
+                        self._on_rate_limit(self.deferred_until)
+                raise ReadFailure(reason, retry_at)
             self._sleep(wait)
         raise AssertionError("retry loop did not return or raise")
 
 
-def _retry_after_seconds(value: str) -> float:
+def _retry_deadline(value: str, now: datetime) -> datetime | None:
     try:
-        return float(int(value))
-    except ValueError, OverflowError:
-        try:
-            return (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
-        except ValueError, TypeError, OverflowError:
-            return 0
+        if value.isascii() and value.isdigit():
+            # Saturate out-of-range delays without retrying earlier than requested.
+            maximum = datetime.max.replace(tzinfo=UTC)
+            if len(value.lstrip("0")) > 12:
+                return maximum
+            seconds = int(value.lstrip("0") or "0")
+            if seconds >= (maximum - now).total_seconds():
+                return maximum
+            return now + timedelta(seconds=seconds)
+        stamp = parsedate_to_datetime(value)
+        return stamp.astimezone(UTC) if stamp.tzinfo is not None else None
+    except ValueError, TypeError, OverflowError:
+        return None
 
 
 def page_payload(payload: object) -> tuple[list[object], str | None]:
@@ -208,6 +233,7 @@ def board_observation(
             None,
             reads.requests - requests,
             reads.bytes - byte_count,
+            error.retry_at,
         )
     ordered = tuple(sorted(rows, key=lambda row: (row.rank, row.wallet))[: board.depth])
     return Observation(

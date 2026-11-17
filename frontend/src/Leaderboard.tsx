@@ -15,6 +15,8 @@ const stamp = (value: string) => new Intl.DateTimeFormat('en-GB', {
   timeZone: 'UTC',
 }).format(new Date(value)) + ' UTC';
 const shortWallet = (wallet: string) => wallet.slice(0, 8) + '…' + wallet.slice(-5);
+const accessDenied = (reason: unknown) => reason instanceof ApiError && [401, 403].includes(reason.status);
+const incompatible = (reason: unknown) => reason instanceof Error && reason.message === 'incompatible_contract';
 const explanation = (reason: string | null) => {
   if (reason === 'http_429') return 'The provider limited requests.';
   if (reason === 'network_unavailable' || /^http_5/.test(reason ?? '')) return 'The provider was unavailable.';
@@ -37,6 +39,7 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
   const [busy, setBusy] = useState(true);
   const [wallet, setWallet] = useState<string | null>(null);
   const [comparison, setComparison] = useState<BenchmarkSummary | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const scope = new URLSearchParams({ period, ranking, category }).toString();
   const request = new URLSearchParams({
     period, ranking, category, q: query, offset: String(pagination.offset),
@@ -54,7 +57,10 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
       if (!controller.signal.aborted) setActive({ key, page });
     }).catch((reason: unknown) => {
       if (controller.signal.aborted) return;
-      if (reason instanceof ApiError && reason.status === 403) onIdentityFailure();
+      if (accessDenied(reason)) onIdentityFailure();
+      else if (incompatible(reason)) {
+        setActive(null); setWallet(null); setError('Leaderboard data is incompatible with this Console version.');
+      }
       else if (reason instanceof ApiError && reason.status === 410) setError('A new board is available. Reload to start from page one.');
       else setError('Could not load the board. Try reloading.');
     }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
@@ -69,8 +75,11 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
       if (!controller.signal.aborted) setReferences(value);
     }).catch((reason: unknown) => {
       if (controller.signal.aborted) return;
-      if (reason instanceof ApiError && reason.status === 403) onIdentityFailure();
-      else setReferenceError(true);
+      if (accessDenied(reason)) onIdentityFailure();
+      else {
+        if (incompatible(reason)) { setReferences(null); setComparison(null); }
+        setReferenceError(true);
+      }
     });
     return () => controller.abort();
   }, [reload, onIdentityFailure]);
@@ -105,7 +114,13 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
         <div><span>Wallets on this board</span><strong>{snapshot?.fetched_at ? count(snapshot.board_count) : '—'}</strong></div>
         <div><span>Board captured</span><strong className={s.date}>{snapshot?.fetched_at ? stamp(snapshot.fetched_at) : '—'}</strong></div>
       </div>
-      <form className={s.controls} onSubmit={event => { event.preventDefault(); resetPage(); setQuery(search.trim()); }}>
+      <button type="button" className={s.filterToggle} aria-controls="leaderboard-filters"
+        aria-expanded={filtersOpen} onClick={() => setFiltersOpen(value => !value)}>
+        <strong>Search and filters</strong><span>{period === 'all' ? 'All time' : period} · {ranking === 'PNL' ? 'P&L' : 'Volume'} · {category}{query && ' · Search active'}</span>
+      </button>
+      <form id="leaderboard-filters" className={s.controls} data-expanded={filtersOpen} onSubmit={event => {
+        event.preventDefault(); resetPage(); setQuery(search.trim());
+      }}>
         <label>Period<select value={period} onChange={event => {
           const value = event.target.value;
           setPeriod(value); if (value !== 'month') setCategory('overall'); resetPage();
@@ -174,7 +189,7 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
             <Button variant="default" disabled={busy || snapshot.offset + 50 >= snapshot.total} onClick={() => next(snapshot.offset + 50)}>Next</Button></div>
         </div>
       </> : <p className={s.empty}>{query ? 'No matching wallets in the retained bank.' :
-        snapshot.state === 'EMPTY' ? 'The provider returned an empty board.' : 'No board has been collected for this selection.'}</p>)}
+        snapshot.fetched_at && snapshot.board_count === 0 ? 'The provider returned an empty board.' : 'No board has been collected for this selection.'}</p>)}
       <footer className={s.note}>
         {snapshot?.has_more_at_source && <span>Collected top {count(snapshot.depth)}. More rows exist at the source. </span>}
         Rank change compares the previous capture of this board. Categories are available for the monthly view.
@@ -195,7 +210,9 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
           <p>{item.denominator && item.bank_count && item.shared !== null
             ? count(item.shared) + ' of ' + count(item.denominator) + ' wallets'
             : item.capture_id ? 'No eligible comparison' : 'No reference capture'}</p>
-          {item.captured_at && <small>{stamp(item.captured_at)}</small>}
+          {item.captured_at && <small>Reference captured {stamp(item.captured_at)}</small>}
+          {item.captured_at && item.bank_frozen_at && stamp(item.captured_at) !== stamp(item.bank_frozen_at)
+            && <small>Bank as of {stamp(item.bank_frozen_at)}</small>}
           {item.capture_id !== null && <Button variant="subtle" onClick={() => setComparison(item)}>Compare {item.source}</Button>}
         </article>;
       })}</div>
@@ -225,7 +242,7 @@ function WalletDetail({ wallet, scope, onIdentityFailure }: {
       if (!controller.signal.aborted) setDetail(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
-      if (error instanceof ApiError && error.status === 403) onIdentityFailure();
+      if (accessDenied(error)) onIdentityFailure();
       else setFailed(true);
     });
     return () => controller.abort();
@@ -279,13 +296,13 @@ function ComparisonDetail({ capture, onIdentityFailure }: {
       if (!controller.signal.aborted) setPage(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
-      if (error instanceof ApiError && error.status === 403) onIdentityFailure();
+      if (accessDenied(error)) onIdentityFailure();
       else setFailed(true);
     });
     return () => controller.abort();
   }, [capture.capture_id, offset, onIdentityFailure]);
   return <div className={s.detail}>
-    <p>{capture.scope}</p><p className={s.note}>{capture.method}{capture.bank_frozen_at && ' · Bank frozen ' + stamp(capture.bank_frozen_at)}</p>
+    <p>{capture.scope}</p><p className={s.note}>{capture.method}{capture.bank_frozen_at && ' · Bank as of ' + stamp(capture.bank_frozen_at)}</p>
     <p>Absent wallets were outside this bank capture. Rank and P&L agreement require comparable definitions.</p>
     {!page && <p role="status">{failed ? 'Comparison details are unavailable.' : 'Loading comparison…'}</p>}
     {page && <><div className={s.tableRegion} tabIndex={0} role="region" aria-label="Wallet overlap">
