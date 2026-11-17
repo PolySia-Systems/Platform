@@ -7,9 +7,10 @@ import s from './Console.module.css';
 import { BrandLockup, Amount, Badge } from './design/Primitives';
 import { useMantineColorScheme } from '@mantine/core';
 import { EvidenceWorkspace, valueDirection } from './Workspaces';
+import { Leaderboard } from './Leaderboard';
 
 type Intent = { preview_id: string; expected_revision: number; idempotency_key: string; context: string; identity: string };
-const tabs = { overview: m.overview, investigate: m.investigate, operate: m.operate, evaluate: m.evaluate, system: m.system } as const;
+const tabs = { overview: m.overview, leaderboard: 'Leaderboard', investigate: m.investigate, operate: m.operate, evaluate: m.evaluate, system: m.system } as const;
 type Tab = keyof typeof tabs;
 const names = { publication: m.source, financial: m.financial, supervision: m.supervision, worker: m.worker, publisher: m.publisher };
 const stamp = (value: string | null | undefined, locale = 'en-GB') => value
@@ -268,14 +269,15 @@ export default function App() {
       </div>
       <main id="main" tabIndex={-1} className={s.main} aria-busy={refreshBusy}>
         <div className={s.pageHeading}><div><p className={s.eyebrow}>{m.eyebrow}</p>
-          <h1>{tab === 'overview' ? m.heading : tab === 'investigate' ? m.investigateTitle : tab === 'operate' ? m.operateTitle : tab === 'evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
-          <p>{tab === 'overview' ? m.subtitle : tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p></div>
-          <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>
+          <h1>{tab === 'overview' ? m.heading : tab === 'leaderboard' ? 'Leaderboard' : tab === 'investigate' ? m.investigateTitle : tab === 'operate' ? m.operateTitle : tab === 'evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
+          <p>{tab === 'overview' ? m.subtitle : tab === 'leaderboard' ? 'Explore Polymarket performance, wallet history and reference coverage.' : tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p></div>
+          {tab !== 'leaderboard' && <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>}
         </div>
-        {(authFailure || failure) && <div className={s.error} role="alert">{authFailure || failure}
+        {(authFailure || (failure && tab !== 'leaderboard')) && <div className={s.error} role="alert">{authFailure || failure}
           {authFailure && <Button disabled={refreshBusy} onClick={() => void refresh()}>{m.renew}</Button>}</div>}
         {clockSkew && <p className={s.muted} role="status">{m.clockSkew}</p>}
         {example && <p role="status">{m.exampleNotice}</p>}
+        {tab === 'leaderboard' && validIdentity && session && <Leaderboard key={session.identity} onIdentityFailure={identityFailure} />}
         {tab === 'overview' && <>
           <section className={s.blocker} aria-label={m.attention}><span className={s.blockerIcon}>!</span><div>
             <strong>{m.attention}</strong><p>{snapshot?.blocker ?? m.loading}</p></div>

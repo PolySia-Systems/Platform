@@ -10,6 +10,7 @@ runner = CliRunner()
 
 EXPECTED_NAMESPACES = {
     "control",
+    "leaderboard",
     "live",
     "market",
     "ops",
@@ -18,6 +19,7 @@ EXPECTED_NAMESPACES = {
     "wallet-intelligence",
 }
 EXPECTED_COMMANDS = {
+    "leaderboard": {"refresh", "import-reference"},
     "system": {
         "configuration",
         "console",

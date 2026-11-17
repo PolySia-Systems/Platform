@@ -28,6 +28,7 @@ SOURCE_ID = "polycop"
 SCHEMA_VERSION = "polycop-leaderboard-v1"
 
 _ENVELOPE_FIELDS = frozenset({"data", "page", "status", "total_pages"})
+_SPREAD_FIELDS = frozenset({"copy_spread", "spread_progress"})
 _PROFILE_FIELDS = frozenset({"name", "profile_image", "profile_updated_at", "pseudonym"})
 _ROW_FIELDS = frozenset(
     {
@@ -342,8 +343,12 @@ def _validate_page(payload: Any, *, expected_page: int) -> tuple[int, list[dict[
     if not isinstance(payload, dict):
         raise _schema_error("envelope_not_object", payload)
     actual_fields = frozenset(str(key) for key in payload)
-    if actual_fields != _ENVELOPE_FIELDS:
+    if actual_fields not in {_ENVELOPE_FIELDS, _ENVELOPE_FIELDS | {"total_count"}}:
         raise _schema_error("envelope_fields_changed", payload)
+    if "total_count" in payload and (
+        type(payload["total_count"]) is not int or payload["total_count"] < 0
+    ):
+        raise _schema_error("total_count_value_changed", payload)
     if payload.get("status") != "success":
         raise PolyCopSourceError("PolyCop response status was not successful.")
     page = payload.get("page")
@@ -365,8 +370,11 @@ def _normalize_row(
     source_rank: int,
 ) -> CandidateWalletRecord:
     actual_fields = frozenset(str(key) for key in row)
-    if actual_fields not in {_ROW_FIELDS, _ROW_FIELDS | _PROFILE_FIELDS}:
+    if actual_fields - _SPREAD_FIELDS not in {_ROW_FIELDS, _ROW_FIELDS | _PROFILE_FIELDS}:
         raise _schema_error("row_fields_changed", row)
+    if any(row.get(field) is not None and not isinstance(row[field], dict)
+           for field in _SPREAD_FIELDS):
+        raise _schema_error("spread_metadata_value_changed", row)
     profile_digest: str | None = None
     if _PROFILE_FIELDS.issubset(actual_fields):
         if (

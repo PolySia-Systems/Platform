@@ -52,6 +52,90 @@ class Wire(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class LeaderboardRow(Wire):
+    wallet: str
+    name: str | None
+    rank: int | None
+    pnl: Exact | None
+    volume: Exact | None
+    rank_change: int | None
+
+
+class LeaderboardPage(Wire):
+    state: Validity
+    generation: Fingerprint | None
+    fetched_at: Instant | None
+    attempted_at: Instant | None
+    source_health_at: Instant | None
+    outcome: Literal["complete", "partial", "failed"] | None
+    reason: str | None
+    next_retry_at: Instant | None
+    refresh_in_progress: bool
+    critically_stale: bool
+    has_more_at_source: bool | None
+    depth: int
+    board_count: int
+    bank_count: int
+    total: int
+    offset: int
+    items: Annotated[list[LeaderboardRow], Field(max_length=50)]
+
+
+class LeaderboardPoint(Wire):
+    observed_at: Instant
+    rank: int
+    pnl: Exact
+    volume: Exact
+
+
+class LeaderboardActivity(Wire):
+    since: Instant
+    through: Instant
+    latest: Instant | None
+    trades: int
+    markets: int
+    complete: bool
+
+
+class LeaderboardWallet(Wire):
+    wallet: str
+    name: str | None
+    first_seen: Instant
+    last_seen: Instant
+    activity: LeaderboardActivity | None
+    history: Annotated[list[LeaderboardPoint], Field(max_length=30)]
+
+
+class BenchmarkSummary(Wire):
+    source: str
+    capture_id: int | None
+    captured_at: Instant | None
+    bank_frozen_at: Instant | None
+    bank_count: int | None
+    scope: str | None
+    method: str | None
+    complete: bool | None
+    shared: int | None
+    denominator: int | None
+    older_than_week: bool
+
+
+class LeaderboardBenchmarks(Wire):
+    items: Annotated[list[BenchmarkSummary], Field(max_length=3)]
+
+
+class BenchmarkWallet(Wire):
+    wallet: str
+    shared: bool
+
+
+class LeaderboardComparison(Wire):
+    capture_id: int
+    offset: int
+    total: int
+    items: Annotated[list[BenchmarkWallet], Field(max_length=50)]
+
+
 class Scope(Wire):
     run: Identity | None
     account: Identity | None
@@ -274,6 +358,10 @@ class Detail(Wire):
 Action.model_rebuild()
 Record.model_rebuild()
 CONTRACT_MODELS = (
+    LeaderboardPage,
+    LeaderboardWallet,
+    LeaderboardBenchmarks,
+    LeaderboardComparison,
     Snapshot,
     Session,
     ActionCatalog,

@@ -8,6 +8,7 @@ from polysia.cli_commands import (
     console,
     core,
     developer,
+    leaderboard,
     live,
     operations,
     platform_discovery,
@@ -54,6 +55,7 @@ ops_app.add_typer(session.session_app, name="session")
 app.add_typer(control_app, name="control")
 app.add_typer(live_app, name="live")
 app.add_typer(wallet_intelligence_app, name="wallet-intelligence")
+app.add_typer(leaderboard.app, name="leaderboard")
 
 
 @app.callback()

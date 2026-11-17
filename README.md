@@ -33,6 +33,8 @@ and conservative operating defaults.
   history.
 
 A bounded private [PolySia Console and independent Shadow profile](docs/10-operations/independent-platform-shadow.md) provide retained reports, native/PolyCop discovery, durable STOP and encrypted recovery tooling.
+
+The private Console also supports an independently sourced [Polymarket leaderboard](docs/10-operations/leaderboard.md) with wallet search, retained history and dated reference coverage.
 Software implementation, secure deployment and real-observation usefulness have
 separate acceptance receipts; no continuous admission or public access is implied.
 

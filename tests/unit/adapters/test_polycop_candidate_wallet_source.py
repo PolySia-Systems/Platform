@@ -83,6 +83,23 @@ def test_reviewed_profile_metadata_is_bound_without_becoming_economic_features()
     assert "profile_image" not in enriched.metrics
 
 
+def test_reviewed_spread_extension_preserves_the_legacy_economic_row() -> None:
+    original = _row(1)
+    extended = {**original, "copy_spread": {"basis": "book"}, "spread_progress": None}
+    envelope = {**_page(1, 1, [extended]), "total_count": 1}
+    pages, rows = polycop_source._validate_page(envelope, expected_page=1)
+    assert pages == 1
+    assert polycop_source._normalize_row(rows[0], source_page=1, source_rank=1) == (
+        polycop_source._normalize_row(original, source_page=1, source_rank=1)
+    )
+    with pytest.raises(PolyCopSchemaChangedError, match="total_count_value_changed"):
+        polycop_source._validate_page({**envelope, "total_count": True}, expected_page=1)
+    with pytest.raises(PolyCopSchemaChangedError, match="spread_metadata_value_changed"):
+        polycop_source._normalize_row(
+            {**extended, "copy_spread": 42}, source_page=1, source_rank=1
+        )
+
+
 @pytest.mark.parametrize("change", [
     {"profile_updated_at": True}, {"profile_updated_at": -1},
     {"name": None}, {"name": "x" * 2049}, {"unreviewed_field": "value"},
