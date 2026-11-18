@@ -7,7 +7,12 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from polysia.domain.copytrading.watchlist_shadow import MAX_DURATION, MAX_RUNS, MIN_DURATION
+from polysia.domain.copytrading.watchlist_shadow import (
+    MAX_DURATION,
+    MAX_RUN_WALLETS,
+    MIN_DURATION,
+    RUN_PAGE_SIZE,
+)
 from polysia.storage.watchlists import (
     LIST_ID_PATTERN,
     MAX_LISTS,
@@ -95,8 +100,11 @@ class Watchlists(Wire):
 class WatchlistRunRequest(Wire):
     identity: Fingerprint
     run_id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
-    list_id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
-    list_revision: Annotated[int, Field(ge=1)]
+    list_id: Annotated[str, Field(pattern=LIST_ID_PATTERN)] | None = None
+    list_revision: Annotated[int, Field(ge=1)] | None = None
+    wallets: Annotated[
+        list[Annotated[str, Field(pattern=WALLET_PATTERN)]], Field(max_length=MAX_RUN_WALLETS)
+    ] | None = None
     duration_seconds: Annotated[int, Field(ge=MIN_DURATION, le=MAX_DURATION)]
 
 
@@ -116,6 +124,14 @@ class WatchlistRunWallet(Wire):
     realized: Exact
     fees: Exact
     slippage: Exact
+    closed_positions: int | None
+    marked_positions: int
+    valued_positions: int
+    cash: Exact
+    open_cost: Exact
+    marked_value: Exact
+    marked_pnl: Exact
+    gaps: list[Literal["event_budget", "observation_gap", "valuation_budget"]]
 
 
 class WatchlistRun(Wire):
@@ -129,14 +145,63 @@ class WatchlistRun(Wire):
     started_cash_per_wallet: Exact
     realized: Exact
     equity: Exact | None
+    net_pnl: Exact | None
+    cash: Exact
+    marked_pnl: Exact
+    unvalued_cost: Exact
+    cutoff_at: Instant | None
+    end_reason: Literal["manual", "time"] | None
+    coverage: Literal["observing", "covered", "incomplete", "none"]
     wallets: list[WatchlistRunWallet]
 
 
 class WatchlistRunPage(Wire):
-    items: Annotated[list[WatchlistRun], Field(max_length=MAX_RUNS)]
+    items: Annotated[list[WatchlistRun], Field(max_length=RUN_PAGE_SIZE)]
     min_duration_seconds: int
     max_duration_seconds: int
     max_wallets: int
+    busy: bool
+    storage_low: bool
+    next_offset: int | None
+    starting_cash: Exact
+    maximum_fill: Exact
+    fee_bps: Exact
+
+
+class ShadowPositionDetail(Wire):
+    outcome: str
+    quantity: Exact
+    cost: Exact
+    marked_quantity: Exact | None
+    value: Exact | None
+    fee: Exact | None
+    quote_at: Instant | None
+    received_at: Instant | None
+    source: str | None
+
+
+class ShadowEventDetail(Wire):
+    id: str
+    reason: str
+    outcome: str | None = None
+    market: str | None = None
+    side: str | None = None
+    signal_at: Instant | None = None
+    evaluated_at: Instant | None = None
+    quantity: Exact | None = None
+    price: Exact | None = None
+    notional: Exact | None = None
+    fee: Exact | None = None
+    slippage: Exact | None = None
+    realized: Exact | None = None
+    quote_at: Instant | None = None
+    quote_received_at: Instant | None = None
+
+
+class ShadowRunDetail(Wire):
+    positions: list[ShadowPositionDetail]
+    events: list[ShadowEventDetail]
+    next_offset: int | None
 
 
 class InstallationSettings(Wire):
@@ -451,6 +516,7 @@ Record.model_rebuild()
 CONTRACT_MODELS = (
     Watchlists,
     WatchlistRunPage,
+    ShadowRunDetail,
     InstallationSettings,
     LeaderboardPage,
     LeaderboardWallet,

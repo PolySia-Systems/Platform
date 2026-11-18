@@ -153,9 +153,14 @@ export function Leaderboard({ onIdentityFailure, session }: {
       <header className={s.boardHeader}>
         <div><h2>Trader rankings</h2><p>{basis} · Polymarket</p></div>
         <div className={s.actions}>
-          {watchlists?.enabled && <Button variant="default" onClick={() => setManageOpen(true)}>
-            Watchlists
-          </Button>}
+          {watchlists?.enabled && <>
+            <Button variant="default" onClick={() => { setWatchlistMessage(''); setManageOpen(true); }}>
+              Watchlists
+            </Button>
+            <Button variant="default" onClick={() => {
+              setWatchlistMessage(''); setRunList(null); setManageOpen(true);
+            }}>Paper tests</Button>
+          </>}
           <a className={s.coverageLink} href="#leaderboard-coverage">Reference coverage ↓</a>
           <Button className={consoleStyles.secondaryButton} onClick={refresh} disabled={busy}>Reload data</Button>
         </div>
@@ -199,6 +204,10 @@ export function Leaderboard({ onIdentityFailure, session }: {
         <Button disabled={watchlists.items.length >= watchlists.max_lists} onClick={() => {
           setManageOpen(true); setEditor({ id: crypto.randomUUID().replaceAll('-', ''), name: '', wallets: selected, revision: 0 });
         }}>Save selection</Button>
+        <Button onClick={() => {
+          setWatchlistMessage(''); setManageOpen(true);
+          setRunList({ id: '', name: 'Leaderboard selection', revision: 0, wallets: selected });
+        }}>Test selected wallets</Button>
         <Button variant="default" onClick={() => setSelected([])}>Clear</Button>
       </div>}
       {!manageOpen && watchlistMessage && <p className={s.status} role="status">{watchlistMessage}</p>}
@@ -263,8 +272,10 @@ export function Leaderboard({ onIdentityFailure, session }: {
     </section>
     <Modal opened={manageOpen} onClose={() => {
       if (!saving) { setManageOpen(false); setEditor(null); setRunList(undefined); }
-    }} title="Watchlists" closeButtonProps={{ 'aria-label': 'Close watchlists' }} returnFocus>
-      {watchlistMessage && <p role="status">{watchlistMessage}</p>}
+    }} title={runList === undefined ? 'Watchlists' : 'Paper tests'}
+      closeButtonProps={{ 'aria-label': runList === undefined ? 'Close watchlists' : 'Close paper tests' }}
+      returnFocus>
+      {runList === undefined && watchlistMessage && <p role="status">{watchlistMessage}</p>}
       {runList !== undefined ? <>
         <Button variant="subtle" onClick={() => setRunList(undefined)}>Back to watchlists</Button>
         <WatchlistShadow key={runList?.id ?? 'history'} session={session} list={runList}

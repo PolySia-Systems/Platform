@@ -79,7 +79,13 @@
 .watchlistForm input { min-width: 0; color: var(--console-ink); background: var(--console-surface); }
 .watchlistForm ul, .list { display: grid; list-style: none; padding: 0; margin: 0; gap: 12px; }
 .list li { justify-content: space-between; flex-wrap: wrap; }
-.list li span { display: block; }
+.list li > div:first-child > span { display: block; }
+.shadowFields { min-inline-size: 0; border: 1px solid var(--console-border); padding: 12px; }
+.shadowWallets { display: flex; flex-wrap: wrap; gap: 8px 16px; max-block-size: 10rem; overflow: auto; }
+.shadowWallets label { display: flex; align-items: center; }
+.shadowCard { min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--console-border); }
+.shadowCard summary { color: var(--console-ink); cursor: pointer; }
+.shadowCard code { overflow-wrap: anywhere; }
 .gain { color: var(--console-success); }
 .loss { color: var(--console-danger); }
 .wallet {

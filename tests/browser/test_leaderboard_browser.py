@@ -54,7 +54,64 @@ def test_watchlist_is_restored_in_a_new_browser_context(console_fixture, tmp_pat
         page.get_by_label("Duration", exact=True).fill("3")
         page.get_by_role("combobox", name="Duration unit").select_option("days")
         page.get_by_role("button", name="Start Shadow", exact=True).click()
-        expect(page.get_by_text("Test cohort · RUNNING · 1 wallets")).to_be_visible()
+        expect(page.get_by_text("Test cohort · Running · 1 wallet")).to_be_visible()
+        page.reload()
+        page.get_by_role("button", name="Leaderboard", exact=True).click()
+        page.get_by_role("button", name="Paper tests", exact=True).click()
+        expect(page.get_by_text("Test cohort · Running · 1 wallet")).to_be_visible()
+        page.once("dialog", lambda dialog: dialog.accept())
+        page.get_by_role("button", name="End test and see results").click()
+        result = page.get_by_text("Test cohort · Ended early · 1 wallet")
+        expect(result).to_be_visible()
+        expect(page.get_by_text("The source supplied no verified observations.")).to_be_visible()
+        browser.close()
+
+
+def test_direct_paper_selection_recovers_from_two_errors(console_fixture, tmp_path):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    store = LeaderboardStore(tmp_path / "leaderboard.sqlite3")
+    store.initialize()
+    now = datetime.now(UTC)
+    token = store.acquire(now)
+    assert token
+    rows = tuple(
+        Standing(f"0x{i:040x}", f"Wallet {i}", i, Decimal(200 - i), Decimal(300))
+        for i in range(1, 11)
+    )
+    store.publish(
+        Observation(
+            Board("polymarket", "month", "PNL"), rows, now, now, "complete", None, False, 1, 100,
+        ),
+        token,
+    )
+    store.release(token)
+    origin, impersonate, *_ = console_fixture
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, impersonate, width=360)
+        page = context.new_page()
+        page.goto(origin)
+        page.get_by_role("button", name="Leaderboard", exact=True).click()
+        for i in range(1, 11):
+            page.get_by_role("checkbox", name=f"Select Wallet {i}", exact=True).check()
+        page.get_by_role("button", name="Test selected wallets", exact=True).click()
+        form = page.get_by_role("dialog", name="Paper tests")
+        form.get_by_label("Duration", exact=True).fill("15")
+        expect(form.get_by_text("Choose 1–6 wallets for this test.")).to_be_visible()
+        expect(form.get_by_label("Duration", exact=True)).to_have_attribute("aria-invalid", "true")
+        expect(form.get_by_role("button", name="Start Shadow")).to_be_disabled()
+        output = Path("output/playwright")
+        output.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(output / "paper-test-validation-mobile.png"))
+        for item in form.get_by_role("checkbox").all()[6:]:
+            item.uncheck()
+        form.get_by_role("button", name="15 minutes", exact=True).click()
+        expect(form.get_by_role("button", name="Start Shadow")).to_be_enabled()
+        form.get_by_role("button", name="Start Shadow").click()
+        expect(form.get_by_text("Leaderboard selection · Running · 6 wallets")).to_be_visible()
+        expect(form.get_by_text("Paper test · virtual funds")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(output / "paper-test-running-mobile.png"))
         browser.close()
 
 

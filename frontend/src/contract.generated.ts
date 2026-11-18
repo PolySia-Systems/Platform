@@ -29,12 +29,15 @@ export type Record = { identity: string; kind: "wallet" | "order" | "position"; 
 export type RecordLink = { kind: "wallet" | "order" | "position"; identity: string; label: string };
 export type Scope = { run: string | null; account: string | null; venue: string | null };
 export type Session = { api: "console/v1"; release: "0.4.0"; bundle: string | null; actor: string; role: "reader" | "operator"; csrf: string; identity: string; server_time: string; valid_until: string };
+export type ShadowEventDetail = { id: string; reason: string; outcome?: string | null; market?: string | null; side?: string | null; signal_at?: string | null; evaluated_at?: string | null; quantity?: string | null; price?: string | null; notional?: string | null; fee?: string | null; slippage?: string | null; realized?: string | null; quote_at?: string | null; quote_received_at?: string | null };
+export type ShadowPositionDetail = { outcome: string; quantity: string; cost: string; marked_quantity: string | null; value: string | null; fee: string | null; quote_at: string | null; received_at: string | null; source: string | null };
+export type ShadowRunDetail = { positions: (ShadowPositionDetail)[]; events: (ShadowEventDetail)[]; next_offset: number | null };
 export type Snapshot = { api: "console/v1"; release: "0.4.0"; server_time: string; context: Context; components: (Component)[]; financial: Financial | null; supervision: Supervision; blocker: string; actions: (Action)[]; atomic: false };
 export type Supervision = { status: "READY" | "STOPPED" | "UNKNOWN"; reason: string; next_action: string };
 export type Watchlist = { id: string; name: string; wallets: (string)[]; revision: number };
-export type WatchlistRun = { id: string; name: string; model: string; status: "RUNNING" | "FINISHED" | "CANCELLED"; started_at: string; ends_at: string; finished_at: string | null; started_cash_per_wallet: string; realized: string; equity: string | null; wallets: (WatchlistRunWallet)[] };
-export type WatchlistRunPage = { items: (WatchlistRun)[]; min_duration_seconds: number; max_duration_seconds: number; max_wallets: number };
-export type WatchlistRunWallet = { address: string; observed_through: string; observations: number; read_errors: number; fills: number; skipped: number; open_positions: number; realized: string; fees: string; slippage: string };
+export type WatchlistRun = { id: string; name: string; model: string; status: "RUNNING" | "FINISHED" | "CANCELLED"; started_at: string; ends_at: string; finished_at: string | null; started_cash_per_wallet: string; realized: string; equity: string | null; net_pnl: string | null; cash: string; marked_pnl: string; unvalued_cost: string; cutoff_at: string | null; end_reason: "manual" | "time" | null; coverage: "observing" | "covered" | "incomplete" | "none"; wallets: (WatchlistRunWallet)[] };
+export type WatchlistRunPage = { items: (WatchlistRun)[]; min_duration_seconds: number; max_duration_seconds: number; max_wallets: number; busy: boolean; storage_low: boolean; next_offset: number | null; starting_cash: string; maximum_fill: string; fee_bps: string };
+export type WatchlistRunWallet = { address: string; observed_through: string; observations: number; read_errors: number; fills: number; skipped: number; open_positions: number; realized: string; fees: string; slippage: string; closed_positions: number | null; marked_positions: number; valued_positions: number; cash: string; open_cost: string; marked_value: string; marked_pnl: string; gaps: ("event_budget" | "observation_gap" | "valuation_budget")[] };
 export type Watchlists = { enabled: boolean; items: (Watchlist)[]; max_lists: number; max_wallets: number };
 export type Workspace = { generation: string; sections: (EvidenceSection)[] };
 export const schemas = {
@@ -2205,6 +2208,350 @@ export const schemas = {
     "title": "Session",
     "type": "object"
   },
+  "ShadowRunDetail": {
+    "$defs": {
+      "ShadowEventDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "evaluated_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evaluated At"
+          },
+          "fee": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fee"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "market": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Market"
+          },
+          "notional": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notional"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Price"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quantity"
+          },
+          "quote_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quote At"
+          },
+          "quote_received_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quote Received At"
+          },
+          "realized": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Realized"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Side"
+          },
+          "signal_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Signal At"
+          },
+          "slippage": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slippage"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "title": "ShadowEventDetail",
+        "type": "object"
+      },
+      "ShadowPositionDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "cost": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Cost",
+            "type": "string"
+          },
+          "fee": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee"
+          },
+          "marked_quantity": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marked Quantity"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "quantity": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "quote_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote At"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "outcome",
+          "quantity",
+          "cost",
+          "marked_quantity",
+          "value",
+          "fee",
+          "quote_at",
+          "received_at",
+          "source"
+        ],
+        "title": "ShadowPositionDetail",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "events": {
+        "items": {
+          "$ref": "#/$defs/ShadowEventDetail"
+        },
+        "title": "Events",
+        "type": "array"
+      },
+      "next_offset": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next Offset"
+      },
+      "positions": {
+        "items": {
+          "$ref": "#/$defs/ShadowPositionDetail"
+        },
+        "title": "Positions",
+        "type": "array"
+      }
+    },
+    "required": [
+      "positions",
+      "events",
+      "next_offset"
+    ],
+    "title": "ShadowRunDetail",
+    "type": "object"
+  },
   "Snapshot": {
     "$defs": {
       "Action": {
@@ -2849,6 +3196,50 @@ export const schemas = {
       "WatchlistRun": {
         "additionalProperties": false,
         "properties": {
+          "cash": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Cash",
+            "type": "string"
+          },
+          "coverage": {
+            "enum": [
+              "observing",
+              "covered",
+              "incomplete",
+              "none"
+            ],
+            "title": "Coverage",
+            "type": "string"
+          },
+          "cutoff_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutoff At"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "manual",
+                  "time"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Reason"
+          },
           "ends_at": {
             "maxLength": 32,
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
@@ -2886,6 +3277,12 @@ export const schemas = {
             "title": "Id",
             "type": "string"
           },
+          "marked_pnl": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Marked Pnl",
+            "type": "string"
+          },
           "model": {
             "title": "Model",
             "type": "string"
@@ -2893,6 +3290,19 @@ export const schemas = {
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "net_pnl": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Pnl"
           },
           "realized": {
             "maxLength": 128,
@@ -2921,6 +3331,12 @@ export const schemas = {
             "title": "Status",
             "type": "string"
           },
+          "unvalued_cost": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Unvalued Cost",
+            "type": "string"
+          },
           "wallets": {
             "items": {
               "$ref": "#/$defs/WatchlistRunWallet"
@@ -2940,6 +3356,13 @@ export const schemas = {
           "started_cash_per_wallet",
           "realized",
           "equity",
+          "net_pnl",
+          "cash",
+          "marked_pnl",
+          "unvalued_cost",
+          "cutoff_at",
+          "end_reason",
+          "coverage",
           "wallets"
         ],
         "title": "WatchlistRun",
@@ -2953,6 +3376,23 @@ export const schemas = {
             "title": "Address",
             "type": "string"
           },
+          "cash": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Cash",
+            "type": "string"
+          },
+          "closed_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Positions"
+          },
           "fees": {
             "maxLength": 128,
             "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
@@ -2963,6 +3403,34 @@ export const schemas = {
             "title": "Fills",
             "type": "integer"
           },
+          "gaps": {
+            "items": {
+              "enum": [
+                "event_budget",
+                "observation_gap",
+                "valuation_budget"
+              ],
+              "type": "string"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "marked_pnl": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Marked Pnl",
+            "type": "string"
+          },
+          "marked_positions": {
+            "title": "Marked Positions",
+            "type": "integer"
+          },
+          "marked_value": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Marked Value",
+            "type": "string"
+          },
           "observations": {
             "title": "Observations",
             "type": "integer"
@@ -2971,6 +3439,12 @@ export const schemas = {
             "maxLength": 32,
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
             "title": "Observed Through",
+            "type": "string"
+          },
+          "open_cost": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Open Cost",
             "type": "string"
           },
           "open_positions": {
@@ -2996,6 +3470,10 @@ export const schemas = {
             "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
             "title": "Slippage",
             "type": "string"
+          },
+          "valued_positions": {
+            "title": "Valued Positions",
+            "type": "integer"
           }
         },
         "required": [
@@ -3008,7 +3486,15 @@ export const schemas = {
           "open_positions",
           "realized",
           "fees",
-          "slippage"
+          "slippage",
+          "closed_positions",
+          "marked_positions",
+          "valued_positions",
+          "cash",
+          "open_cost",
+          "marked_value",
+          "marked_pnl",
+          "gaps"
         ],
         "title": "WatchlistRunWallet",
         "type": "object"
@@ -3016,6 +3502,16 @@ export const schemas = {
     },
     "additionalProperties": false,
     "properties": {
+      "busy": {
+        "title": "Busy",
+        "type": "boolean"
+      },
+      "fee_bps": {
+        "maxLength": 128,
+        "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+        "title": "Fee Bps",
+        "type": "string"
+      },
       "items": {
         "items": {
           "$ref": "#/$defs/WatchlistRun"
@@ -3032,16 +3528,49 @@ export const schemas = {
         "title": "Max Wallets",
         "type": "integer"
       },
+      "maximum_fill": {
+        "maxLength": 128,
+        "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+        "title": "Maximum Fill",
+        "type": "string"
+      },
       "min_duration_seconds": {
         "title": "Min Duration Seconds",
         "type": "integer"
+      },
+      "next_offset": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next Offset"
+      },
+      "starting_cash": {
+        "maxLength": 128,
+        "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+        "title": "Starting Cash",
+        "type": "string"
+      },
+      "storage_low": {
+        "title": "Storage Low",
+        "type": "boolean"
       }
     },
     "required": [
       "items",
       "min_duration_seconds",
       "max_duration_seconds",
-      "max_wallets"
+      "max_wallets",
+      "busy",
+      "storage_low",
+      "next_offset",
+      "starting_cash",
+      "maximum_fill",
+      "fee_bps"
     ],
     "title": "WatchlistRunPage",
     "type": "object"

@@ -17,6 +17,11 @@ export async function post<T>(path: string, name: keyof typeof schemas, data: ob
   const response = await fetch(prefix + path, { method: 'POST', credentials: 'same-origin',
     cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(4000),
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, csrf }) });
-  if (!response.ok) throw new ApiError(response.status, 'mutation_failed');
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const reason = body && typeof body === 'object' && 'reason' in body && typeof body.reason === 'string'
+      ? body.reason : 'mutation_failed';
+    throw new ApiError(response.status, reason);
+  }
   return validate<T>(name, await response.json());
 }

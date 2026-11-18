@@ -111,6 +111,13 @@ Presentation primitives may import domain types. They must not call the gateway,
 authorize operations, or depend on App orchestration. A duplicate component is a
 review judgment; static checks do not claim to detect conceptual duplicates.
 
+For a material change to a user task, record in the PR how a user finds,
+completes, and recovers from it. Link rendered evidence for the normal path and
+one realistic blocker with readable feedback and a keyboard path. Include a
+Console or CLI handoff when the task crosses that boundary. Show how a first-time
+user can explain the outcome and an experienced user can inspect its evidence.
+Record observed human comprehension separately from automated success.
+
 ## State and release behavior
 
 Workspace IDs are independent of English labels. Investigation search/filter

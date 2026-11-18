@@ -48,13 +48,15 @@ def shadow_tick(database: Database) -> None:
     from polysia.application.services.watchlist_shadow import tick
     from polysia.storage.watchlist_runs import WatchlistRuns
 
+    public = PolymarketPublicAdapter()
     status = asyncio.run(tick(
         WatchlistRuns(database),
         lambda leaders: PolymarketCopyTradingSource(
             leaders, market_scope=PolymarketMarketScope.ALL_VERIFIED,
             max_pages=4, max_requests=4, max_elapsed_seconds=8,
         ),
-        PolymarketPublicAdapter(),
+        public,
+        settlement_reader=public.get_market_by_condition_id,
     ))
     typer.echo(json.dumps({"status": status}))
 
