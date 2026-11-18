@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import hashlib
 import importlib.util
 import json
@@ -19,6 +20,7 @@ import socket
 import sqlite3
 import ssl
 import subprocess
+import sys
 import tarfile
 import time
 from contextlib import closing
@@ -37,13 +39,22 @@ CADDY_SHA512 = (
 )
 SCHEMA = "platform-installation/v1"
 MAX_ASSET = 536_870_912
+MANAGED_UNIT = "# Managed by PolySia platform_admin.py\n"
+LEADERBOARD_SCHEDULE = (
+    "[Unit]\nDescription=Check whether the PolySia leaderboard needs a refresh\n\n"
+    "[Timer]\nOnCalendar=*-*-* *:0/15:00\nPersistent=true\n\n"
+    "[Install]\nWantedBy=timers.target\n"
+)
 
 
 def load_core(args: argparse.Namespace):
     """Load only the bootstrap bytes bound to the same trusted release as this entry."""
     directory = (args.artifact_directory or Path(__file__).resolve().parent).resolve()
     manifest_path = directory / "manifest.json"
-    if not manifest_path.exists():
+    bootstrap = directory / "platform_bootstrap.py"
+    if manifest_path.is_symlink() or bootstrap.is_symlink():
+        raise ValueError("release assets must be regular files")
+    if not manifest_path.exists() or not bootstrap.exists():
         if (
             not args.tag
             or re.fullmatch(r"v\d+\.\d+\.\d+", args.tag) is None
@@ -60,10 +71,12 @@ def load_core(args: argparse.Namespace):
             raise ValueError("release source differs from requested commit")
         if hashlib.sha256(Path(__file__).read_bytes()).hexdigest() != manifest["admin_sha256"]:
             raise ValueError("administrative entry differs from trusted release")
-        manifest_path.write_bytes(raw)
-        target = directory / "platform_bootstrap.py"
-        if not target.exists():
-            download(origin + target.name, target)
+        if manifest_path.exists() and manifest_path.read_bytes() != raw:
+            raise ValueError("retained manifest differs from published release")
+        if not bootstrap.exists():
+            download(origin + bootstrap.name, bootstrap)
+        if not manifest_path.exists():
+            atomic(manifest_path, raw.decode("utf-8"))
     manifest = json.loads(manifest_path.read_text())
     for path, key in (
         (Path(__file__), "admin_sha256"),
@@ -107,6 +120,7 @@ def validate(value: dict) -> dict:
         or re.fullmatch(r"[a-f0-9]{40}", value.get("commit", "")) is None
         or value.get("profile") not in {"private", "own-domain", "cloudflare"}
         or value.get("backup", {}).get("mode") not in {"none", "local", "sftp"}
+        or value.get("leaderboard", "auto") not in {"auto", "paused"}
     ):
         raise ValueError("unsupported installation configuration")
     profile, hostname = value["profile"], value.get("hostname", "")
@@ -340,7 +354,12 @@ def image_json(image: str, code: str, value: dict) -> str:
 
 
 def configure(
-    value: dict, *, image: str, allow_change: bool = False, cloudflare: dict | None = None
+    value: dict,
+    *,
+    image: str,
+    allow_change: bool = False,
+    cloudflare: dict | None = None,
+    password_change: tuple[str, str] | None = None,
 ) -> dict:
     """Stage validated access/configuration before any activation."""
     validate(value)
@@ -374,6 +393,7 @@ def configure(
                     "port": 8765,
                     "commands": "/control/commands.sqlite3",
                     "publication": "/publication/publication.json",
+                    "leaderboard_database": core.LEADERBOARD_DATABASE,
                     "csrf_secret_file": "/config/csrf-secret",
                 },
                 mode=0o640,
@@ -391,6 +411,10 @@ def configure(
                 "existing Cloudflare origin is preserved; commission an authorized route "
                 "before changing its hostname",
             )
+        if not existing_web.get("leaderboard_database"):
+            existing_web["leaderboard_database"] = core.LEADERBOARD_DATABASE
+            atomic(core.CONFIG_ROOT / "web.json", existing_web, mode=0o640)
+            os.chown(core.CONFIG_ROOT / "web.json", 0, 10102)
         atomic(current, value)
         return {
             "status": "EXISTING_CLOUDFLARE_PRESERVED"
@@ -405,7 +429,9 @@ def configure(
         credentials = json.loads(access.read_text())
     else:
         credentials = {name: secrets.token_urlsafe(32) for name in value["roles"]}
-        atomic(access, credentials)
+    if password_change is not None:
+        name, password = password_change
+        credentials[name] = password
     passwords = {}
     for name in value["roles"]:
         if name not in credentials:
@@ -448,6 +474,7 @@ def configure(
         "unix_socket": "/run/polysia-platform/web.sock",
         "commands": "/control/commands.sqlite3",
         "publication": "/publication/publication.json",
+        "leaderboard_database": core.LEADERBOARD_DATABASE,
         "csrf_secret_file": "/config/csrf-secret",
     }
     atomic(core.CONFIG_ROOT / "web.json", web, mode=0o640)
@@ -485,6 +512,142 @@ def gateway_unit(caddy: Path, *, public: bool) -> str:
     )
 
 
+def leaderboard_override() -> Path:
+    return core.SERVICE_ROOT / "polysia-platform-web.service.d/leaderboard.conf"
+
+
+def leaderboard_preflight() -> None:
+    """Recognize the old manual setup without overwriting other operator customizations."""
+    state = core.STATE_ROOT / "leaderboard"
+    if state.is_symlink() or state.exists() and (
+        not state.is_dir() or (state.stat().st_uid, state.stat().st_gid) != (10101, 10102)
+    ):
+        raise ValueError("leaderboard state directory must be owned by the collector")
+    for name in ("leaderboard.sqlite3", "leaderboard.sqlite3-journal",
+                 "leaderboard.sqlite3-wal", "leaderboard.sqlite3-shm"):
+        path = state / name
+        if path.is_symlink() or path.exists() and (
+            not path.is_file()
+            or path.stat().st_nlink != 1
+            or (path.stat().st_uid, path.stat().st_gid) != (10101, 10102)
+        ):
+            raise ValueError("unexpected leaderboard database ownership or path")
+    web = core.CONFIG_ROOT / "web.json"
+    if web.is_file() and json.loads(web.read_text()).get("leaderboard_database") not in {
+        None, core.LEADERBOARD_DATABASE,
+    }:
+        raise ValueError("existing Console uses a custom leaderboard database; retain its settings")
+    legacy_service = (
+        "[Unit]\nDescription=Refresh the PolySia leaderboard\nAfter=docker.service\n"
+        "Requires=docker.service\n\n[Service]\nType=oneshot\nTimeoutStartSec=10min\n"
+        "ExecStart=/usr/bin/docker run --rm --read-only --cap-drop=ALL "
+        "--security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,noexec "
+        "--user 10101:10102 --network bridge -e TRADING_MODE=DATA_ONLY "
+        "-e LIVE_TRADING_ENABLED=false "
+        f"-v {state.as_posix()}:/leaderboard:rw IMAGE "
+        "leaderboard refresh --database /leaderboard/leaderboard.sqlite3\n"
+    )
+    for name, expected in (
+        (core.LEADERBOARD_SERVICE, legacy_service), (core.LEADERBOARD_TIMER, LEADERBOARD_SCHEDULE),
+    ):
+        path = core.SERVICE_ROOT / name
+        overrides = path.with_name(name + ".d")
+        if overrides.is_symlink() or overrides.is_dir() and any(overrides.glob("*.conf")):
+            raise ValueError("existing leaderboard timer or service has a custom override")
+        if path.is_symlink() or path.exists() and path.resolve() != path:
+            raise ValueError("leaderboard supervision path must not traverse symlinks")
+        if path.is_file():
+            current = path.read_text()
+            if not current.startswith(MANAGED_UNIT) and re.sub(
+                r"sha256:[a-f0-9]{64}", "IMAGE", current
+            ) != expected:
+                raise ValueError("existing leaderboard timer or service differs from known setup")
+    override = leaderboard_override()
+    if override.is_symlink() or override.parent.is_symlink():
+        raise ValueError("leaderboard override must not traverse symlinks")
+    if override.exists():
+        unit = core.SERVICE_ROOT / "polysia-platform-web.service"
+        original = [
+            line.removeprefix("ExecStart=") for line in unit.read_text().splitlines()
+            if line.startswith("ExecStart=")
+        ]
+        prefix = "/usr/bin/docker run "
+        mount = f"--volume {state.as_posix()}:/leaderboard:ro "
+        if len(original) != 1 or not original[0].startswith(prefix):
+            raise ValueError("existing Console start command cannot be adopted")
+        expected = (
+            "[Service]\nExecStart=\nExecStart=" + prefix + mount
+            + original[0].removeprefix(prefix) + "\n"
+        )
+        if override.read_text() != expected:
+            raise ValueError("existing Console leaderboard override differs from known setup")
+
+
+def install_leaderboard(image: str) -> None:
+    state = core.STATE_ROOT / "leaderboard"
+    state.mkdir(mode=0o2750, exist_ok=True)
+    os.chown(state, 10101, 10102)
+    state.chmod(0o2750)
+    atomic(
+        core.SERVICE_ROOT / core.LEADERBOARD_SERVICE,
+        MANAGED_UNIT + core.service_text(image, role="leaderboard", hostname=""),
+        mode=0o644,
+    )
+    atomic(
+        core.SERVICE_ROOT / core.LEADERBOARD_TIMER,
+        MANAGED_UNIT + LEADERBOARD_SCHEDULE,
+        mode=0o644,
+    )
+    # Preflight recognized this exact override. Its original bytes are in
+    # the rollback checkpoint before any change to the base service.
+    leaderboard_override().unlink(missing_ok=True)
+
+
+def leaderboard_status() -> dict:
+    path = core.STATE_ROOT / "leaderboard/leaderboard.sqlite3"
+    state = "WAITING_FOR_DATA"
+    fetched_at = None
+    if path.is_file():
+        try:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+                fetched_at = db.execute(
+                    "SELECT max(fetched_at) FROM leaderboard_attempts WHERE outcome='complete'"
+                ).fetchone()[0]
+        except sqlite3.Error:
+            state = "DATA_UNAVAILABLE"
+    if fetched_at:
+        state = "CAPTURE_AVAILABLE"
+    policy = core.CONFIG_ROOT / "installation.json"
+    schedule = (
+        json.loads(policy.read_text()).get("leaderboard", "auto") if policy.is_file() else None
+    )
+    return {"state": state, "last_complete_at": fetched_at, "schedule": schedule}
+
+
+def start_leaderboard(image: str, policy: str) -> None:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        try:
+            actual_image = core.run(
+                "docker", "inspect", "polysia-platform-web", "--format", "{{.Image}}"
+            )
+        except subprocess.CalledProcessError:
+            time.sleep(0.25)
+            continue
+        if actual_image == image:
+            break
+        raise ValueError("running Console image differs from the verified leaderboard image")
+    else:
+        raise ValueError("Console container did not start; inspect the web service status")
+    if policy == "paused":
+        core.run("systemctl", "disable", "--now", core.LEADERBOARD_TIMER)
+        core.run("systemctl", "stop", core.LEADERBOARD_SERVICE)
+        return
+    core.run("systemctl", "enable", "--now", core.LEADERBOARD_TIMER)
+    # A provider outage must not fail the Console installation.
+    core.run("systemctl", "start", "--no-block", core.LEADERBOARD_SERVICE)
+
+
 def activate(value: dict, *, image: str) -> None:
     gateway_state = core.STATE_ROOT / "gateway"
     gateway_state.mkdir(exist_ok=True, mode=0o700)
@@ -519,6 +682,7 @@ def activate(value: dict, *, image: str) -> None:
             previous["release_commit"] = value["commit"]
         atomic(worker, previous, mode=0o640)
         os.chown(worker, 0, 10102)
+    install_leaderboard(image)
     for role in ("worker", "publisher", "web"):
         text = core.service_text(
             image,
@@ -526,6 +690,7 @@ def activate(value: dict, *, image: str) -> None:
             hostname=socket.gethostname(),
             gateway=value["profile"] != "cloudflare",
             configured=(core.CONFIG_ROOT / "manifest.json").is_file(),
+            leaderboard=role == "web",
         )
         atomic(core.SERVICE_ROOT / ("polysia-platform-" + role + ".service"), text, mode=0o644)
     if value["profile"] == "cloudflare":
@@ -751,6 +916,10 @@ def preserve_rollback() -> dict | None:
             "health.timer",
         )
     ]
+    files.extend(
+        (core.SERVICE_ROOT / core.LEADERBOARD_SERVICE, core.SERVICE_ROOT / core.LEADERBOARD_TIMER,
+         leaderboard_override())
+    )
     existing = {}
     for path in files:
         if path.is_symlink():
@@ -802,7 +971,10 @@ def rollback() -> dict:
     for target, metadata in receipt["files"].items():
         digest = metadata["sha256"]
         path = Path(target)
-        if path.parent not in {core.CONFIG_ROOT, core.SERVICE_ROOT} or path.is_symlink():
+        if (
+            path.parent not in {core.CONFIG_ROOT, core.SERVICE_ROOT}
+            and path != leaderboard_override()
+        ) or path.is_symlink() or path.parent.is_symlink():
             raise ValueError("rollback destination outside protected configuration")
         if re.fullmatch(r"[a-f0-9]{64}", digest) is None:
             raise ValueError("rollback file identity is invalid")
@@ -823,6 +995,9 @@ def rollback() -> dict:
             check=False,
             timeout=40,
         )
+    if (core.SERVICE_ROOT / core.LEADERBOARD_TIMER).is_file():
+        core.run("systemctl", "disable", "--now", core.LEADERBOARD_TIMER)
+        core.run("systemctl", "stop", core.LEADERBOARD_SERVICE)
     for path, saved, metadata in restored:
         shutil.copy2(saved, path)
         path.chmod(metadata["mode"])
@@ -1265,6 +1440,9 @@ def main() -> None:
     parser.add_argument("--operator", action="append", default=[])
     parser.add_argument("--reader", action="append", default=[])
     parser.add_argument("--remove-user", action="append", default=[])
+    parser.add_argument(
+        "--set-password", metavar="USER", help="Set one local password in a terminal."
+    )
     parser.add_argument("--noninteractive", action="store_true")
     parser.add_argument("--backup-mode", choices=("none", "local", "sftp"))
     parser.add_argument("--recipient-file", type=Path)
@@ -1274,6 +1452,10 @@ def main() -> None:
     parser.add_argument("--upload-key-file", type=Path)
     parser.add_argument("--recovery-key", type=Path)
     parser.add_argument("--archive", type=Path)
+    parser.add_argument(
+        "--leaderboard", choices=("auto", "paused"),
+        help="Collect rankings automatically (default), or keep retained data without polling.",
+    )
     args = parser.parse_args()
     if os.geteuid() != 0 and not (args.action == "health" and os.geteuid() == 10101):
         parser.error("administrative SSH/root access required")
@@ -1291,10 +1473,14 @@ def main() -> None:
         for name in ("installation.json", "maintenance-receipt.json"):
             path = core.CONFIG_ROOT / name
             print(path.read_text() if path.exists() else name + ": UNCONFIGURED")
+        print(json.dumps({"leaderboard": leaderboard_status()}, sort_keys=True))
         return
     if args.action in {"stop", "uninstall"}:
         result = protected_stop()
         if args.action == "uninstall":
+            if (core.SERVICE_ROOT / core.LEADERBOARD_TIMER).is_file():
+                core.run("systemctl", "disable", "--now", core.LEADERBOARD_TIMER)
+                core.run("systemctl", "stop", core.LEADERBOARD_SERVICE)
             for name in (
                 "worker.timer",
                 "publisher.timer",
@@ -1360,6 +1546,21 @@ def main() -> None:
         del roles[name]
     roles.update(dict.fromkeys(args.reader, "reader"))
     roles.update(dict.fromkeys(args.operator, "operator"))
+    password_change = None
+    if args.set_password:
+        if (
+            args.noninteractive or not sys.stdin.isatty() or profile == "cloudflare"
+            or args.action not in {"install", "configure"} or args.set_password not in roles
+        ):
+            parser.error("--set-password needs a local account and an interactive terminal")
+        password = getpass.getpass("New password (at least 16 characters): ")
+        if (
+            len(password) < 16 or len(password.encode()) > 72
+            or not password.isprintable()
+            or password != getpass.getpass("Repeat password: ")
+        ):
+            parser.error("passwords must match and contain 16 to 72 UTF-8 bytes of printable text")
+        password_change = (args.set_password, password)
     public_opt_in = args.public_opt_in or prior.get("public_opt_in", False)
     if profile == "own-domain" and not public_opt_in and not args.noninteractive:
         answer = input(
@@ -1380,10 +1581,14 @@ def main() -> None:
             "backup": prior.get("backup", retained_backup()),
         }
     )
+    policy = args.leaderboard or prior.get("leaderboard", "auto")
+    if args.leaderboard or "leaderboard" in prior:
+        value["leaderboard"] = policy
     preflight(value)
     if args.action == "preflight":
         try:
             core.activation_preflight(value["commit"])
+            leaderboard_preflight()
         except ValueError as error:
             print(
                 json.dumps(
@@ -1427,10 +1632,11 @@ def main() -> None:
         print(json.dumps(receipt, sort_keys=True))
         return
     core.activation_preflight(value["commit"])
+    leaderboard_preflight()
     checkpoint_file = core.CONFIG_ROOT / "rollback-checkpoint.json"
     checkpoint = (
         preserve_rollback()
-        if prior != value
+        if prior != value or password_change is not None
         else json.loads(checkpoint_file.read_text())
         if checkpoint_file.exists()
         else None
@@ -1464,6 +1670,7 @@ def main() -> None:
         image=receipt["image_id"],
         allow_change=args.action in {"configure", "update"},
         cloudflare=cf,
+        password_change=password_change,
     )
     phase(value, "CONFIGURATION_STAGED", access=access)
     if access["status"] == "ACCESS_CONFIGURATION_REQUIRED":
@@ -1480,6 +1687,7 @@ def main() -> None:
     try:
         activate(value, image=receipt["image_id"])
         verify_access(value)
+        start_leaderboard(receipt["image_id"], policy)
         promote_retained_backup(value, image=receipt["image_id"])
         install_health(value)
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -1511,6 +1719,7 @@ def main() -> None:
         backup=value["backup"],
         acquisition_enabled=False,
         rollback_checkpoint=checkpoint,
+        leaderboard=leaderboard_status(),
     )
     print(
         json.dumps(
@@ -1519,6 +1728,7 @@ def main() -> None:
                 "access": access,
                 "backup": value["backup"].get("protection", "UNPROTECTED"),
                 "acquisition_enabled": False,
+                "leaderboard": leaderboard_status(),
                 "next_action": "Read the Console. Observation needs separate approved authority.",
             }
         )

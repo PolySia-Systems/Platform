@@ -4,6 +4,22 @@ PolySia is a risk-controlled, extensible trading and prediction-market
 platform. Polymarket is the first venue adapter and practical MVP, not the
 identity of the core platform.
 
+## Quick start on your server
+
+Use Ubuntu 24.04 or 26.04 on amd64 with administrative SSH access, Docker
+and systemd, 1 GiB available RAM and 8 GiB free disk space. Open an SSH
+terminal on the server and run the official setup entry:
+
+```bash
+setup=$(mktemp -d) && curl -fsSLo "$setup/install.sh" https://raw.githubusercontent.com/PolySia-Systems/Platform/main/deploy/install.sh && bash "$setup/install.sh" install --set-password owner
+```
+
+Choose private SSH access, or use your own domain after pointing its DNS at
+the server. A fresh install runs in DATA_ONLY mode. Once a release includes
+managed leaderboard collection, the console can load public Polymarket
+rankings without an API key. Use the [self-hosting guide](docs/10-operations/independent-platform-shadow.md)
+for your sign-in URL, private certificate trust, access choices and maintenance.
+
 The current implementation is a Python modular monolith with venue-neutral
 domain and application boundaries, deterministic financial arithmetic,
 independent risk authority, explicit execution state, persistent reconciliation,

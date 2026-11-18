@@ -74,6 +74,8 @@ def main() -> None:
         "--noninteractive",
         "--profile",
         "private",
+        "--leaderboard",
+        "paused",
         "--commit",
         args.commit,
         "--artifact-directory",
@@ -81,6 +83,12 @@ def main() -> None:
     )
     first = json.loads(run(*command))
     assert first["status"] == "SETUP_COMPLETE"
+    assert first["leaderboard"] == {
+        "state": "WAITING_FOR_DATA", "last_complete_at": None, "schedule": "paused"
+    }
+    assert json.loads((config / "web.json").read_text())["leaderboard_database"] == (
+        core.LEADERBOARD_DATABASE
+    )
     credentials = (config / "gateway-credentials.json").read_bytes()
     second = json.loads(run(*command))
     assert second["status"] == "SETUP_COMPLETE"
@@ -104,6 +112,24 @@ def main() -> None:
         time.sleep(0.2)
     context = ssl.create_default_context(cafile=str(ca))
     accounts = json.loads(credentials)
+
+    collector = core.container_command(staged["image_id"], role="leaderboard", hostname="")
+    collector[collector.index("--network") + 1] = "none"
+    end = collector.index(staged["image_id"])
+    seed = (
+        "from datetime import UTC, datetime; from decimal import Decimal; "
+        "from pathlib import Path; from polysia.domain.leaderboard import Board, Observation, "
+        "Standing; from polysia.storage.leaderboard import LeaderboardStore; "
+        "s=LeaderboardStore(Path('/leaderboard/leaderboard.sqlite3')); s.initialize(); "
+        "n=datetime.now(UTC); t=s.acquire(n); "
+        "s.publish(Observation(Board('polymarket','month','PNL'), "
+        "(Standing('0x'+'1'*40,'Installation fixture',1,Decimal('1'),Decimal('5')),), "
+        "n,n,'complete',None,False,1,100),t); s.release(t)"
+    )
+    run(
+        *collector[:end], "--entrypoint", "python",
+        staged["image_id"], "-c", seed,
+    )
 
     def request(path="/", *, user="owner", password=None, method="GET", body=None, headers=None):
         supplied = dict(headers or {})
@@ -135,6 +161,9 @@ def main() -> None:
     assert status == 200
     assert request(user=None)[0] == 401
     assert request(password="incorrect-fixture-password")[0] == 401
+    status, _, body = request("/api/console/v1/leaderboard", user="reader")
+    assert status == 200
+    assert json.loads(body)["items"][0]["name"] == "Installation fixture"
     assert request(user=None, headers={"X-Polysia-User": "owner"})[0] == 401
     assert request(headers={"Host": "foreign.invalid"})[0] in {403, 404, 421}
     assert request(headers={"Origin": "https://foreign.invalid"})[0] == 403
