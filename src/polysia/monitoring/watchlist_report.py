@@ -104,11 +104,11 @@ def summary(status: str, data: dict[str, Any]) -> WatchlistRun:
         coverage = "covered"
     equity = None
     cash = _sum([w.cash for w in wallets])
-    marked = _sum([w.marked_value for w in wallets])
+    total_marked_value = _sum([w.marked_value for w in wallets])
     marked_pnl = _sum([w.marked_pnl for w in wallets])
-    marked_cost = marked - marked_pnl
+    marked_cost = total_marked_value - marked_pnl
     if wallets and all(w.observations and w.open_positions == w.valued_positions for w in wallets):
-        equity = cash + marked
+        equity = cash + total_marked_value
     net_pnl = (
         str(equity - Decimal(data["started_cash_per_wallet"]) * len(wallets))
         if equity is not None and cutoff_at is not None and coverage == "covered" else None

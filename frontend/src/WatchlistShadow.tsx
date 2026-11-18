@@ -73,7 +73,7 @@ export function WatchlistShadow({ session, list, onDone }: {
 
   useEffect(() => {
     if (!list) done.current?.focus();
-  }, [list]);
+  }, [list, runs !== null]);
 
   async function mutate(path: string, data: Launch | { run_id: string }) {
     if (requestInFlight.current) return;
@@ -132,6 +132,7 @@ export function WatchlistShadow({ session, list, onDone }: {
       <fieldset disabled={pending || uncertain !== null} className={s.shadowFields}>
         <legend>Wallets for this test</legend>
         <p>{wallets.length} selected{runs ? ' · up to ' + runs.max_wallets : ''}</p>
+        {runs && !validWallets && <p role="status">Choose 1–{runs.max_wallets} wallets for this test.</p>}
         <div className={s.shadowWallets}>{list.wallets.map(address =>
           <label key={address}><input type="checkbox" checked={wallets.includes(address)}
             onChange={event => {
@@ -139,10 +140,10 @@ export function WatchlistShadow({ session, list, onDone }: {
               setWallets(current => checked ? [...current, address] : current.filter(item => item !== address));
             }} /> <code title={address}>{address.slice(0, 10)}…{address.slice(-6)}</code></label>
         )}</div>
-        {runs && !validWallets && <p role="status">Choose 1–{runs.max_wallets} wallets for this test.</p>}
       </fieldset>
       <fieldset disabled={pending || uncertain !== null} className={s.shadowFields}>
         <legend>Duration</legend>
+        {runs && <small id="paper-duration-range">Choose {runs.min_duration_seconds / 60} minutes to {runs.max_duration_seconds / 86400} days.</small>}
         <div className={s.actions}>
           <Button type="button" variant="default" onClick={() => { setAmount('15'); setUnit('minutes'); }}>15 minutes</Button>
           <Button type="button" variant="default" onClick={() => { setAmount('2'); setUnit('hours'); }}>2 hours</Button>
@@ -157,7 +158,6 @@ export function WatchlistShadow({ session, list, onDone }: {
             <option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option>
           </select></label>
         </div>
-        {runs && <small id="paper-duration-range">Choose {runs.min_duration_seconds / 60} minutes to {runs.max_duration_seconds / 86400} days.</small>}
         {validDuration && <p>Estimated end {local(new Date(Date.now() + duration * 1000).toISOString())}</p>}
       </fieldset>
       {runs && <small>{runs.starting_cash} virtual USDC per wallet, up to {runs.maximum_fill} USDC per simulated trade.
@@ -169,9 +169,8 @@ export function WatchlistShadow({ session, list, onDone }: {
         {uncertain ? 'Check and retry start' : 'Start Shadow'}
       </Button>
     </form> : <>
-      <h3 tabIndex={-1} ref={done}>Paper tests</h3>
       {!runs ? <p>Loading tests…</p> : <>
-        {offset === 0 && <><h4>Active</h4>{runs.items.some(run => run.status === 'RUNNING')
+        {offset === 0 && <><h3 tabIndex={-1} ref={done}>Active test</h3>{runs.items.some(run => run.status === 'RUNNING')
           ? runs.items.filter(run => run.status === 'RUNNING').map(run => <RunCard key={run.id} run={run}
             stop={pending ? undefined : () => {
               if (window.confirm('End this paper test and keep its report?')) {
@@ -179,7 +178,7 @@ export function WatchlistShadow({ session, list, onDone }: {
               }
             }} />)
           : <p>{runs.busy ? 'Another operator has a test running.' : 'No active paper test.'}</p>}</>}
-        <h4>History</h4>
+        <h3>History</h3>
         {runs.items.filter(run => run.status !== 'RUNNING').map(run =>
           <RunCard key={run.id} run={run} show={ended === run.id} />)}
         {!runs.items.some(run => run.status !== 'RUNNING') && <p>No completed paper tests on this page.</p>}
@@ -197,6 +196,7 @@ export function WatchlistShadow({ session, list, onDone }: {
 function RunCard({ run, stop, show }: { run: WatchlistRun; stop?: () => void; show?: boolean }) {
   const running = run.status === 'RUNNING';
   const fills = run.wallets.reduce((sum, wallet) => sum + wallet.fills, 0);
+  const skipped = run.wallets.reduce((sum, wallet) => sum + wallet.skipped, 0);
   const open = run.wallets.reduce((sum, wallet) => sum + wallet.open_positions, 0);
   const valued = run.wallets.reduce((sum, wallet) => sum + wallet.valued_positions, 0);
   const hasMark = run.wallets.some(wallet => wallet.marked_positions > 0);
@@ -213,7 +213,7 @@ function RunCard({ run, stop, show }: { run: WatchlistRun; stop?: () => void; sh
       ? 'Ended early' : 'Finished'} · {run.wallets.length} {run.wallets.length === 1 ? 'wallet' : 'wallets'}</summary>
     <div className={s.watchlistForm}>
       <small>Paper test · virtual funds</small>
-      <p>{fills} simulated {fills === 1 ? 'trade' : 'trades'} · {open} open positions
+      <p>{fills} simulated {fills === 1 ? 'trade' : 'trades'} · {skipped} skipped · {open} open positions
         {closed === null ? '' : ' · ' + closed + ' closed positions'}</p>
       <p>Gain or loss from simulated sales <strong>{compact(run.realized)} USDC</strong></p>
       {open > 0 && <p>{open - valued} of {open} open positions lack a full ending price.</p>}
