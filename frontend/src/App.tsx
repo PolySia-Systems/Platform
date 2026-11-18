@@ -8,6 +8,7 @@ import { BrandLockup, Amount, Badge } from './design/Primitives';
 import { useMantineColorScheme } from '@mantine/core';
 import { EvidenceWorkspace, valueDirection } from './Workspaces';
 import { Leaderboard } from './Leaderboard';
+import { InstallationSettings } from './InstallationSettings';
 
 type Intent = { preview_id: string; expected_revision: number; idempotency_key: string; context: string; identity: string };
 const tabs = { overview: m.overview, leaderboard: 'Leaderboard', investigate: m.investigate, operate: m.operate, evaluate: m.evaluate, system: m.system } as const;
@@ -362,6 +363,7 @@ export default function App() {
           </section>
           <EvidenceWorkspace key={workspaceRefresh} panel="operate" generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />
         </>}
+        {tab === 'system' && validIdentity && session?.role === 'operator' && <InstallationSettings />}
         {(tab === 'evaluate' || tab === 'system') && <EvidenceWorkspace key={tab + workspaceRefresh} panel={tab === 'evaluate' ? 'evaluate' : 'system'}
           generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />}
         {tab === 'evaluate' && <section className={s.panel} aria-label={m.exports}><h2>{m.exports}</h2>

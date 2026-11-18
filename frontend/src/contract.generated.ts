@@ -12,6 +12,7 @@ export type EvidenceSection = { title: string; validity: Component; facts: (Fact
 export type EvidenceTable = { title: string; columns: (string)[]; rows: ((string | null)[])[]; total: number | null; state: "AVAILABLE" | "EMPTY" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "INCOMPATIBLE" };
 export type Fact = { label: string; value: string | null };
 export type Financial = { status: "RUNNING" | "DRAIN" | "STOP" | "UNKNOWN"; authority: "DENIED" | "EXPIRED" | "NOT_STARTED" | "WITHIN_WINDOW" | "UNKNOWN"; authority_until: string | null; reconciliation: "MATCHED" | "BLOCKED" | "UNKNOWN"; economics: string; cash: Money; exposure: Money; reserved: Money; positions: number | null; unknown_orders: number | null; account_observed_at?: string | null; account_valid_until?: string | null };
+export type InstallationSettings = { release: string | null; profile: string | null; connection: string | null; connection_checked_at: string | null; authenticated: string | null; backup_mode: string | null; backup_status: string | null; update_state: string | null; update_available: string | null; update_automatic: boolean | null };
 export type LeaderboardActivity = { since: string; through: string; latest: string | null; trades: number; markets: number; complete: boolean };
 export type LeaderboardBenchmarks = { items: (BenchmarkSummary)[] };
 export type LeaderboardComparison = { capture_id: number; offset: number; total: number; items: (BenchmarkWallet)[] };
@@ -509,6 +510,135 @@ export const schemas = {
       "trace"
     ],
     "title": "Detail",
+    "type": "object"
+  },
+  "InstallationSettings": {
+    "additionalProperties": false,
+    "properties": {
+      "authenticated": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Authenticated"
+      },
+      "backup_mode": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Backup Mode"
+      },
+      "backup_status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Backup Status"
+      },
+      "connection": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Connection"
+      },
+      "connection_checked_at": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Connection Checked At"
+      },
+      "profile": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Profile"
+      },
+      "release": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Release"
+      },
+      "update_automatic": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Update Automatic"
+      },
+      "update_available": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Update Available"
+      },
+      "update_state": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Update State"
+      }
+    },
+    "required": [
+      "release",
+      "profile",
+      "connection",
+      "connection_checked_at",
+      "authenticated",
+      "backup_mode",
+      "backup_status",
+      "update_state",
+      "update_available",
+      "update_automatic"
+    ],
+    "title": "InstallationSettings",
     "type": "object"
   },
   "LeaderboardBenchmarks": {

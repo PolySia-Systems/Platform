@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS leaderboard_retry (
     scope TEXT PRIMARY KEY,
     retry_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS leaderboard_schedule (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+    interval_minutes INTEGER NOT NULL CHECK(interval_minutes BETWEEN 15 AND 1440)
+);
 CREATE TABLE IF NOT EXISTS leaderboard_attempts (
     id INTEGER PRIMARY KEY,
     board TEXT NOT NULL,
@@ -193,6 +197,15 @@ class LeaderboardStore:
                 "SELECT retry_at FROM leaderboard_retry WHERE scope='provider'"
             ).fetchone()
             return datetime.fromisoformat(row[0]) if row else None
+
+    def set_refresh_interval(self, token: str, minutes: int) -> None:
+        with self._write() as db:
+            self._require_lease(db, token)
+            db.execute(
+                "INSERT INTO leaderboard_schedule VALUES (1, ?) "
+                "ON CONFLICT(singleton) DO UPDATE SET interval_minutes=excluded.interval_minutes",
+                (minutes,),
+            )
 
     def publish(self, item: Observation, token: str) -> int:
         """Publish atomically and return the number of newly admitted wallet addresses."""
@@ -372,7 +385,15 @@ def next_refresh_at(
     if attempt is not None:
         interval = timedelta(minutes=15)
         if attempt["outcome"] == "complete" and not force:
-            interval = timedelta(hours=24 if board.discovery_only else 6)
+            if board.discovery_only:
+                interval = timedelta(days=1)
+            else:
+                row = None
+                if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='leaderboard_schedule'"
+                ).fetchone():
+                    row = db.execute("SELECT interval_minutes FROM leaderboard_schedule").fetchone()
+                interval = timedelta(minutes=row[0] if row else 360)
         deadlines.append(datetime.fromisoformat(attempt["fetched_at"]) + interval)
     # A read-only Console may open a retained database before the writer upgrades it.
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='leaderboard_retry'").fetchone():

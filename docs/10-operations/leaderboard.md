@@ -17,6 +17,10 @@ boards that are still fresh. Inspect the last complete capture using host
 admin `status`. Run the same guided setup entry with `configure --leaderboard paused`
 to keep displaying retained data and stop polling, or `configure --leaderboard auto`
 to resume, using the currently installed release's versioned entry.
+When automatic collection is enabled, `sudo polysia-admin configure
+--leaderboard-interval 120` changes the visible boards' successful refresh
+interval to two hours. The accepted interval is 15–1440 minutes. Retry floors,
+provider deadlines and discovery eligibility still apply.
 
 An update from the original Helsinki setup adopts the standard data directory
 and recognizes the previous manual service, timer and web override. Back up

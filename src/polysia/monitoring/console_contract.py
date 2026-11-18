@@ -139,6 +139,19 @@ class WatchlistRunPage(Wire):
     max_wallets: int
 
 
+class InstallationSettings(Wire):
+    release: str | None
+    profile: str | None
+    connection: str | None
+    connection_checked_at: str | None
+    authenticated: str | None
+    backup_mode: str | None
+    backup_status: str | None
+    update_state: str | None
+    update_available: str | None
+    update_automatic: bool | None
+
+
 class LeaderboardPage(Wire):
     state: Validity
     generation: Fingerprint | None
@@ -438,6 +451,7 @@ Record.model_rebuild()
 CONTRACT_MODELS = (
     Watchlists,
     WatchlistRunPage,
+    InstallationSettings,
     LeaderboardPage,
     LeaderboardWallet,
     LeaderboardBenchmarks,
