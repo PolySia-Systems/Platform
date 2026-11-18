@@ -8,6 +8,7 @@ from decimal import Decimal
 from email.message import Message
 from io import BytesIO
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from typer.testing import CliRunner
@@ -133,6 +134,8 @@ def test_provider_and_board_retry_deadlines_survive_restart_and_force(storage):
     )
     reopened = LeaderboardStore(store.path)
     assert not reopened.should_refresh(board, now + timedelta(hours=1), force=True)
+    custom_depth = replace(board, discovery_only=True, discovery_depth=2000)
+    assert not reopened.should_refresh(custom_depth, now + timedelta(hours=1), force=True)
     assert reopened.should_refresh(other, now)
     store.defer_provider(token, until + timedelta(hours=1))
     store.defer_provider(token, until)
@@ -158,6 +161,91 @@ def test_discovery_depth_keeps_visible_board_and_increases_searchable_bank(stora
     assert store.should_refresh(board, now + timedelta(hours=6))
     assert not store.should_refresh(deeper, now + timedelta(hours=6))
     assert store.should_refresh(deeper, now + timedelta(days=1))
+
+
+def test_custom_discovery_depth_keeps_history_and_counts_unique_new_wallets(tmp_path, monkeypatch):
+    path = tmp_path / "bank.sqlite3"
+    store = LeaderboardStore(path)
+    store.initialize()
+    now = datetime.now(UTC)
+    token = store.acquire(now)
+    visible = Board("polymarket", "month", "PNL")
+    original = replace(visible, discovery_only=True)
+    assert token
+    store.publish(observation(now, standing(1, 1)), token)
+    store.publish(observation(now - timedelta(days=2), standing(2, 1), board=original), token)
+    store.release(token)
+    earlier = page(path, visible, now, "", 0, None)
+    requests = []
+
+    def transport(**options):
+        reads = PublicReads(**options)
+
+        def open_page(request, **kwargs):
+            query = parse_qs(urlsplit(request.full_url).query)
+            offset = int(query.get("cursor", ["0"])[0])
+            limit = int(query["limit"][0])
+            requests.append(query["time_period"][0])
+            rows = [
+                {"user_id": f"0x{i:040x}", "rank": i, "pnl": "1.23", "volume": "100"}
+                for i in range(offset + 1, offset + limit + 1)
+            ]
+            return BytesIO(
+                json.dumps(
+                    {
+                        "data": rows,
+                        "pagination": {"has_more": True, "next_cursor": str(offset + limit)},
+                    }
+                ).encode()
+            )
+
+        monkeypatch.setattr(reads, "_open", open_page)
+        return reads
+
+    monkeypatch.setattr("polysia.cli_commands.leaderboard.PublicReads", transport)
+    args = ["refresh", "--database", str(path), "--discovery-only", "--max-requests", "26"]
+    runner = CliRunner()
+    result = runner.invoke(app, [*args, "--discovery-depth", "1250"])
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.stdout)
+    assert (summary["requests"], summary["max_requests"], summary["wallets_added"]) == (
+        26,
+        26,
+        1248,
+    )
+    assert requests == ["month"] * 13 + ["all"] * 13
+    assert all(key.endswith(":1250") for key in summary["boards"])
+    kept = page(path, visible, now, "", 0, earlier.generation)
+    assert kept.items == earlier.items and kept.bank_count == 1250
+    with store.read() as db:
+        assert (
+            db.execute(
+                "SELECT row_count FROM leaderboard_attempts WHERE board=?", (original.key,)
+            ).fetchone()[0]
+            == 1
+        )
+    # A new depth shares the discovery cadence, including the minimum manual interval.
+    repeat = runner.invoke(app, [*args, "--discovery-depth", "1200", "--force"])
+    assert repeat.exit_code == 0
+    assert json.loads(repeat.stdout)["requests"] == json.loads(repeat.stdout)["wallets_added"] == 0
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--discovery-depth", "2000"],
+        ["--discovery-only", "--discovery-depth", "1000"],
+        ["--discovery-only", "--discovery-depth", "5001"],
+        ["--discovery-only", "--discovery-depth", "1250", "--max-requests", "25"],
+        ["--max-requests", "31"],
+        ["--max-requests", "101"],
+    ],
+)
+def test_invalid_collection_policy_precedes_database_or_network_use(tmp_path, options):
+    path = tmp_path / "unopened.sqlite3"
+    result = CliRunner().invoke(app, ["refresh", "--database", str(path), *options])
+    assert result.exit_code == 2
+    assert not path.exists()
 
 
 def test_refresh_cli_shares_provider_cooldown_across_discovery_and_visible_boards(

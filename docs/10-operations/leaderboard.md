@@ -49,6 +49,32 @@ collection. The default board refresh has its own six-hour cadence.
 polysia leaderboard refresh --discovery-only --database ./leaderboard.sqlite3
 ```
 
+### Changing collection cost and coverage
+
+Set the discovery depth and HTTP budget in the existing job command. For example,
+the following collects the top 2,000 for each of the two discovery periods.
+Forty full pages cover both periods. The remaining eight attempts allow for
+short pages or retries within the other limits.
+
+```text
+polysia leaderboard refresh --database ./leaderboard.sqlite3 --discovery-only --discovery-depth 2000 --max-requests 48
+```
+
+| Change | Where it belongs | Proportionate check |
+|---|---|---|
+| Discovery depth | Set `--discovery-depth` between 1,001 and 5,000. The visible P&L boards already cover 1,000. Each depth has its own observations. Changing depth preserves the job's cadence and existing history. Omit the discovery job when the visible boards provide sufficient coverage. | Check the two completed scopes, `wallets_added`, requests and bytes. Compare several runs at the same cadence before increasing depth. |
+| Request budget | Set `--max-requests` up to 100 per invocation. Allow 32 full pages for the visible boards or twice the discovery depth rounded up to pages of 100. The CLI rejects a budget below that baseline before opening the database. A fully consumed budget can leave optional details unavailable. | Check actual attempts and outcomes. Leave headroom for retries. `wallets_added` counts distinct new addresses from committed, complete scopes. A retry or an address shared by both periods does not inflate it. |
+| Refresh frequency | Edit the existing scheduler. Its normal guards are six hours for visible boards and 24 hours for discovery. For example, a two-hour schedule with `--force` requests a two-hour refresh. All jobs honor the 15-minute floor and provider deadlines. Manual reference imports have their own cadence. | Verify two scheduled receipts, the retained capture times and the configured freshness objective. Ongoing stale warnings are expected if a schedule intentionally exceeds that objective. |
+| Freshness warnings, retry floors, retention and hard safety ceilings | These are product or resource guarantees. Change the corresponding implementation and user-facing labels or documentation together when the guarantee changes. | Test just below and at each threshold. For retries, exercise restart and forced refresh. For retention, prove an older database keeps its current and historical evidence. |
+| Ranking semantics and metrics | Period and ranking selection are existing UI controls. Changing the meaning of P&L, adding a scoring formula or changing a unit requires an explicit metric definition, compatible source data and a separately identifiable historical series when semantics differ. | Replay fixed samples with exact expected values. For a wire or UI change, regenerate the Console contract and assets and verify the affected browser journey. |
+
+The receipt measures discovery yield for the whole invocation. A falling yield
+can reflect an already populated bank. Choose depth using repeated observations
+and dated reference coverage. Automatic depth changes, resumable cross-run
+cursors and an IP-wide quota shared with other applications would add coordination
+and recovery work. Revisit them if repeated budget exhaustion or measured
+cross-job contention prevents a complete, timely collection.
+
 The Console reloads the current retained view automatically about once a minute
 while visible on the first page. **Reload data** reads the latest retained
 generation immediately. The collector owns network refresh and its budget.

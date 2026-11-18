@@ -19,6 +19,8 @@ from polysia.adapters.polymarket.data_api_v2 import DATA_API_BASE_URL
 from polysia.domain.leaderboard import Activity, Board, Observation, Standing
 
 WALLET = re.compile(r"0x[0-9a-fA-F]{40}")
+BOARD_PAGE_SIZE = 100
+MAX_REQUESTS_PER_RUN = 100
 _BODY_CAP = 2 * 1024 * 1024
 _ALLOWED = frozenset({"/v2/leaderboard", "/v2/status", "/v2/trades"})
 
@@ -44,7 +46,7 @@ class PublicReads:
     def __init__(
         self,
         *,
-        max_requests: int = 100,
+        max_requests: int = MAX_REQUESTS_PER_RUN,
         max_bytes: int = 50 * 1024 * 1024,
         seconds: float = 600,
         sleep: Callable[[float], None] = time.sleep,
@@ -194,7 +196,7 @@ def board_observation(
         "time_period": board.period,
         "sort_by": board.ranking,
         "category": board.category,
-        "limit": 100,
+        "limit": BOARD_PAGE_SIZE,
     }
     rows: list[Standing] = []
     wallets: set[str] = set()
@@ -206,7 +208,7 @@ def board_observation(
                 "/v2/leaderboard", params if not cursor else {**params, "cursor": cursor}
             )
             page, cursor = page_payload(payload)
-            if len(page) > 100 or cursor and (not page or cursor in seen_cursors):
+            if len(page) > BOARD_PAGE_SIZE or cursor and (not page or cursor in seen_cursors):
                 raise ReadFailure("invalid_page_or_repeated_cursor")
             mapped = [standing(row) for row in page]
             ids = {row.wallet for row in mapped}
@@ -220,7 +222,7 @@ def board_observation(
             if not cursor or len(rows) >= board.depth:
                 break
             seen_cursors.add(cursor)
-            if len(seen_cursors) >= (board.depth // 100) + 2:
+            if len(seen_cursors) >= (board.depth // BOARD_PAGE_SIZE) + 2:
                 raise ReadFailure("page_budget_exhausted")
     except ReadFailure as error:
         return Observation(

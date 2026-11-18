@@ -12,27 +12,93 @@ from typing import Annotated
 import typer
 
 from polysia.adapters.polymarket.leaderboard import (
+    BOARD_PAGE_SIZE,
+    MAX_REQUESTS_PER_RUN,
     WALLET,
     PublicReads,
     board_observation,
     source_health,
     wallet_activity,
 )
-from polysia.domain.leaderboard import CATEGORIES, RANKINGS, REFERENCES, Board, ReferenceCapture
+from polysia.domain.leaderboard import (
+    CATEGORIES,
+    MAX_DISCOVERY_DEPTH,
+    RANKINGS,
+    REFERENCES,
+    V1_DISCOVERY_DEPTH,
+    VISIBLE_PNL_DEPTH,
+    Board,
+    ReferenceCapture,
+)
 from polysia.storage.leaderboard import LeaderboardStore
 
 app = typer.Typer(help="Collect public ranking evidence independently of trading.")
 Database = Annotated[Path, typer.Option("--database", dir_okay=False)]
 
 
+def _collection_boards(discovery_only: bool, depth: int | None) -> list[Board]:
+    if discovery_only:
+        return [
+            Board(
+                "polymarket",
+                period,
+                "PNL",
+                discovery_only=True,
+                discovery_depth=depth if depth is not None else V1_DISCOVERY_DEPTH,
+            )
+            for period in ("month", "all")
+        ]
+    if depth is not None:
+        raise typer.BadParameter("--discovery-depth requires --discovery-only.")
+    boards = [
+        Board("polymarket", period, ranking)
+        for period in ("month", "all", "week", "day")
+        for ranking in RANKINGS
+    ]
+    boards.extend(
+        Board("polymarket", "month", ranking, category)
+        for category in CATEGORIES[1:]
+        for ranking in RANKINGS
+    )
+    return boards
+
+
 @app.command("refresh")
-def refresh(database: Database, force: bool = False, discovery_only: bool = False) -> None:
+def refresh(
+    database: Database,
+    force: bool = False,
+    discovery_only: bool = False,
+    discovery_depth: Annotated[
+        int | None,
+        typer.Option(
+            min=VISIBLE_PNL_DEPTH + 1,
+            max=MAX_DISCOVERY_DEPTH,
+            help=f"Rows per monthly and all-time discovery board (default {V1_DISCOVERY_DEPTH:,}).",
+        ),
+    ] = None,
+    max_requests: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            max=MAX_REQUESTS_PER_RUN,
+            help="HTTP attempts per run, including retries and details.",
+        ),
+    ] = MAX_REQUESTS_PER_RUN,
+) -> None:
     """Refresh due public boards and bounded wallet details."""
+    boards = _collection_boards(discovery_only, discovery_depth)
+    pages = sum((board.depth + BOARD_PAGE_SIZE - 1) // BOARD_PAGE_SIZE for board in boards)
+    if max_requests < pages:
+        raise typer.BadParameter(
+            f"Selected boards need a budget of at least {pages} requests at full depth.",
+            param_hint="--max-requests",
+        )
     store = LeaderboardStore(database)
     now = datetime.now(UTC)
     token = None
     results: dict[str, str] = {}
     enriched = 0
+    wallets_added = 0
     try:
         store.initialize()
         token = store.acquire(now)
@@ -43,39 +109,30 @@ def refresh(database: Database, force: bool = False, discovery_only: bool = Fals
         if until is not None and until > now:
             typer.echo(json.dumps({"status": "provider_deferred", "retry_at": until.isoformat()}))
             return
-        reads = PublicReads(on_rate_limit=partial(store.defer_provider, token))
-        if discovery_only:
-            boards = [
-                Board("polymarket", period, "PNL", discovery_only=True)
-                for period in ("month", "all")
-            ]
-        else:
-            boards = [
-                Board("polymarket", period, ranking)
-                for period in ("month", "all", "week", "day")
-                for ranking in RANKINGS
-            ]
-            boards.extend(
-                Board("polymarket", "month", ranking, category)
-                for category in CATEGORIES[1:]
-                for ranking in RANKINGS
-            )
+        reads = PublicReads(
+            max_requests=max_requests, on_rate_limit=partial(store.defer_provider, token)
+        )
         shortlist: set[str] = set()
         for board in boards:
             if not store.should_refresh(board, now, force=force):
                 continue
             item = board_observation(board, reads)
-            store.publish(item, token)
+            wallets_added += store.publish(item, token)
             results[board.key] = item.outcome if item.reason is None else item.reason
             if item.outcome == "complete" and board == Board("polymarket", "month", "PNL"):
                 shortlist.update(row.wallet for row in item.rows[:12])
-        if results and not discovery_only and reads.deferred_until is None:
+        if (
+            results
+            and not discovery_only
+            and reads.deferred_until is None
+            and reads.requests < max_requests
+        ):
             computed = source_health(reads)
             store.health(datetime.now(UTC), computed, token)
         through = int(now.timestamp())
         since = int((now - timedelta(days=7)).timestamp())
         for wallet in sorted(shortlist):
-            if reads.deferred_until is not None:
+            if reads.deferred_until is not None or reads.requests >= max_requests:
                 break
             activity = wallet_activity(wallet, reads, since, through)
             if activity.complete or activity.trade_count:
@@ -100,6 +157,8 @@ def refresh(database: Database, force: bool = False, discovery_only: bool = Fals
                 "requests": reads.requests,
                 "received_bytes": reads.bytes,
                 "enriched_wallets": enriched,
+                "wallets_added": wallets_added,
+                "max_requests": max_requests,
                 "provider_retry_at": reads.deferred_until.isoformat()
                 if reads.deferred_until
                 else None,

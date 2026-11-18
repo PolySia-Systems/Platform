@@ -11,6 +11,9 @@ PERIODS: tuple[Period, ...] = ("day", "week", "month", "all")
 RANKINGS: tuple[Ranking, ...] = ("PNL", "VOLUME")
 CATEGORIES = ("overall", "sports", "politics", "crypto")
 REFERENCES = ("PolyCop", "Rivo", "PolyIntel")
+VISIBLE_PNL_DEPTH = 1000
+V1_DISCOVERY_DEPTH = 3000
+MAX_DISCOVERY_DEPTH = 5000
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +23,7 @@ class Board:
     ranking: Ranking
     category: str = "overall"
     discovery_only: bool = False
+    discovery_depth: int = V1_DISCOVERY_DEPTH
 
     def __post_init__(self) -> None:
         if self.period not in PERIODS or self.ranking not in RANKINGS:
@@ -32,18 +36,35 @@ class Board:
             or self.period not in ("month", "all")
         ):
             raise ValueError("unsupported_discovery_scope")
+        if (
+            type(self.discovery_depth) is not int
+            or not VISIBLE_PNL_DEPTH < self.discovery_depth <= MAX_DISCOVERY_DEPTH
+            or (not self.discovery_only and self.discovery_depth != V1_DISCOVERY_DEPTH)
+        ):
+            raise ValueError("unsupported_discovery_depth")
 
     @property
     def depth(self) -> int:
         if self.discovery_only:
-            return 3000
+            return self.discovery_depth
         if self.category == "overall" and self.ranking == "PNL" and self.period in ("month", "all"):
-            return 1000
+            return VISIBLE_PNL_DEPTH
         return 100
 
     @property
+    def query_key(self) -> str:
+        return f"{self.venue}:traders:v1:{self.category}:{self.period}:{self.ranking}"
+
+    @property
+    def discovery_prefix(self) -> str:
+        return f"{self.query_key}:discovery:"
+
+    @property
     def key(self) -> str:
-        return f"{self.venue}:traders:v1:{self.category}:{self.period}:{self.ranking}:{self.depth}"
+        # Keep the original 3,000-row series readable in existing evidence databases.
+        if self.discovery_only and self.depth != V1_DISCOVERY_DEPTH:
+            return f"{self.discovery_prefix}{self.depth}"
+        return f"{self.query_key}:{self.depth}"
 
 
 @dataclass(frozen=True, slots=True)

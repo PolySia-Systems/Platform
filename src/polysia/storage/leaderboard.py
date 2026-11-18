@@ -11,7 +11,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from polysia.domain.leaderboard import Activity, Board, Observation, ReferenceCapture
+from polysia.domain.leaderboard import (
+    V1_DISCOVERY_DEPTH,
+    Activity,
+    Board,
+    Observation,
+    ReferenceCapture,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS leaderboard_lease (
@@ -164,7 +170,16 @@ class LeaderboardStore:
 
     def should_refresh(self, board: Board, now: datetime, *, force: bool = False) -> bool:
         with self.read() as db:
-            deadline = next_refresh_at(db, board, latest_attempt(db, board), force=force)
+            if board.discovery_only:
+                # Cadence follows the job across depths. Visible rankings retain their own clock.
+                attempt = db.execute(
+                    """SELECT fetched_at, outcome FROM leaderboard_attempts
+                    WHERE board = ? OR instr(board, ?) = 1 ORDER BY id DESC LIMIT 1""",
+                    (f"{board.query_key}:{V1_DISCOVERY_DEPTH}", board.discovery_prefix),
+                ).fetchone()
+            else:
+                attempt = latest_attempt(db, board)
+            deadline = next_refresh_at(db, board, attempt, force=force)
             return deadline is None or now >= deadline
 
     def defer_provider(self, token: str, until: datetime) -> None:
@@ -179,7 +194,8 @@ class LeaderboardStore:
             ).fetchone()
             return datetime.fromisoformat(row[0]) if row else None
 
-    def publish(self, item: Observation, token: str) -> None:
+    def publish(self, item: Observation, token: str) -> int:
+        """Publish atomically and return the number of newly admitted wallet addresses."""
         if item.outcome == "complete" and (
             item.has_more is None or item.has_more and len(item.rows) != item.board.depth
         ):
@@ -214,7 +230,13 @@ class LeaderboardStore:
                 "INSERT INTO leaderboard_rows VALUES (?, ?, ?, ?, ?, ?, ?)",
                 ((record_id, index, *row) for index, row in enumerate(mapped, 1)),
             )
+            added = 0
             if item.outcome == "complete":
+                added = db.execute(
+                    """SELECT count(*) FROM leaderboard_rows r WHERE r.attempt_id = ?
+                    AND NOT EXISTS (SELECT 1 FROM leaderboard_bank b WHERE b.wallet = r.wallet)""",
+                    (record_id,),
+                ).fetchone()[0]
                 db.executemany(
                     """INSERT INTO leaderboard_bank VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(wallet) DO UPDATE SET
@@ -223,6 +245,7 @@ class LeaderboardStore:
                     WHERE excluded.last_seen >= leaderboard_bank.last_seen""",
                     ((wallet, name, fetched, fetched, source) for wallet, name, *_ in mapped),
                 )
+            return int(added)
 
     def health(self, observed: datetime, computed: datetime | None, token: str) -> None:
         with self._write() as db:
@@ -354,8 +377,9 @@ def next_refresh_at(
     # A read-only Console may open a retained database before the writer upgrades it.
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='leaderboard_retry'").fetchone():
         hint = db.execute(
-            "SELECT max(retry_at) FROM leaderboard_retry WHERE scope IN ('provider', ?)",
-            (board.key,),
+            """SELECT max(retry_at) FROM leaderboard_retry
+            WHERE scope = 'provider' OR instr(scope, ?) = 1""",
+            (board.query_key + ":",),
         ).fetchone()[0]
         if hint is not None:
             deadlines.append(datetime.fromisoformat(hint))
