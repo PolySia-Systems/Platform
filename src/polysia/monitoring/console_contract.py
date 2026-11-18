@@ -7,6 +7,14 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from polysia.storage.watchlists import (
+    LIST_ID_PATTERN,
+    MAX_LISTS,
+    MAX_NAME,
+    MAX_WALLETS,
+    WALLET_PATTERN,
+)
+
 API_VERSION: Literal["console/v1"] = "console/v1"
 RELEASE: Literal["0.4.0"] = "0.4.0"
 Identity = Annotated[str, Field(min_length=1, max_length=256)]
@@ -59,6 +67,28 @@ class LeaderboardRow(Wire):
     pnl: Exact | None
     volume: Exact | None
     rank_change: int | None
+
+
+class Watchlist(Wire):
+    id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
+    name: Annotated[str, Field(min_length=1, max_length=MAX_NAME)]
+    wallets: Annotated[
+        list[Annotated[str, Field(pattern=WALLET_PATTERN)]], Field(max_length=MAX_WALLETS)
+    ]
+    revision: Annotated[int, Field(ge=0)]
+
+
+class WatchlistMutation(Wire):
+    identity: Fingerprint
+    item: Watchlist
+    delete: bool = False
+
+
+class Watchlists(Wire):
+    enabled: bool
+    items: Annotated[list[Watchlist], Field(max_length=MAX_LISTS)]
+    max_lists: Annotated[int, Field(ge=1)]
+    max_wallets: Annotated[int, Field(ge=1)]
 
 
 class LeaderboardPage(Wire):
@@ -358,6 +388,7 @@ class Detail(Wire):
 Action.model_rebuild()
 Record.model_rebuild()
 CONTRACT_MODELS = (
+    Watchlists,
     LeaderboardPage,
     LeaderboardWallet,
     LeaderboardBenchmarks,

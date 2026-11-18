@@ -25,6 +25,14 @@ custom units before changing them if the installer reports a conflict.
 For older releases and installations without the guided host setup, configure
 collection and the Console separately as described below.
 
+## Save a wallet selection
+
+An operator on a managed installation can select wallets across ranking pages
+or searches, then choose **Save selection**. Open **Watchlists** to add the
+current selection to a saved list, rename it, remove wallets or delete the list.
+Watchlists are private to the signed-in operator and survive browser restarts.
+Deleting a list leaves the public rankings and wallet history intact.
+
 Use the installed release and a writable path in a private data directory.
 The path's directory must already exist. Run the collector as the data owner,
 using the existing job runner or an interactive terminal.

@@ -82,6 +82,7 @@ class ConsoleApplication:
         identity_header: str = "HTTP_CF_ACCESS_JWT_ASSERTION",
         scoped_targets: frozenset[str] = frozenset(),
         leaderboard_database: Path | None = None,
+        watchlist_database: Path | None = None,
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -102,6 +103,7 @@ class ConsoleApplication:
         self._commands, self._csrf_secret = commands, csrf_secret
         self._scoped_targets = scoped_targets
         self.leaderboard_database = leaderboard_database
+        self.watchlist_database = watchlist_database
         if identity_header not in {"HTTP_CF_ACCESS_JWT_ASSERTION", "HTTP_X_POLYSIA_USER"}:
             raise ValueError("unsupported identity boundary")
         self._identity_header = identity_header
@@ -163,6 +165,7 @@ class ConsoleApplication:
                     "/api/operations/apply",
                     PREFIX + "/preview",
                     PREFIX + "/apply",
+                    PREFIX + "/watchlists",
                 }
                 or role != "operator"
             ):
@@ -189,7 +192,7 @@ class ConsoleApplication:
                     or not any(hmac.compare_digest(csrf, item) for item in (expected, previous))
                 ):
                     return respond("403 Forbidden", {"reason": "csrf_invalid"})
-                if path in {PREFIX + "/preview", PREFIX + "/apply"}:
+                if path in {PREFIX + "/preview", PREFIX + "/apply", PREFIX + "/watchlists"}:
                     receipt = self._gateway.mutate(path, command, subject, role)
                 elif path == "/api/operations/preview":
                     if set(command) - {"operation", "target", "arguments"}:

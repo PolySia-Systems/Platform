@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Button, Modal } from '@mantine/core';
-import { ApiError, read } from './client';
+import { ApiError, post, read } from './client';
 import type {
   BenchmarkSummary, LeaderboardBenchmarks, LeaderboardComparison, LeaderboardPage,
-  LeaderboardWallet,
+  LeaderboardWallet, Session, Watchlist, Watchlists,
 } from './contract.generated';
 import { Badge } from './design/Primitives';
 import s from './Leaderboard.module.css';
@@ -24,7 +24,9 @@ const explanation = (reason: string | null) => {
   return 'The latest collection could not be verified.';
 };
 
-export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => void }) {
+export function Leaderboard({ onIdentityFailure, session }: {
+  onIdentityFailure: () => void; session: Session;
+}) {
   const [period, setPeriod] = useState('month');
   const [ranking, setRanking] = useState('PNL');
   const [category, setCategory] = useState('overall');
@@ -40,6 +42,12 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
   const [wallet, setWallet] = useState<string | null>(null);
   const [comparison, setComparison] = useState<BenchmarkSummary | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [watchlists, setWatchlists] = useState<Watchlists | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [editor, setEditor] = useState<Watchlist | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [watchlistMessage, setWatchlistMessage] = useState('');
   const scope = new URLSearchParams({ period, ranking, category }).toString();
   const request = new URLSearchParams({
     period, ranking, category, q: query, offset: String(pagination.offset),
@@ -47,6 +55,44 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
   if (pagination.generation !== null) request.set('generation', pagination.generation);
   const key = request.toString();
   const snapshot = active?.key === key ? active.page : null;
+
+  useEffect(() => {
+    if (session.role !== 'operator') return;
+    const controller = new AbortController();
+    void read<Watchlists>('/watchlists', 'Watchlists', controller.signal).then(setWatchlists)
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        if (accessDenied(reason)) onIdentityFailure();
+        else setWatchlistMessage('Could not load watchlists. Reload the page to retry.');
+      });
+    return () => controller.abort();
+  }, [session.role, onIdentityFailure]);
+
+  const toggleSelected = (address: string) => {
+    if (!watchlists?.enabled) return;
+    setSelected(values => values.includes(address) ? values.filter(value => value !== address)
+      : values.length < watchlists.max_wallets ? [...values, address] : values);
+  };
+
+  const saveWatchlist = async (item: Watchlist, remove = false) => {
+    setSaving(true);
+    setWatchlistMessage('');
+    try {
+      const updated = await post<Watchlists>('/watchlists', 'Watchlists',
+        { item, delete: remove, identity: session.identity }, session.csrf);
+      setWatchlists(updated);
+      setEditor(null);
+      if (!remove) setSelected([]);
+      setWatchlistMessage(remove ? 'Watchlist deleted.' : 'Watchlist saved.');
+    } catch (reason: unknown) {
+      if (accessDenied(reason)) onIdentityFailure();
+      else if (reason instanceof ApiError && reason.status === 409) {
+        setWatchlistMessage('Could not save. This list may have changed. Close and reload before editing again.');
+      } else setWatchlistMessage('Could not confirm the change. You can retry.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -105,6 +151,9 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
       <header className={s.boardHeader}>
         <div><h2>Trader rankings</h2><p>{basis} · Polymarket</p></div>
         <div className={s.actions}>
+          {watchlists?.enabled && <Button variant="default" onClick={() => setManageOpen(true)}>
+            Watchlists
+          </Button>}
           <a className={s.coverageLink} href="#leaderboard-coverage">Reference coverage ↓</a>
           <Button className={consoleStyles.secondaryButton} onClick={refresh} disabled={busy}>Reload data</Button>
         </div>
@@ -143,6 +192,14 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
           }} /></label>
         <Button type="submit">Search</Button>
       </form>
+      {watchlists?.enabled && selected.length > 0 && <div className={s.selection}>
+        <span aria-live="polite">{selected.length} selected · limit {watchlists.max_wallets}</span>
+        <Button disabled={watchlists.items.length >= watchlists.max_lists} onClick={() => {
+          setManageOpen(true); setEditor({ id: crypto.randomUUID().replaceAll('-', ''), name: '', wallets: selected, revision: 0 });
+        }}>Save selection</Button>
+        <Button variant="default" onClick={() => setSelected([])}>Clear</Button>
+      </div>}
+      {!manageOpen && watchlistMessage && <p className={s.status} role="status">{watchlistMessage}</p>}
       <div className={s.status} aria-live="polite">
         {busy && <span>Loading board…</span>}
         {error && <span className={s.warning}>{error}{snapshot && ' Showing the last loaded view.'}</span>}
@@ -167,13 +224,19 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
               <th scope="col" className={s.numeric}>Rank change</th></tr></thead>
             <tbody>{snapshot.items.map(row => <tr key={row.wallet}>
               <td className={s.rank}>{row.rank ?? '—'}</td>
-              <td><button type="button" className={s.wallet} onClick={() => setWallet(row.wallet)}
+              <td><div className={s.traderCell}>
+                {watchlists?.enabled && <input type="checkbox"
+                  aria-label={'Select ' + (row.name ?? row.wallet)}
+                  checked={selected.includes(row.wallet)}
+                  disabled={!selected.includes(row.wallet) && selected.length >= watchlists.max_wallets}
+                  onChange={() => toggleSelected(row.wallet)} />}
+                <button type="button" className={s.wallet} onClick={() => setWallet(row.wallet)}
                 disabled={snapshot.state === 'PARTIAL' && row.rank !== null}
                 aria-label={'Wallet details for ' + (row.name ?? row.wallet)}>
                 <span className={s.monogram} aria-hidden="true">{(row.name ?? row.wallet.slice(2)).slice(0, 2).toUpperCase()}</span>
                 <span><strong><bdi>{row.name ?? shortWallet(row.wallet)}</bdi></strong>
                   <small dir="ltr">{row.rank === null ? 'Outside this board · ' : ''}{shortWallet(row.wallet)}</small></span>
-              </button></td>
+                </button></div></td>
               <td className={s.numeric}><bdi className={row.pnl?.startsWith('-') ? s.loss : row.pnl && row.pnl !== '0' ? s.gain : undefined}>{row.pnl ?? '—'}</bdi></td>
               <td className={s.numeric}><bdi>{row.volume ?? '—'}</bdi></td>
               <td className={s.numeric}>{row.rank_change === null ? '—' : row.rank_change > 0
@@ -196,6 +259,41 @@ export function Leaderboard({ onIdentityFailure }: { onIdentityFailure: () => vo
         {snapshot?.source_health_at && <span> Provider health report {stamp(snapshot.source_health_at)}.</span>}
       </footer>
     </section>
+    <Modal opened={manageOpen} onClose={() => { if (!saving) { setManageOpen(false); setEditor(null); } }}
+      title="Watchlists" closeButtonProps={{ 'aria-label': 'Close watchlists' }} returnFocus>
+      {watchlistMessage && <p role="status">{watchlistMessage}</p>}
+      {editor ? <form className={s.watchlistForm} onSubmit={event => {
+        event.preventDefault(); void saveWatchlist(editor);
+      }}>
+        <label>Watchlist name<input required maxLength={80} value={editor.name}
+          onChange={event => setEditor({ ...editor, name: event.target.value })} /></label>
+        <ul>{editor.wallets.map(address => <li key={address}>
+          <code title={address}>{shortWallet(address)}</code>
+          <Button variant="default" aria-label={'Remove ' + address} disabled={saving}
+            onClick={() => setEditor({ ...editor, wallets: editor.wallets.filter(value => value !== address) })}>Remove</Button>
+        </li>)}</ul>
+        <div className={s.actions}>
+          <Button type="submit" disabled={saving || !editor.name.trim()}>Save watchlist</Button>
+          <Button variant="default" disabled={saving} onClick={() => setEditor(null)}>Cancel edit</Button>
+        </div>
+      </form> : <>
+        {watchlists?.items.length ? <ul className={s.list}>
+          {watchlists.items.map(item => <li key={item.id}>
+            <div><strong>{item.name}</strong><span>{item.wallets.length} wallets</span></div>
+            <div className={s.actions}>
+              {selected.length > 0 && <Button variant="default"
+                disabled={new Set([...item.wallets, ...selected]).size > watchlists.max_wallets}
+                onClick={() => setEditor({ ...item, wallets: [...new Set([...item.wallets, ...selected])] })}>
+                Add selection
+              </Button>}
+              <Button variant="default" aria-label={'Edit ' + item.name} onClick={() => setEditor(item)}>Edit</Button>
+              <Button variant="subtle" disabled={saving} aria-label={'Delete ' + item.name}
+                onClick={() => { if (window.confirm('Delete watchlist “' + item.name + '”?')) void saveWatchlist(item, true); }}>Delete</Button>
+            </div>
+          </li>)}
+        </ul> : <p>Select wallets in the rankings to save your first watchlist.</p>}
+      </>}
+    </Modal>
     <section className={s.benchmarks} id="leaderboard-coverage" tabIndex={-1} aria-label="Reference coverage">
       <h2>Reference coverage</h2><p>Wallets from each capture found in our independently collected bank.</p>
       {referenceError && <p role="status" className={s.warning}>Could not reload reference coverage.{references && ' Showing the last loaded comparisons.'}</p>}

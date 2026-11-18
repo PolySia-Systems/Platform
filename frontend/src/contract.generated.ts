@@ -30,6 +30,8 @@ export type Scope = { run: string | null; account: string | null; venue: string 
 export type Session = { api: "console/v1"; release: "0.4.0"; bundle: string | null; actor: string; role: "reader" | "operator"; csrf: string; identity: string; server_time: string; valid_until: string };
 export type Snapshot = { api: "console/v1"; release: "0.4.0"; server_time: string; context: Context; components: (Component)[]; financial: Financial | null; supervision: Supervision; blocker: string; actions: (Action)[]; atomic: false };
 export type Supervision = { status: "READY" | "STOPPED" | "UNKNOWN"; reason: string; next_action: string };
+export type Watchlist = { id: string; name: string; wallets: (string)[]; revision: number };
+export type Watchlists = { enabled: boolean; items: (Watchlist)[]; max_lists: number; max_wallets: number };
 export type Workspace = { generation: string; sections: (EvidenceSection)[] };
 export const schemas = {
   "ActionCatalog": {
@@ -2707,6 +2709,81 @@ export const schemas = {
       "atomic"
     ],
     "title": "Snapshot",
+    "type": "object"
+  },
+  "Watchlists": {
+    "$defs": {
+      "Watchlist": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "wallets": {
+            "items": {
+              "pattern": "^0x[0-9a-f]{40}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Wallets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "wallets",
+          "revision"
+        ],
+        "title": "Watchlist",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "title": "Enabled",
+        "type": "boolean"
+      },
+      "items": {
+        "items": {
+          "$ref": "#/$defs/Watchlist"
+        },
+        "maxItems": 16,
+        "title": "Items",
+        "type": "array"
+      },
+      "max_lists": {
+        "minimum": 1,
+        "title": "Max Lists",
+        "type": "integer"
+      },
+      "max_wallets": {
+        "minimum": 1,
+        "title": "Max Wallets",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "enabled",
+      "items",
+      "max_lists",
+      "max_wallets"
+    ],
+    "title": "Watchlists",
     "type": "object"
   },
   "Workspace": {

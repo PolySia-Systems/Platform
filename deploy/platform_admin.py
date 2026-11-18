@@ -394,6 +394,7 @@ def configure(
                     "commands": "/control/commands.sqlite3",
                     "publication": "/publication/publication.json",
                     "leaderboard_database": core.LEADERBOARD_DATABASE,
+                    "watchlist_database": "/watchlists/watchlists.sqlite3",
                     "csrf_secret_file": "/config/csrf-secret",
                 },
                 mode=0o640,
@@ -411,8 +412,13 @@ def configure(
                 "existing Cloudflare origin is preserved; commission an authorized route "
                 "before changing its hostname",
             )
-        if not existing_web.get("leaderboard_database"):
-            existing_web["leaderboard_database"] = core.LEADERBOARD_DATABASE
+        defaults = {
+            "leaderboard_database": core.LEADERBOARD_DATABASE,
+            "watchlist_database": "/watchlists/watchlists.sqlite3",
+        }
+        missing = {key: path for key, path in defaults.items() if not existing_web.get(key)}
+        if missing:
+            existing_web.update(missing)
             atomic(core.CONFIG_ROOT / "web.json", existing_web, mode=0o640)
             os.chown(core.CONFIG_ROOT / "web.json", 0, 10102)
         atomic(current, value)
@@ -475,6 +481,7 @@ def configure(
         "commands": "/control/commands.sqlite3",
         "publication": "/publication/publication.json",
         "leaderboard_database": core.LEADERBOARD_DATABASE,
+        "watchlist_database": "/watchlists/watchlists.sqlite3",
         "csrf_secret_file": "/config/csrf-secret",
     }
     atomic(core.CONFIG_ROOT / "web.json", web, mode=0o640)
@@ -649,6 +656,12 @@ def start_leaderboard(image: str, policy: str) -> None:
 
 
 def activate(value: dict, *, image: str) -> None:
+    watchlists = core.STATE_ROOT / "watchlists"
+    if watchlists.is_symlink() or watchlists.resolve() != watchlists:
+        raise ValueError("watchlist directory cannot traverse symlinks")
+    watchlists.mkdir(exist_ok=True, mode=0o700)
+    os.chown(watchlists, 10102, 10102)
+    watchlists.chmod(0o700)
     gateway_state = core.STATE_ROOT / "gateway"
     gateway_state.mkdir(exist_ok=True, mode=0o700)
     os.chown(gateway_state, 10102, 10102)

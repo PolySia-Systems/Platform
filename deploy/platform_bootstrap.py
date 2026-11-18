@@ -142,6 +142,7 @@ def container_command(
             args += ["--volume", "/run/polysia-platform:/run/polysia-platform:rw"]
         if leaderboard:
             args += ["--volume", f"{state_root}/leaderboard:{LEADERBOARD_MOUNT}:ro"]
+            args += ["--volume", f"{state_root}/watchlists:/watchlists:rw"]
     else:
         args += [
             "--user",

@@ -277,7 +277,7 @@ export default function App() {
           {authFailure && <Button disabled={refreshBusy} onClick={() => void refresh()}>{m.renew}</Button>}</div>}
         {clockSkew && <p className={s.muted} role="status">{m.clockSkew}</p>}
         {example && <p role="status">{m.exampleNotice}</p>}
-        {tab === 'leaderboard' && validIdentity && session && <Leaderboard key={session.identity} onIdentityFailure={identityFailure} />}
+        {tab === 'leaderboard' && validIdentity && session && <Leaderboard key={session.identity} session={session} onIdentityFailure={identityFailure} />}
         {tab === 'overview' && <>
           <section className={s.blocker} aria-label={m.attention}><span className={s.blockerIcon}>!</span><div>
             <strong>{m.attention}</strong><p>{snapshot?.blocker ?? m.loading}</p></div>

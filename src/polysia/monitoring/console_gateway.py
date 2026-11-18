@@ -31,6 +31,9 @@ from polysia.monitoring.console_contract import (
     Scope,
     Session,
     Snapshot,
+    Watchlist,
+    WatchlistMutation,
+    Watchlists,
 )
 from polysia.monitoring.console_projection import (
     UNKNOWN_SCOPE,
@@ -39,6 +42,7 @@ from polysia.monitoring.console_projection import (
     fingerprint,
     project_supervision,
 )
+from polysia.storage.watchlists import MAX_LISTS, MAX_WALLETS, WatchlistStore
 
 if TYPE_CHECKING:
     from polysia.monitoring.console import ConsoleApplication
@@ -510,6 +514,9 @@ class ConsoleGateway:
         if path == PREFIX + "/snapshot":
             parameters(query, set())
             return self.snapshot(subject, role, now, model).model_dump()
+        if path == PREFIX + "/watchlists":
+            parameters(query, set())
+            return self.watchlists(subject, role).model_dump()
         if path.startswith(PREFIX + "/leaderboard"):
             from polysia.domain.leaderboard import Board, Period, Ranking
             from polysia.monitoring import leaderboard
@@ -621,6 +628,15 @@ class ConsoleGateway:
             ).model_dump()
         raise KeyError("unknown_route")
 
+    def watchlists(self, subject: str, role: str) -> Watchlists:
+        database = self.app.watchlist_database
+        enabled = database is not None and role == "operator"
+        items = WatchlistStore(database).lists(subject) if database is not None and enabled else []
+        return Watchlists(
+            enabled=enabled, items=[Watchlist.model_validate(item) for item in items],
+            max_lists=MAX_LISTS, max_wallets=MAX_WALLETS,
+        )
+
     def mutate(self, path: str, payload: dict[str, Any], subject: str, role: str) -> dict[str, Any]:
         now = datetime.now(UTC)
         session = self.session(subject, role, now)
@@ -628,6 +644,17 @@ class ConsoleGateway:
             raise ValueError("console_bundle_unavailable")
         if role != "operator" or payload.get("identity") != session.identity:
             raise ValueError("authentication_changed")
+        if path == PREFIX + "/watchlists":
+            if self.app.watchlist_database is None:
+                raise ValueError("watchlists_not_configured")
+            request_watchlist = WatchlistMutation.model_validate(payload)
+            store = WatchlistStore(self.app.watchlist_database)
+            item = request_watchlist.item
+            if request_watchlist.delete:
+                store.delete(subject, item.id, item.revision)
+            else:
+                store.save(subject, item.id, item.name, item.wallets, item.revision)
+            return self.watchlists(subject, role).model_dump()
         if path == PREFIX + "/preview":
             request = PreviewRequest.model_validate(payload)
             action = self.action(

@@ -35,7 +35,9 @@ def serve_console(
                                      identity_header=identity_header,
                                      scoped_targets=frozenset(value.get("scoped_targets", ())),
                                      leaderboard_database=Path(value["leaderboard_database"])
-                                     if value.get("leaderboard_database") else None)
+                                     if value.get("leaderboard_database") else None,
+                                     watchlist_database=Path(value["watchlist_database"])
+                                     if value.get("watchlist_database") else None)
     serve(application, **listener, threads=2,
           connection_limit=20, channel_timeout=10, max_request_header_size=32_768,
           max_request_body_size=4096, expose_tracebacks=False, clear_untrusted_proxy_headers=True)
