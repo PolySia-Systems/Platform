@@ -134,7 +134,7 @@ independent protected operator route remain recovery owners.
 
 ## Asset custody and maintenance
 
-Use the existing npm build recipe. Vite does not inline images/fonts. The Python
+Use the existing npm build recipe. esbuild emits images and fonts as separate files. The Python
 server serves allowlisted exact MIME types as bytes; img/font CSP access is same
 origin only. Hash, path, symlink, size, inventory and source-freshness checks remain
 fail-closed. Selected media also pass a bounded PNG CRC/data/dimension profile,
@@ -167,7 +167,7 @@ Python development dependencies. Set `POLYSIA_PREVIEW_PYTHON` only when the loca
 bar selects fresh, stale, unknown or request-failure scenarios and RTL. It uses
 the real components, wire validator and canonical synthetic financial producer.
 It never reads credentials or contacts a venue; its gateway rejects POST.
-Vite updates source edits without package installation or backup commissioning.
+The preview watcher rebuilds assets after edits. Reload the browser to view the new build.
 The installed protected bundle still owns release acceptance and production CSP.
 
 Workspace tables disclose detailed evidence on demand, with state/count visible

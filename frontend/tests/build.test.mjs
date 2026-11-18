@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { runInNewContext } from 'node:vm';
 import { parseAst } from 'rolldown/parseAst';
-import { assertCanonicalSource, escapeTemplateWhitespace } from '../vite.config.mjs';
+import { assertCanonicalSource, escapeTemplateWhitespace } from '../bundle.mjs';
 
 test('custody refuses noncanonical text while preserving reviewed binary artwork', () => {
   assert.doesNotThrow(() => assertCanonicalSource('src/App.tsx', Buffer.from('source\n')));

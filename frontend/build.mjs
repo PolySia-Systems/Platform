@@ -4,8 +4,9 @@ import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { parseAst } from 'rolldown/parseAst';
-import { assertCanonicalSource, escapeTemplateWhitespace } from './vite.config.mjs';
+import { assertCanonicalSource, bundleOptions, escapeTemplateWhitespace } from './bundle.mjs';
 process.chdir(fileURLToPath(new URL('.', import.meta.url)));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const root = resolve('..');
@@ -15,7 +16,7 @@ const walk = dir => readdirSync(dir, { withFileTypes: true })
   .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).flatMap(e =>
   e.isDirectory() ? walk(resolve(dir, e.name)) : [resolve(dir, e.name)]);
 const sources = [...walk('src'), ...walk('licenses'), ...['package.json', 'package-lock.json',
-  'tsconfig.json', 'vite.config.mjs', 'build.mjs', '.npmrc', '.node-version'].map(p => resolve(p)),
+  'tsconfig.json', 'bundle.mjs', 'build.mjs', '.npmrc', '.node-version'].map(p => resolve(p)),
   resolve('../src/polysia/monitoring/console_contract.py')].sort((a,b) => {
     const x = relative(root,a).replaceAll('\\','/'), y = relative(root,b).replaceAll('\\','/');
     return x < y ? -1 : x > y ? 1 : 0;
@@ -34,6 +35,9 @@ if (process.argv.includes('--check')) {
     if (hash(readFileSync(resolve(output,name))) !== digest) throw Error('Stale asset: '+name);
   }
 } else {
+  const staging = resolve('.build');
+  rmSync(staging, { recursive: true, force: true });
+  await build(bundleOptions(staging));
   rmSync(output, { recursive: true, force: true }); mkdirSync(output, { recursive: true });
   const files = {};
   if (walk('.build').filter(p => p.endsWith('.js')).length !== 1) throw Error('Review asset custody before introducing split chunks');

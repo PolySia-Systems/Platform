@@ -1,8 +1,9 @@
-"""Loopback GET-only synthetic gateway for the Vite development entry."""
+"""Serve the loopback GET-only synthetic Console and API."""
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 from contextlib import suppress
@@ -15,11 +16,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from polysia.monitoring.console import ConsoleApplication  # noqa: E402
+from polysia.monitoring.console_bundle import MEDIA_TYPES  # noqa: E402
 from polysia.storage.console_commands import ConsoleCommandStore  # noqa: E402
 from tests.fixtures.console_h1 import write_publication  # noqa: E402
 
 
-def main() -> None:
+def main(assets: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="polysia-ui-preview-") as directory:
         root = Path(directory)
         apps = {}
@@ -42,6 +44,19 @@ def main() -> None:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 route = urlsplit(self.path)
+                if route.path == "/":
+                    self.send_body((ROOT / "frontend/index.html").read_bytes(), "text/html")
+                    return
+                asset = re.fullmatch(
+                    r"/assets/([A-Za-z0-9_-]+\.(?:css|js|png|svg|woff2))", route.path
+                )
+                if asset:
+                    path = assets / asset[1]
+                    if path.is_file():
+                        self.send_body(path.read_bytes(), MEDIA_TYPES[path.suffix])
+                    else:
+                        self.send_error(404)
+                    return
                 if not route.path.startswith("/api/console/v1/"):
                     self.send_error(404)
                     return
@@ -73,12 +88,15 @@ def main() -> None:
                 except (KeyError, ValueError, LookupError):
                     self.send_error(400, "Synthetic query rejected")
                     return
+                self.send_body(body, "application/json")
+
+            def send_body(self, body: bytes, content_type: str) -> None:
                 self.send_response(200)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                # Navigation/HMR may abort a local read before it finishes.
+                # Navigation may abort a local read before it finishes.
                 with suppress(ConnectionError):
                     self.wfile.write(body)
 
@@ -88,8 +106,8 @@ def main() -> None:
             def log_message(self, *_: object) -> None:
                 pass
 
-        server = HTTPServer(("127.0.0.1", 0), Handler)
-        print(server.server_port, flush=True)
+        server = HTTPServer(("127.0.0.1", 5173), Handler)
+        print("Synthetic preview: http://127.0.0.1:5173/?preview=fresh", flush=True)
         try:
             server.serve_forever()
         finally:
@@ -97,4 +115,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(Path(sys.argv[1]).resolve())
