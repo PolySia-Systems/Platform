@@ -25,7 +25,7 @@ def test_source_custody_separates_test_evidence_from_runtime_inputs(tmp_path):
     for folder in ("src", "licenses"):
         shutil.copytree(root / "frontend" / folder, tmp_path / "frontend" / folder)
     for name in (
-        "package.json", "package-lock.json", "tsconfig.json", "vite.config.mjs",
+        "package.json", "package-lock.json", "tsconfig.json", "bundle.mjs",
         "build.mjs", ".npmrc", ".node-version",
     ):
         shutil.copyfile(root / "frontend" / name, tmp_path / "frontend" / name)

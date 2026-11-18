@@ -10,7 +10,7 @@
 
 ## Decision and CURRENT boundary
 
-Use React 19.3.1, strict TypeScript 7.0.2, Vite 8.3.8 and Mantine 9.7.5 with
+Use React 19.3.1, strict TypeScript 7.0.2, esbuild 0.28.2 and Mantine 9.7.5 with
 CSS modules and a small PolySia token layer. Build with Node 24.22.1 and npm
 11.19.1; `frontend/package-lock.json` is the sole JavaScript lock. The existing
 protected WSGI application serves static assets. No Node production runtime,
@@ -51,12 +51,11 @@ under the Python production CSP. External CSS is preferred; a per-response nonce
 is restricted to style elements. There is no unsafe script, eval, blanket inline
 allowance, CDN, telemetry or service worker. RSC `use client` directives in the
 Mantine distribution are removed by an explicit static-browser transform; this
-application has no server-component semantics. This resolves the Vite directive
-warning at its browser-only build boundary.
+application has no server-component semantics. The transform applies at the browser build boundary.
 
 ## Static artifact custody
 
-Development uses `npm run dev --prefix frontend`: a loopback Vite server and
+Development uses `npm run dev --prefix frontend`: a loopback static server and
 GET-only synthetic gateway reuse the canonical producer fixtures. No credentials,
 venue reads, financial worker, install or recovery commissioning are involved.
 Fresh/stale/unknown/error scenarios are explicit. The development HTML and
@@ -97,7 +96,7 @@ preview and recovery lifetimes difficult to compose. A second HTTP framework,
 SSR or generic BFF adds ownership without a demonstrated need. Mantine is retained
 because the production slice proves its required interaction/CSP surface; no
 second speculative library comparison is needed. React, Mantine, TypeScript and
-Vite are maintained upstream, MIT licensed; transitive notices are shipped,
+esbuild are maintained upstream, MIT licensed; transitive notices are shipped,
 JavaScript audit and CycloneDX SBOM join existing Python supply-chain gates.
 Exact dependency rationale and the upstream notice exception are recorded in
 [Console dependencies](../../05-security/console-dependencies.md).
@@ -192,7 +191,7 @@ economics remain EXTERNAL/UNKNOWN. No production-readiness claim follows.
 ## Official sources reviewed
 
 - [React versions](https://react.dev/versions)
-- [Vite backend integration](https://vite.dev/guide/backend-integration)
+- [esbuild CSS and static asset handling](https://esbuild.github.io/content-types/)
 - [Mantine provider](https://mantine.dev/theming/mantine-provider/)
 - [Mantine RTL](https://mantine.dev/styles/rtl/)
 

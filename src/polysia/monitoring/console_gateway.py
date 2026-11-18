@@ -510,6 +510,43 @@ class ConsoleGateway:
         if path == PREFIX + "/snapshot":
             parameters(query, set())
             return self.snapshot(subject, role, now, model).model_dump()
+        if path.startswith(PREFIX + "/leaderboard"):
+            from polysia.domain.leaderboard import Board, Period, Ranking
+            from polysia.monitoring import leaderboard
+
+            database = None if example else self.app.leaderboard_database
+            if path == PREFIX + "/leaderboard/benchmarks":
+                parameters(query, set())
+                return leaderboard.benchmarks(database, now).model_dump()
+            if path == PREFIX + "/leaderboard/comparison":
+                args = parameters(query, {"capture", "offset"})
+                return leaderboard.comparison(
+                    database, int(args.get("capture", "0")), int(args.get("offset", "0"))
+                ).model_dump()
+            if path in {PREFIX + "/leaderboard", PREFIX + "/leaderboard/wallet"}:
+                keys = {"period", "ranking", "category"}
+                args = parameters(
+                    query, keys | ({"wallet"} if path.endswith("/wallet") else
+                                   {"q", "offset", "generation"}),
+                )
+                board = Board(
+                    "polymarket",
+                    cast(Period, args.get("period", "month")),
+                    cast(Ranking, args.get("ranking", "PNL")),
+                    args.get("category", "overall"),
+                )
+                if path.endswith("/wallet"):
+                    wallet = args.get("wallet", "")
+                    if not re.fullmatch(r"0x[0-9a-f]{40}", wallet):
+                        raise ValueError("invalid_wallet")
+                    return leaderboard.wallet_detail(database, board, wallet).model_dump()
+                generation = args.get("generation")
+                if generation is not None and not re.fullmatch(r"[0-9a-f]{64}", generation):
+                    raise ValueError("invalid_generation")
+                return leaderboard.page(
+                    database, board, now, args.get("q", ""), int(args.get("offset", "0")),
+                    generation,
+                ).model_dump()
         if path == PREFIX + "/workspace":
             from polysia.monitoring.console_workspaces import workspace
 

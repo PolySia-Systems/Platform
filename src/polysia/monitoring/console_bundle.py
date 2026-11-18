@@ -108,7 +108,7 @@ def source_digest(root: Path) -> str:
             "package.json",
             "package-lock.json",
             "tsconfig.json",
-            "vite.config.mjs",
+            "bundle.mjs",
             "build.mjs",
             ".npmrc",
             ".node-version",

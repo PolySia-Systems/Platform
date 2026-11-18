@@ -81,6 +81,7 @@ class ConsoleApplication:
         csrf_secret: bytes,
         identity_header: str = "HTTP_CF_ACCESS_JWT_ASSERTION",
         scoped_targets: frozenset[str] = frozenset(),
+        leaderboard_database: Path | None = None,
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -100,6 +101,7 @@ class ConsoleApplication:
         self._publication, self._origin, self._verify = publication, origin, verify
         self._commands, self._csrf_secret = commands, csrf_secret
         self._scoped_targets = scoped_targets
+        self.leaderboard_database = leaderboard_database
         if identity_header not in {"HTTP_CF_ACCESS_JWT_ASSERTION", "HTTP_X_POLYSIA_USER"}:
             raise ValueError("unsupported identity boundary")
         self._identity_header = identity_header
@@ -257,6 +259,9 @@ class ConsoleApplication:
                     )
                 return respond("404 Not Found", {"reason": "record_or_route_missing"})
             except sqlite3.DatabaseError:
+                if path.startswith(PREFIX + "/leaderboard"):
+                    return respond("503 Service Unavailable",
+                                   {"reason": "leaderboard_store_unavailable"})
                 return respond("503 Service Unavailable", {"reason": "command_store_unavailable"})
             except OSError, ValueError, TypeError:
                 return respond(

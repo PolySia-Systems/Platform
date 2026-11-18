@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import ssl
 import threading
 import time
@@ -135,7 +136,20 @@ def console_fixture(tmp_path: Path) -> Any:
         def log_message(self, *_args: Any) -> None:
             pass
 
-    server = make_server("127.0.0.1", 0, lambda _e, _s: [], handler_class=Quiet)
+    # Windows may assign a low port that browsers reject, even for loopback HTTPS.
+    # Reserve a high port by binding directly and retry collisions.
+    for _ in range(16):
+        try:
+            server = make_server(
+                "127.0.0.1", 49152 + secrets.randbelow(16384), lambda _e, _s: [],
+                handler_class=Quiet,
+            )
+            break
+        except OSError as error:
+            if error.errno not in {13, 98, 10013, 10048}:
+                raise
+    else:
+        raise RuntimeError("No high loopback port was available for the Console fixture")
     origin = f"https://localhost:{server.server_port}"
     server.set_app(
         ConsoleApplication(
@@ -144,6 +158,7 @@ def console_fixture(tmp_path: Path) -> Any:
             verify=verifier,
             commands=commands,
             csrf_secret=b"test-fixture-only" * 3,
+            leaderboard_database=tmp_path / "leaderboard.sqlite3",
             scoped_targets=frozenset(
                 {
                     "fixture-lab",

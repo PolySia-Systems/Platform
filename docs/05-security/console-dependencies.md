@@ -2,23 +2,35 @@
 
 ## Human Console static frontend
 
-The scoped owner activation selects React/React DOM 19.3.1, Mantine core/hooks
-9.7.5, TypeScript 7.0.2 and Vite 8.3.8. Node 24.22.1/npm 11.19.1 and one npm
+The current stack uses React/React DOM 19.3.1, Mantine core/hooks
+9.7.5, TypeScript 7.0.2 and esbuild 0.28.2. Node 24.22.1/npm 11.19.1 and one npm
 lockfile pin development builds; production has no Node process or asset fetch.
 Registry peer/engine metadata and the current official React, Vite and Mantine
 documentation were checked before selection. Strict TypeScript and a generated
 Python-owned schema provide checked boundary types; no runtime framework or
 Python dependency was added.
 
-The 2026-11-16 maintenance update retains the original 2026-10-27 stack and
-applies patch releases: Mantine core/hooks 9.7.4 → 9.7.5, Vite 8.3.5 → 8.3.8
-and Rolldown 1.2.15 → 1.2.18. Mantine's patch fixes focus, timer and input
+The historical 2026-11-16 maintenance update retains the original 2026-10-27 stack and
+applies patch releases: Mantine core/hooks 9.7.4 â†’ 9.7.5, Vite 8.3.5 â†’ 8.3.8
+and Rolldown 1.2.15 â†’ 1.2.18. Mantine's patch fixes focus, timer and input
 handling; Vite's patch improves Windows path startup and build behavior.
 Rolldown stays on Vite's declared `~1.2.18` line, avoiding a parallel 1.3.x
 bundler graph. The proposed Mantine 9.8 feature update is not adopted.
 See [Mantine fixes](https://github.com/mantinedev/mantine/releases/tag/9.7.5),
 [Vite release](https://github.com/vitejs/vite/releases/tag/v8.3.8) and
 [Rolldown maintenance release](https://github.com/rolldown/rolldown/releases/tag/v1.2.18).
+
+The leaderboard release replaces the Vite build dependency with esbuild 0.28.2
+(MIT) from its official npm release. The prior lock pulled an unpatched
+[picomatch advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) through
+Vite and tinyglobby. npm's proposed Vite 6.2.7 downgrade produced another high
+advisory in an isolated lockfile audit. esbuild emits the single JavaScript and
+CSS entry with CSS modules and separate media files. The reviewed build and
+license custody procedure continues to own every shipped byte. The local Python
+preview serves the development build on loopback with synthetic GET-only data.
+The full npm audit and SBOM checks cover the replacement. Rollback selects a
+complete retained Console release and restores its matching source and lock.
+See the [official esbuild release](https://github.com/evanw/esbuild/releases/tag/v0.28.2).
 
 H2 adds exact development-only `axe-core@4.14.0` (MPL-2.0), maintained by
 Deque, for automated accessibility checks of the installed protected Console.
@@ -32,7 +44,7 @@ Rollback removes this development dependency and its audit fixture together;
 it has no production runtime or financial behavior. See the
 [official engine and license](https://github.com/dequelabs/axe-core).
 
-Rolldown 1.2.18 (MIT), already Vite's locked bundler, is also declared as an
+Rolldown 1.2.18 (MIT) remains an
 exact direct development dependency because the final-byte recipe uses its
 published AST parser. The recipe escapes whitespace in ordinary template
 literals without changing their runtime string values; tagged raw templates

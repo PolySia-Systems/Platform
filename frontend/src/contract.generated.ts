@@ -2,6 +2,8 @@
 export type Action = { operation: "shadow.create" | "shadow.clone" | "shadow.start" | "shadow.drain" | "shadow.resume" | "shadow.finalize" | "shadow.archive" | "shadow.compare" | "policy.stage" | "session.stop" | "session.drain" | "acquisition.stop" | "acquisition.drain" | "acquisition.resume" | "acquisition.export"; target: string; label: string; impact: string; context: string; protective: boolean; arguments?: (Argument)[] };
 export type ActionCatalog = { actions: (Action)[] };
 export type Argument = { name: "policy_digest" | "source" | "other" | "start" | "end"; label: string; kind: "choice" | "utc"; choices: (Choice)[] };
+export type BenchmarkSummary = { source: string; capture_id: number | null; captured_at: string | null; bank_frozen_at: string | null; bank_count: number | null; scope: string | null; method: string | null; complete: boolean | null; shared: number | null; denominator: number | null; older_than_week: boolean };
+export type BenchmarkWallet = { wallet: string; shared: boolean };
 export type Choice = { value: string; label: string };
 export type Component = { name: "publication" | "financial" | "supervision" | "worker" | "publisher"; state: "AVAILABLE" | "EMPTY" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "INCOMPATIBLE"; observed_at: string | null; valid_until: string | null; generation: string | null; scope: Scope; reason: string };
 export type Context = { dataset: "RETAINED" | "SYNTHETIC" | "UNKNOWN"; environment: "production" | "development" | "test" | "UNKNOWN"; configured_mode: "DATA_ONLY" | "PAPER" | "LIVE" | "UNKNOWN"; observed_mode: "DATA_ONLY" | "PAPER" | "LIVE" | "UNKNOWN"; scope: Scope; generation: string | null; provenance: string };
@@ -10,6 +12,13 @@ export type EvidenceSection = { title: string; validity: Component; facts: (Fact
 export type EvidenceTable = { title: string; columns: (string)[]; rows: ((string | null)[])[]; total: number | null; state: "AVAILABLE" | "EMPTY" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "INCOMPATIBLE" };
 export type Fact = { label: string; value: string | null };
 export type Financial = { status: "RUNNING" | "DRAIN" | "STOP" | "UNKNOWN"; authority: "DENIED" | "EXPIRED" | "NOT_STARTED" | "WITHIN_WINDOW" | "UNKNOWN"; authority_until: string | null; reconciliation: "MATCHED" | "BLOCKED" | "UNKNOWN"; economics: string; cash: Money; exposure: Money; reserved: Money; positions: number | null; unknown_orders: number | null; account_observed_at?: string | null; account_valid_until?: string | null };
+export type LeaderboardActivity = { since: string; through: string; latest: string | null; trades: number; markets: number; complete: boolean };
+export type LeaderboardBenchmarks = { items: (BenchmarkSummary)[] };
+export type LeaderboardComparison = { capture_id: number; offset: number; total: number; items: (BenchmarkWallet)[] };
+export type LeaderboardPage = { state: "AVAILABLE" | "EMPTY" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "INCOMPATIBLE"; generation: string | null; fetched_at: string | null; attempted_at: string | null; source_health_at: string | null; outcome: "complete" | "partial" | "failed" | null; reason: string | null; next_retry_at: string | null; refresh_in_progress: boolean; critically_stale: boolean; has_more_at_source: boolean | null; depth: number; board_count: number; bank_count: number; total: number; offset: number; items: (LeaderboardRow)[] };
+export type LeaderboardPoint = { observed_at: string; rank: number; pnl: string; volume: string };
+export type LeaderboardRow = { wallet: string; name: string | null; rank: number | null; pnl: string | null; volume: string | null; rank_change: number | null };
+export type LeaderboardWallet = { wallet: string; name: string | null; first_seen: string; last_seen: string; activity: LeaderboardActivity | null; history: (LeaderboardPoint)[] };
 export type Money = { value: string | null; unit: string | null; meaning: string };
 export type Page = { generation: string; items: (Record)[]; total: number; next_cursor: string | null };
 export type Preview = { preview_id: string; actor: string; operation: string; target: string; context: string; identity: string; expected_revision: number; expires_at: string; impact: string; arguments?: (Fact)[] };
@@ -495,6 +504,616 @@ export const schemas = {
       "trace"
     ],
     "title": "Detail",
+    "type": "object"
+  },
+  "LeaderboardBenchmarks": {
+    "$defs": {
+      "BenchmarkSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "bank_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Count"
+          },
+          "bank_frozen_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Frozen At"
+          },
+          "capture_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capture Id"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complete"
+          },
+          "denominator": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Denominator"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "older_than_week": {
+            "title": "Older Than Week",
+            "type": "boolean"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "shared": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "capture_id",
+          "captured_at",
+          "bank_frozen_at",
+          "bank_count",
+          "scope",
+          "method",
+          "complete",
+          "shared",
+          "denominator",
+          "older_than_week"
+        ],
+        "title": "BenchmarkSummary",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/BenchmarkSummary"
+        },
+        "maxItems": 3,
+        "title": "Items",
+        "type": "array"
+      }
+    },
+    "required": [
+      "items"
+    ],
+    "title": "LeaderboardBenchmarks",
+    "type": "object"
+  },
+  "LeaderboardComparison": {
+    "$defs": {
+      "BenchmarkWallet": {
+        "additionalProperties": false,
+        "properties": {
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
+          "wallet": {
+            "title": "Wallet",
+            "type": "string"
+          }
+        },
+        "required": [
+          "wallet",
+          "shared"
+        ],
+        "title": "BenchmarkWallet",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "capture_id": {
+        "title": "Capture Id",
+        "type": "integer"
+      },
+      "items": {
+        "items": {
+          "$ref": "#/$defs/BenchmarkWallet"
+        },
+        "maxItems": 50,
+        "title": "Items",
+        "type": "array"
+      },
+      "offset": {
+        "title": "Offset",
+        "type": "integer"
+      },
+      "total": {
+        "title": "Total",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "capture_id",
+      "offset",
+      "total",
+      "items"
+    ],
+    "title": "LeaderboardComparison",
+    "type": "object"
+  },
+  "LeaderboardPage": {
+    "$defs": {
+      "LeaderboardRow": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "pnl": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "rank_change": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank Change"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "wallet": {
+            "title": "Wallet",
+            "type": "string"
+          }
+        },
+        "required": [
+          "wallet",
+          "name",
+          "rank",
+          "pnl",
+          "volume",
+          "rank_change"
+        ],
+        "title": "LeaderboardRow",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "attempted_at": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Attempted At"
+      },
+      "bank_count": {
+        "title": "Bank Count",
+        "type": "integer"
+      },
+      "board_count": {
+        "title": "Board Count",
+        "type": "integer"
+      },
+      "critically_stale": {
+        "title": "Critically Stale",
+        "type": "boolean"
+      },
+      "depth": {
+        "title": "Depth",
+        "type": "integer"
+      },
+      "fetched_at": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Fetched At"
+      },
+      "generation": {
+        "anyOf": [
+          {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Generation"
+      },
+      "has_more_at_source": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Has More At Source"
+      },
+      "items": {
+        "items": {
+          "$ref": "#/$defs/LeaderboardRow"
+        },
+        "maxItems": 50,
+        "title": "Items",
+        "type": "array"
+      },
+      "next_retry_at": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next Retry At"
+      },
+      "offset": {
+        "title": "Offset",
+        "type": "integer"
+      },
+      "outcome": {
+        "anyOf": [
+          {
+            "enum": [
+              "complete",
+              "partial",
+              "failed"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Outcome"
+      },
+      "reason": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Reason"
+      },
+      "refresh_in_progress": {
+        "title": "Refresh In Progress",
+        "type": "boolean"
+      },
+      "source_health_at": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Source Health At"
+      },
+      "state": {
+        "enum": [
+          "AVAILABLE",
+          "EMPTY",
+          "STALE",
+          "PARTIAL",
+          "UNAVAILABLE",
+          "INCOMPATIBLE"
+        ],
+        "title": "State",
+        "type": "string"
+      },
+      "total": {
+        "title": "Total",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "state",
+      "generation",
+      "fetched_at",
+      "attempted_at",
+      "source_health_at",
+      "outcome",
+      "reason",
+      "next_retry_at",
+      "refresh_in_progress",
+      "critically_stale",
+      "has_more_at_source",
+      "depth",
+      "board_count",
+      "bank_count",
+      "total",
+      "offset",
+      "items"
+    ],
+    "title": "LeaderboardPage",
+    "type": "object"
+  },
+  "LeaderboardWallet": {
+    "$defs": {
+      "LeaderboardActivity": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest"
+          },
+          "markets": {
+            "title": "Markets",
+            "type": "integer"
+          },
+          "since": {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "title": "Since",
+            "type": "string"
+          },
+          "through": {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "title": "Through",
+            "type": "string"
+          },
+          "trades": {
+            "title": "Trades",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "since",
+          "through",
+          "latest",
+          "trades",
+          "markets",
+          "complete"
+        ],
+        "title": "LeaderboardActivity",
+        "type": "object"
+      },
+      "LeaderboardPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "observed_at": {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "pnl": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Pnl",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "volume": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Volume",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observed_at",
+          "rank",
+          "pnl",
+          "volume"
+        ],
+        "title": "LeaderboardPoint",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "activity": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LeaderboardActivity"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "first_seen": {
+        "maxLength": 32,
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+        "title": "First Seen",
+        "type": "string"
+      },
+      "history": {
+        "items": {
+          "$ref": "#/$defs/LeaderboardPoint"
+        },
+        "maxItems": 30,
+        "title": "History",
+        "type": "array"
+      },
+      "last_seen": {
+        "maxLength": 32,
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+        "title": "Last Seen",
+        "type": "string"
+      },
+      "name": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Name"
+      },
+      "wallet": {
+        "title": "Wallet",
+        "type": "string"
+      }
+    },
+    "required": [
+      "wallet",
+      "name",
+      "first_seen",
+      "last_seen",
+      "activity",
+      "history"
+    ],
+    "title": "LeaderboardWallet",
     "type": "object"
   },
   "Page": {

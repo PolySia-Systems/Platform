@@ -1,4 +1,23 @@
-import { defineConfig } from 'vite';
+import { readFile } from 'node:fs/promises';
+
+export function bundleOptions(outdir, development = false) {
+  return {
+    entryPoints: ['src/main.tsx'], outdir, bundle: true,
+    format: 'esm', target: 'es2022', jsx: 'automatic', minify: !development,
+    entryNames: development ? 'console' : 'console-[hash]', assetNames: '[name]-[hash]',
+    publicPath: '/assets', legalComments: 'none',
+    define: { 'import.meta.env.DEV': String(development) },
+    loader: { '.svg': 'file', '.png': 'file', '.woff2': 'file' },
+    plugins: [{ name: 'static-browser-directives', setup(build) {
+      build.onLoad({ filter: /\.mjs$/ }, async ({ path }) => {
+        if (!path.replaceAll('\\', '/').includes('/node_modules/@mantine/')) return;
+        const source = await readFile(path, 'utf8');
+        return { contents: source.replace(/^[\"']use client[\"'];\s*/, ''), loader: 'js' };
+      });
+    } }],
+  };
+}
+
 // Custody hashes exact bytes. Git checks these source inputs out with LF;
 // refuse a local CRLF build rather than publish a hash CI cannot reproduce.
 export function assertCanonicalSource(path, bytes) {
@@ -39,19 +58,3 @@ export function escapeTemplateWhitespace(code, ast) {
   for (const edit of edits.sort((a,b) => b.start-a.start)) code = code.slice(0,edit.start) + edit.escaped + code.slice(edit.end);
   return code;
 }
-export default defineConfig({
-  // RSC boundaries have no meaning in this exclusively static browser bundle.
-  plugins: [{ name: 'static-browser-directives', enforce: 'pre', transform(code, id) {
-    if (id.includes('/@mantine/') || id.includes('\\@mantine\\')) {
-      return code.replace(/^["']use client["'];\s*/, '');
-    }
-  } }],
-  base: '/assets/',
-  build: {
-    assetsInlineLimit: 0, target: 'es2022', outDir: '.build', emptyOutDir: true,
-    cssCodeSplit: false, modulePreload: false,
-    rollupOptions: { input: 'src/main.tsx', output: {
-      entryFileNames: '[name]-[hash].js', assetFileNames: '[name]-[hash][extname]',
-    } },
-  },
-});
