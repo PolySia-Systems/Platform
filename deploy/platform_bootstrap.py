@@ -93,6 +93,7 @@ def container_command(
     gateway: bool = False,
     configured: bool = True,
     leaderboard: bool = False,
+    leaderboard_interval: int | None = None,
 ) -> list[str]:
     if role not in {"worker", "publisher", "web", "leaderboard", "watchlist-shadow"}:
         raise ValueError("unsupported process role")
@@ -124,12 +125,19 @@ def container_command(
             image, "leaderboard", "shadow-tick", "--database", "/watchlists/watchlists.sqlite3",
         ]
     if role == "leaderboard":
+        if leaderboard_interval is not None and (
+            type(leaderboard_interval) is not int or not 15 <= leaderboard_interval <= 1440
+        ):
+            raise ValueError("invalid leaderboard interval")
         return args + [
             "--user", "10101:10102", "--network", "bridge", "--memory", "256m",
             "--cpus", ".5", "--volume",
             f"{state_root}/leaderboard:{LEADERBOARD_MOUNT}:rw",
             image, "leaderboard", "refresh", "--database", LEADERBOARD_DATABASE,
-        ]
+        ] + (
+            ["--interval-minutes", str(leaderboard_interval)]
+            if leaderboard_interval is not None else []
+        )
     if role == "web":
         args += [
             "--user",
@@ -280,10 +288,12 @@ def service_text(
     gateway: bool = False,
     configured: bool = True,
     leaderboard: bool = False,
+    leaderboard_interval: int | None = None,
 ) -> str:
     command = container_command(
         image, role=role, hostname=hostname, gateway=gateway, configured=configured,
         leaderboard=leaderboard,
+        leaderboard_interval=leaderboard_interval,
     )
     if any(re.search(r"[\s%\n]", argument) for argument in command):
         raise ValueError("unsafe systemd argument")

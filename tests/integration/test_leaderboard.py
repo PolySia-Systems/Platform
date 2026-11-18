@@ -79,6 +79,20 @@ def test_partial_restart_and_window_isolation(storage):
         page(store.path, week, now, "", 50, first.generation)
 
 
+def test_changed_interval_survives_restart_and_agrees_with_console(storage):
+    store, now, token = storage
+    board = Board("polymarket", "month", "PNL")
+    store.publish(observation(now, standing(1, 1)), token)
+    store.set_refresh_interval(token, 30)
+    reopened = LeaderboardStore(store.path)
+    midnight = now + timedelta(minutes=30)
+    assert not reopened.should_refresh(board, midnight - timedelta(seconds=1))
+    assert reopened.should_refresh(board, midnight)
+    actual = page(store.path, board, now, "", 0, None)
+    assert actual.next_retry_at == midnight.isoformat()
+    assert actual.items[0].wallet == standing(1, 1).wallet
+
+
 def test_failed_write_rolls_back_generation_and_discovery(storage):
     store, now, token = storage
     good = observation(now, standing(1, 1))

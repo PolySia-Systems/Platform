@@ -160,4 +160,10 @@
   .referenceGrid { grid-template-columns: 1fr; }
   .wallet { max-inline-size: 18ch; }
   .monogram { display: none; }
+  .board .tableRegion table { table-layout: fixed; min-inline-size: 450px; }
+  .board .tableRegion :is(th, td):first-child { width: 46px; padding-inline: 8px; }
+  .board .tableRegion th:nth-child(2) { width: 132px; }
+  .board .tableRegion th:nth-child(3) { width: 115px; }
+  .board .tableRegion td.numeric bdi { white-space: normal; overflow-wrap: anywhere; }
+  .board .wallet { max-inline-size: 13ch; }
 }

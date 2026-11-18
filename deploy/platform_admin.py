@@ -22,6 +22,7 @@ import ssl
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from contextlib import closing
 from datetime import UTC, datetime
@@ -121,6 +122,7 @@ def validate(value: dict) -> dict:
         or value.get("profile") not in {"private", "own-domain", "cloudflare"}
         or value.get("backup", {}).get("mode") not in {"none", "local", "sftp"}
         or value.get("leaderboard", "auto") not in {"auto", "paused"}
+        or "release_tag" in value and re.fullmatch(r"v\d+\.\d+\.\d+", value["release_tag"]) is None
     ):
         raise ValueError("unsupported installation configuration")
     profile, hostname = value["profile"], value.get("hostname", "")
@@ -320,7 +322,7 @@ def install_gateway() -> Path:
     return binary
 
 
-def image_json(image: str, code: str, value: dict) -> str:
+def image_json(image: str, code: str, value: dict, *, network: str = "none") -> str:
     result = subprocess.run(
         [
             "docker",
@@ -328,7 +330,7 @@ def image_json(image: str, code: str, value: dict) -> str:
             "--rm",
             "-i",
             "--network",
-            "none",
+            network,
             "--read-only",
             "--memory",
             "128m",
@@ -351,6 +353,222 @@ def image_json(image: str, code: str, value: dict) -> str:
         timeout=60,
     )
     return result.stdout
+
+
+def install_admin_entry() -> None:
+    target = Path("/usr/local/sbin/polysia-admin")
+    text = (
+        "#!/usr/bin/python3\n# Managed by PolySia platform_admin.py\n"
+        "import json, os, re, sys\nfrom pathlib import Path\n"
+        "config = Path('/etc/polysia-platform/installation.json')\n"
+        "commit = json.loads(config.read_text())['commit']\n"
+        "if not re.fullmatch(r'[a-f0-9]{40}', commit):\n"
+        "    raise SystemExit('Cannot identify the installed PolySia release')\n"
+        "entry = '/opt/polysia-platform/releases/' + commit + '/platform_admin.py'\n"
+        "os.execv('/usr/bin/python3', ['/usr/bin/python3', entry, *sys.argv[1:]])\n"
+    )
+    if target.exists() and target.read_text() != text:
+        raise ValueError("existing polysia-admin entry is not the managed launcher")
+    atomic(target, text, mode=0o755)
+
+
+def connection(args: argparse.Namespace) -> dict:
+    """Save credentials only after a scoped public or authenticated read passes."""
+    path = core.CONFIG_ROOT / "polymarket-connection.json"
+    status_path = core.STATE_ROOT / "publication/connection-status.json"
+    if path.is_symlink() or status_path.is_symlink():
+        raise ValueError("connection settings must not be symlinks")
+    if args.connection_action == "remove":
+        path.unlink(missing_ok=True)
+        result = {"state": "NOT_CONFIGURED"}
+    else:
+        if args.connection_action == "set":
+            if not sys.stdin.isatty():
+                raise ValueError("use an interactive terminal for connection setup")
+            address = input("Public Polymarket wallet address: ").strip().lower()
+            if not re.fullmatch(r"0x[0-9a-f]{40}", address):
+                raise ValueError("expected a 0x wallet address with 40 hexadecimal digits")
+            candidate = {"wallet": address}
+            if input("Verify existing CLOB API credentials? [y/N]: ").strip().lower() == "y":
+                signer = input("Public address of the API key signer: ").strip()
+                if not re.fullmatch(r"0x[0-9a-fA-F]{40}", signer):
+                    raise ValueError("expected a public signer address")
+                candidate["signer"] = signer
+                for field, label in (
+                    ("api_key", "API key"),
+                    ("api_secret", "API secret"),
+                    ("api_passphrase", "API passphrase"),
+                ):
+                    value = getpass.getpass(label + ": ")
+                    if not 1 <= len(value) <= 512 or not value.isascii() or not value.isprintable():
+                        raise ValueError("credential format is invalid")
+                    candidate[field] = value
+        elif path.is_file():
+            candidate = json.loads(path.read_text())
+        else:
+            return {"state": "NOT_CONFIGURED"}
+        config = validate(json.loads((core.CONFIG_ROOT / "installation.json").read_text()))
+        release = core.INSTALL_ROOT / "releases" / config["commit"]
+        image = json.loads((release / "installation-receipt.json").read_text())["image_id"]
+        result = json.loads(image_json(
+            image,
+            "import json,sys; from polysia.adapters.polymarket.connection_probe import probe; "
+            "print(json.dumps(probe(json.load(sys.stdin))))",
+            candidate,
+            network="bridge",
+        ))
+        if set(result) != {"public", "authenticated"}:
+            raise ValueError("unrecognized connection check result")
+        verified = result["public"] == "OBSERVED" and result["authenticated"] in {
+            "NOT_CONFIGURED", "VERIFIED",
+        }
+        if verified and args.connection_action == "set":
+            atomic(path, candidate)
+        result["state"] = "CHECKED" if verified else "CHECK_INCOMPLETE"
+        result["saved"] = path.is_file()
+        if not verified and args.connection_action == "set":
+            result["kept_previous"] = path.is_file()
+            return result
+    result["checked_at"] = datetime.now(UTC).isoformat()
+    atomic(status_path, result, mode=0o640)
+    os.chown(status_path, 0, 10102)
+    return result
+
+
+def update_schedule(commit: str, *, enabled: bool) -> None:
+    service, timer = "polysia-platform-update.service", "polysia-platform-update.timer"
+    if not enabled:
+        if (core.SERVICE_ROOT / timer).is_file():
+            core.run("systemctl", "disable", "--now", timer)
+        return
+    entry = core.INSTALL_ROOT / "releases" / commit / "platform_admin.py"
+    atomic(
+        core.SERVICE_ROOT / service,
+        MANAGED_UNIT + "[Unit]\nDescription=Check and apply a qualified PolySia release\n"
+        "After=network-online.target docker.service\n[Service]\nType=oneshot\n"
+        f"ExecStart=/usr/bin/python3 {entry} auto-update\nTimeoutStartSec=20min\n",
+        mode=0o644,
+    )
+    atomic(
+        core.SERVICE_ROOT / timer,
+        MANAGED_UNIT + "[Unit]\nDescription=Check PolySia updates daily\n"
+        "[Timer]\nOnCalendar=*-*-* 03:30:00 UTC\nPersistent=true\n"
+        "[Install]\nWantedBy=timers.target\n",
+        mode=0o644,
+    )
+    core.run("systemctl", "daemon-reload")
+    core.run("systemctl", "enable", "--now", timer)
+
+
+def recover_update(config: dict, candidate: str) -> None:
+    receipt_path = core.CONFIG_ROOT / "maintenance-receipt.json"
+    checkpoint_path = core.CONFIG_ROOT / "rollback-checkpoint.json"
+    if not receipt_path.is_file() or not checkpoint_path.is_file():
+        return
+    receipt = json.loads(receipt_path.read_text())
+    checkpoint = json.loads(checkpoint_path.read_text())
+    if (
+        receipt.get("commit") != candidate or receipt.get("phase") not in {
+            "ARTIFACT_VERIFIED", "CONFIGURATION_STAGED", "ACTIVATION_INCOMPLETE",
+        }
+        or checkpoint.get("commit") != config["commit"]
+    ):
+        return
+    rollback()
+    core.run("systemctl", "start", "polysia-platform-web.service")
+    if config["profile"] != "cloudflare":
+        core.run("systemctl", "start", "polysia-platform-gateway.service")
+    verify_access(config)
+    module_path = core.INSTALL_ROOT / "releases" / config["commit"] / "installation-receipt.json"
+    image = json.loads(module_path.read_text())["image_id"]
+    start_leaderboard(image, config.get("leaderboard", "auto"))
+    if (core.SERVICE_ROOT / core.SHADOW_TIMER).is_file():
+        core.run("systemctl", "enable", "--now", core.SHADOW_TIMER)
+    phase(config, "PREVIOUS_RELEASE_RECOVERED", candidate=candidate, worker="FENCED")
+
+
+def release_update(action: str, policy: str | None) -> dict:
+    config = validate(json.loads((core.CONFIG_ROOT / "installation.json").read_text()))
+    policy_path = core.CONFIG_ROOT / "update-policy.json"
+    automatic = policy_path.is_file() and json.loads(policy_path.read_text()).get("auto") is True
+    if policy is not None:
+        automatic = policy == "auto"
+        if automatic and not config.get("release_tag"):
+            raise ValueError("install a published version before enabling automatic updates")
+        update_schedule(config["commit"], enabled=automatic)
+        atomic(policy_path, {"auto": automatic})
+    result = {
+        "installed": config.get("release_tag"), "available": None, "automatic": automatic,
+        "checked_at": datetime.now(UTC).isoformat(), "state": "UNKNOWN",
+    }
+    if action == "auto-update" and not automatic:
+        return {**result, "state": "DISABLED"}
+    origin = "https://github.com/PolySia-Systems/Platform/releases"
+    try:
+        with urlopen(origin + "/latest", timeout=15) as response:
+            tag = response.geturl().removeprefix(origin + "/tag/")
+        match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+        if not match:
+            raise ValueError("latest release identity missing")
+        result["available"] = tag
+        if action == "auto-update":
+            installed = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", config.get("release_tag", ""))
+            if installed is None or tuple(map(int, match.groups())) <= tuple(
+                map(int, installed.groups())
+            ):
+                result["state"] = "CURRENT_OR_RETAINED"
+            else:
+                base = origin + "/download/" + tag + "/"
+                with urlopen(base + "manifest.json", timeout=20) as response:
+                    raw = response.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError("manifest too large")
+                manifest = json.loads(raw)
+                commit = manifest["commit"]
+                if not re.fullmatch(r"[a-f0-9]{40}", commit):
+                    raise ValueError("candidate commit invalid")
+                if commit == config["commit"]:
+                    result["state"] = "CURRENT_OR_RETAINED"
+                else:
+                    core.activation_preflight(commit)
+                    database = core.STATE_ROOT / "watchlists/watchlists.sqlite3"
+                    if database.is_file():
+                        uri = database.as_uri() + "?mode=ro"
+                        with closing(sqlite3.connect(uri, uri=True)) as db:
+                            if db.execute(
+                                "SELECT 1 FROM sqlite_master WHERE name='watchlist_run'"
+                            ).fetchone() and db.execute(
+                                "SELECT 1 FROM watchlist_run WHERE status='RUNNING'"
+                            ).fetchone():
+                                raise ValueError("watchlist research is still running")
+                    with tempfile.TemporaryDirectory() as directory:
+                        entry = Path(directory) / "platform_admin.py"
+                        download(base + entry.name, entry)
+                        digest = hashlib.sha256(entry.read_bytes()).hexdigest()
+                        if digest != manifest["admin_sha256"]:
+                            raise ValueError("candidate installer differs from release manifest")
+                        try:
+                            core.run(
+                                "/usr/bin/python3", str(entry), "update", "--noninteractive",
+                                "--tag", tag, "--commit", commit,
+                            )
+                        except subprocess.CalledProcessError:
+                            recover_update(config, commit)
+                            raise
+                    effective = json.loads(
+                        (core.CONFIG_ROOT / "maintenance-receipt.json").read_text()
+                    )
+                    if effective.get("phase") != "ACTIVATED" or effective.get("commit") != commit:
+                        raise ValueError("candidate activation not verified")
+                    result.update(installed=tag, state="UPDATED")
+        else:
+            result["state"] = "CHECKED"
+    except (OSError, ValueError, KeyError, sqlite3.Error, subprocess.SubprocessError):
+        result["state"] = "UPDATE_REQUIRES_REVIEW" if action == "auto-update" else "UNAVAILABLE"
+    path = core.STATE_ROOT / "publication/update-status.json"
+    atomic(path, result, mode=0o640)
+    os.chown(path, 0, 10102)
+    return result
 
 
 def configure(
@@ -590,14 +808,16 @@ def leaderboard_preflight() -> None:
             raise ValueError("existing Console leaderboard override differs from known setup")
 
 
-def install_leaderboard(image: str) -> None:
+def install_leaderboard(image: str, interval: int | None) -> None:
     state = core.STATE_ROOT / "leaderboard"
     state.mkdir(mode=0o2750, exist_ok=True)
     os.chown(state, 10101, 10102)
     state.chmod(0o2750)
     atomic(
         core.SERVICE_ROOT / core.LEADERBOARD_SERVICE,
-        MANAGED_UNIT + core.service_text(image, role="leaderboard", hostname=""),
+        MANAGED_UNIT + core.service_text(
+            image, role="leaderboard", hostname="", leaderboard_interval=interval,
+        ),
         mode=0o644,
     )
     atomic(
@@ -710,7 +930,7 @@ def activate(value: dict, *, image: str) -> None:
             previous["release_commit"] = value["commit"]
         atomic(worker, previous, mode=0o640)
         os.chown(worker, 0, 10102)
-    install_leaderboard(image)
+    install_leaderboard(image, value.get("leaderboard_interval"))
     install_watchlist_shadow(image)
     for role in ("worker", "publisher", "web"):
         text = core.service_text(
@@ -858,7 +1078,7 @@ def install_health(value: dict) -> None:
         {
             "schema": "platform-health/v1",
             "commit": value["commit"],
-            "version": manifest.get("version", "UNKNOWN"),
+            "version": value.get("release_tag", manifest.get("version", "UNKNOWN")),
             "profile": value["profile"],
             "hostname": value["hostname"],
             "backup_mode": value["backup"]["mode"],
@@ -943,6 +1163,8 @@ def preserve_rollback() -> dict | None:
             "recovery-status.timer",
             "health.service",
             "health.timer",
+            "update.service",
+            "update.timer",
         )
     ]
     files.extend(
@@ -1486,6 +1708,10 @@ def main() -> None:
             "uninstall",
             "backup",
             "health",
+            "connection",
+            "password",
+            "updates",
+            "auto-update",
         ),
     )
     parser.add_argument("--tag")
@@ -1512,16 +1738,35 @@ def main() -> None:
     parser.add_argument("--upload-key-file", type=Path)
     parser.add_argument("--recovery-key", type=Path)
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--connection-action", choices=("set", "test", "remove"), default="test")
+    parser.add_argument("--account", metavar="USER")
+    parser.add_argument("--rotate-password", metavar="USER")
+    parser.add_argument("--update-policy", choices=("manual", "auto"))
     parser.add_argument(
         "--leaderboard", choices=("auto", "paused"),
         help="Collect rankings automatically (default), or keep retained data without polling.",
     )
+    parser.add_argument("--leaderboard-interval", type=int, metavar="MINUTES")
     args = parser.parse_args()
     if os.geteuid() != 0 and not (args.action == "health" and os.geteuid() == 10101):
         parser.error("administrative SSH/root access required")
     core = load_core(args)
     if args.action == "health":
         print(json.dumps(publish_health(), sort_keys=True))
+        return
+    if args.action == "connection":
+        print(json.dumps(connection(args), sort_keys=True))
+        return
+    if args.action == "password":
+        if not sys.stdout.isatty() or not args.account:
+            parser.error("provide --account and read the password in an interactive terminal")
+        credentials = json.loads((core.CONFIG_ROOT / "gateway-credentials.json").read_text())
+        if args.account not in credentials:
+            parser.error("local account not found")
+        print(credentials[args.account])
+        return
+    if args.action in {"updates", "auto-update"}:
+        print(json.dumps(release_update(args.action, args.update_policy), sort_keys=True))
         return
     if args.action == "rollback":
         print(json.dumps(rollback(), sort_keys=True))
@@ -1551,6 +1796,7 @@ def main() -> None:
                 "health.timer",
                 "backup.timer",
                 "recovery-status.timer",
+                "update.timer",
             ):
                 if (core.SERVICE_ROOT / ("polysia-platform-" + name)).exists():
                     core.run("systemctl", "disable", "--now", "polysia-platform-" + name)
@@ -1610,6 +1856,13 @@ def main() -> None:
     roles.update(dict.fromkeys(args.reader, "reader"))
     roles.update(dict.fromkeys(args.operator, "operator"))
     password_change = None
+    if args.rotate_password:
+        if (
+            args.set_password or args.action != "configure" or profile == "cloudflare"
+            or args.rotate_password not in roles
+        ):
+            parser.error("--rotate-password needs an existing local account")
+        password_change = (args.rotate_password, secrets.token_urlsafe(32))
     if args.set_password:
         if (
             args.noninteractive or not sys.stdin.isatty() or profile == "cloudflare"
@@ -1647,6 +1900,18 @@ def main() -> None:
     policy = args.leaderboard or prior.get("leaderboard", "auto")
     if args.leaderboard or "leaderboard" in prior:
         value["leaderboard"] = policy
+    interval = (
+        args.leaderboard_interval
+        if args.leaderboard_interval is not None else prior.get("leaderboard_interval")
+    )
+    if interval is not None:
+        if type(interval) is not int or not 15 <= interval <= 1440:
+            parser.error("--leaderboard-interval must be between 15 and 1440 minutes")
+        value["leaderboard_interval"] = interval
+    release_tag = args.tag or prior.get("release_tag")
+    if release_tag:
+        value["release_tag"] = release_tag
+    validate(value)
     preflight(value)
     if args.action == "preflight":
         try:
@@ -1754,6 +2019,10 @@ def main() -> None:
         core.run("systemctl", "enable", "--now", core.SHADOW_TIMER)
         promote_retained_backup(value, image=receipt["image_id"])
         install_health(value)
+        install_admin_entry()
+        updates = core.CONFIG_ROOT / "update-policy.json"
+        if updates.is_file() and json.loads(updates.read_text()).get("auto") is True:
+            update_schedule(value["commit"], enabled=True)
     except (OSError, ValueError, subprocess.SubprocessError):
         atomic(core.CONFIG_ROOT / "restart-fenced", {"reason": "activation_incomplete"})
         subprocess.run(
@@ -1800,4 +2069,24 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Share one host maintenance lock across release versions. Emergency stop
+    # and the parent of an automatic update must remain independently callable.
+    if len(sys.argv) > 1 and sys.argv[1] in {
+        "install", "update", "configure", "restore", "uninstall", "rollback", "backup",
+    }:
+        import fcntl
+
+        lock = os.open(
+            "/run/lock/polysia-platform-admin.lock",
+            os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600,
+        )
+        try:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SystemExit("Another PolySia maintenance operation is active.") from None
+            main()
+        finally:
+            os.close(lock)
+    else:
+        main()

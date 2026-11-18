@@ -54,6 +54,52 @@ def test_private_and_explicit_domain_configuration_are_versioned_and_validated()
     assert admin.validate(value) == value
 
 
+def test_automatic_update_defers_before_downloading_when_activation_is_refused(
+    tmp_path, monkeypatch,
+):
+    (tmp_path / "publication").mkdir()
+    (tmp_path / "installation.json").write_text(json.dumps({
+        **configuration(), "release_tag": "v0.4.1",
+    }))
+    (tmp_path / "update-policy.json").write_text('{"auto":true}')
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    monkeypatch.setattr(core, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(admin.os, "chown", lambda *args: None, raising=False)
+    monkeypatch.setattr(admin, "atomic", lambda path, value, **kw: path.write_text(
+        json.dumps(value)
+    ))
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self):
+            return "https://github.com/PolySia-Systems/Platform/releases/tag/v0.4.2"
+
+        def read(self, limit):
+            return json.dumps({"commit": "b" * 40}).encode()
+
+    monkeypatch.setattr(admin, "urlopen", lambda *args, **kwargs: Response())
+
+    def refuse(commit):
+        assert commit == "b" * 40
+        raise ValueError("pinned active session")
+
+    def unexpected(*args):
+        pytest.fail("a blocked upgrade attempted to fetch or apply the candidate")
+
+    monkeypatch.setattr(core, "activation_preflight", refuse)
+    monkeypatch.setattr(core, "run", unexpected)
+    monkeypatch.setattr(admin, "download", unexpected)
+    receipt = admin.release_update("auto-update", None)
+    assert receipt["state"] == "UPDATE_REQUIRES_REVIEW"
+    assert receipt["installed"] == "v0.4.1"
+    assert receipt["available"] == "v0.4.2"
+
+
 def test_same_release_rerun_cannot_restart_newly_authorized_acquisition(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
     (tmp_path / "worker.json").write_text(

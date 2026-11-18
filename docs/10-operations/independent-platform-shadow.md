@@ -5,6 +5,43 @@ acceptance are separate receipts. See the [execution record](../18-ai-handoffs/p
 
 ## Release and isolated roots
 
+The current setup entry is linked in the [README quick start](../../README.md#quick-start-on-your-server).
+On supported releases, **System / Setup** shows the last host checks and the
+commands to manage this installation. Run host administration from your SSH
+terminal.
+
+```bash
+sudo polysia-admin status
+sudo polysia-admin configure --set-password owner
+sudo polysia-admin configure --profile own-domain --hostname console.example.com
+sudo polysia-admin connection --connection-action set
+sudo polysia-admin connection --connection-action test
+sudo polysia-admin connection --connection-action remove
+sudo polysia-admin backup
+sudo polysia-admin backup --backup-mode none
+sudo polysia-admin updates
+sudo polysia-admin updates --update-policy auto
+```
+
+The connection check accepts a public address and optionally existing CLOB API
+credentials with the associated public signer address. A successful public check
+means the endpoint answered for that address. The authenticated check confirms
+the provided key can read its CLOB key list. Neither check requires a wallet
+private key or grants authorization. Enter credentials only at the masked SSH
+prompts. A failed candidate leaves the prior saved connection in place.
+
+To generate a replacement password, run
+`sudo polysia-admin configure --rotate-password owner`. Retrieve that account's
+password privately with `sudo polysia-admin password --account owner` in an
+interactive terminal. The returned value is the credential for that account.
+
+Automatic updates are opt-in and use the same exact release verification and
+activation guard as a manual update. The daily check is scheduled at 03:30 UTC.
+Return to manual with `sudo polysia-admin updates --update-policy manual`.
+Inspect the host receipt after a deferred update. Dashboard settings are a
+redacted status view, while authentication and other administrative changes use
+the installed host entry.
+
 The root-only administrative entry is `platform_admin.py`, distributed beside
 the manifest-verified bootstrap in the same exact immutable release. Current
 release [v0.4.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.4.0)

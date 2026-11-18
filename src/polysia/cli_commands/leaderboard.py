@@ -90,6 +90,7 @@ def _collection_boards(discovery_only: bool, depth: int | None) -> list[Board]:
 def refresh(
     database: Database,
     force: bool = False,
+    interval_minutes: Annotated[int | None, typer.Option(min=15, max=1440)] = None,
     discovery_only: bool = False,
     discovery_depth: Annotated[
         int | None,
@@ -109,6 +110,8 @@ def refresh(
     ] = MAX_REQUESTS_PER_RUN,
 ) -> None:
     """Refresh due public boards and bounded wallet details."""
+    if discovery_only and interval_minutes is not None:
+        raise typer.BadParameter("Board refresh interval applies only to visible rankings.")
     boards = _collection_boards(discovery_only, discovery_depth)
     pages = sum((board.depth + BOARD_PAGE_SIZE - 1) // BOARD_PAGE_SIZE for board in boards)
     if max_requests < pages:
@@ -128,6 +131,8 @@ def refresh(
         if token is None:
             typer.echo('{"status":"refresh_in_progress"}')
             return
+        if interval_minutes is not None:
+            store.set_refresh_interval(token, interval_minutes)
         until = store.provider_retry_at()
         if until is not None and until > now:
             typer.echo(json.dumps({"status": "provider_deferred", "retry_at": until.isoformat()}))

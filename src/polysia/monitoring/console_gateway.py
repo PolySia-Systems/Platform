@@ -25,6 +25,7 @@ from polysia.monitoring.console_contract import (
     Choice,
     Context,
     Fact,
+    InstallationSettings,
     OperationName,
     Preview,
     PreviewRequest,
@@ -528,6 +529,11 @@ class ConsoleGateway:
         if path == PREFIX + "/watchlist-runs":
             parameters(query, set())
             return self.watchlist_runs(subject, role).model_dump()
+        if path == PREFIX + "/installation-settings":
+            parameters(query, set())
+            if role != "operator" or example:
+                raise LookupError("record_or_route_missing")
+            return self.installation_settings().model_dump()
         if path.startswith(PREFIX + "/leaderboard"):
             from polysia.domain.leaderboard import Board, Period, Ranking
             from polysia.monitoring import leaderboard
@@ -646,6 +652,28 @@ class ConsoleGateway:
         return Watchlists(
             enabled=enabled, items=[Watchlist.model_validate(item) for item in items],
             max_lists=MAX_LISTS, max_wallets=MAX_WALLETS,
+        )
+
+    def installation_settings(self) -> InstallationSettings:
+        def receipt(name: str) -> dict[str, Any]:
+            path = self.app._publication.with_name(name + ".json")
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+                return {}
+            value = json.loads(path.read_text())
+            return value if isinstance(value, dict) else {}
+
+        install = receipt("installation-status")
+        connection = receipt("connection-status")
+        backup = receipt("backup-status")
+        updates = receipt("update-status")
+        return InstallationSettings(
+            release=updates.get("installed") or install.get("version"),
+            profile=install.get("profile"), connection=connection.get("state"),
+            connection_checked_at=connection.get("checked_at"),
+            authenticated=connection.get("authenticated"),
+            backup_mode=install.get("backup_mode"), backup_status=backup.get("status"),
+            update_state=updates.get("state"), update_available=updates.get("available"),
+            update_automatic=updates.get("automatic"),
         )
 
     def watchlist_runs(self, subject: str, role: str) -> WatchlistRunPage:

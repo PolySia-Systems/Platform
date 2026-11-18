@@ -164,6 +164,15 @@ def main() -> None:
     status, _, body = request("/api/console/v1/leaderboard", user="reader")
     assert status == 200
     assert json.loads(body)["items"][0]["name"] == "Installation fixture"
+    settings_path = "/api/console/v1/installation-settings"
+    assert request(settings_path, user="reader")[0] == 404
+    status, _, body = request(settings_path)
+    assert status == 200
+    assert json.loads(body)["profile"] == "private"
+    assert b"credentials_file" not in body
+    assert json.loads(run("/usr/local/sbin/polysia-admin", "connection")) == {
+        "state": "NOT_CONFIGURED",
+    }
     assert request(user=None, headers={"X-Polysia-User": "owner"})[0] == 401
     assert request(headers={"Host": "foreign.invalid"})[0] in {403, 404, 421}
     assert request(headers={"Origin": "https://foreign.invalid"})[0] == 403
