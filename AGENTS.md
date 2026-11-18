@@ -309,7 +309,7 @@ reversible assumption and continue independent work; never invent evidence.
 Keep nested guides short and unique. Current guides: adapter, architecture docs
 and tests. Do not add Risk/Execution guides that duplicate universal rules.
 Use AGENTS.override.md only for deliberate same-directory replacement.
-For Console/UI follow
+For user-facing workflows, including Console, CLI and setup, follow
 [product design](docs/04-architecture/product-design-system.md): reuse semantic
 tokens/primitives, preserve exact financial strings, command ownership and static
 asset custody, and validate rendered output.

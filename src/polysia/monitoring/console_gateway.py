@@ -6,14 +6,22 @@ import base64
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlencode
 
 from polysia.control.scoped_operations import OPERATIONS, Operation
 from polysia.control.service import ControlService
-from polysia.domain.copytrading.watchlist_shadow import MAX_DURATION, MAX_RUN_WALLETS, MIN_DURATION
+from polysia.domain.copytrading.watchlist_shadow import (
+    FEE_BPS,
+    MAX_DURATION,
+    MAX_FILL_NOTIONAL,
+    MAX_RUN_WALLETS,
+    MIN_DURATION,
+    RUN_PAGE_SIZE,
+    STARTING_CASH,
+)
+from polysia.monitoring import watchlist_report
 from polysia.monitoring.console_bundle import verify_bundle
 from polysia.monitoring.console_contract import (
     API_VERSION,
@@ -37,10 +45,8 @@ from polysia.monitoring.console_contract import (
     Watchlist,
     WatchlistCancelRequest,
     WatchlistMutation,
-    WatchlistRun,
     WatchlistRunPage,
     WatchlistRunRequest,
-    WatchlistRunWallet,
     Watchlists,
 )
 from polysia.monitoring.console_projection import (
@@ -51,7 +57,13 @@ from polysia.monitoring.console_projection import (
     project_supervision,
 )
 from polysia.storage.watchlist_runs import WatchlistRuns
-from polysia.storage.watchlists import MAX_LISTS, MAX_WALLETS, WatchlistStore
+from polysia.storage.watchlists import (
+    LIST_ID_PATTERN,
+    MAX_LISTS,
+    MAX_WALLETS,
+    WALLET_PATTERN,
+    WatchlistStore,
+)
 
 if TYPE_CHECKING:
     from polysia.monitoring.console import ConsoleApplication
@@ -527,8 +539,13 @@ class ConsoleGateway:
             parameters(query, set())
             return self.watchlists(subject, role).model_dump()
         if path == PREFIX + "/watchlist-runs":
-            parameters(query, set())
-            return self.watchlist_runs(subject, role).model_dump()
+            args = parameters(query, {"offset"})
+            offset = int(args.get("offset", "0"))
+            if not 0 <= offset <= 1_000_000:
+                raise ValueError("invalid_offset")
+            return self.watchlist_runs(subject, role, offset=offset).model_dump()
+        if path == PREFIX + "/watchlist-runs/detail":
+            return self.watchlist_run_detail(subject, role, query)
         if path == PREFIX + "/installation-settings":
             parameters(query, set())
             if role != "operator" or example:
@@ -676,40 +693,35 @@ class ConsoleGateway:
             update_automatic=updates.get("automatic"),
         )
 
-    def watchlist_runs(self, subject: str, role: str) -> WatchlistRunPage:
+    def watchlist_runs(self, subject: str, role: str, *, offset: int = 0) -> WatchlistRunPage:
         database = self.app.watchlist_database
-        items = []
-        if database is not None and role == "operator":
-            for status, data in WatchlistRuns(database).for_owner(subject):
-                wallets = [
-                    WatchlistRunWallet(
-                        address=address, observed_through=value["through"],
-                        observations=value["observations"], read_errors=value["read_errors"],
-                        fills=list(value["events"].values()).count("current_book_shadow_fill"),
-                        skipped=sum(
-                            reason != "current_book_shadow_fill"
-                            for reason in value["events"].values()
-                        ),
-                        open_positions=len(value["positions"]), realized=value["realized"],
-                        fees=value["fees"], slippage=value["slippage"],
-                    )
-                    for address, value in data["wallets"].items()
-                ]
-                equity = None if any(wallet.open_positions for wallet in wallets) else str(
-                    sum(Decimal(value["cash"]) for value in data["wallets"].values())
-                )
-                items.append(WatchlistRun(
-                    id=data["id"], name=data["name"], model=data["model"], status=cast(Any, status),
-                    started_at=data["started_at"], ends_at=data["ends_at"],
-                    finished_at=data["finished_at"],
-                    started_cash_per_wallet=data["started_cash_per_wallet"],
-                    realized=str(sum(Decimal(wallet.realized) for wallet in wallets)),
-                    equity=equity, wallets=wallets,
-                ))
+        store = WatchlistRuns(database) if database is not None and role == "operator" else None
+        page = store.for_owner(subject, offset=offset) if store is not None else []
         return WatchlistRunPage(
-            items=items, min_duration_seconds=MIN_DURATION, max_duration_seconds=MAX_DURATION,
-            max_wallets=MAX_RUN_WALLETS,
+            items=[watchlist_report.summary(status, data) for status, data in page[:RUN_PAGE_SIZE]],
+            min_duration_seconds=MIN_DURATION, max_duration_seconds=MAX_DURATION,
+            max_wallets=MAX_RUN_WALLETS, busy=store.busy() if store else False,
+            storage_low=not store.has_space() if store else False,
+            next_offset=offset + RUN_PAGE_SIZE if len(page) > RUN_PAGE_SIZE else None,
+            starting_cash=STARTING_CASH, maximum_fill=MAX_FILL_NOTIONAL, fee_bps=FEE_BPS,
         )
+
+    def watchlist_run_detail(self, subject: str, role: str, query: str) -> dict[str, Any]:
+        database = self.app.watchlist_database
+        if database is None or role != "operator":
+            raise LookupError("record_or_route_missing")
+        args = parameters(query, {"run_id", "wallet", "offset"})
+        run_id, wallet = args.get("run_id", ""), args.get("wallet", "")
+        offset = int(args.get("offset", "0"))
+        if not re.fullmatch(LIST_ID_PATTERN, run_id) or not re.fullmatch(WALLET_PATTERN, wallet):
+            raise ValueError("invalid_run_identity")
+        if not 0 <= offset <= 2_000:
+            raise ValueError("invalid_offset")
+        rows = WatchlistRuns(database).for_owner(subject, run_id=run_id)
+        if not rows:
+            raise LookupError("record_or_route_missing")
+        status, data = rows[0]
+        return watchlist_report.detail(status, data, wallet, offset).model_dump()
 
     def mutate(self, path: str, payload: dict[str, Any], subject: str, role: str) -> dict[str, Any]:
         now = datetime.now(UTC)
@@ -740,7 +752,7 @@ class ConsoleGateway:
                 launch = WatchlistRunRequest.model_validate(payload)
                 runs.start(
                     subject, launch.run_id, launch.list_id, launch.list_revision,
-                    launch.duration_seconds, now,
+                    launch.duration_seconds, now, selection=launch.wallets,
                 )
             return self.watchlist_runs(subject, role).model_dump()
         if path == PREFIX + "/preview":

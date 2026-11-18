@@ -237,7 +237,14 @@ class ConsoleApplication:
                         "next_action": "inspect durable receipts before retrying",
                     },
                 )
-            except ValueError, TypeError, KeyError, CookieError, json.JSONDecodeError, ControlError:
+            except ValueError as error:
+                if path == PREFIX + "/watchlist-runs" and str(error) in {
+                    "shadow_busy", "shadow_storage_low", "shadow_cohort_size",
+                    "shadow_request_id_conflict", "watchlist_revision_changed", "watchlist_missing",
+                }:
+                    return respond("409 Conflict", {"reason": str(error)})
+                return respond("409 Conflict", {"reason": "command_invalid_or_revision_changed"})
+            except TypeError, KeyError, CookieError, ControlError:
                 return respond("409 Conflict", {"reason": "command_invalid_or_revision_changed"})
             return respond("202 Accepted", receipt)
         if isinstance(path, str) and path.startswith(PREFIX + "/"):

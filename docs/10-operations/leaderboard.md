@@ -39,19 +39,46 @@ Deleting a list leaves the public rankings and wallet history intact.
 
 ### Forward Shadow
 
-Open a saved list and choose **Shadow**. Use a preset or enter your own duration
-between 15 minutes and seven days. An installation runs one experiment at a
-time for up to six selected wallets. Once started, the cohort and duration
-are fixed. Closing the browser does not stop it. Open **View Shadow runs**
-to see modeled fills, costs, coverage and realized results or stop early.
-Each wallet starts with 100 virtual USDC. The model uses public order books,
-caps gross notional at 5 USDC per simulated fill and charges a modeled 2% fee.
-The board and this scheduler operate independently. The result reports observed
-coverage rather than assuming every trade was seen. Total equity is unavailable
-with open positions until a reliable closing valuation can be established.
+Choose **Test selected wallets** on the Leaderboard or open **Shadow** from
+a saved list. Select up to six wallets for this test and set a duration
+from 15 minutes to seven days. The original list is preserved. The server
+can run one paper test at a time. Open **Paper tests** from the Leaderboard
+to return after signing in again, read older reports, or choose **End test
+and see results** while a test is running.
+
+Each wallet starts with 100 virtual USDC. A simulated fill is capped at 5
+USDC gross with a modeled 2% fee. The summary reports realized simulated
+gain or loss, positions still open, and available ending estimates. Wallet
+details retain exact amounts, trade decisions and price times. Book marks
+use observed bid depth and estimated exit fees. The snapshot must have been
+received by the cutoff and its quote must be at most 180 seconds old. A
+verified settlement captured by the cutoff has no modeled exit fee and can
+have zero value. Partial depth prices only the covered shares. The combined
+estimate sums independent wallet simulations. The same depth can support
+separate estimates for two wallets holding the same outcome.
+
+Scheduled expiry can check the remaining source window without simulating
+late fills. Manual end records the available evidence immediately. A lost or
+oversized window can leave a gap. Reports show coverage and valuation
+separately. Earlier model records keep their original facts and can lack
+exact fills, close counts and ending marks.
+
+| Limit | Rationale and verification |
+| --- | --- |
+| 32 wallets per saved list, six per paper test, one active test | Saved lists have no polling cost. Start enforces the frozen cohort and the worker has at most three concurrent wallet observations. Measure changed limits on the same deployment with a busy cohort and leaderboard refresh. |
+| 12 price or settlement lookups per wallet per tick and 2,000 retained decisions per wallet | Reserve work for observed signals before optional ending marks. The 72-lookup cohort ceiling counts logical requests before transport retries. Monitor actual endpoint requests, time, coverage and saturation. Refine in the worker and repeat contract and load tests before raising either ceiling. |
+| 20 reports per history page, 128 MiB watchlist store envelope with 16 MiB reserved for a new run | Keep earlier reports. Admission checks the store and requires 32 MiB of free space for writes. If starts are blocked by disk space, free space and retry. If the store itself reaches its envelope, preserve a verified encrypted archive before any maintenance or reviewed ceiling increase. |
+
+The duration is a supported per-run choice. Budget and admission ceilings
+are versioned implementation policy. Check a changed policy against the
+installed scheduler, backup footprint and wire contract before release.
+Allow active v2 tests to finish before rolling back the worker to v1.
 
 Authorized HTTP clients can use `GET /api/console/v1/watchlists` and
-`GET /api/console/v1/watchlist-runs` to read state. Use the same verified Console
+`GET /api/console/v1/watchlist-runs` to read state. The page exposes
+`next_offset` for older reports. An owner can use
+`GET /api/console/v1/watchlist-runs/detail?run_id=…&wallet=…` for a wallet's
+retained evidence. Use the same verified Console
 login, origin and CSRF session as the browser. For writes, first read
 `GET /api/console/v1/session`, retain its cookie and send `identity`, `csrf` and
 the configured `Origin` with the JSON request. A watchlist write to
