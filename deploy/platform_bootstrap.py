@@ -20,6 +20,10 @@ INSTALL_ROOT = Path("/opt/polysia-platform")
 STATE_ROOT = Path("/var/lib/polysia-platform")
 CONFIG_ROOT = Path("/etc/polysia-platform")
 SERVICE_ROOT = Path("/etc/systemd/system")
+LEADERBOARD_SERVICE = "polysia-leaderboard-refresh.service"
+LEADERBOARD_TIMER = "polysia-leaderboard-refresh.timer"
+LEADERBOARD_MOUNT = "/leaderboard"
+LEADERBOARD_DATABASE = LEADERBOARD_MOUNT + "/leaderboard.sqlite3"
 
 
 def verify_artifact(directory: Path, *, commit: str) -> dict[str, Any]:
@@ -86,8 +90,9 @@ def container_command(
     hostname: str,
     gateway: bool = False,
     configured: bool = True,
+    leaderboard: bool = False,
 ) -> list[str]:
-    if role not in {"worker", "publisher", "web"}:
+    if role not in {"worker", "publisher", "web", "leaderboard"}:
         raise ValueError("unsupported process role")
     config_root, state_root = CONFIG_ROOT.as_posix(), STATE_ROOT.as_posix()
     args = [
@@ -110,6 +115,13 @@ def container_command(
         "--env",
         "LIVE_TRADING_ENABLED=false",
     ]
+    if role == "leaderboard":
+        return args + [
+            "--user", "10101:10102", "--network", "bridge", "--memory", "256m",
+            "--cpus", ".5", "--volume",
+            f"{state_root}/leaderboard:{LEADERBOARD_MOUNT}:rw",
+            image, "leaderboard", "refresh", "--database", LEADERBOARD_DATABASE,
+        ]
     if role == "web":
         args += [
             "--user",
@@ -128,6 +140,8 @@ def container_command(
         if gateway:
             args[args.index("host")] = "none"
             args += ["--volume", "/run/polysia-platform:/run/polysia-platform:rw"]
+        if leaderboard:
+            args += ["--volume", f"{state_root}/leaderboard:{LEADERBOARD_MOUNT}:ro"]
     else:
         args += [
             "--user",
@@ -256,9 +270,11 @@ def service_text(
     hostname: str,
     gateway: bool = False,
     configured: bool = True,
+    leaderboard: bool = False,
 ) -> str:
     command = container_command(
-        image, role=role, hostname=hostname, gateway=gateway, configured=configured
+        image, role=role, hostname=hostname, gateway=gateway, configured=configured,
+        leaderboard=leaderboard,
     )
     if any(re.search(r"[\s%\n]", argument) for argument in command):
         raise ValueError("unsafe systemd argument")
@@ -275,7 +291,8 @@ def service_text(
         + "\nExecStart="
         + " ".join(command)
         + ("\nExecStop=/usr/bin/docker stop -t 25 polysia-platform-web" if role == "web" else "")
-        + "\nTimeoutStartSec=180\nTimeoutStopSec=35\nKillMode=control-group\n"
+        + ("\nTimeoutStartSec=10min" if role == "leaderboard" else "\nTimeoutStartSec=180")
+        + "\nTimeoutStopSec=35\nKillMode=control-group\n"
         + (
             # RuntimeDirectory is owned by this root Docker supervisor. systemd
             # reapplies that ownership after ExecStartPre, so it cannot own the

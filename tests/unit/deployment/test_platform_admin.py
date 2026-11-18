@@ -87,6 +87,42 @@ def test_gateway_backend_has_no_tcp_or_financial_mount_and_stop_survives_queue_f
     assert "RuntimeDirectory=" not in web
 
 
+def test_managed_leaderboard_has_independent_data_only_container():
+    image = "sha256:" + "a" * 64
+    collector = core.container_command(image, role="leaderboard", hostname="")
+    console = core.container_command(image, role="web", hostname="", leaderboard=True)
+    state = core.STATE_ROOT.as_posix() + "/leaderboard"
+    assert f"{state}:/leaderboard:rw" in collector
+    assert f"{state}:/leaderboard:ro" in console
+    assert collector[-5:] == [
+        image, "leaderboard", "refresh", "--database", core.LEADERBOARD_DATABASE,
+    ]
+    assert "TRADING_MODE=DATA_ONLY" in collector and "LIVE_TRADING_ENABLED=false" in collector
+    assert not any("/config" in value or "/control" in value for value in collector)
+
+
+def test_adoption_refuses_unrecognized_overrides_without_changing_them(tmp_path, monkeypatch):
+    root = tmp_path.resolve()
+    monkeypatch.setattr(core, "CONFIG_ROOT", root)
+    monkeypatch.setattr(core, "STATE_ROOT", root)
+    monkeypatch.setattr(core, "SERVICE_ROOT", root)
+    image = "sha256:" + "a" * 64
+    base = core.service_text(image, role="web", hostname="test")
+    (root / "polysia-platform-web.service").write_text(base)
+    path = admin.leaderboard_override()
+    path.parent.mkdir()
+    start = next(line for line in base.splitlines() if line.startswith("ExecStart="))
+    mount = f"--volume {(root / 'leaderboard').as_posix()}:/leaderboard:ro "
+    expected = start.replace("/usr/bin/docker run ", "/usr/bin/docker run " + mount, 1)
+    path.write_text("[Service]\nExecStart=\n" + expected + "\n")
+    admin.leaderboard_preflight()
+    custom = path.read_text() + "Environment=CUSTOM=1\n"
+    path.write_text(custom)
+    with pytest.raises(ValueError, match="override differs"):
+        admin.leaderboard_preflight()
+    assert path.read_text() == custom
+
+
 def test_legacy_backup_registration_preserves_destination_and_requires_fresh_proof(
     tmp_path,
     monkeypatch,

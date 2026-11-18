@@ -8,6 +8,23 @@ scope.
 
 ## First collection and Console configuration
 
+On releases with managed leaderboard collection, the guided installer creates
+the private data directory, connects it to the Console and starts
+`polysia-leaderboard-refresh.timer`. Open **Leaderboard**. The first capture
+starts in the background, and an upstream outage can delay its arrival without
+preventing sign-in. The timer checks every 15 minutes and the collector skips
+boards that are still fresh. Inspect the last complete capture using host
+admin `status`. Run the same guided setup entry with `configure --leaderboard paused`
+to keep displaying retained data and stop polling, or `configure --leaderboard auto`
+to resume, using the currently installed release's versioned entry.
+
+An update from the original Helsinki setup adopts the standard data directory
+and recognizes the previous manual service, timer and web override. Back up
+custom units before changing them if the installer reports a conflict.
+
+For older releases and installations without the guided host setup, configure
+collection and the Console separately as described below.
+
 Use the installed release and a writable path in a private data directory.
 The path's directory must already exist. Run the collector as the data owner,
 using the existing job runner or an interactive terminal.
