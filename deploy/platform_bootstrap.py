@@ -24,6 +24,8 @@ LEADERBOARD_SERVICE = "polysia-leaderboard-refresh.service"
 LEADERBOARD_TIMER = "polysia-leaderboard-refresh.timer"
 LEADERBOARD_MOUNT = "/leaderboard"
 LEADERBOARD_DATABASE = LEADERBOARD_MOUNT + "/leaderboard.sqlite3"
+SHADOW_SERVICE = "polysia-watchlist-shadow.service"
+SHADOW_TIMER = "polysia-watchlist-shadow.timer"
 
 
 def verify_artifact(directory: Path, *, commit: str) -> dict[str, Any]:
@@ -92,7 +94,7 @@ def container_command(
     configured: bool = True,
     leaderboard: bool = False,
 ) -> list[str]:
-    if role not in {"worker", "publisher", "web", "leaderboard"}:
+    if role not in {"worker", "publisher", "web", "leaderboard", "watchlist-shadow"}:
         raise ValueError("unsupported process role")
     config_root, state_root = CONFIG_ROOT.as_posix(), STATE_ROOT.as_posix()
     args = [
@@ -115,6 +117,12 @@ def container_command(
         "--env",
         "LIVE_TRADING_ENABLED=false",
     ]
+    if role == "watchlist-shadow":
+        return args + [
+            "--user", "10102:10102", "--network", "bridge", "--memory", "256m",
+            "--cpus", ".5", "--volume", f"{state_root}/watchlists:/watchlists:rw",
+            image, "leaderboard", "shadow-tick", "--database", "/watchlists/watchlists.sqlite3",
+        ]
     if role == "leaderboard":
         return args + [
             "--user", "10101:10102", "--network", "bridge", "--memory", "256m",

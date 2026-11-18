@@ -166,6 +166,8 @@ class ConsoleApplication:
                     PREFIX + "/preview",
                     PREFIX + "/apply",
                     PREFIX + "/watchlists",
+                    PREFIX + "/watchlist-runs",
+                    PREFIX + "/watchlist-runs/cancel",
                 }
                 or role != "operator"
             ):
@@ -192,7 +194,7 @@ class ConsoleApplication:
                     or not any(hmac.compare_digest(csrf, item) for item in (expected, previous))
                 ):
                     return respond("403 Forbidden", {"reason": "csrf_invalid"})
-                if path in {PREFIX + "/preview", PREFIX + "/apply", PREFIX + "/watchlists"}:
+                if isinstance(path, str) and path.startswith(PREFIX + "/"):
                     receipt = self._gateway.mutate(path, command, subject, role)
                 elif path == "/api/operations/preview":
                     if set(command) - {"operation", "target", "arguments"}:

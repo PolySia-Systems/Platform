@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,28 @@ from polysia.storage.leaderboard import LeaderboardStore
 
 app = typer.Typer(help="Collect public ranking evidence independently of trading.")
 Database = Annotated[Path, typer.Option("--database", dir_okay=False)]
+
+
+@app.command("shadow-tick")
+def shadow_tick(database: Database) -> None:
+    """Advance one bounded public-data experiment without using a signer."""
+    from polysia.adapters.polymarket.copytrading_source import (
+        PolymarketCopyTradingSource,
+        PolymarketMarketScope,
+    )
+    from polysia.adapters.polymarket.public import PolymarketPublicAdapter
+    from polysia.application.services.watchlist_shadow import tick
+    from polysia.storage.watchlist_runs import WatchlistRuns
+
+    status = asyncio.run(tick(
+        WatchlistRuns(database),
+        lambda leaders: PolymarketCopyTradingSource(
+            leaders, market_scope=PolymarketMarketScope.ALL_VERIFIED,
+            max_pages=4, max_requests=4, max_elapsed_seconds=8,
+        ),
+        PolymarketPublicAdapter(),
+    ))
+    typer.echo(json.dumps({"status": status}))
 
 
 def _collection_boards(discovery_only: bool, depth: int | None) -> list[Board]:

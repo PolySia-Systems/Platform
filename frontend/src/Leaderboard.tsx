@@ -6,6 +6,7 @@ import type {
   LeaderboardWallet, Session, Watchlist, Watchlists,
 } from './contract.generated';
 import { Badge } from './design/Primitives';
+import { WatchlistShadow } from './WatchlistShadow';
 import s from './Leaderboard.module.css';
 import consoleStyles from './Console.module.css';
 
@@ -46,6 +47,7 @@ export function Leaderboard({ onIdentityFailure, session }: {
   const [selected, setSelected] = useState<string[]>([]);
   const [editor, setEditor] = useState<Watchlist | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [runList, setRunList] = useState<Watchlist | null | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [watchlistMessage, setWatchlistMessage] = useState('');
   const scope = new URLSearchParams({ period, ranking, category }).toString();
@@ -259,10 +261,15 @@ export function Leaderboard({ onIdentityFailure, session }: {
         {snapshot?.source_health_at && <span> Provider health report {stamp(snapshot.source_health_at)}.</span>}
       </footer>
     </section>
-    <Modal opened={manageOpen} onClose={() => { if (!saving) { setManageOpen(false); setEditor(null); } }}
-      title="Watchlists" closeButtonProps={{ 'aria-label': 'Close watchlists' }} returnFocus>
+    <Modal opened={manageOpen} onClose={() => {
+      if (!saving) { setManageOpen(false); setEditor(null); setRunList(undefined); }
+    }} title="Watchlists" closeButtonProps={{ 'aria-label': 'Close watchlists' }} returnFocus>
       {watchlistMessage && <p role="status">{watchlistMessage}</p>}
-      {editor ? <form className={s.watchlistForm} onSubmit={event => {
+      {runList !== undefined ? <>
+        <Button variant="subtle" onClick={() => setRunList(undefined)}>Back to watchlists</Button>
+        <WatchlistShadow key={runList?.id ?? 'history'} session={session} list={runList}
+          onDone={() => setRunList(null)} />
+      </> : editor ? <form className={s.watchlistForm} onSubmit={event => {
         event.preventDefault(); void saveWatchlist(editor);
       }}>
         <label>Watchlist name<input required maxLength={80} value={editor.name}
@@ -277,6 +284,7 @@ export function Leaderboard({ onIdentityFailure, session }: {
           <Button variant="default" disabled={saving} onClick={() => setEditor(null)}>Cancel edit</Button>
         </div>
       </form> : <>
+        <Button variant="subtle" onClick={() => setRunList(null)}>View Shadow runs</Button>
         {watchlists?.items.length ? <ul className={s.list}>
           {watchlists.items.map(item => <li key={item.id}>
             <div><strong>{item.name}</strong><span>{item.wallets.length} wallets</span></div>
@@ -287,6 +295,8 @@ export function Leaderboard({ onIdentityFailure, session }: {
                 Add selection
               </Button>}
               <Button variant="default" aria-label={'Edit ' + item.name} onClick={() => setEditor(item)}>Edit</Button>
+              <Button disabled={!item.wallets.length} aria-label={'Shadow ' + item.name}
+                onClick={() => setRunList(item)}>Shadow</Button>
               <Button variant="subtle" disabled={saving} aria-label={'Delete ' + item.name}
                 onClick={() => { if (window.confirm('Delete watchlist “' + item.name + '”?')) void saveWatchlist(item, true); }}>Delete</Button>
             </div>

@@ -203,6 +203,12 @@ def _backup_generation(value: dict[str, Any]) -> dict[str, Any]:
     )
     if (CONFIG_ROOT / "manifest.json").is_file():
         args += ["--volume", f"{CONFIG_ROOT}/manifest.json:/config/manifest.json:ro"]
+    for role in ("leaderboard", "watchlists"):
+        research = STATE_ROOT / role
+        if research.is_dir():
+            if research.is_symlink():
+                raise ValueError("research backup directory cannot be a symlink")
+            args += ["--volume", f"{research}:/{role}:ro"]
     args += campaign_mounts(json.loads((CONFIG_ROOT / "worker.json").read_bytes()))
     args += ["--name", "polysia-platform-backup-stage"]
     with job_stage("snapshot"):

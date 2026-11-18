@@ -6,12 +6,14 @@ import base64
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlencode
 
 from polysia.control.scoped_operations import OPERATIONS, Operation
 from polysia.control.service import ControlService
+from polysia.domain.copytrading.watchlist_shadow import MAX_DURATION, MAX_RUN_WALLETS, MIN_DURATION
 from polysia.monitoring.console_bundle import verify_bundle
 from polysia.monitoring.console_contract import (
     API_VERSION,
@@ -32,7 +34,12 @@ from polysia.monitoring.console_contract import (
     Session,
     Snapshot,
     Watchlist,
+    WatchlistCancelRequest,
     WatchlistMutation,
+    WatchlistRun,
+    WatchlistRunPage,
+    WatchlistRunRequest,
+    WatchlistRunWallet,
     Watchlists,
 )
 from polysia.monitoring.console_projection import (
@@ -42,6 +49,7 @@ from polysia.monitoring.console_projection import (
     fingerprint,
     project_supervision,
 )
+from polysia.storage.watchlist_runs import WatchlistRuns
 from polysia.storage.watchlists import MAX_LISTS, MAX_WALLETS, WatchlistStore
 
 if TYPE_CHECKING:
@@ -517,6 +525,9 @@ class ConsoleGateway:
         if path == PREFIX + "/watchlists":
             parameters(query, set())
             return self.watchlists(subject, role).model_dump()
+        if path == PREFIX + "/watchlist-runs":
+            parameters(query, set())
+            return self.watchlist_runs(subject, role).model_dump()
         if path.startswith(PREFIX + "/leaderboard"):
             from polysia.domain.leaderboard import Board, Period, Ranking
             from polysia.monitoring import leaderboard
@@ -637,6 +648,41 @@ class ConsoleGateway:
             max_lists=MAX_LISTS, max_wallets=MAX_WALLETS,
         )
 
+    def watchlist_runs(self, subject: str, role: str) -> WatchlistRunPage:
+        database = self.app.watchlist_database
+        items = []
+        if database is not None and role == "operator":
+            for status, data in WatchlistRuns(database).for_owner(subject):
+                wallets = [
+                    WatchlistRunWallet(
+                        address=address, observed_through=value["through"],
+                        observations=value["observations"], read_errors=value["read_errors"],
+                        fills=list(value["events"].values()).count("current_book_shadow_fill"),
+                        skipped=sum(
+                            reason != "current_book_shadow_fill"
+                            for reason in value["events"].values()
+                        ),
+                        open_positions=len(value["positions"]), realized=value["realized"],
+                        fees=value["fees"], slippage=value["slippage"],
+                    )
+                    for address, value in data["wallets"].items()
+                ]
+                equity = None if any(wallet.open_positions for wallet in wallets) else str(
+                    sum(Decimal(value["cash"]) for value in data["wallets"].values())
+                )
+                items.append(WatchlistRun(
+                    id=data["id"], name=data["name"], model=data["model"], status=cast(Any, status),
+                    started_at=data["started_at"], ends_at=data["ends_at"],
+                    finished_at=data["finished_at"],
+                    started_cash_per_wallet=data["started_cash_per_wallet"],
+                    realized=str(sum(Decimal(wallet.realized) for wallet in wallets)),
+                    equity=equity, wallets=wallets,
+                ))
+        return WatchlistRunPage(
+            items=items, min_duration_seconds=MIN_DURATION, max_duration_seconds=MAX_DURATION,
+            max_wallets=MAX_RUN_WALLETS,
+        )
+
     def mutate(self, path: str, payload: dict[str, Any], subject: str, role: str) -> dict[str, Any]:
         now = datetime.now(UTC)
         session = self.session(subject, role, now)
@@ -655,6 +701,20 @@ class ConsoleGateway:
             else:
                 store.save(subject, item.id, item.name, item.wallets, item.revision)
             return self.watchlists(subject, role).model_dump()
+        if path in {PREFIX + "/watchlist-runs", PREFIX + "/watchlist-runs/cancel"}:
+            if self.app.watchlist_database is None:
+                raise ValueError("watchlists_not_configured")
+            runs = WatchlistRuns(self.app.watchlist_database)
+            if path.endswith("/cancel"):
+                cancellation = WatchlistCancelRequest.model_validate(payload)
+                runs.cancel(subject, cancellation.run_id, now)
+            else:
+                launch = WatchlistRunRequest.model_validate(payload)
+                runs.start(
+                    subject, launch.run_id, launch.list_id, launch.list_revision,
+                    launch.duration_seconds, now,
+                )
+            return self.watchlist_runs(subject, role).model_dump()
         if path == PREFIX + "/preview":
             request = PreviewRequest.model_validate(payload)
             action = self.action(

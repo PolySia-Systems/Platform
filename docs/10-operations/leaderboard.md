@@ -33,6 +33,32 @@ current selection to a saved list, rename it, remove wallets or delete the list.
 Watchlists are private to the signed-in operator and survive browser restarts.
 Deleting a list leaves the public rankings and wallet history intact.
 
+### Forward Shadow
+
+Open a saved list and choose **Shadow**. Use a preset or enter your own duration
+between 15 minutes and seven days. An installation runs one experiment at a
+time for up to six selected wallets. Once started, the cohort and duration
+are fixed. Closing the browser does not stop it. Open **View Shadow runs**
+to see modeled fills, costs, coverage and realized results or stop early.
+Each wallet starts with 100 virtual USDC. The model uses public order books,
+caps gross notional at 5 USDC per simulated fill and charges a modeled 2% fee.
+The board and this scheduler operate independently. The result reports observed
+coverage rather than assuming every trade was seen. Total equity is unavailable
+with open positions until a reliable closing valuation can be established.
+
+Authorized HTTP clients can use `GET /api/console/v1/watchlists` and
+`GET /api/console/v1/watchlist-runs` to read state. Use the same verified Console
+login, origin and CSRF session as the browser. For writes, first read
+`GET /api/console/v1/session`, retain its cookie and send `identity`, `csrf` and
+the configured `Origin` with the JSON request. A watchlist write to
+`POST /api/console/v1/watchlists` carries an `item` with its stable `id`, `name`,
+`wallets` and expected `revision` (zero for create). Add `delete: true` to delete
+that revision. Launch at `POST /api/console/v1/watchlist-runs` with a stable
+32-character lowercase hex `run_id`, `list_id`, `list_revision` and
+`duration_seconds`. Retry an uncertain launch with the same request ID and
+inputs. Cancel at `POST /api/console/v1/watchlist-runs/cancel` using the run ID.
+Each route uses the signed-in operator's own lists and runs.
+
 Use the installed release and a writable path in a private data directory.
 The path's directory must already exist. Run the collector as the data owner,
 using the existing job runner or an interactive terminal.

@@ -50,6 +50,11 @@ def test_watchlist_is_restored_in_a_new_browser_context(console_fixture, tmp_pat
         page.get_by_role("button", name="Leaderboard", exact=True).click()
         page.get_by_role("button", name="Watchlists", exact=True).click()
         expect(page.get_by_text("Test cohort", exact=True)).to_be_visible()
+        page.get_by_role("button", name="Shadow Test cohort", exact=True).click()
+        page.get_by_label("Duration", exact=True).fill("3")
+        page.get_by_role("combobox", name="Duration unit").select_option("days")
+        page.get_by_role("button", name="Start Shadow", exact=True).click()
+        expect(page.get_by_text("Test cohort · RUNNING · 1 wallets")).to_be_visible()
         browser.close()
 
 
