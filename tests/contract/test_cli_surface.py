@@ -19,7 +19,7 @@ EXPECTED_NAMESPACES = {
     "wallet-intelligence",
 }
 EXPECTED_COMMANDS = {
-    "leaderboard": {"refresh", "import-reference"},
+    "leaderboard": {"refresh", "import-reference", "shadow-tick"},
     "system": {
         "configuration",
         "console",

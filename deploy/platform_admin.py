@@ -394,6 +394,7 @@ def configure(
                     "commands": "/control/commands.sqlite3",
                     "publication": "/publication/publication.json",
                     "leaderboard_database": core.LEADERBOARD_DATABASE,
+                    "watchlist_database": "/watchlists/watchlists.sqlite3",
                     "csrf_secret_file": "/config/csrf-secret",
                 },
                 mode=0o640,
@@ -411,8 +412,13 @@ def configure(
                 "existing Cloudflare origin is preserved; commission an authorized route "
                 "before changing its hostname",
             )
-        if not existing_web.get("leaderboard_database"):
-            existing_web["leaderboard_database"] = core.LEADERBOARD_DATABASE
+        defaults = {
+            "leaderboard_database": core.LEADERBOARD_DATABASE,
+            "watchlist_database": "/watchlists/watchlists.sqlite3",
+        }
+        missing = {key: path for key, path in defaults.items() if not existing_web.get(key)}
+        if missing:
+            existing_web.update(missing)
             atomic(core.CONFIG_ROOT / "web.json", existing_web, mode=0o640)
             os.chown(core.CONFIG_ROOT / "web.json", 0, 10102)
         atomic(current, value)
@@ -475,6 +481,7 @@ def configure(
         "commands": "/control/commands.sqlite3",
         "publication": "/publication/publication.json",
         "leaderboard_database": core.LEADERBOARD_DATABASE,
+        "watchlist_database": "/watchlists/watchlists.sqlite3",
         "csrf_secret_file": "/config/csrf-secret",
     }
     atomic(core.CONFIG_ROOT / "web.json", web, mode=0o640)
@@ -603,6 +610,21 @@ def install_leaderboard(image: str) -> None:
     leaderboard_override().unlink(missing_ok=True)
 
 
+def install_watchlist_shadow(image: str) -> None:
+    atomic(
+        core.SERVICE_ROOT / core.SHADOW_SERVICE,
+        MANAGED_UNIT + core.service_text(image, role="watchlist-shadow", hostname=""),
+        mode=0o644,
+    )
+    atomic(
+        core.SERVICE_ROOT / core.SHADOW_TIMER,
+        MANAGED_UNIT + "[Unit]\nDescription=Advance watchlist Shadow\n\n"
+        "[Timer]\nOnCalendar=*-*-* *:*:00 UTC\nPersistent=true\nAccuracySec=1s\n\n"
+        "[Install]\nWantedBy=timers.target\n",
+        mode=0o644,
+    )
+
+
 def leaderboard_status() -> dict:
     path = core.STATE_ROOT / "leaderboard/leaderboard.sqlite3"
     state = "WAITING_FOR_DATA"
@@ -649,6 +671,12 @@ def start_leaderboard(image: str, policy: str) -> None:
 
 
 def activate(value: dict, *, image: str) -> None:
+    watchlists = core.STATE_ROOT / "watchlists"
+    if watchlists.is_symlink() or watchlists.resolve() != watchlists:
+        raise ValueError("watchlist directory cannot traverse symlinks")
+    watchlists.mkdir(exist_ok=True, mode=0o2750)
+    os.chown(watchlists, 10102, 10102)
+    watchlists.chmod(0o2750)
     gateway_state = core.STATE_ROOT / "gateway"
     gateway_state.mkdir(exist_ok=True, mode=0o700)
     os.chown(gateway_state, 10102, 10102)
@@ -683,6 +711,7 @@ def activate(value: dict, *, image: str) -> None:
         atomic(worker, previous, mode=0o640)
         os.chown(worker, 0, 10102)
     install_leaderboard(image)
+    install_watchlist_shadow(image)
     for role in ("worker", "publisher", "web"):
         text = core.service_text(
             image,
@@ -918,7 +947,8 @@ def preserve_rollback() -> dict | None:
     ]
     files.extend(
         (core.SERVICE_ROOT / core.LEADERBOARD_SERVICE, core.SERVICE_ROOT / core.LEADERBOARD_TIMER,
-         leaderboard_override())
+         leaderboard_override(), core.SERVICE_ROOT / core.SHADOW_SERVICE,
+         core.SERVICE_ROOT / core.SHADOW_TIMER)
     )
     existing = {}
     for path in files:
@@ -998,6 +1028,9 @@ def rollback() -> dict:
     if (core.SERVICE_ROOT / core.LEADERBOARD_TIMER).is_file():
         core.run("systemctl", "disable", "--now", core.LEADERBOARD_TIMER)
         core.run("systemctl", "stop", core.LEADERBOARD_SERVICE)
+    if (core.SERVICE_ROOT / core.SHADOW_TIMER).is_file():
+        core.run("systemctl", "disable", "--now", core.SHADOW_TIMER)
+        core.run("systemctl", "stop", core.SHADOW_SERVICE)
     for path, saved, metadata in restored:
         shutil.copy2(saved, path)
         path.chmod(metadata["mode"])
@@ -1298,6 +1331,15 @@ def restore_installation(args: argparse.Namespace, value: dict, *, image: str) -
     if not args.archive or not args.recovery_key:
         raise ValueError("--archive and separately held --recovery-key are required")
     worker_root = core.STATE_ROOT / "worker"
+    research = {
+        "leaderboard": (core.STATE_ROOT / "leaderboard/leaderboard.sqlite3", 10101),
+        "watchlists": (core.STATE_ROOT / "watchlists/watchlists.sqlite3", 10102),
+    }
+    if any(
+        path.parent.resolve() != path.parent or any(path.parent.glob(path.name + "*"))
+        for path, _ in research.values()
+    ):
+        raise ValueError("replacement restore requires empty leaderboard and watchlist state")
     if any(worker_root.glob("*.sqlite3*")):
         raise ValueError("replacement restore requires empty financial/authority state")
     reports = core.STATE_ROOT / "publication/reports"
@@ -1356,6 +1398,24 @@ def restore_installation(args: argparse.Namespace, value: dict, *, image: str) -
         safe[field] = (
             "/control/commands.sqlite3" if field == "commands" else "/state/" + target.name
         )
+    for role, (target, owner) in research.items():
+        source = bundle / (role + ".sqlite3")
+        if source.is_file():
+            target.parent.mkdir(exist_ok=True, mode=0o2750)
+            os.chown(target.parent, owner, 10102)
+            target.parent.chmod(0o2750)
+            shutil.copy2(source, target)
+            os.chown(target, owner, 10102)
+            target.chmod(0o640)
+            if role == "watchlists":
+                with closing(sqlite3.connect(target)) as db, db:
+                    if db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='watchlist_run'"
+                    ).fetchone():
+                        db.execute(
+                            "UPDATE watchlist_run SET status='CANCELLED',revision=revision+1 "
+                            "WHERE status='RUNNING'"
+                        )
     for name, target in (
         ("policy.json", core.CONFIG_ROOT / "manifest.json"),
         ("cohort.json", worker_root / "cohort.json"),
@@ -1481,6 +1541,9 @@ def main() -> None:
             if (core.SERVICE_ROOT / core.LEADERBOARD_TIMER).is_file():
                 core.run("systemctl", "disable", "--now", core.LEADERBOARD_TIMER)
                 core.run("systemctl", "stop", core.LEADERBOARD_SERVICE)
+            if (core.SERVICE_ROOT / core.SHADOW_TIMER).is_file():
+                core.run("systemctl", "disable", "--now", core.SHADOW_TIMER)
+                core.run("systemctl", "stop", core.SHADOW_SERVICE)
             for name in (
                 "worker.timer",
                 "publisher.timer",
@@ -1688,6 +1751,7 @@ def main() -> None:
         activate(value, image=receipt["image_id"])
         verify_access(value)
         start_leaderboard(receipt["image_id"], policy)
+        core.run("systemctl", "enable", "--now", core.SHADOW_TIMER)
         promote_retained_backup(value, image=receipt["image_id"])
         install_health(value)
     except (OSError, ValueError, subprocess.SubprocessError):

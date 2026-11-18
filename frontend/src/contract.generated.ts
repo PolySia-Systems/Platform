@@ -30,6 +30,11 @@ export type Scope = { run: string | null; account: string | null; venue: string 
 export type Session = { api: "console/v1"; release: "0.4.0"; bundle: string | null; actor: string; role: "reader" | "operator"; csrf: string; identity: string; server_time: string; valid_until: string };
 export type Snapshot = { api: "console/v1"; release: "0.4.0"; server_time: string; context: Context; components: (Component)[]; financial: Financial | null; supervision: Supervision; blocker: string; actions: (Action)[]; atomic: false };
 export type Supervision = { status: "READY" | "STOPPED" | "UNKNOWN"; reason: string; next_action: string };
+export type Watchlist = { id: string; name: string; wallets: (string)[]; revision: number };
+export type WatchlistRun = { id: string; name: string; model: string; status: "RUNNING" | "FINISHED" | "CANCELLED"; started_at: string; ends_at: string; finished_at: string | null; started_cash_per_wallet: string; realized: string; equity: string | null; wallets: (WatchlistRunWallet)[] };
+export type WatchlistRunPage = { items: (WatchlistRun)[]; min_duration_seconds: number; max_duration_seconds: number; max_wallets: number };
+export type WatchlistRunWallet = { address: string; observed_through: string; observations: number; read_errors: number; fills: number; skipped: number; open_positions: number; realized: string; fees: string; slippage: string };
+export type Watchlists = { enabled: boolean; items: (Watchlist)[]; max_lists: number; max_wallets: number };
 export type Workspace = { generation: string; sections: (EvidenceSection)[] };
 export const schemas = {
   "ActionCatalog": {
@@ -2707,6 +2712,283 @@ export const schemas = {
       "atomic"
     ],
     "title": "Snapshot",
+    "type": "object"
+  },
+  "WatchlistRunPage": {
+    "$defs": {
+      "WatchlistRun": {
+        "additionalProperties": false,
+        "properties": {
+          "ends_at": {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "title": "Ends At",
+            "type": "string"
+          },
+          "equity": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "realized": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Realized",
+            "type": "string"
+          },
+          "started_at": {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "title": "Started At",
+            "type": "string"
+          },
+          "started_cash_per_wallet": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Started Cash Per Wallet",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "RUNNING",
+              "FINISHED",
+              "CANCELLED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "wallets": {
+            "items": {
+              "$ref": "#/$defs/WatchlistRunWallet"
+            },
+            "title": "Wallets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "model",
+          "status",
+          "started_at",
+          "ends_at",
+          "finished_at",
+          "started_cash_per_wallet",
+          "realized",
+          "equity",
+          "wallets"
+        ],
+        "title": "WatchlistRun",
+        "type": "object"
+      },
+      "WatchlistRunWallet": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "pattern": "^0x[0-9a-f]{40}$",
+            "title": "Address",
+            "type": "string"
+          },
+          "fees": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Fees",
+            "type": "string"
+          },
+          "fills": {
+            "title": "Fills",
+            "type": "integer"
+          },
+          "observations": {
+            "title": "Observations",
+            "type": "integer"
+          },
+          "observed_through": {
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
+            "title": "Observed Through",
+            "type": "string"
+          },
+          "open_positions": {
+            "title": "Open Positions",
+            "type": "integer"
+          },
+          "read_errors": {
+            "title": "Read Errors",
+            "type": "integer"
+          },
+          "realized": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Realized",
+            "type": "string"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "slippage": {
+            "maxLength": 128,
+            "pattern": "^-?(0|[1-9]\\d*)(\\.\\d+)?([Ee][+-]?\\d+)?$",
+            "title": "Slippage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "observed_through",
+          "observations",
+          "read_errors",
+          "fills",
+          "skipped",
+          "open_positions",
+          "realized",
+          "fees",
+          "slippage"
+        ],
+        "title": "WatchlistRunWallet",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/WatchlistRun"
+        },
+        "maxItems": 20,
+        "title": "Items",
+        "type": "array"
+      },
+      "max_duration_seconds": {
+        "title": "Max Duration Seconds",
+        "type": "integer"
+      },
+      "max_wallets": {
+        "title": "Max Wallets",
+        "type": "integer"
+      },
+      "min_duration_seconds": {
+        "title": "Min Duration Seconds",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "items",
+      "min_duration_seconds",
+      "max_duration_seconds",
+      "max_wallets"
+    ],
+    "title": "WatchlistRunPage",
+    "type": "object"
+  },
+  "Watchlists": {
+    "$defs": {
+      "Watchlist": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "wallets": {
+            "items": {
+              "pattern": "^0x[0-9a-f]{40}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Wallets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "wallets",
+          "revision"
+        ],
+        "title": "Watchlist",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "title": "Enabled",
+        "type": "boolean"
+      },
+      "items": {
+        "items": {
+          "$ref": "#/$defs/Watchlist"
+        },
+        "maxItems": 16,
+        "title": "Items",
+        "type": "array"
+      },
+      "max_lists": {
+        "minimum": 1,
+        "title": "Max Lists",
+        "type": "integer"
+      },
+      "max_wallets": {
+        "minimum": 1,
+        "title": "Max Wallets",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "enabled",
+      "items",
+      "max_lists",
+      "max_wallets"
+    ],
+    "title": "Watchlists",
     "type": "object"
   },
   "Workspace": {

@@ -157,7 +157,7 @@ def evaluate_shadow_events(
         key = (event.market_reference, event.outcome_reference)
         position = positions.get(key, ShadowPosition())
         quote = quotes.get(event.event_id)
-        evaluation, updated = _evaluate_event(
+        evaluation, updated = evaluate_shadow_fill(
             wallet_id,
             event,
             position=position,
@@ -192,7 +192,7 @@ def evaluate_shadow_events(
     return tuple(evaluations), summary
 
 
-def _evaluate_event(
+def evaluate_shadow_fill(
     wallet_id: str,
     event: LeaderTradeEvent,
     *,

@@ -72,6 +72,14 @@
 .tableRegion .numeric { text-align: end; white-space: nowrap; }
 .numeric small { color: var(--console-muted); font-weight: 400; }
 .rank { color: var(--console-muted); }
+.traderCell, .selection, .watchlistForm li, .list li { display: flex; align-items: center; gap: 10px; }
+.selection { flex-wrap: wrap; padding: 0 24px 12px; }
+.watchlistForm { display: grid; gap: 12px; }
+.watchlistForm label { display: grid; gap: 4px; }
+.watchlistForm input { min-width: 0; color: var(--console-ink); background: var(--console-surface); }
+.watchlistForm ul, .list { display: grid; list-style: none; padding: 0; margin: 0; gap: 12px; }
+.list li { justify-content: space-between; flex-wrap: wrap; }
+.list li span { display: block; }
 .gain { color: var(--console-success); }
 .loss { color: var(--console-danger); }
 .wallet {

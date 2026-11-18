@@ -38,6 +38,10 @@ MAX_BUNDLE_BYTES = 536_870_912
 MAX_PAYLOAD_BYTES = 503_316_480
 RECOVERY_VERSION = "platform-recovery/v2"
 LEGACY_RECOVERY_VERSION = "platform-recovery/v1"
+PUBLIC_RESEARCH_DATABASES = {
+    "leaderboard": Path("/leaderboard/leaderboard.sqlite3"),
+    "watchlists": Path("/watchlists/watchlists.sqlite3"),
+}
 
 
 @dataclass
@@ -161,9 +165,13 @@ def create_encrypted_backup(
             ("commands", Path(value["commands"])),
             ("financial", database),
             ("latency", database.with_name("native-latency.sqlite3")),
+            *PUBLIC_RESEARCH_DATABASES.items(),
         ):
             if not source.is_file():
-                if role in {"financial", "latency"} or role == "authority" and unconfigured:
+                if (
+                    role in {"financial", "latency", *PUBLIC_RESEARCH_DATABASES}
+                    or role == "authority" and unconfigured
+                ):
                     continue
                 raise ValueError("required recovery database missing")
             try:
@@ -404,7 +412,9 @@ def extract_and_verify_recovery(
     bundle = load_bundle_manifest(destination)
     unconfigured = metadata.get("installation_state") == "UNCONFIGURED"
     required_roles = {"commands"} if unconfigured else {"authority", "commands"}
-    if unconfigured and {record.role for record in bundle.databases} != {"commands"}:
+    if unconfigured and {record.role for record in bundle.databases} - {
+        "commands", *PUBLIC_RESEARCH_DATABASES,
+    }:
         raise ValueError("unconfigured recovery contains unexpected financial or authority state")
     if not required_roles <= {record.role for record in bundle.databases}:
         raise ValueError("authority or command recovery state missing")
@@ -494,6 +504,11 @@ def extract_and_verify_recovery(
             raise ValueError("recovered report identity mismatch")
         shutil.copy2(source, report_archive / name.removeprefix("report-"))
     for record in bundle.databases:
+        if record.role in PUBLIC_RESEARCH_DATABASES:
+            shutil.copy2(
+                destination / record.filename, destination / (record.role + ".sqlite3")
+            )
+            continue
         if record.role == "latency":
             shutil.copy2(destination / record.filename, destination / "native-latency.sqlite3")
             continue

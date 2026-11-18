@@ -159,6 +159,7 @@ def console_fixture(tmp_path: Path) -> Any:
             commands=commands,
             csrf_secret=b"test-fixture-only" * 3,
             leaderboard_database=tmp_path / "leaderboard.sqlite3",
+            watchlist_database=tmp_path / "watchlists.sqlite3",
             scoped_targets=frozenset(
                 {
                     "fixture-lab",

@@ -16,6 +16,48 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_watchlist_is_restored_in_a_new_browser_context(console_fixture, tmp_path):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    store = LeaderboardStore(tmp_path / "leaderboard.sqlite3")
+    store.initialize()
+    now = datetime.now(UTC)
+    token = store.acquire(now)
+    assert token
+    rows = (Standing("0x" + "1" * 40, "Test Trader", 1, Decimal("42"), Decimal("200")),)
+    store.publish(
+        Observation(
+            Board("polymarket", "month", "PNL"), rows, now, now, "complete", None, False, 1, 100,
+        ),
+        token,
+    )
+    store.release(token)
+    origin, impersonate, *_ = console_fixture
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, impersonate)
+        page = context.new_page()
+        page.goto(origin)
+        page.get_by_role("button", name="Leaderboard", exact=True).click()
+        page.get_by_role("checkbox", name="Select Test Trader").check()
+        page.get_by_role("button", name="Save selection").click()
+        page.get_by_label("Watchlist name").fill("Test cohort")
+        page.get_by_role("button", name="Save watchlist").click()
+        expect(page.get_by_text("Watchlist saved.")).to_be_visible()
+        browser.close()
+        browser, context = browser_context(runtime, origin, impersonate)
+        page = context.new_page()
+        page.goto(origin)
+        page.get_by_role("button", name="Leaderboard", exact=True).click()
+        page.get_by_role("button", name="Watchlists", exact=True).click()
+        expect(page.get_by_text("Test cohort", exact=True)).to_be_visible()
+        page.get_by_role("button", name="Shadow Test cohort", exact=True).click()
+        page.get_by_label("Duration", exact=True).fill("3")
+        page.get_by_role("combobox", name="Duration unit").select_option("days")
+        page.get_by_role("button", name="Start Shadow", exact=True).click()
+        expect(page.get_by_text("Test cohort · RUNNING · 1 wallets")).to_be_visible()
+        browser.close()
+
+
 @pytest.mark.parametrize("width", [360, 768, 1280, 1920])
 def test_leaderboard_journey(console_fixture, tmp_path, width):  # noqa: F811
     from playwright.sync_api import expect, sync_playwright

@@ -7,6 +7,15 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from polysia.domain.copytrading.watchlist_shadow import MAX_DURATION, MAX_RUNS, MIN_DURATION
+from polysia.storage.watchlists import (
+    LIST_ID_PATTERN,
+    MAX_LISTS,
+    MAX_NAME,
+    MAX_WALLETS,
+    WALLET_PATTERN,
+)
+
 API_VERSION: Literal["console/v1"] = "console/v1"
 RELEASE: Literal["0.4.0"] = "0.4.0"
 Identity = Annotated[str, Field(min_length=1, max_length=256)]
@@ -59,6 +68,75 @@ class LeaderboardRow(Wire):
     pnl: Exact | None
     volume: Exact | None
     rank_change: int | None
+
+
+class Watchlist(Wire):
+    id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
+    name: Annotated[str, Field(min_length=1, max_length=MAX_NAME)]
+    wallets: Annotated[
+        list[Annotated[str, Field(pattern=WALLET_PATTERN)]], Field(max_length=MAX_WALLETS)
+    ]
+    revision: Annotated[int, Field(ge=0)]
+
+
+class WatchlistMutation(Wire):
+    identity: Fingerprint
+    item: Watchlist
+    delete: bool = False
+
+
+class Watchlists(Wire):
+    enabled: bool
+    items: Annotated[list[Watchlist], Field(max_length=MAX_LISTS)]
+    max_lists: Annotated[int, Field(ge=1)]
+    max_wallets: Annotated[int, Field(ge=1)]
+
+
+class WatchlistRunRequest(Wire):
+    identity: Fingerprint
+    run_id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
+    list_id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
+    list_revision: Annotated[int, Field(ge=1)]
+    duration_seconds: Annotated[int, Field(ge=MIN_DURATION, le=MAX_DURATION)]
+
+
+class WatchlistCancelRequest(Wire):
+    identity: Fingerprint
+    run_id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
+
+
+class WatchlistRunWallet(Wire):
+    address: Annotated[str, Field(pattern=WALLET_PATTERN)]
+    observed_through: Instant
+    observations: int
+    read_errors: int
+    fills: int
+    skipped: int
+    open_positions: int
+    realized: Exact
+    fees: Exact
+    slippage: Exact
+
+
+class WatchlistRun(Wire):
+    id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
+    name: str
+    model: str
+    status: Literal["RUNNING", "FINISHED", "CANCELLED"]
+    started_at: Instant
+    ends_at: Instant
+    finished_at: Instant | None
+    started_cash_per_wallet: Exact
+    realized: Exact
+    equity: Exact | None
+    wallets: list[WatchlistRunWallet]
+
+
+class WatchlistRunPage(Wire):
+    items: Annotated[list[WatchlistRun], Field(max_length=MAX_RUNS)]
+    min_duration_seconds: int
+    max_duration_seconds: int
+    max_wallets: int
 
 
 class LeaderboardPage(Wire):
@@ -358,6 +436,8 @@ class Detail(Wire):
 Action.model_rebuild()
 Record.model_rebuild()
 CONTRACT_MODELS = (
+    Watchlists,
+    WatchlistRunPage,
     LeaderboardPage,
     LeaderboardWallet,
     LeaderboardBenchmarks,
