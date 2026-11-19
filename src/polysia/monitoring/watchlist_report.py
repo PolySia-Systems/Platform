@@ -1,5 +1,6 @@
 """Project retained paper-run evidence without synthesizing legacy values."""
 
+from collections import Counter
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -9,11 +10,23 @@ from polysia.monitoring.console_contract import (
     ShadowEventDetail,
     ShadowPositionDetail,
     ShadowRunDetail,
+    ShadowSkipCause,
+    ShadowSkipCount,
     WatchlistRun,
     WatchlistRunWallet,
 )
 
 DETAIL_PAGE_SIZE = 30
+_SKIP_CAUSES: dict[str, ShadowSkipCause] = {
+    "virtual_cash_exhausted": "cash",
+    "insufficient_executable_liquidity": "liquidity",
+    "forward_signal_stale": "timing",
+    "observed_after_cutoff": "timing",
+    "past_cutoff": "timing",
+    "current_order_book_unavailable": "evidence",
+    "current_order_book_stale": "evidence",
+    "no_shadow_position_to_sell": "no_position",
+}
 
 
 def _position(
@@ -63,6 +76,7 @@ def summary(status: str, data: dict[str, Any]) -> WatchlistRun:
     cutoff = _cutoff(status, data)
     cutoff_at = datetime.fromisoformat(cutoff) if cutoff else None
     wallets = []
+    skip_counts: Counter[ShadowSkipCause] = Counter()
     for address, value in data["wallets"].items():
         # A running quote is not an ending value.
         positions = _positions(value, cutoff_at)
@@ -74,6 +88,8 @@ def summary(status: str, data: dict[str, Any]) -> WatchlistRun:
             Decimal(0),
         )
         events = list(value["events"].values())
+        skip_counts.update(_SKIP_CAUSES.get(reason, "other") for reason in events
+                           if reason != FILL_REASON)
         wallets.append(WatchlistRunWallet(
             address=address, observed_through=value["through"],
             observations=value["observations"], read_errors=value["read_errors"],
@@ -121,6 +137,10 @@ def summary(status: str, data: dict[str, Any]) -> WatchlistRun:
         equity=str(equity) if equity is not None else None, net_pnl=net_pnl,
         cash=str(cash), marked_pnl=str(marked_pnl),
         unvalued_cost=str(_sum([w.open_cost for w in wallets]) - marked_cost),
+        skip_counts=[
+            ShadowSkipCount(cause=cause, count=count)
+            for cause, count in sorted(skip_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
         coverage=coverage, wallets=wallets,
     )
 
