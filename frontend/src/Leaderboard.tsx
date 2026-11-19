@@ -44,7 +44,8 @@ export function Leaderboard({ onIdentityFailure, session }: {
   const [comparison, setComparison] = useState<BenchmarkSummary | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [watchlists, setWatchlists] = useState<Watchlists | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selection, setSelection] = useState<{ address: string; name: string | null }[]>([]);
+  const selected = selection.map(item => item.address);
   const [editor, setEditor] = useState<Watchlist | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [runList, setRunList] = useState<Watchlist | null | undefined>(undefined);
@@ -70,10 +71,11 @@ export function Leaderboard({ onIdentityFailure, session }: {
     return () => controller.abort();
   }, [session.role, onIdentityFailure]);
 
-  const toggleSelected = (address: string) => {
+  const toggleSelected = (address: string, name: string | null) => {
     if (!watchlists?.enabled) return;
-    setSelected(values => values.includes(address) ? values.filter(value => value !== address)
-      : values.length < watchlists.max_wallets ? [...values, address] : values);
+    setSelection(values => values.some(item => item.address === address)
+      ? values.filter(item => item.address !== address)
+      : values.length < watchlists.max_wallets ? [...values, { address, name }] : values);
   };
 
   const saveWatchlist = async (item: Watchlist, remove = false) => {
@@ -84,7 +86,7 @@ export function Leaderboard({ onIdentityFailure, session }: {
         { item, delete: remove, identity: session.identity }, session.csrf);
       setWatchlists(updated);
       setEditor(null);
-      if (!remove) setSelected([]);
+      if (!remove) setSelection([]);
       setWatchlistMessage(remove ? 'Watchlist deleted.' : 'Watchlist saved.');
     } catch (reason: unknown) {
       if (accessDenied(reason)) onIdentityFailure();
@@ -208,7 +210,7 @@ export function Leaderboard({ onIdentityFailure, session }: {
           setWatchlistMessage(''); setManageOpen(true);
           setRunList({ id: '', name: 'Leaderboard selection', revision: 0, wallets: selected });
         }}>Test selected wallets</Button>
-        <Button variant="default" onClick={() => setSelected([])}>Clear</Button>
+        <Button variant="default" onClick={() => setSelection([])}>Clear</Button>
       </div>}
       {!manageOpen && watchlistMessage && <p className={s.status} role="status">{watchlistMessage}</p>}
       <div className={s.status} aria-live="polite">
@@ -240,7 +242,7 @@ export function Leaderboard({ onIdentityFailure, session }: {
                   aria-label={'Select ' + (row.name ?? row.wallet)}
                   checked={selected.includes(row.wallet)}
                   disabled={!selected.includes(row.wallet) && selected.length >= watchlists.max_wallets}
-                  onChange={() => toggleSelected(row.wallet)} />}
+                  onChange={() => toggleSelected(row.wallet, row.name)} />}
                 <button type="button" className={s.wallet} onClick={() => setWallet(row.wallet)}
                 disabled={snapshot.state === 'PARTIAL' && row.rank !== null}
                 aria-label={'Wallet details for ' + (row.name ?? row.wallet)}>
@@ -279,6 +281,8 @@ export function Leaderboard({ onIdentityFailure, session }: {
       {runList !== undefined ? <>
         <Button variant="subtle" onClick={() => setRunList(undefined)}>Back to watchlists</Button>
         <WatchlistShadow key={runList?.id ?? 'history'} session={session} list={runList}
+          labels={new Map([...(watchlists?.wallet_labels ?? []), ...selection]
+            .flatMap(({ address, name }) => name?.trim() ? [[address, name] as const] : []))}
           onDone={() => setRunList(null)} />
       </> : editor ? <form className={s.watchlistForm} onSubmit={event => {
         event.preventDefault(); void saveWatchlist(editor);
@@ -295,7 +299,7 @@ export function Leaderboard({ onIdentityFailure, session }: {
           <Button variant="default" disabled={saving} onClick={() => setEditor(null)}>Cancel edit</Button>
         </div>
       </form> : <>
-        <Button variant="subtle" onClick={() => setRunList(null)}>View Shadow runs</Button>
+        <Button variant="subtle" onClick={() => setRunList(null)}>View paper tests</Button>
         {watchlists?.items.length ? <ul className={s.list}>
           {watchlists.items.map(item => <li key={item.id}>
             <div><strong>{item.name}</strong><span>{item.wallets.length} wallets</span></div>
@@ -306,8 +310,8 @@ export function Leaderboard({ onIdentityFailure, session }: {
                 Add selection
               </Button>}
               <Button variant="default" aria-label={'Edit ' + item.name} onClick={() => setEditor(item)}>Edit</Button>
-              <Button disabled={!item.wallets.length} aria-label={'Shadow ' + item.name}
-                onClick={() => setRunList(item)}>Shadow</Button>
+              <Button disabled={!item.wallets.length} aria-label={'Paper test for ' + item.name}
+                onClick={() => setRunList(item)}>Paper test</Button>
               <Button variant="subtle" disabled={saving} aria-label={'Delete ' + item.name}
                 onClick={() => { if (window.confirm('Delete watchlist “' + item.name + '”?')) void saveWatchlist(item, true); }}>Delete</Button>
             </div>

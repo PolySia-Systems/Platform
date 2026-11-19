@@ -39,16 +39,19 @@ Deleting a list leaves the public rankings and wallet history intact.
 
 ### Forward Shadow
 
-Choose **Test selected wallets** on the Leaderboard or open **Shadow** from
+Choose **Test selected wallets** on the Leaderboard or open **Paper test** from
 a saved list. Select up to six wallets for this test and set a duration
-from 15 minutes to seven days. The original list is preserved. The server
+from 15 minutes to seven days. Known trader names appear beside their addresses.
+The original list is preserved. The server
 can run one paper test at a time. Open **Paper tests** from the Leaderboard
 to return after signing in again, read older reports, or choose **End test
 and see results** while a test is running.
 
 Each wallet starts with 100 virtual USDC. A simulated fill is capped at 5
-USDC gross with a modeled 2% fee. The summary reports realized simulated
-gain or loss, positions still open, and available ending estimates. Wallet
+USDC gross with a modeled 2% fee. A finished report leads with the estimated
+total, or says why a total is unavailable and shows the priced portion.
+Simulated sales appear separately. Skipped-trade counts cover all recorded
+decisions, including ones outside the current detail page. Wallet
 details retain exact amounts, trade decisions and price times. Book marks
 use observed bid depth and estimated exit fees. The snapshot must have been
 received by the cutoff and its quote must be at most 180 seconds old. A

@@ -83,6 +83,8 @@
 .shadowFields { min-inline-size: 0; border: 1px solid var(--console-border); padding: 12px; }
 .shadowWallets { display: flex; flex-wrap: wrap; gap: 8px 16px; max-block-size: 10rem; overflow: auto; }
 .shadowWallets label { display: flex; align-items: center; }
+.shadowWalletLabel { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.paperOutcome { padding: 12px; border: 1px solid var(--console-border); border-radius: 6px; }
 .shadowCard { min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--console-border); }
 .shadowCard summary { color: var(--console-ink); cursor: pointer; }
 .shadowCard code { overflow-wrap: anywhere; }

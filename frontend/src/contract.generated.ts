@@ -32,13 +32,16 @@ export type Session = { api: "console/v1"; release: "0.4.0"; bundle: string | nu
 export type ShadowEventDetail = { id: string; reason: string; outcome?: string | null; market?: string | null; side?: string | null; signal_at?: string | null; evaluated_at?: string | null; quantity?: string | null; price?: string | null; notional?: string | null; fee?: string | null; slippage?: string | null; realized?: string | null; quote_at?: string | null; quote_received_at?: string | null };
 export type ShadowPositionDetail = { outcome: string; quantity: string; cost: string; marked_quantity: string | null; value: string | null; fee: string | null; quote_at: string | null; received_at: string | null; source: string | null };
 export type ShadowRunDetail = { positions: (ShadowPositionDetail)[]; events: (ShadowEventDetail)[]; next_offset: number | null };
+export type ShadowSkipCause = "cash" | "liquidity" | "timing" | "evidence" | "no_position" | "other";
+export type ShadowSkipCount = { cause: ShadowSkipCause; count: number };
 export type Snapshot = { api: "console/v1"; release: "0.4.0"; server_time: string; context: Context; components: (Component)[]; financial: Financial | null; supervision: Supervision; blocker: string; actions: (Action)[]; atomic: false };
 export type Supervision = { status: "READY" | "STOPPED" | "UNKNOWN"; reason: string; next_action: string };
 export type Watchlist = { id: string; name: string; wallets: (string)[]; revision: number };
-export type WatchlistRun = { id: string; name: string; model: string; status: "RUNNING" | "FINISHED" | "CANCELLED"; started_at: string; ends_at: string; finished_at: string | null; started_cash_per_wallet: string; realized: string; equity: string | null; net_pnl: string | null; cash: string; marked_pnl: string; unvalued_cost: string; cutoff_at: string | null; end_reason: "manual" | "time" | null; coverage: "observing" | "covered" | "incomplete" | "none"; wallets: (WatchlistRunWallet)[] };
+export type WatchlistRun = { id: string; name: string; model: string; status: "RUNNING" | "FINISHED" | "CANCELLED"; started_at: string; ends_at: string; finished_at: string | null; started_cash_per_wallet: string; realized: string; equity: string | null; net_pnl: string | null; cash: string; marked_pnl: string; unvalued_cost: string; cutoff_at: string | null; end_reason: "manual" | "time" | null; coverage: "observing" | "covered" | "incomplete" | "none"; skip_counts: (ShadowSkipCount)[]; wallets: (WatchlistRunWallet)[] };
 export type WatchlistRunPage = { items: (WatchlistRun)[]; min_duration_seconds: number; max_duration_seconds: number; max_wallets: number; busy: boolean; storage_low: boolean; next_offset: number | null; starting_cash: string; maximum_fill: string; fee_bps: string };
 export type WatchlistRunWallet = { address: string; observed_through: string; observations: number; read_errors: number; fills: number; skipped: number; open_positions: number; realized: string; fees: string; slippage: string; closed_positions: number | null; marked_positions: number; valued_positions: number; cash: string; open_cost: string; marked_value: string; marked_pnl: string; gaps: ("event_budget" | "observation_gap" | "valuation_budget")[] };
-export type Watchlists = { enabled: boolean; items: (Watchlist)[]; max_lists: number; max_wallets: number };
+export type WatchlistWalletLabel = { address: string; name: string };
+export type Watchlists = { enabled: boolean; items: (Watchlist)[]; max_lists: number; max_wallets: number; wallet_labels: (WatchlistWalletLabel)[] };
 export type Workspace = { generation: string; sections: (EvidenceSection)[] };
 export const schemas = {
   "ActionCatalog": {
@@ -3193,6 +3196,36 @@ export const schemas = {
   },
   "WatchlistRunPage": {
     "$defs": {
+      "ShadowSkipCause": {
+        "enum": [
+          "cash",
+          "liquidity",
+          "timing",
+          "evidence",
+          "no_position",
+          "other"
+        ],
+        "type": "string"
+      },
+      "ShadowSkipCount": {
+        "additionalProperties": false,
+        "properties": {
+          "cause": {
+            "$ref": "#/$defs/ShadowSkipCause"
+          },
+          "count": {
+            "exclusiveMinimum": 0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cause",
+          "count"
+        ],
+        "title": "ShadowSkipCount",
+        "type": "object"
+      },
       "WatchlistRun": {
         "additionalProperties": false,
         "properties": {
@@ -3310,6 +3343,13 @@ export const schemas = {
             "title": "Realized",
             "type": "string"
           },
+          "skip_counts": {
+            "items": {
+              "$ref": "#/$defs/ShadowSkipCount"
+            },
+            "title": "Skip Counts",
+            "type": "array"
+          },
           "started_at": {
             "maxLength": 32,
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$",
@@ -3363,6 +3403,7 @@ export const schemas = {
           "cutoff_at",
           "end_reason",
           "coverage",
+          "skip_counts",
           "wallets"
         ],
         "title": "WatchlistRun",
@@ -3614,6 +3655,26 @@ export const schemas = {
         ],
         "title": "Watchlist",
         "type": "object"
+      },
+      "WatchlistWalletLabel": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "pattern": "^0x[0-9a-f]{40}$",
+            "title": "Address",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "name"
+        ],
+        "title": "WatchlistWalletLabel",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -3639,13 +3700,21 @@ export const schemas = {
         "minimum": 1,
         "title": "Max Wallets",
         "type": "integer"
+      },
+      "wallet_labels": {
+        "items": {
+          "$ref": "#/$defs/WatchlistWalletLabel"
+        },
+        "title": "Wallet Labels",
+        "type": "array"
       }
     },
     "required": [
       "enabled",
       "items",
       "max_lists",
-      "max_wallets"
+      "max_wallets",
+      "wallet_labels"
     ],
     "title": "Watchlists",
     "type": "object"

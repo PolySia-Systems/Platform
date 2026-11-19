@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@mantine/core';
 import { ApiError, post, read } from './client';
-import type { Session, ShadowRunDetail, Watchlist, WatchlistRun, WatchlistRunPage } from './contract.generated';
+import type { Session, ShadowRunDetail, ShadowSkipCount, Watchlist, WatchlistRun, WatchlistRunPage } from './contract.generated';
 import s from './Leaderboard.module.css';
 
 const units = { minutes: 60, hours: 3600, days: 86400 } as const;
@@ -32,9 +32,10 @@ type Launch = {
   wallets: string[];
 };
 
-export function WatchlistShadow({ session, list, onDone }: {
+export function WatchlistShadow({ session, list, labels, onDone }: {
   session: Session;
   list: Watchlist | null;
+  labels: ReadonlyMap<string, string>;
   onDone: () => void;
 }) {
   const [runs, setRuns] = useState<WatchlistRunPage | null>(null);
@@ -138,7 +139,12 @@ export function WatchlistShadow({ session, list, onDone }: {
             onChange={event => {
               const checked = event.target.checked;
               setWallets(current => checked ? [...current, address] : current.filter(item => item !== address));
-            }} /> <code title={address}>{address.slice(0, 10)}…{address.slice(-6)}</code></label>
+            }} />
+            <span className={s.shadowWalletLabel}>
+              {labels.has(address) && <strong><bdi>{labels.get(address)}</bdi></strong>}
+              <code title={address}>{address.slice(0, 10)}…{address.slice(-6)}</code>
+            </span>
+          </label>
         )}</div>
       </fieldset>
       <fieldset disabled={pending || uncertain !== null} className={s.shadowFields}>
@@ -166,7 +172,7 @@ export function WatchlistShadow({ session, list, onDone }: {
       {runs?.storage_low && <p role="status">{errorCopy.shadow_storage_low}</p>}
       <Button type="submit" disabled={pending || (!uncertain &&
         (!validDuration || !validWallets || runs?.busy || runs?.storage_low))}>
-        {uncertain ? 'Check and retry start' : 'Start Shadow'}
+        {uncertain ? 'Check and retry start' : 'Start paper test'}
       </Button>
     </form> : <>
       {!runs ? <p>Loading tests…</p> : <>
@@ -193,6 +199,15 @@ export function WatchlistShadow({ session, list, onDone }: {
   </section>;
 }
 
+const skipLabels: Record<ShadowSkipCount['cause'], string> = {
+  cash: 'Insufficient virtual cash',
+  liquidity: 'Not enough liquidity at the observed price',
+  timing: 'Signal arrived too late to simulate',
+  evidence: 'No valid market price available',
+  no_position: 'No simulated holding to sell',
+  other: 'Other reasons (see exact evidence)',
+};
+
 function RunCard({ run, stop, show }: { run: WatchlistRun; stop?: () => void; show?: boolean }) {
   const running = run.status === 'RUNNING';
   const fills = run.wallets.reduce((sum, wallet) => sum + wallet.fills, 0);
@@ -213,18 +228,25 @@ function RunCard({ run, stop, show }: { run: WatchlistRun; stop?: () => void; sh
       ? 'Ended early' : 'Finished'} · {run.wallets.length} {run.wallets.length === 1 ? 'wallet' : 'wallets'}</summary>
     <div className={s.watchlistForm}>
       <small>Paper test · virtual funds</small>
+      {!running && <div className={s.paperOutcome}>
+        <strong>{run.net_pnl === null ? 'Total gain or loss is unknown'
+          : 'Estimated total gain or loss: ' + compact(run.net_pnl) + ' USDC'}</strong>
+        {run.net_pnl === null && hasMark &&
+          <p>Estimated gain or loss on priced shares: <bdi>{compact(run.marked_pnl)} USDC</bdi></p>}
+        {open > valued && <p>{open - valued} of {open} open positions lack a full ending price.
+          {' '}The unpriced shares cost <bdi>{compact(run.unvalued_cost)} USDC</bdi>.</p>}
+        <p>{coverage[run.coverage]}</p>
+      </div>}
       <p>{fills} simulated {fills === 1 ? 'trade' : 'trades'} · {skipped} skipped · {open} open positions
         {closed === null ? '' : ' · ' + closed + ' closed positions'}</p>
-      <p>Gain or loss from simulated sales <strong>{compact(run.realized)} USDC</strong></p>
-      {open > 0 && <p>{open - valued} of {open} open positions lack a full ending price.</p>}
-      {!running && <>
-        <p>{run.equity === null ? 'Total paper balance at the end is unavailable.'
-          : 'Estimated paper balance from observed activity ' + compact(run.equity) + ' USDC.'}</p>
-        {run.net_pnl !== null && <p>Estimated total gain or loss <strong>{compact(run.net_pnl)} USDC</strong></p>}
-        {hasMark && <p>Estimated gain or loss on priced shares {compact(run.marked_pnl)} USDC.</p>}
-        {open > valued && <p>Unpriced shares cost {compact(run.unvalued_cost)} USDC.</p>}
-      </>}
-      <p>{coverage[run.coverage]}</p>
+      {run.skip_counts.length > 0 && <div>
+        <strong>Why trades were skipped</strong>
+        <ul aria-label="Reasons trades were skipped">
+          {run.skip_counts.map(({ cause, count }) => <li key={cause}>{skipLabels[cause]}: {count}</li>)}
+        </ul>
+      </div>}
+      <p>Gain or loss from simulated sales: <bdi>{compact(run.realized)} USDC</bdi></p>
+      {running && <p>{coverage[run.coverage]}</p>}
       {stop && <Button variant="default" onClick={stop}>End test and see results</Button>}
       <details>
         <summary>Wallets and exact evidence</summary>
@@ -233,6 +255,7 @@ function RunCard({ run, stop, show }: { run: WatchlistRun; stop?: () => void; sh
         <p>Each wallet uses a separate virtual balance. Combined estimates do not represent a joint sale.</p>
         <p>Model {run.model} · exact realized {run.realized} USDC
           {run.equity === null ? '' : ' · exact paper balance ' + run.equity + ' USDC'}</p>
+        {hasMark && <p>Exact gain or loss on priced shares <bdi>{run.marked_pnl} USDC</bdi></p>}
         <ul>{run.wallets.map(wallet => <li key={wallet.address}><div>
           <code>{wallet.address}</code>
           <p>{wallet.fills} trades · {wallet.skipped} skipped · {wallet.open_positions} open</p>

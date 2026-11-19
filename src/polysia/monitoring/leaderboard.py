@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -18,8 +19,25 @@ from polysia.monitoring.console_contract import (
     LeaderboardRow,
     LeaderboardWallet,
     Validity,
+    WatchlistWalletLabel,
 )
 from polysia.storage.leaderboard import LeaderboardStore, digest, latest_attempt, next_refresh_at
+
+
+def wallet_labels(path: Path | None, addresses: set[str]) -> list[WatchlistWalletLabel]:
+    if path is None or not path.is_file() or not addresses:
+        return []
+    try:
+        with LeaderboardStore(path).read() as db:
+            rows = db.execute(
+                "SELECT wallet, name FROM leaderboard_bank WHERE wallet IN ("
+                + ", ".join("?" for _ in addresses) + ") AND name IS NOT NULL ORDER BY wallet",
+                tuple(sorted(addresses)),
+            )
+            return [WatchlistWalletLabel(address=row["wallet"], name=row["name"]) for row in rows
+                    if row["name"].strip()]
+    except sqlite3.OperationalError:
+        return []
 
 
 def page(

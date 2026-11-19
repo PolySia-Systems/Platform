@@ -663,12 +663,18 @@ class ConsoleGateway:
         raise KeyError("unknown_route")
 
     def watchlists(self, subject: str, role: str) -> Watchlists:
+        from polysia.monitoring.leaderboard import wallet_labels
+
         database = self.app.watchlist_database
         enabled = database is not None and role == "operator"
         items = WatchlistStore(database).lists(subject) if database is not None and enabled else []
         return Watchlists(
             enabled=enabled, items=[Watchlist.model_validate(item) for item in items],
             max_lists=MAX_LISTS, max_wallets=MAX_WALLETS,
+            wallet_labels=wallet_labels(
+                self.app.leaderboard_database,
+                {wallet for item in items for wallet in item["wallets"]},
+            ),
         )
 
     def installation_settings(self) -> InstallationSettings:

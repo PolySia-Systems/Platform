@@ -90,11 +90,17 @@ class WatchlistMutation(Wire):
     delete: bool = False
 
 
+class WatchlistWalletLabel(Wire):
+    address: Annotated[str, Field(pattern=WALLET_PATTERN)]
+    name: str
+
+
 class Watchlists(Wire):
     enabled: bool
     items: Annotated[list[Watchlist], Field(max_length=MAX_LISTS)]
     max_lists: Annotated[int, Field(ge=1)]
     max_wallets: Annotated[int, Field(ge=1)]
+    wallet_labels: list[WatchlistWalletLabel]
 
 
 class WatchlistRunRequest(Wire):
@@ -134,6 +140,14 @@ class WatchlistRunWallet(Wire):
     gaps: list[Literal["event_budget", "observation_gap", "valuation_budget"]]
 
 
+type ShadowSkipCause = Literal["cash", "liquidity", "timing", "evidence", "no_position", "other"]
+
+
+class ShadowSkipCount(Wire):
+    cause: ShadowSkipCause
+    count: Annotated[int, Field(gt=0)]
+
+
 class WatchlistRun(Wire):
     id: Annotated[str, Field(pattern=LIST_ID_PATTERN)]
     name: str
@@ -152,6 +166,7 @@ class WatchlistRun(Wire):
     cutoff_at: Instant | None
     end_reason: Literal["manual", "time"] | None
     coverage: Literal["observing", "covered", "incomplete", "none"]
+    skip_counts: list[ShadowSkipCount]
     wallets: list[WatchlistRunWallet]
 
 

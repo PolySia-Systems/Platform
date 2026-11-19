@@ -20,7 +20,8 @@ managed leaderboard collection, the console can load public Polymarket
 rankings without an API key. Use the [self-hosting guide](docs/10-operations/independent-platform-shadow.md)
 for your sign-in URL, private certificate trust, access choices and maintenance.
 From the Leaderboard, choose **Test selected wallets** to start a paper test.
-Open **Paper tests** to return to a running or completed test. See the
+Open **Paper tests** to see the result, whether the total is known, and why
+trades were skipped. See the
 [Shadow report and limits](docs/10-operations/leaderboard.md#forward-shadow).
 
 The current implementation is a Python modular monolith with venue-neutral

@@ -43,9 +43,11 @@ redacted status view, while authentication and other administrative changes use
 the installed host entry.
 
 The root-only administrative entry is `platform_admin.py`, distributed beside
-the manifest-verified bootstrap in the same exact immutable release. Current
-release [v0.4.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.4.0)
-contains the SDK 0.13.0 migration from [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
+the manifest-verified bootstrap in the same exact immutable release. Start with
+the [guided setup](../../README.md#quick-start-on-your-server) for the current
+release. The pinned example below records the historical
+[v0.4.0](https://github.com/PolySia-Systems/Platform/releases/tag/v0.4.0)
+SDK 0.13.0 migration from [PR #200](https://github.com/PolySia-Systems/Platform/pull/200).
 The owner's clean-server decision supersedes the old v0.3.0 staging blocker.
 Historical receipts remain unchanged; ordinary retained-state upgrade gates remain.
 The dated clean-install receipt records actual private activation and cold recovery.
@@ -55,7 +57,8 @@ at least 1 GiB available RAM and 8 GiB free staging/rollback space are prerequis
 Fresh private setup creates its own reader/operator credentials and configuration;
 it creates no acquisition manifest or admission. For a fresh server, download the
 published entry into a new private directory and verify its recorded SHA-256
-before running it. Ubuntu's Python and coreutils suffice for this bootstrap:
+before running it. Ubuntu's Python and coreutils suffice. For example, the
+historical pinned installation used:
 
 ```bash
 set -eu
