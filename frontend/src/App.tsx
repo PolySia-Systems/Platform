@@ -26,7 +26,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('overview');
   const [filters, setFilters] = useState({ kind: 'order', query: '', state: '', source: '' });
   const investigationMemory = useRef<InvestigationMemory | null>(null);
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [retainedSnapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [failure, setFailure] = useState('');
   const [authFailure, setAuthFailure] = useState('');
@@ -59,11 +59,13 @@ export default function App() {
   const epoch = useRef(0);
   const active = useRef(true);
   const currentIdentity = useRef('');
+  const currentPrincipal = useRef('');
   const currentContext = useRef('');
   const investigationScope = useRef('');
   const selectedAction = useRef<Action | null>(null);
   const [rtl, setRtl] = useState(new URLSearchParams(location.search).get('locale') === 'fa-IR');
   const validIdentity = session !== null && !authFailure && clock < Date.parse(session.valid_until);
+  const snapshot = validIdentity ? retainedSnapshot : null;
   const now = () => anchor.current.server + performance.now() - anchor.current.mono;
   const rememberIntent = (value: Intent | null) => { activeIntent.current = value; setIntent(value); };
 
@@ -85,6 +87,7 @@ export default function App() {
   const refresh = useCallback((): Promise<void> => {
     if (refreshTask.current) return refreshTask.current;
     const authentication = authEpoch.current;
+    let snapshotReceived = false;
     const current = () => active.current && authEpoch.current === authentication;
     setRefreshBusy(true);
     // Separate deadlines and settlement: history cannot exhaust snapshot/session budget.
@@ -92,7 +95,18 @@ export default function App() {
       read<Session>('/session', 'Session').then(value => {
         if (!current()) return;
         if (value.bundle !== document.querySelector<HTMLMetaElement>('meta[name="bundle-source"]')?.content) throw Error('incompatible_contract');
-        if (currentIdentity.current && currentIdentity.current !== value.identity) { investigationMemory.current = null; setFilters({ kind: 'order', query: '', state: '', source: '' }); invalidate(); }
+        const principal = JSON.stringify([value.actor, value.role]);
+        if (currentIdentity.current && currentPrincipal.current !== principal) {
+          identityFailure(); return;
+        }
+        if (currentIdentity.current && currentIdentity.current !== value.identity) {
+          // CSRF rotation invalidates previews. Keep exact receipt recovery available.
+          invalidate();
+          if (!snapshotReceived) setSnapshot(null);
+          investigationMemory.current = null;
+          setFilters({ kind: 'order', query: '', state: '', source: '' });
+        }
+        currentPrincipal.current = principal;
         currentIdentity.current = value.identity;
         anchor.current = { server: Date.parse(value.server_time), mono: performance.now() };
         setClockSkew(Math.abs(Date.now() - anchor.current.server) > 60_000);
@@ -106,7 +120,7 @@ export default function App() {
         investigationScope.current = scope;
         const context = JSON.stringify([value.context, value.actions]);
         if (currentContext.current && currentContext.current !== context && !selectedAction.current?.protective) invalidate();
-        currentContext.current = context; setSnapshot(value); setFailure('');
+        snapshotReceived = true; currentContext.current = context; setSnapshot(value); setFailure('');
       }).catch(error => { if (current()) { setFailure(errorText(error));
         if (error instanceof ApiError && error.status === 403) identityFailure(); } }),
       read<Receipts>('/receipts', 'Receipts').then(value => {
@@ -141,7 +155,7 @@ export default function App() {
       recoveryRequest.current?.abort(); historyRequest.current?.abort();
       document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pageshow', visibility); };
   }, [invalidate, refresh]);
-  useEffect(() => { if (session && !validIdentity) invalidate(); }, [validIdentity, session, invalidate]);
+  useEffect(() => { if (session && clock >= Date.parse(session.valid_until)) identityFailure(); }, [clock, session, identityFailure]);
   useEffect(() => { if (preview && clock >= Date.parse(preview.expires_at)) invalidate(); }, [clock, preview, invalidate]);
   useEffect(() => { setDirection(rtl ? 'rtl' : 'ltr'); document.documentElement.lang = rtl ? 'fa-IR' : 'en'; }, [rtl, setDirection]);
 
@@ -229,10 +243,13 @@ export default function App() {
   const componentState = (item: Component) => item.valid_until && clock >= Date.parse(item.valid_until) ? 'STALE' : item.state;
   const financialMeta = snapshot?.components.find(c => c.name === 'financial');
   const evidenceError = authFailure || failure;
-  const overviewFeedback = evidenceError
-    ? snapshot ? m.retainedReadFailure : m.retryEvidence
-    : snapshot?.blocker ?? (refreshBusy ? m.loading : m.noEvidence);
-  const financialStale = Boolean(failure || authFailure) || !financialMeta || componentState(financialMeta) !== 'AVAILABLE';
+  const overviewFeedback = snapshot?.blocker ?? (authFailure ? m.identityRequired : failure ? m.retryEvidence : refreshBusy ? m.loading : m.noEvidence);
+  const financialState = financialMeta ? componentState(financialMeta) : m.unknown;
+  const amountState = evidenceError && financialState === 'AVAILABLE' ? m.stale : financialState;
+  const amounts: [string, Money | undefined][] = [
+    [m.cash, snapshot?.financial?.cash], [m.exposure, snapshot?.financial?.exposure], [m.reserved, snapshot?.financial?.reserved],
+  ];
+  const financialStale = Boolean(evidenceError) || financialState !== 'AVAILABLE';
   const supervisionMeta = snapshot?.components.find(c => c.name === 'supervision');
   const supervisionValid = supervisionMeta && componentState(supervisionMeta) === 'AVAILABLE';
 
@@ -268,26 +285,33 @@ export default function App() {
         {!actions.some(a => a.protective) && <span>{m.unavailable}</span>}
       </div>
       <main id="main" tabIndex={-1} className={s.main} aria-busy={refreshBusy}>
-        <div className={s.pageHeading}><div>{tab !== 'leaderboard' && <p className={s.eyebrow}>{m.eyebrow}</p>}
+        <div className={s.pageHeading}><div>
           <h1>{tab === 'overview' ? m.heading : tab === 'leaderboard' ? 'Leaderboard' : tab === 'investigate' ? m.investigateTitle : tab === 'operate' ? m.operateTitle : tab === 'evaluate' ? m.evaluateTitle : m.systemTitle}</h1>
-          {tab !== 'leaderboard' && <p>{tab === 'overview' ? m.subtitle : tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p>}</div>
+          {tab !== 'overview' && tab !== 'leaderboard' && <p>{tab === 'investigate' ? m.investigateSubtitle : tab === 'operate' ? m.operateSubtitle : tab === 'evaluate' ? m.evaluateSubtitle : m.systemSubtitle}</p>}</div>
           {tab !== 'leaderboard' && <Button className={s.secondaryButton} disabled={refreshBusy} onClick={() => { setWorkspaceRefresh(value => value + 1); void refresh(); }}>{m.refresh} ↻</Button>}
         </div>
-        {(authFailure || (failure && tab !== 'leaderboard')) && <div className={s.error} role="alert">{authFailure || failure}
+        {(authFailure || (failure && tab !== 'leaderboard' && tab !== 'overview')) && <div className={s.error} role="alert">{authFailure || failure}
           {authFailure && <Button disabled={refreshBusy} onClick={() => void refresh()}>{m.renew}</Button>}</div>}
         {clockSkew && <p className={s.muted} role="status">{m.clockSkew}</p>}
         {example && <p role="status">{m.exampleNotice}</p>}
         {tab === 'leaderboard' && validIdentity && session && <Leaderboard key={session.identity} session={session} onIdentityFailure={identityFailure} />}
         {tab === 'overview' && <>
           <section className={s.blocker} aria-label={m.attention}><span className={s.blockerIcon}>!</span><div>
-            <strong>{m.attention}</strong><p>{overviewFeedback}</p></div>
+            <strong>{evidenceError && snapshot ? m.lastBlocker : m.attention}</strong><p>{overviewFeedback}</p></div>
             {validIdentity && session?.role === 'operator' && !evidenceError &&
               <button onClick={() => setTab('operate')}>{m.operate} →</button>}</section>
-          <section className={s.metrics} aria-label="Exact financial amounts">
-            {[[m.cash, snapshot?.financial?.cash], [m.exposure, snapshot?.financial?.exposure], [m.reserved, snapshot?.financial?.reserved]].map(([label, value]) =>
-              <article key={label as string} className={s.metric}><p>{label as string}</p><Amount value={value as Money | undefined} />
-                <small>{financialStale ? m.staleData : (value as Money | undefined)?.meaning ?? m.noEvidence}</small>
-                <Badge alert={financialStale}>{evidenceError && financialMeta ? m.stale : financialMeta ? componentState(financialMeta) : m.unknown}</Badge></article>)}
+          {failure && !authFailure && <p role="alert" className={snapshot && failure === m.missing ? s.readNotice : s.error}>{snapshot && failure === m.missing ? m.retainedReadFailure : failure}</p>}
+          <section className={s.amountPanel} aria-label="Exact financial amounts">
+            <div className={s.panelHeading}><h2>{m.recordedAmounts}</h2><Badge alert={financialStale}>{amountState}</Badge></div>
+            {financialMeta?.observed_at && <p className={s.muted}>{m.amountsObserved} <Timestamp value={financialMeta.observed_at} /></p>}
+            {financialMeta && amountState !== financialMeta.state && <p className={s.muted}>{m.sourceState} {financialMeta.state}</p>}
+            {financialStale && <p className={s.muted}>{m.staleData}</p>}
+            <div className={s.metrics}>
+              {amounts.map(([label, amount]) => <article key={label} className={s.metric}>
+                <p>{label}</p><Amount value={amount} />
+                {amount?.meaning && amount.meaning !== label && <small>{amount.meaning}</small>}
+              </article>)}
+            </div>
           </section>
           <div className={s.twoColumns}>
             <section className={s.panel} aria-label={m.independent}><div className={s.panelHeading}><h2>{m.independent}</h2>
@@ -433,7 +457,7 @@ function Investigation({ generation, onIdentityFailure, filters, setFilters, mem
   useEffect(() => {
     const prior = memory.current;
     if (!prior || prior.generation !== generation || prior.kind !== kind) {
-      const message = prior && prior.generation !== generation ? m.cursor : '';
+      const message = prior?.page && prior.generation !== generation ? m.cursor : '';
       setPage(null); setDetail(null); setError(message);
       memory.current = { generation, kind, page: null, detail: null, error: message, scroll: 0 };
     } else if (table.current) table.current.scrollTop = prior.scroll;

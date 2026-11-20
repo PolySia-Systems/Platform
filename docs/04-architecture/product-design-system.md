@@ -57,7 +57,10 @@ Current masters are normalized native SVG paths from the owner-supplied final
 exports. Original exports are retained in `frontend/brand-source/` for provenance,
 not served. `frontend/src/assets/brand/` contains symbol, wordmark and combined
 lockup variants for light/dark surfaces. Only imported product roles are bundled.
-Combined lockups are reusable artwork; the Console composes the separate roles
+Combined lockups fit the unchanged symbol and lettering into a 190 by 66 canvas.
+The exact placement and surface-specific digests are in provenance.json. Owner
+package names use on-dark and on-light for the corresponding repository slots.
+The Console composes the separate roles
 at its existing compact proportions. Outlined wordmarks do not require a font.
 
 Provenance records original and normalized hashes and the normalization recipe.
@@ -73,7 +76,11 @@ and reviewed PNG digest are in provenance.json. The source role suffixes name
 the intended surface. The preview uses the same PNG, while the protected build
 serves the hashed derivative. Review changes at 16 and 32 px on both surfaces.
 
-The Overview labels retained values after a failed refresh. Use **Refresh
+Overview presents the last observed blocker separately from a failed refresh.
+Recorded amounts share a financial component state and observation time.
+Each amount retains its unit and meaning. Mobile evidence rows expose the
+source reason alongside validity details. A paper-test dialog returns to its
+origin in the leaderboard or watchlists. Use **Refresh
 evidence** to retry the read. In **System / Setup** the same control retries the
 operator's installation status. Update policy remains unknown until a receipt
 reports it, and connection check times are displayed in UTC.

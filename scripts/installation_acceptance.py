@@ -65,23 +65,38 @@ def main() -> None:
         "backup": {"mode": "none"},
     }
     admin.preflight(value)
-    # A process interruption after staging must be resumable, preserving staged identity.
-    staged = core.bootstrap(artifact, commit=args.commit, install_units=False)
+    options = ("--noninteractive", "--leaderboard", "paused", "--commit", args.commit)
+    release = core.INSTALL_ROOT / "releases" / args.commit
     command = (
-        sys.executable,
-        str(artifact / "platform_admin.py"),
-        "install",
-        "--noninteractive",
-        "--profile",
-        "private",
-        "--leaderboard",
-        "paused",
-        "--commit",
-        args.commit,
-        "--artifact-directory",
-        str(artifact),
+        sys.executable, str(artifact / "platform_admin.py"), "install", *options,
+        "--profile", "private", "--artifact-directory", str(artifact),
     )
-    first = json.loads(run(*command))
+    # A fresh Access install can stop before the stable host entry exists.
+    blocked = json.loads(run(
+        sys.executable, str(artifact / "platform_admin.py"), "install", *options,
+        "--profile", "cloudflare", "--hostname", "console.example.test",
+        "--artifact-directory", str(artifact),
+    ))
+    staged = json.loads((release / "installation-receipt.json").read_text())
+    assert staged["commit"] == args.commit and not staged["acquisition_enabled"]
+    assert blocked["status"] == "ACCESS_CONFIGURATION_REQUIRED"
+    pending = json.loads((config / "maintenance-receipt.json").read_text())
+    assert pending["phase"] == "CONFIGURATION_STAGED" and pending["commit"] == args.commit
+    assert not (config / "installation.json").exists()
+    assert not Path("/usr/local/sbin/polysia-admin").exists()
+
+    # Exercise the documented release-local launch in a new process. The operator
+    # selects private access for the remaining real HTTPS acceptance journey.
+    import fcntl
+
+    resume = (sys.executable, str(release / "platform_admin.py"), "install", *options,
+              "--profile", "private")
+    with Path("/run/lock/polysia-platform-admin.lock").open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        refusal = subprocess.run(resume, capture_output=True, text=True, timeout=30, check=False)
+        assert refusal.returncode != 0 and "maintenance operation is active" in refusal.stderr
+        assert json.loads((config / "maintenance-receipt.json").read_text()) == pending
+    first = json.loads(run(*resume))
     assert first["status"] == "SETUP_COMPLETE"
     assert first["leaderboard"] == {
         "state": "WAITING_FOR_DATA", "last_complete_at": None, "schedule": "paused"
@@ -337,6 +352,8 @@ def main() -> None:
                 "profile": "private",
                 "trusted_https": "explicit isolated Caddy CA; no certificate bypass",
                 "interrupted_rerun": "PASS",
+                "pre_activation_release_entry": "PASS",
+                "maintenance_lock_contention": "PASS",
                 "revocation": "PASS",
                 "protected_stop": "PASS",
                 "sample_count": 100,

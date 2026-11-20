@@ -25,15 +25,21 @@ def test_investigation_distinguishes_unsearched_filters_errors_and_generation(ri
     with sync_playwright() as runtime:
         browser, context = browser_context(runtime, origin, token, width=width)
         page = context.new_page()
-        page.goto(origin)
+        pending = []
+        page.route("**/api/console/v1/snapshot", lambda route: pending.append(route))
+        with page.expect_request("**/api/console/v1/snapshot"):
+            page.goto(origin)
         page.get_by_role("button", name="Investigate", exact=True).click()
+        pending.pop().continue_()
+        page.unroute("**/api/console/v1/snapshot")
+        expect(page.get_by_role("main")).to_have_attribute("aria-busy", "false")
         prompt = page.get_by_text("Search to load retained evidence for these filters.", exact=True)
         changed = page.get_by_text("This evidence generation changed.", exact=False)
         expect(prompt).to_be_visible()
         expect(changed).to_have_count(0)
         expect(page.get_by_text("No retained financial evidence", exact=True)).to_have_count(0)
         search = page.get_by_label("Search exact identity")
-        assert search.evaluate("e => getComputedStyle(e).fontSize") == "14px"
+        expect(search).to_have_css("font-size", "14px")
         search.fill("order-00000")
         page.get_by_role("button", name="Search", exact=True).click()
         record = page.get_by_role("button", name="order-00000", exact=True)
@@ -96,7 +102,7 @@ def test_design_themes_assets_filters_and_preview(rich_console):  # noqa: F811
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(origin)
-        expect(page.get_by_role("heading", name="A clear view of the session.")).to_be_visible()
+        expect(page.get_by_role("heading", name="Session overview")).to_be_visible()
         page.evaluate("document.fonts.ready")
         assert page.locator('img[alt="PolySia"]').evaluate("e => e.complete && e.naturalWidth > 0")
         output = Path("output/playwright")
@@ -262,6 +268,7 @@ def test_auth_loss_clears_evidence_and_recovers_without_replay(rich_console):  #
         page.route("**/api/console/v1/session", lambda route: route.fulfill(status=403))
         page.get_by_role("button", name="Refresh evidence", exact=False).click()
         expect(page.get_by_role("alert")).to_contain_text("Authentication changed or expired")
+        expect(page.get_by_label("Exact financial amounts")).not_to_contain_text("99.49")
         page.unroute("**/api/console/v1/session")
         page.get_by_role("button", name="Refresh identity", exact=False).click()
         expect(page.get_by_role("alert")).to_have_count(0)
@@ -288,6 +295,8 @@ def test_console_read_failure_recovers_without_losing_retained_amounts(rich_cons
         page.screenshot(path=str(output / "overview-read-failure.png"))
 
         refresh = page.get_by_role("button", name="Refresh evidence")
+        posts = []
+        page.on("request", lambda req: posts.append(req.url) if req.method == "POST" else None)
         page.unroute(snapshot)
         refresh.click()
         amounts = page.get_by_label("Exact financial amounts")
@@ -295,11 +304,57 @@ def test_console_read_failure_recovers_without_losing_retained_amounts(rich_cons
         expect(page.get_by_role("alert")).to_have_count(0)
         page.route(snapshot, lambda route: route.fulfill(status=503))
         refresh.click()
-        expect(attention).to_contain_text("last successful read")
+        expect(attention).to_contain_text("Independent STOP is observed")
+        expect(attention).to_contain_text("Last observed")
+        expect(page.get_by_role("alert")).to_contain_text("last successful read")
         expect(amounts).to_contain_text("1.010")
-        expect(amounts.get_by_text("STALE", exact=True).first).to_be_visible()
+        expect(amounts.get_by_text("STALE", exact=True)).to_be_visible()
+        page.unroute(snapshot)
+        refresh.click()
+        expect(page.get_by_role("alert")).to_have_count(0)
+        expect(attention).to_contain_text("Independent STOP is observed")
+        expect(attention).not_to_contain_text("Last observed")
+        expect(amounts).to_contain_text("1.010")
+        assert posts == []
         page.get_by_role("button", name="System / Setup").click()
         expect(page.get_by_role("region", name="Installation settings")).to_have_count(0)
+        browser.close()
+
+
+def test_partial_evidence_during_failure_and_changed_principal(rich_console):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, *_ = rich_console
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, token)
+        page = context.new_page()
+        snapshot = "**/api/console/v1/snapshot"
+
+        def partial(route):
+            response = route.fetch()
+            payload = response.json()
+            financial = next(row for row in payload["components"] if row["name"] == "financial")
+            financial["state"] = "PARTIAL"
+            route.fulfill(response=response, json=payload)
+
+        page.route(snapshot, partial)
+        page.goto(origin)
+        amounts = page.get_by_label("Exact financial amounts")
+        expect(amounts).to_contain_text("PARTIAL")
+        page.unroute(snapshot)
+        page.route(snapshot, lambda route: route.fulfill(status=503))
+        refresh = page.get_by_role("button", name="Refresh evidence")
+        refresh.click()
+        expect(page.get_by_role("alert")).to_contain_text("last successful read")
+        expect(amounts).to_contain_text("PARTIAL")
+        expect(amounts).to_contain_text("99.49")
+
+        context.set_extra_http_headers({"Cf-Access-Jwt-Assertion": token("fixture-reader")})
+        refresh.click()
+        expect(page.get_by_role("alert")).to_contain_text("Authentication changed")
+        expect(amounts).not_to_contain_text("99.49")
+        attention = page.get_by_label("Needs attention")
+        expect(attention).not_to_contain_text("Independent STOP is observed")
         browser.close()
 
 

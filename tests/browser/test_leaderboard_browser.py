@@ -112,6 +112,14 @@ def test_direct_paper_selection_recovers_from_two_errors(console_fixture, tmp_pa
         else:
             page.get_by_role("button", name="Test selected wallets", exact=True).press("Enter")
         form = page.get_by_role("dialog", name="Paper tests")
+        back = "Back to watchlists" if width == 1280 else "Back to leaderboard"
+        form.get_by_role("button", name=back).press("Enter")
+        if width == 1280:
+            entry = page.get_by_role("button", name="Paper test for Ten traders", exact=True)
+        else:
+            entry = page.get_by_role("button", name="Test selected wallets", exact=True)
+        expect(entry).to_be_focused()
+        entry.press("Enter")
         form.get_by_label("Duration", exact=True).fill("15")
         expect(form.get_by_text("Choose 1–6 wallets for this test.")).to_be_visible()
         expect(form.get_by_label("Duration", exact=True)).to_have_attribute("aria-invalid", "true")
@@ -152,6 +160,9 @@ def test_direct_paper_selection_recovers_from_two_errors(console_fixture, tmp_pa
                 state.pop("closed")
             assert runs.apply(owner, key * 32, test_revision, "FINISHED", test_data)
         page.keyboard.press("Escape")
+        if width == 1280:
+            expect(entry).to_be_focused()
+            page.keyboard.press("Escape")
         paper_tests = page.get_by_role("button", name="Paper tests", exact=True)
         paper_tests.press("Enter")
         result = form.get_by_text(f"{run_name} · Finished · 6 wallets", exact=True)

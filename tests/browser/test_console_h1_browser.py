@@ -62,7 +62,7 @@ def test_h1_production_csp_visual_detail_and_real_supervisor_receipt(h1_fixture,
         response = page.goto(origin + "/")
         assert "unsafe-inline" not in response.headers["content-security-policy"]
         assert "unsafe-eval" not in response.headers["content-security-policy"]
-        expect(page.get_by_role("heading", name="A clear view of the session.")).to_be_visible()
+        expect(page.get_by_role("heading", name="Session overview")).to_be_visible()
         expect(page.get_by_label("Session context")).to_contain_text("PAPER")
         expect(page.get_by_label("Exact financial amounts")).to_contain_text(
             publication["financial_session"]["exposure"]["reserved"]

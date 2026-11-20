@@ -11,9 +11,10 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from types import SimpleNamespace
 from typing import Any
-from wsgiref.simple_server import WSGIRequestHandler, make_server
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import jwt
 import pytest
@@ -132,6 +133,11 @@ def console_fixture(tmp_path: Path) -> Any:
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key())
     )
 
+    class BrowserServer(ThreadingMixIn, WSGIServer):
+        # Chromium can hold speculative connections open while issuing parallel reads.
+        daemon_threads = True
+        request_queue_size = 32
+
     class Quiet(WSGIRequestHandler):
         def log_message(self, *_args: Any) -> None:
             pass
@@ -142,7 +148,7 @@ def console_fixture(tmp_path: Path) -> Any:
         try:
             server = make_server(
                 "127.0.0.1", 49152 + secrets.randbelow(16384), lambda _e, _s: [],
-                handler_class=Quiet,
+                server_class=BrowserServer, handler_class=Quiet,
             )
             break
         except OSError as error:
@@ -173,7 +179,9 @@ def console_fixture(tmp_path: Path) -> Any:
     )
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, private)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.socket = context.wrap_socket(
+        server.socket, server_side=True, do_handshake_on_connect=False,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 

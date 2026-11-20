@@ -3,8 +3,8 @@
   "inter_source": "https://raw.githubusercontent.com/rsms/inter/master/docs/font-files/InterVariable.woff2",
   "sha256": {
     "brand/favicon.png": "9af12e45b56f9469c22d0d7dbfa5858f2162b026d47e9a707e56ff157b435d6a",
-    "brand/lockup-dark.svg": "e32c967da99dc96c56a4f50a676b77bb8a517936adb33fd7d9428ce6ec714b96",
-    "brand/lockup-light.svg": "3d2fdf58579fba4e97b0323c80711b746768cd1802d82207aac5517c45541732",
+    "brand/lockup-dark.svg": "b98b4eedba56465ce9f4b76475afabfe5642af31cdd13c9477266cb53cf1baac",
+    "brand/lockup-light.svg": "23d444207975752a2c0bc2d1c7f4433e4ae6ce787ad82477319e08ef4b6624a3",
     "brand/symbol-dark.svg": "6e1445358c81c3e6779628029a9351feb0a1d6e0af243f59bc10c17dd31750a8",
     "brand/symbol-light.svg": "d5035d14aa7e10df761041a1b782b14149d6abcbfe501e73aed9665a909d41c0",
     "brand/wordmark-dark.svg": "b965181515df7b16b13db8c5fd1ff8367dca52299dcb28c2dcfe08c9d41bd2e2",
@@ -16,5 +16,6 @@
     "frontend/brand-source/light.svg": "683a8448e06fce7b097e47de1c6b70aa4a6dab038b33d96e524ae192074987e3"
   },
   "normalization": "Retain all original path coordinates, fills and transforms. Inline class fill rules; convert circles to equivalent two-arc paths and polygons to closed paths. Remove DTD, metadata and unused namespaces. Crop viewBoxes only. No recoloring or optical redesign.",
-  "favicon": "32px opaque RGB PNG: resvg-py 0.5.0 renders symbol-dark at 96px high. Pillow 13.0.0 centers it (floor offsets) on an opaque 128px Midnight #080B12 square with alpha_composite, converts to RGB, downsamples to 32px with LANCZOS, and saves an optimized PNG."
+  "favicon": "32px opaque RGB PNG: resvg-py 0.5.0 renders symbol-dark at 96px high. Pillow 13.0.0 centers it (floor offsets) on an opaque 128px Midnight #080B12 square with alpha_composite, converts to RGB, downsamples to 32px with LANCZOS, and saves an optimized PNG.",
+  "horizontal_lockup": "190 x 66 viewBox. Center the unchanged surface symbol in x=2 y=2 w=48 h=62 and the matching wordmark in x=56 y=12 w=133 h=42 with uniform contain scaling. Preserve all child paths, paint and inherited fill rules."
 }

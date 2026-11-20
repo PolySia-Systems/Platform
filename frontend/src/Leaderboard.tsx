@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@mantine/core';
 import { ApiError, post, read } from './client';
 import type {
@@ -49,7 +49,24 @@ export function Leaderboard({ onIdentityFailure, session }: {
   const [editor, setEditor] = useState<Watchlist | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [runList, setRunList] = useState<Watchlist | null | undefined>(undefined);
+  const watchlistOrigin = useRef('');
   const [saving, setSaving] = useState(false);
+  function returnFromDialog() {
+    if (saving) return;
+    if (runList !== undefined && watchlistOrigin.current) {
+      setRunList(undefined);
+      return;
+    }
+    setManageOpen(false);
+    setEditor(null);
+    setRunList(undefined);
+  }
+  useEffect(() => {
+    if (manageOpen && runList === undefined && watchlistOrigin.current) {
+      document.getElementById(watchlistOrigin.current)?.focus();
+      watchlistOrigin.current = '';
+    }
+  }, [manageOpen, runList]);
   const [watchlistMessage, setWatchlistMessage] = useState('');
   const scope = new URLSearchParams({ period, ranking, category }).toString();
   const request = new URLSearchParams({
@@ -272,14 +289,12 @@ export function Leaderboard({ onIdentityFailure, session }: {
         {snapshot?.source_health_at && <span> Provider health report {stamp(snapshot.source_health_at)}.</span>}
       </footer>
     </section>
-    <Modal opened={manageOpen} onClose={() => {
-      if (!saving) { setManageOpen(false); setEditor(null); setRunList(undefined); }
-    }} title={runList === undefined ? 'Watchlists' : 'Paper tests'}
+    <Modal opened={manageOpen} onClose={returnFromDialog} title={runList === undefined ? 'Watchlists' : 'Paper tests'}
       closeButtonProps={{ 'aria-label': runList === undefined ? 'Close watchlists' : 'Close paper tests' }}
       returnFocus>
       {runList === undefined && watchlistMessage && <p role="status">{watchlistMessage}</p>}
       {runList !== undefined ? <>
-        <Button variant="subtle" onClick={() => setRunList(undefined)}>Back to watchlists</Button>
+        <Button variant="subtle" onClick={returnFromDialog}>{watchlistOrigin.current ? 'Back to watchlists' : 'Back to leaderboard'}</Button>
         <WatchlistShadow key={runList?.id ?? 'history'} session={session} list={runList}
           labels={new Map([...(watchlists?.wallet_labels ?? []), ...selection]
             .flatMap(({ address, name }) => name?.trim() ? [[address, name] as const] : []))}
@@ -299,7 +314,9 @@ export function Leaderboard({ onIdentityFailure, session }: {
           <Button variant="default" disabled={saving} onClick={() => setEditor(null)}>Cancel edit</Button>
         </div>
       </form> : <>
-        <Button variant="subtle" onClick={() => setRunList(null)}>View paper tests</Button>
+        <Button id="watchlist-history" variant="subtle" onClick={event => {
+          watchlistOrigin.current = event.currentTarget.id; setRunList(null);
+        }}>View paper tests</Button>
         {watchlists?.items.length ? <ul className={s.list}>
           {watchlists.items.map(item => <li key={item.id}>
             <div><strong>{item.name}</strong><span>{item.wallets.length} wallets</span></div>
@@ -311,7 +328,9 @@ export function Leaderboard({ onIdentityFailure, session }: {
               </Button>}
               <Button variant="default" aria-label={'Edit ' + item.name} onClick={() => setEditor(item)}>Edit</Button>
               <Button disabled={!item.wallets.length} aria-label={'Paper test for ' + item.name}
-                onClick={() => setRunList(item)}>Paper test</Button>
+                id={'paper-test-' + item.id} onClick={event => {
+                watchlistOrigin.current = event.currentTarget.id; setRunList(item);
+              }}>Paper test</Button>
               <Button variant="subtle" disabled={saving} aria-label={'Delete ' + item.name}
                 onClick={() => { if (window.confirm('Delete watchlist “' + item.name + '”?')) void saveWatchlist(item, true); }}>Delete</Button>
             </div>
