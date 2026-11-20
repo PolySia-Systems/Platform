@@ -443,13 +443,14 @@ def test_guided_install_reports_actual_phase(outcome, tty, tmp_path, monkeypatch
     monkeypatch.setattr(
         admin, "atomic", lambda path, value: path.write_text(json.dumps(value), encoding="utf-8"),
     )
-    monkeypatch.setattr(
-        admin, "configure", lambda *a, **kw: {
-            "status": "ACCESS_CONFIGURATION_REQUIRED" if outcome == "access-required"
-            else "ACCESS_CONFIGURED",
-            "credentials_file": "secret-sentinel",
-        },
-    )
+    if outcome == "access-required":
+        monkeypatch.setattr("builtins.input", lambda: "")
+        profile = ["--profile", "cloudflare", "--hostname", "console.example.test"]
+    else:
+        profile = ["--profile", "private"]
+        monkeypatch.setattr(admin, "configure", lambda *a, **kw: {
+            "status": "ACCESS_CONFIGURED", "credentials_file": "secret-sentinel",
+        })
 
     def activate(*a, **kw):
         if outcome == "fenced":
@@ -468,10 +469,12 @@ def test_guided_install_reports_actual_phase(outcome, tty, tmp_path, monkeypatch
     monkeypatch.setattr(admin, "leaderboard_status", lambda: {"status": "UNKNOWN"})
     monkeypatch.setattr(
         sys, "argv", [
-            "platform_admin.py", "install", "--profile", "private", "--tag", "v1.2.3",
+            "platform_admin.py", "install", *profile, "--tag", "v1.2.3",
             "--commit", "a" * 40, "--artifact-directory", str(tmp_path),
         ],
     )
+    if not tty and outcome == "access-required":
+        sys.argv.append("--noninteractive")
     if outcome == "fenced":
         with pytest.raises(ValueError, match="worker restart is fenced"):
             admin.main()
@@ -492,6 +495,11 @@ def test_guided_install_reports_actual_phase(outcome, tty, tmp_path, monkeypatch
         "fenced": ("ACTIVATION_INCOMPLETE", None, "Worker restart is fenced"),
         "interrupted": ("CONFIGURATION_STAGED", None, "Release artifact verified"),
     }[outcome]
+    if outcome == "access-required":
+        assert not (config / "installation.json").exists()
+        assert "maintenance-receipt.json" in json.loads(out)["access"]["next_action"]
+        if tty:
+            assert "Access profile: cloudflare" in err
     assert receipt["phase"] == expected_phase
     assert (json.loads(out)["status"] if out else None) == expected_status
     if tty:
@@ -500,3 +508,17 @@ def test_guided_install_reports_actual_phase(outcome, tty, tmp_path, monkeypatch
         assert ("Setup completed" in err) == (outcome == "success")
     else:
         assert not err
+    if outcome == "access-required" and not tty:
+        monkeypatch.setattr(admin.os, "chown", lambda *_: None, raising=False)
+        monkeypatch.setattr(
+            admin, "atomic",
+            lambda path, value, **_: path.write_text(json.dumps(value), encoding="utf-8"),
+        )
+        sys.argv.extend(["--access-issuer", "https://fixture.cloudflareaccess.com",
+                         "--access-audience", "b" * 64, "--access-owner", "owner@example.test"])
+        admin.main()
+        resumed = json.loads(capsys.readouterr().out)
+        assert resumed["status"] == "SETUP_COMPLETE"
+        assert resumed["access"]["route"] == "EXTERNAL_OWNER_COMMISSIONING_REQUIRED"
+        assert resumed["acquisition_enabled"] is False
+        assert json.loads((config / "installation.json").read_text())["commit"] == "a" * 40

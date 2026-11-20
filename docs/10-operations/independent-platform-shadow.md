@@ -248,6 +248,45 @@ created. Existing production web identity and Tunnel inputs are preserved.
 Neither successful setup nor an external-identity configuration receipt proves
 that a new route/login was commissioned.
 
+### Resume incomplete Cloudflare setup
+
+When first installation reports `ACCESS_CONFIGURATION_REQUIRED`, the verified
+release has been staged. The installed `polysia-admin` command may not exist
+yet. Get the Access issuer, audience and operator email from the owner of the
+Access application. Keep the original hostname, release tag and installation
+options, including the leaderboard schedule. For a guided retry from SSH,
+read only the pinned commit from the protected receipt and run that copy:
+
+```bash
+set -eu
+commit=$(sudo python3 - <<'PY'
+import json, re
+from pathlib import Path
+root = Path("/etc/polysia-platform")
+record = json.loads((root / "maintenance-receipt.json").read_bytes())
+commit = record.get("commit", "")
+if (record.get("schema") != "platform-maintenance/v1"
+        or record.get("phase") != "CONFIGURATION_STAGED"
+        or record.get("access", {}).get("status") != "ACCESS_CONFIGURATION_REQUIRED"
+        or (root / "restart-fenced").exists()
+        or not re.fullmatch("[a-f0-9]{40}", commit)):
+    raise SystemExit("Inspect the installation phase and restart fence before continuing.")
+print(commit)
+PY
+)
+release="/opt/polysia-platform/releases/$commit"
+# Supply the original hostname, tag and any other original install options.
+sudo python3 "$release/platform_admin.py" install --commit "$commit" --profile cloudflare \
+  --hostname "$original_hostname" --tag "$original_tag"
+```
+
+Set `original_hostname` and `original_tag` to the values from the interrupted
+install before running this block. For a verified offline artifact installed
+without a tag, omit `--tag`. Enter the three Access values at the prompts.
+The entry verifies the retained release files. A second blocked result still
+requires operator action. Inspect the activation receipt before commissioning
+the external route.
+
 The private gateway CA is not globally installed. Retain its public fingerprint
 with SSH host verification and use a dedicated browser trust context. Basic
 credentials can remain in the browser cache. Use `configure --remove-user USER`

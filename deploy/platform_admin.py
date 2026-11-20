@@ -41,6 +41,12 @@ CADDY_SHA512 = (
     "3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7"
 )
 SCHEMA = "platform-installation/v1"
+ACCESS_RESUME_GUIDANCE = (
+    "Read maintenance-receipt.json in /etc/polysia-platform for the commit. "
+    "Under /opt/polysia-platform/releases, use that commit's platform_admin.py "
+    "with the original install options and the Access issuer, audience and owner. "
+    "See Resume incomplete Cloudflare setup in the self-hosting guide."
+)
 MAX_ASSET = 536_870_912
 MANAGED_UNIT = "# Managed by PolySia platform_admin.py\n"
 LEADERBOARD_SCHEDULE = (
@@ -229,9 +235,9 @@ def _maintenance_summary(
             next_step = "Open the configured Console and inspect System / Setup."
     elif phase_name == "CONFIGURATION_STAGED":
         state = "Configuration staged. Activation is unconfirmed."
-        if access.get("status") == "ACCESS_CONFIGURATION_REQUIRED":
+        if profile == "cloudflare" and access.get("status") == "ACCESS_CONFIGURATION_REQUIRED":
             state = "Access configuration required."
-            next_step = "Provide the Access issuer, audience and owner through guided setup."
+            next_step = ACCESS_RESUME_GUIDANCE
     elif phase_name == "ACTIVATION_INCOMPLETE":
         state = "Activation incomplete."
         next_step = "Inspect the host maintenance receipt and service logs over SSH."
@@ -731,8 +737,7 @@ def configure(
         if not (core.CONFIG_ROOT / "web.json").exists():
             return {
                 "status": "ACCESS_CONFIGURATION_REQUIRED",
-                "next_action": "Provide your Access issuer, audience and owner identity "
-                "through the guided administrative entry.",
+                "next_action": ACCESS_RESUME_GUIDANCE,
             }
         existing_web = json.loads((core.CONFIG_ROOT / "web.json").read_text())
         if existing_web["origin"] != "https://" + value["hostname"]:
@@ -2106,15 +2111,24 @@ def main() -> None:
     if profile == "cloudflare" and not (core.CONFIG_ROOT / "web.json").exists():
         supplied = (args.access_issuer, args.access_audience, args.access_owner)
         if not all(supplied) and not args.noninteractive:
-            print("Create your owner-only Access application and Tunnel to 127.0.0.1:8765.")
             print(
-                "This configures the verifier; DNS, ingress and account setup remain owner actions."
+                "Create your owner-only Access application and Tunnel to 127.0.0.1:8765.",
+                file=sys.stderr,
             )
+            print(
+                "This configures the verifier. The owner sets up DNS, ingress and the account.",
+                file=sys.stderr,
+            )
+
+            def access_input(prompt: str) -> str:
+                print(prompt, end=" ", file=sys.stderr, flush=True)
+                return input().strip()
+
             supplied = (
                 args.access_issuer
-                or input("Access issuer https://TEAM.cloudflareaccess.com: ").strip(),
-                args.access_audience or input("Access application audience: ").strip(),
-                args.access_owner or input("Authorized operator email: ").strip(),
+                or access_input("Access issuer https://TEAM.cloudflareaccess.com:"),
+                args.access_audience or access_input("Access application audience:"),
+                args.access_owner or access_input("Authorized operator email:"),
             )
         if any(supplied) and not all(supplied):
             parser.error("provide all three --access-issuer, --access-audience and --access-owner")
