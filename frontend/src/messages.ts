@@ -6,6 +6,8 @@ export const m = {
   scope: 'Session context', run: 'Run', account: 'Account', venue: 'Venue', environment: 'Environment',
   configured: 'Configured mode', observed: 'Recorded mode', dataset: 'Dataset', generation: 'Generation',
   unknown: 'UNKNOWN', loading: 'Loading protected evidence…', refresh: 'Refresh evidence',
+  retryEvidence: 'Use Refresh evidence to retry this read.',
+  retainedReadFailure: 'Refresh failed. Values shown are from the last successful read. Use Refresh evidence to retry.',
   missing: 'Evidence unavailable. Use the protected supervisor / CLI for independent STOP.',
   auth: 'Authentication changed or expired. Refresh identity; no command will be replayed.',
   contract: 'Incompatible response. Check the installed API and bundle before continuing.',

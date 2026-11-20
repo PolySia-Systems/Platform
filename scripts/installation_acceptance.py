@@ -93,6 +93,12 @@ def main() -> None:
     second = json.loads(run(*command))
     assert second["status"] == "SETUP_COMPLETE"
     assert (config / "gateway-credentials.json").read_bytes() == credentials
+    human = run("/usr/local/sbin/polysia-admin", "status", "--human")
+    assert "Access profile: private" in human
+    assert "Setup completed at the recorded time." in human
+    assert "Acquisition at setup: disabled." in human
+    assert "gateway-credentials.json" not in human
+    assert all(password not in human for password in json.loads(credentials).values())
     assert (
         staged["image_id"]
         == json.loads((config / "maintenance-receipt.json").read_text())["image_id"]

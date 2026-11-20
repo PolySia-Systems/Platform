@@ -47,6 +47,10 @@ def main(assets: Path) -> None:
                 if route.path == "/":
                     self.send_body((ROOT / "frontend/index.html").read_bytes(), "text/html")
                     return
+                if route.path == "/favicon.png":
+                    icon = ROOT / "frontend/src/assets/brand/favicon.png"
+                    self.send_body(icon.read_bytes(), "image/png")
+                    return
                 asset = re.fullmatch(
                     r"/assets/([A-Za-z0-9_-]+\.(?:css|js|png|svg|woff2))", route.path
                 )

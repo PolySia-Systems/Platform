@@ -43,7 +43,7 @@ properties. Numeric cells and values retain exact string content. Do not reduce
 financial text size to make a dense screen fit. Tables have a named keyboard
 scroll region, semantic headers and bounded server pagination.
 
-Navigation currently uses visible labels without decorative glyph icons. Add a
+Navigation uses visible labels in a three-column grid on narrow screens. Add a
 licensed consistent icon source only when a real interaction needs it; do not
 reintroduce platform-dependent text symbols.
 
@@ -67,11 +67,16 @@ Normalization removes export metadata, DTD and styles, converts primitive shapes
 to equivalent paths and adjusts viewBoxes without altering path coordinates.
 The extra fully occluded circle in the light original has no visible effect.
 
-The 32 px favicon is a raster derivative of the current dark symbol on Midnight.
-At 16 px the faceted core and fine orbital details are not individually legible;
-the silhouette and red node carry recognition. A new simplified micro-mark is
-not claimed. Future changes must preserve identity, pass the existing path-only
-SVG profile, update provenance, rebuild and be reviewed at actual rendered sizes.
+The 32 px favicon uses the dark-surface symbol on an opaque Midnight tile so
+pale outlines remain visible in light browser chrome. The exact raster recipe
+and reviewed PNG digest are in provenance.json. The source role suffixes name
+the intended surface. The preview uses the same PNG, while the protected build
+serves the hashed derivative. Review changes at 16 and 32 px on both surfaces.
+
+The Overview labels retained values after a failed refresh. Use **Refresh
+evidence** to retry the read. In **System / Setup** the same control retries the
+operator's installation status. Update policy remains unknown until a receipt
+reports it, and connection check times are displayed in UTC.
 
 ## Evidence vocabulary
 

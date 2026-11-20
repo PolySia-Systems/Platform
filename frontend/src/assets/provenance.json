@@ -2,7 +2,7 @@
   "source": "Owner-supplied CorelDRAW final SVG exports, 2026-11-07; Inter from rsms/inter official distribution",
   "inter_source": "https://raw.githubusercontent.com/rsms/inter/master/docs/font-files/InterVariable.woff2",
   "sha256": {
-    "brand/favicon.png": "1d18266d1a9a75ecb4f7d3933d678611f84aaee3b25179853a836a8f3faf2a29",
+    "brand/favicon.png": "9af12e45b56f9469c22d0d7dbfa5858f2162b026d47e9a707e56ff157b435d6a",
     "brand/lockup-dark.svg": "e32c967da99dc96c56a4f50a676b77bb8a517936adb33fd7d9428ce6ec714b96",
     "brand/lockup-light.svg": "3d2fdf58579fba4e97b0323c80711b746768cd1802d82207aac5517c45541732",
     "brand/symbol-dark.svg": "6e1445358c81c3e6779628029a9351feb0a1d6e0af243f59bc10c17dd31750a8",
@@ -16,5 +16,5 @@
     "frontend/brand-source/light.svg": "683a8448e06fce7b097e47de1c6b70aa4a6dab038b33d96e524ae192074987e3"
   },
   "normalization": "Retain all original path coordinates, fills and transforms. Inline class fill rules; convert circles to equivalent two-arc paths and polygons to closed paths. Remove DTD, metadata and unused namespaces. Crop viewBoxes only. No recoloring or optical redesign.",
-  "favicon": "32px PNG: symbol-dark contained in 28x28 on Midnight, 2px padding; no newly invented micro-mark."
+  "favicon": "32px opaque RGB PNG: resvg-py 0.5.0 renders symbol-dark at 96px high. Pillow 13.0.0 centers it (floor offsets) on an opaque 128px Midnight #080B12 square with alpha_composite, converts to RGB, downsamples to 32px with LANCZOS, and saves an optimized PNG."
 }

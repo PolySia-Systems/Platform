@@ -35,7 +35,7 @@ use retained data and never acquire provider data.
 
 Module paths above are relative to `src/polysia/` unless prefixed by `deploy/`.
 Read the relevant path's instructions. For a token/layout change, edit
-`frontend/src/global.css` (`--console-*` tokens), `Console.module.css`, or the
+`frontend/src/design/tokens.css` (`--console-*` tokens), `Console.module.css`, or the
 relevant React workspace. English messages live in `frontend/src/messages.ts`.
 Do not edit generated `human_console_assets` or financial services to adjust
 presentation. For a read-only card, reuse a field in the typed contract; if a
@@ -59,6 +59,13 @@ shipped CSP, affected desktop/mobile/keyboard/contrast browser checks and packag
 custody, plus the repository's frontend-classified final CI gates. A projection
 or control change additionally requires actual producer/gateway/owner regression
 and negative tests, architecture/safety review and applicable full native gates.
+For installation messages, start at `_maintenance_summary` in
+`deploy/platform_admin.py`. The release distributes this entry as verified
+standalone bytes. Exercise human, legacy and redirected output without host
+changes using `python -m pytest -q tests/unit/deployment/test_platform_admin.py`.
+The operator entry is described in the
+[self-hosting guide](../10-operations/independent-platform-shadow.md#release-and-isolated-roots).
+
 Documentation-only edits use the repository's documentary policy. Derive the
 actual union of gates from the shared classifier; this paragraph grants no skip.
 Production installation does not run Node, npm or a dev server. UI files remain

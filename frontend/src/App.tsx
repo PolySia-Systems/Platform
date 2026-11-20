@@ -4,7 +4,7 @@ import type { Action, ActionCatalog, Component, Detail, Money, Page, Preview, Re
 import { ApiError, post, read } from './client';
 import { m } from './messages';
 import s from './Console.module.css';
-import { BrandLockup, Amount, Badge } from './design/Primitives';
+import { BrandLockup, Amount, Badge, Timestamp, stamp } from './design/Primitives';
 import { useMantineColorScheme } from '@mantine/core';
 import { EvidenceWorkspace, valueDirection } from './Workspaces';
 import { Leaderboard } from './Leaderboard';
@@ -14,12 +14,7 @@ type Intent = { preview_id: string; expected_revision: number; idempotency_key: 
 const tabs = { overview: m.overview, leaderboard: 'Leaderboard', investigate: m.investigate, operate: m.operate, evaluate: m.evaluate, system: m.system } as const;
 type Tab = keyof typeof tabs;
 const names = { publication: m.source, financial: m.financial, supervision: m.supervision, worker: m.worker, publisher: m.publisher };
-const stamp = (value: string | null | undefined, locale = 'en-GB') => value
-  ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' }).format(new Date(value)) + ' UTC' : m.unknown;
 const identifier = (value: string | null | undefined) => <bdi title={value ?? m.unknown} className={s.identifier} dir="ltr">{value ?? m.unknown}</bdi>;
-function Timestamp({ value, locale }: { value: string | null | undefined; locale?: string }) {
-  return <bdi dir="ltr">{stamp(value, locale)}</bdi>;
-}
 function errorText(error: unknown): string {
   if (error instanceof ApiError) return error.status === 403 ? m.auth : error.status === 410 ? m.cursor : error.status === 409 ? m.conflict : m.missing;
   return error instanceof Error && error.message === 'incompatible_contract' ? m.contract : m.missing;
@@ -233,7 +228,11 @@ export default function App() {
   };
   const componentState = (item: Component) => item.valid_until && clock >= Date.parse(item.valid_until) ? 'STALE' : item.state;
   const financialMeta = snapshot?.components.find(c => c.name === 'financial');
-  const financialStale = financialMeta ? componentState(financialMeta) !== 'AVAILABLE' : true;
+  const evidenceError = authFailure || failure;
+  const overviewFeedback = evidenceError
+    ? snapshot ? m.retainedReadFailure : m.retryEvidence
+    : snapshot?.blocker ?? (refreshBusy ? m.loading : m.noEvidence);
+  const financialStale = Boolean(failure || authFailure) || !financialMeta || componentState(financialMeta) !== 'AVAILABLE';
   const supervisionMeta = snapshot?.components.find(c => c.name === 'supervision');
   const supervisionValid = supervisionMeta && componentState(supervisionMeta) === 'AVAILABLE';
 
@@ -281,20 +280,22 @@ export default function App() {
         {tab === 'leaderboard' && validIdentity && session && <Leaderboard key={session.identity} session={session} onIdentityFailure={identityFailure} />}
         {tab === 'overview' && <>
           <section className={s.blocker} aria-label={m.attention}><span className={s.blockerIcon}>!</span><div>
-            <strong>{m.attention}</strong><p>{snapshot?.blocker ?? m.loading}</p></div>
-            <button onClick={() => setTab('operate')}>{m.operate} →</button></section>
+            <strong>{m.attention}</strong><p>{overviewFeedback}</p></div>
+            {validIdentity && session?.role === 'operator' && !evidenceError &&
+              <button onClick={() => setTab('operate')}>{m.operate} →</button>}</section>
           <section className={s.metrics} aria-label="Exact financial amounts">
             {[[m.cash, snapshot?.financial?.cash], [m.exposure, snapshot?.financial?.exposure], [m.reserved, snapshot?.financial?.reserved]].map(([label, value]) =>
               <article key={label as string} className={s.metric}><p>{label as string}</p><Amount value={value as Money | undefined} />
                 <small>{financialStale ? m.staleData : (value as Money | undefined)?.meaning ?? m.noEvidence}</small>
-                <Badge alert={financialStale}>{financialMeta ? componentState(financialMeta) : m.unknown}</Badge></article>)}
+                <Badge alert={financialStale}>{evidenceError && financialMeta ? m.stale : financialMeta ? componentState(financialMeta) : m.unknown}</Badge></article>)}
           </section>
           <div className={s.twoColumns}>
             <section className={s.panel} aria-label={m.independent}><div className={s.panelHeading}><h2>{m.independent}</h2>
               <Badge alert={!supervisionValid || snapshot?.supervision.status === 'STOPPED'}>{supervisionValid ? snapshot?.supervision.status : m.unknown}</Badge></div>
               <p>{supervisionValid ? snapshot?.supervision.reason : m.staleData}</p><p className={s.muted}>{snapshot?.supervision.next_action ?? m.missing}</p>
-              <button className={s.textButton} onClick={() => { setTab('operate'); const stop = actions.find(a => a.operation === 'session.stop');
-                if (stop) changeAction(stop.operation + '|' + stop.target); }}>{m.operate} →</button></section>
+              {validIdentity && actions.some(a => a.operation === 'session.stop') &&
+                <button className={s.textButton} onClick={() => { setTab('operate'); const stop = actions.find(a => a.operation === 'session.stop');
+                  if (stop) changeAction(stop.operation + '|' + stop.target); }}>{m.operate} →</button>}</section>
             <section className={s.panel}><div className={s.panelHeading}><h2>{m.authority}</h2><Badge>{financialStale ? m.unknown : snapshot?.financial?.authority_until && clock >= Date.parse(snapshot.financial.authority_until) ? 'EXPIRED' : snapshot?.financial?.authority ?? m.unknown}</Badge></div>
               <dl className={s.facts}><dt>{m.operational}</dt><dd>{snapshot?.financial?.status ?? m.unknown}</dd>
                 <dt>{m.reconciliation}</dt><dd>{snapshot?.financial?.reconciliation ?? m.unknown}</dd>
@@ -363,7 +364,7 @@ export default function App() {
           </section>
           <EvidenceWorkspace key={workspaceRefresh} panel="operate" generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />
         </>}
-        {tab === 'system' && validIdentity && session?.role === 'operator' && <InstallationSettings />}
+        {tab === 'system' && validIdentity && session?.role === 'operator' && <InstallationSettings key={session.identity} refresh={workspaceRefresh} />}
         {(tab === 'evaluate' || tab === 'system') && <EvidenceWorkspace key={tab + workspaceRefresh} panel={tab === 'evaluate' ? 'evaluate' : 'system'}
           generation={snapshot?.context.generation ?? null} identity={session?.identity ?? ''} clock={clock} onIdentityFailure={identityFailure} />}
         {tab === 'evaluate' && <section className={s.panel} aria-label={m.exports}><h2>{m.exports}</h2>
