@@ -10,6 +10,14 @@ On supported releases, **System / Setup** shows the last host checks and the
 commands to manage this installation. Run host administration from your SSH
 terminal.
 
+On releases whose `polysia-admin status --help` lists `--human`, run
+`sudo polysia-admin status --human` for the release reference, recorded setup
+phase and its next step. The receipt is dated. Use **System / Setup** and the
+host service logs for current observations. A fenced restart calls for
+inspection of the maintenance receipt before recovery. Guided interactive setup
+shows milestone messages on stderr. The standard status and install outputs
+remain available to scripts and noninteractive sessions.
+
 ```bash
 sudo polysia-admin status
 sudo polysia-admin configure --set-password owner

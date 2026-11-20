@@ -23,10 +23,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import time
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -153,21 +155,129 @@ def validate(value: dict) -> dict:
     return value
 
 
-def phase(config: dict, stage: str, **fields: object) -> None:
+def phase(config: dict, stage: str, **fields: object) -> dict:
     path = core.CONFIG_ROOT / "maintenance-receipt.json"
     previous = json.loads(path.read_text()) if path.exists() else {}
     if previous.get("commit") != config["commit"]:
         previous = {}
-    atomic(
-        path,
-        {
-            **previous,
-            "schema": "platform-maintenance/v1",
-            "commit": config["commit"],
-            "phase": stage,
-            "checked_at": datetime.now(UTC).isoformat(),
-            **fields,
-        },
+    receipt = {
+        **previous,
+        "schema": "platform-maintenance/v1",
+        "commit": config["commit"],
+        "phase": stage,
+        "checked_at": datetime.now(UTC).isoformat(),
+        **fields,
+    }
+    atomic(path, receipt)
+    return receipt
+
+
+def _status_record(path: Path, schema: str) -> dict:
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+            return {}
+        value = json.loads(path.read_bytes())
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) and value.get("schema") == schema else {}
+
+
+def _status_time(value: object) -> str:
+    if isinstance(value, str):
+        try:
+            recorded = datetime.fromisoformat(value)
+            if recorded.tzinfo is not None:
+                return recorded.astimezone(UTC).isoformat(timespec="seconds")
+        except (ValueError, OverflowError):
+            pass
+    return "unknown"
+
+
+def _maintenance_summary(
+    config: dict, receipt: dict, *, fenced: bool = False, width: int = 80
+) -> str:
+    """Render selected receipt facts. Never copy arbitrary receipt text or command output."""
+    access = receipt.get("access")
+    access = access if isinstance(access, dict) else {}
+    phase_name = receipt.get("phase")
+    profile = config.get("profile")
+    profiles = ("private", "own-domain", "cloudflare")
+    commit = config.get("commit")
+    commit = commit if isinstance(commit, str) and re.fullmatch(r"[a-f0-9]{40}", commit) else ""
+    tag = config.get("release_tag")
+    release = commit[:12]
+    if isinstance(tag, str) and re.fullmatch(r"v[0-9]{1,8}\.[0-9]{1,8}\.[0-9]{1,8}", tag):
+        release = tag
+    lines = [
+        "PolySia installation status",
+        f"Release reference: {release or 'unknown'}",
+        f"Access profile: {profile if profile in profiles else 'unknown'}",
+    ]
+    if not commit or receipt.get("commit") != commit:
+        phase_name = None
+    next_step = "Inspect the host maintenance receipt and setup guide."
+    if fenced:
+        state = "Worker restart is fenced."
+        next_step = "Inspect the host maintenance receipt and service logs over SSH."
+    elif phase_name == "ACTIVATED":
+        state = "Setup completed at the recorded time."
+        if profile == "private":
+            next_step = "Follow the setup guide for private SSH forwarding and certificate trust."
+        elif access.get("route") == "EXTERNAL_OWNER_COMMISSIONING_REQUIRED":
+            next_step = "The owner must commission the external Access route before sign-in."
+        else:
+            next_step = "Open the configured Console and inspect System / Setup."
+    elif phase_name == "CONFIGURATION_STAGED":
+        state = "Configuration staged. Activation is unconfirmed."
+        if access.get("status") == "ACCESS_CONFIGURATION_REQUIRED":
+            state = "Access configuration required."
+            next_step = "Provide the Access issuer, audience and owner through guided setup."
+    elif phase_name == "ACTIVATION_INCOMPLETE":
+        state = "Activation incomplete."
+        next_step = "Inspect the host maintenance receipt and service logs over SSH."
+    elif phase_name == "PREVIOUS_RELEASE_RECOVERED":
+        state = "Previous release recovered."
+    elif phase_name == "PREFLIGHT_PASSED":
+        state = "Preflight passed. Activation is unconfirmed."
+    elif phase_name == "ARTIFACT_VERIFIED":
+        state = "Release artifact verified. Activation is unconfirmed."
+    elif phase_name == "RESTORE_VERIFIED":
+        state = "Restore verified. Activation is unconfirmed."
+    else:
+        state = "No matching maintenance phase is recorded."
+
+    lines.append(state)
+    if phase_name:
+        lines.append("Receipt time (UTC): " + _status_time(receipt.get("checked_at")))
+    if phase_name == "ACTIVATED" and not fenced:
+        backup = receipt.get("backup")
+        protection = backup.get("protection") if isinstance(backup, dict) else None
+        if protection in (
+            "LOCAL_ENCRYPTED_CHECKPOINT", "INDEPENDENT_SFTP",
+            "UNPROTECTED", "RETAINED_REVERIFY_REQUIRED",
+        ):
+            lines.append("Recorded backup: " + protection)
+        else:
+            lines.append("Recorded backup: unknown")
+        if receipt.get("acquisition_enabled") is False:
+            lines.append("Acquisition at setup: disabled.")
+    lines.append("Next: " + next_step)
+    wrapper = textwrap.TextWrapper(
+        width=max(40, min(width, 80)), break_long_words=False, break_on_hyphens=False,
+    )
+    return "\n".join(wrapper.fill(line) for line in lines)
+
+
+def _print_maintenance_summary(config: dict, receipt: dict, *, stream: TextIO) -> None:
+    print(_maintenance_summary(
+        config, receipt, fenced=(core.CONFIG_ROOT / "restart-fenced").exists(),
+        width=shutil.get_terminal_size().columns,
+    ), file=stream)
+
+
+def _guided_install(args: argparse.Namespace) -> bool:
+    return args.action == "install" and not args.noninteractive and all(
+        stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)
     )
 
 
@@ -1747,7 +1857,10 @@ def main() -> None:
         help="Collect rankings automatically (default), or keep retained data without polling.",
     )
     parser.add_argument("--leaderboard-interval", type=int, metavar="MINUTES")
+    parser.add_argument("--human", action="store_true", help="Show a readable status summary.")
     args = parser.parse_args()
+    if args.human and args.action != "status":
+        parser.error("--human is available only for status")
     if os.geteuid() != 0 and not (args.action == "health" and os.geteuid() == 10101):
         parser.error("administrative SSH/root access required")
     core = load_core(args)
@@ -1775,6 +1888,13 @@ def main() -> None:
         print(json.dumps(configure_backup(args), sort_keys=True))
         return
     if args.action == "status":
+        if args.human:
+            config = _status_record(core.CONFIG_ROOT / "installation.json", SCHEMA)
+            receipt = _status_record(
+                core.CONFIG_ROOT / "maintenance-receipt.json", "platform-maintenance/v1"
+            )
+            _print_maintenance_summary(config, receipt, stream=sys.stdout)
+            return
         for name in ("installation.json", "maintenance-receipt.json"):
             path = core.CONFIG_ROOT / name
             print(path.read_text() if path.exists() else name + ": UNCONFIGURED")
@@ -1803,6 +1923,9 @@ def main() -> None:
             core.run("systemctl", "stop", "polysia-platform-web.service")
         print(json.dumps(result))
         return
+    guided = _guided_install(args)
+    if guided:
+        print("PolySia setup", file=sys.stderr)
     prior_file = core.CONFIG_ROOT / "installation.json"
     prior = validate(json.loads(prior_file.read_text())) if prior_file.exists() else {}
     if (
@@ -1970,8 +2093,12 @@ def main() -> None:
         else None
     )
     phase(value, "PREFLIGHT_PASSED")
+    if guided:
+        print("Preflight passed.", file=sys.stderr)
     receipt = core.bootstrap(directory, commit=value["commit"], install_units=False)
     phase(value, "ARTIFACT_VERIFIED", image_id=receipt["image_id"])
+    if guided:
+        print("Release artifact verified.", file=sys.stderr)
     if args.action == "restore":
         proof = restore_installation(args, value, image=receipt["image_id"])
         phase(value, "RESTORE_VERIFIED", restore=proof)
@@ -2000,8 +2127,10 @@ def main() -> None:
         cloudflare=cf,
         password_change=password_change,
     )
-    phase(value, "CONFIGURATION_STAGED", access=access)
+    maintenance = phase(value, "CONFIGURATION_STAGED", access=access)
     if access["status"] == "ACCESS_CONFIGURATION_REQUIRED":
+        if guided:
+            _print_maintenance_summary(value, maintenance, stream=sys.stderr)
         print(
             json.dumps(
                 {
@@ -2036,16 +2165,18 @@ def main() -> None:
             check=False,
             timeout=40,
         )
-        phase(
+        maintenance = phase(
             value,
             "ACTIVATION_INCOMPLETE",
             worker="FENCED",
             next_action="Inspect dedicated service logs; rerun this exact release or rollback.",
         )
+        if guided:
+            _print_maintenance_summary(value, maintenance, stream=sys.stderr)
         raise ValueError(
             "activation incomplete; worker restart is fenced; inspect maintenance receipt"
         ) from None
-    phase(
+    maintenance = phase(
         value,
         "ACTIVATED",
         access=access,
@@ -2054,6 +2185,8 @@ def main() -> None:
         rollback_checkpoint=checkpoint,
         leaderboard=leaderboard_status(),
     )
+    if guided:
+        _print_maintenance_summary(value, maintenance, stream=sys.stderr)
     print(
         json.dumps(
             {

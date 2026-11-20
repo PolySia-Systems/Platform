@@ -339,3 +339,164 @@ def test_stop_never_delegates_damaged_authority_to_a_legacy_initializer(tmp_path
     assert (tmp_path / "restart-fenced").exists()
     with sqlite3.connect(authority.as_uri() + "?mode=ro", uri=True) as connection:
         assert connection.execute("SELECT name FROM sqlite_master").fetchall() == []
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_status_default_output_and_explicit_human_summary(
+    configured, tmp_path, monkeypatch, capsys,
+):
+    config, receipt = configuration(), {
+        "schema": "platform-maintenance/v1",
+        "commit": "a" * 40,
+        "phase": "ACTIVATED",
+        "checked_at": "2026-11-20T18:20:00+03:30",
+        "backup": {"protection": "UNPROTECTED", "credential": "secret-sentinel"},
+        "acquisition_enabled": False,
+        "next_action": "secret-sentinel",
+    }
+    monkeypatch.setattr(core, "CONFIG_ROOT", tmp_path)
+    monkeypatch.setattr(admin, "load_core", lambda _: core)
+    monkeypatch.setattr(admin.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(admin, "leaderboard_status", lambda: {"status": "UNKNOWN"})
+    monkeypatch.setenv("COLUMNS", "40")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    installation_file = tmp_path / "installation.json"
+    maintenance_file = tmp_path / "maintenance-receipt.json"
+    if configured:
+        installation_file.write_text(json.dumps(config), encoding="utf-8")
+        maintenance_file.write_text(json.dumps(receipt), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["platform_admin.py", "status"])
+    admin.main()
+    out, err = capsys.readouterr()
+    assert not err
+    assert out.splitlines() == [
+        json.dumps(config) if configured else "installation.json: UNCONFIGURED",
+        json.dumps(receipt) if configured else "maintenance-receipt.json: UNCONFIGURED",
+        '{"leaderboard": {"status": "UNKNOWN"}}',
+    ]
+    monkeypatch.setattr(sys, "argv", ["platform_admin.py", "status", "--human"])
+    admin.main()
+    out, err = capsys.readouterr()
+    assert not err
+    assert out.isascii() and max(map(len, out.splitlines())) <= 40
+    assert "secret-sentinel" not in out and "\x1b" not in out
+    if configured:
+        assert "Setup completed at the recorded time." in out
+        assert "2026-11-20T14:50:00+00:00" in out
+        assert "Recorded backup: UNPROTECTED" in out
+        (tmp_path / "restart-fenced").write_text("{}", encoding="utf-8")
+        admin.main()
+        fenced = capsys.readouterr().out
+        assert "Worker restart is fenced." in fenced
+        assert "Setup completed" not in fenced
+        (tmp_path / "restart-fenced").unlink()
+        receipt["commit"] = "b" * 40
+        maintenance_file.write_text(json.dumps(receipt), encoding="utf-8")
+        admin.main()
+        stale = capsys.readouterr().out
+        assert "No matching maintenance phase" in stale
+        assert "Setup completed" not in stale
+    else:
+        assert "No matching maintenance phase" in out
+
+
+def test_health_keeps_publisher_output_and_rejects_human_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(admin.os, "geteuid", lambda: 10101, raising=False)
+    monkeypatch.setattr(admin, "load_core", lambda _: core)
+    calls = []
+
+    def publish():
+        calls.append(True)
+        return {"status": "SYNTHETIC"}
+
+    monkeypatch.setattr(admin, "publish_health", publish)
+    monkeypatch.setattr(sys, "argv", ["platform_admin.py", "health"])
+    admin.main()
+    assert capsys.readouterr() == ('{"status": "SYNTHETIC"}\n', "")
+    monkeypatch.setattr(sys, "argv", ["platform_admin.py", "health", "--human"])
+    with pytest.raises(SystemExit, match="2"):
+        admin.main()
+    assert calls == [True]
+    assert "--human is available only for status" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("outcome", ["success", "access-required", "fenced", "interrupted"])
+@pytest.mark.parametrize("tty", [True, False])
+def test_guided_install_reports_actual_phase(outcome, tty, tmp_path, monkeypatch, capsys):
+    config = tmp_path / "config"
+    config.mkdir()
+    monkeypatch.setattr(admin.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(core, "CONFIG_ROOT", config)
+    monkeypatch.setattr(admin, "load_core", lambda _: core)
+    if tty:
+        for stream in (sys.stdin, sys.stdout, sys.stderr):
+            monkeypatch.setattr(stream, "isatty", lambda: True)
+    else:
+        # Input may still be a TTY when output is redirected.
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(admin, "preflight", lambda _: None)
+    monkeypatch.setattr(core, "activation_preflight", lambda _: None)
+    monkeypatch.setattr(admin, "leaderboard_preflight", lambda: None)
+    monkeypatch.setattr(admin, "preserve_rollback", lambda: None)
+    monkeypatch.setattr(core, "bootstrap", lambda *a, **kw: {"image_id": "synthetic"})
+    monkeypatch.setattr(
+        admin, "atomic", lambda path, value: path.write_text(json.dumps(value), encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        admin, "configure", lambda *a, **kw: {
+            "status": "ACCESS_CONFIGURATION_REQUIRED" if outcome == "access-required"
+            else "ACCESS_CONFIGURED",
+            "credentials_file": "secret-sentinel",
+        },
+    )
+
+    def activate(*a, **kw):
+        if outcome == "fenced":
+            raise ValueError("synthetic activation failure")
+        if outcome == "interrupted":
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(admin, "activate", activate)
+    monkeypatch.setattr(admin.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(admin, "verify_access", lambda _: None)
+    monkeypatch.setattr(admin, "start_leaderboard", lambda *a: None)
+    monkeypatch.setattr(core, "run", lambda *a: None)
+    monkeypatch.setattr(admin, "promote_retained_backup", lambda *a, **kw: None)
+    monkeypatch.setattr(admin, "install_health", lambda _: None)
+    monkeypatch.setattr(admin, "install_admin_entry", lambda: None)
+    monkeypatch.setattr(admin, "leaderboard_status", lambda: {"status": "UNKNOWN"})
+    monkeypatch.setattr(
+        sys, "argv", [
+            "platform_admin.py", "install", "--profile", "private", "--tag", "v1.2.3",
+            "--commit", "a" * 40, "--artifact-directory", str(tmp_path),
+        ],
+    )
+    if outcome == "fenced":
+        with pytest.raises(ValueError, match="worker restart is fenced"):
+            admin.main()
+    elif outcome == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            admin.main()
+    else:
+        admin.main()
+
+    out, err = capsys.readouterr()
+    receipt = json.loads((config / "maintenance-receipt.json").read_text())
+    expected_phase, expected_status, expected_copy = {
+        "success": ("ACTIVATED", "SETUP_COMPLETE", "Setup completed"),
+        "access-required": (
+            "CONFIGURATION_STAGED", "ACCESS_CONFIGURATION_REQUIRED",
+            "Access configuration required",
+        ),
+        "fenced": ("ACTIVATION_INCOMPLETE", None, "Worker restart is fenced"),
+        "interrupted": ("CONFIGURATION_STAGED", None, "Release artifact verified"),
+    }[outcome]
+    assert receipt["phase"] == expected_phase
+    assert (json.loads(out)["status"] if out else None) == expected_status
+    if tty:
+        assert "PolySia setup" in err and expected_copy in err
+        assert "secret-sentinel" not in err
+        assert ("Setup completed" in err) == (outcome == "success")
+    else:
+        assert not err
