@@ -43,7 +43,7 @@ properties. Numeric cells and values retain exact string content. Do not reduce
 financial text size to make a dense screen fit. Tables have a named keyboard
 scroll region, semantic headers and bounded server pagination.
 
-Navigation currently uses visible labels without decorative glyph icons. Add a
+Navigation uses visible labels in a three-column grid on narrow screens. Add a
 licensed consistent icon source only when a real interaction needs it; do not
 reintroduce platform-dependent text symbols.
 

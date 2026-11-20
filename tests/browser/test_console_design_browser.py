@@ -339,7 +339,8 @@ def test_installation_settings_retries_its_own_read_and_labels_update_policy(ric
         refresh.click()
         expect(panel.get_by_role("status")).to_contain_text("last successful read")
         expect(panel).to_contain_text("Manual")
-        page.screenshot(path=str(output / "setup-retained-status.png"), full_page=True)
+        expect(page.locator("#main")).to_have_attribute("aria-busy", "false")
+        panel.screenshot(path=str(output / "setup-retained-status.png"))
         browser.close()
 
 
@@ -392,6 +393,9 @@ def test_protected_favicon_has_opaque_background_and_manifest_digest(rich_consol
                 });
             }"""), width
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+            if width <= 760:
+                navigation = page.get_by_role("navigation")
+                assert navigation.evaluate("nav => nav.scrollWidth <= nav.clientWidth"), width
         brand.focus()
         assert brand.evaluate("link => link.matches(':focus-visible')")
         page.screenshot(path=str(output / "header-keyboard-focus.png"))

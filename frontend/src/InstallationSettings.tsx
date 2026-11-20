@@ -38,7 +38,7 @@ export function InstallationSettings({ refresh }: { refresh: number }) {
     {result === 'failed' && <p role="status">{settings
       ? 'Could not read current installation status. Showing the last successful read. Use Refresh evidence to retry.'
       : 'Could not read installation status. Use Refresh evidence to retry.'}</p>}
-    <dl>
+    <dl className={s.facts}>
       <dt>Accounts and passwords</dt>
       <dd><code>{command}configure --set-password owner</code></dd>
       <dt>Domain and access</dt>
