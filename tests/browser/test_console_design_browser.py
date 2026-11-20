@@ -268,3 +268,131 @@ def test_auth_loss_clears_evidence_and_recovers_without_replay(rich_console):  #
         expect(page.get_by_label("Exact financial amounts")).to_contain_text("99.49")
         assert posts == []
         browser.close()
+
+def test_console_read_failure_recovers_without_losing_retained_amounts(rich_console):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, *_ = rich_console
+    output = Path("output/playwright")
+    output.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, token, role="fixture-reader")
+        page = context.new_page()
+        snapshot = "**/api/console/v1/snapshot"
+        page.route(snapshot, lambda route: route.fulfill(status=503))
+        page.goto(origin)
+        attention = page.get_by_role("region", name="Needs attention")
+        expect(attention).to_contain_text("Use Refresh evidence to retry")
+        expect(attention).not_to_contain_text("Loading protected evidence")
+        expect(attention.get_by_role("button", name="Operate")).to_have_count(0)
+        page.screenshot(path=str(output / "overview-read-failure.png"))
+
+        refresh = page.get_by_role("button", name="Refresh evidence")
+        page.unroute(snapshot)
+        refresh.click()
+        amounts = page.get_by_label("Exact financial amounts")
+        expect(amounts).to_contain_text("1.010")
+        expect(page.get_by_role("alert")).to_have_count(0)
+        page.route(snapshot, lambda route: route.fulfill(status=503))
+        refresh.click()
+        expect(attention).to_contain_text("last successful read")
+        expect(amounts).to_contain_text("1.010")
+        expect(amounts.get_by_text("STALE", exact=True).first).to_be_visible()
+        page.get_by_role("button", name="System / Setup").click()
+        expect(page.get_by_role("region", name="Installation settings")).to_have_count(0)
+        browser.close()
+
+
+def test_installation_settings_retries_its_own_read_and_labels_update_policy(rich_console):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+
+    origin, token, _, _, _, root = rich_console
+    (root / "connection-status.json").write_text(
+        json.dumps({"state": "OBSERVED", "checked_at": "2026-11-20T18:20:00+03:30"}),
+        encoding="utf-8",
+    )
+    output = Path("output/playwright")
+    output.mkdir(parents=True, exist_ok=True)
+    endpoint = "**/api/console/v1/installation-settings"
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, token, width=390)
+        page = context.new_page()
+        page.route(endpoint, lambda route: route.fulfill(status=503))
+        page.goto(origin)
+        page.get_by_role("button", name="System / Setup").click()
+        panel = page.get_by_role("region", name="Installation settings")
+        expect(panel.get_by_role("status")).to_contain_text("Use Refresh evidence to retry")
+        page.unroute(endpoint)
+        refresh = page.get_by_role("button", name="Refresh evidence")
+        with page.expect_response(lambda response: response.url.endswith("/installation-settings")):
+            refresh.press("Enter")
+        expect(panel).to_contain_text("Update policy unknown")
+        expect(panel).to_contain_text("14:50:00 UTC")
+        for policy, label in [(True, "Automatic"), (False, "Manual")]:
+            (root / "update-status.json").write_text(
+                json.dumps({"automatic": policy, "state": "UNKNOWN"}), encoding="utf-8",
+            )
+            refresh.click()
+            expect(panel).to_contain_text(label)
+            expect(panel).to_contain_text("Last check: UNKNOWN")
+        page.route(endpoint, lambda route: route.fulfill(status=503))
+        refresh.click()
+        expect(panel.get_by_role("status")).to_contain_text("last successful read")
+        expect(panel).to_contain_text("Manual")
+        page.screenshot(path=str(output / "setup-retained-status.png"), full_page=True)
+        browser.close()
+
+
+def test_protected_favicon_has_opaque_background_and_manifest_digest(rich_console):  # noqa: F811
+    import hashlib
+
+    from playwright.sync_api import sync_playwright
+
+    origin, token, *_ = rich_console
+    manifest = json.loads(
+        Path("src/polysia/monitoring/human_console_assets/manifest.json").read_text()
+    )
+    output = Path("output/playwright")
+    output.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as runtime:
+        browser, context = browser_context(runtime, origin, token)
+        page = context.new_page()
+        index = page.goto(origin)
+        assert "img-src 'self'" in index.headers["content-security-policy"]
+        href = page.locator('link[rel="icon"]').get_attribute("href")
+        name = href.rsplit("/", 1)[-1]
+        assert name.startswith("favicon-") and name.endswith(".png")
+        response = context.request.get(origin + href)
+        assert response.ok and response.headers["content-type"] == "image/png"
+        assert hashlib.sha256(response.body()).hexdigest() == manifest["files"][name]
+        assert page.evaluate(
+            """async href => {
+                const icon = new Image();
+                icon.src = href;
+                await icon.decode();
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = 32;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(icon, 0, 0);
+                const data = ctx.getImageData(0, 0, 32, 32).data;
+                return icon.width === 32 && icon.height === 32
+                    && data[0] === 8 && data[1] === 11 && data[2] === 18
+                    && data.every((value, i) => i % 4 !== 3 || value === 255);
+            }""",
+            href,
+        )
+        brand = page.get_by_role("link", name="PolySia CONSOLE")
+        for width in (320, 390, 760, 761, 1024, 1100, 1101, 1440):
+            page.set_viewport_size({"width": width, "height": 1000})
+            assert brand.evaluate("""link => {
+                const { left, right } = link.getBoundingClientRect();
+                return [...link.querySelectorAll('img')].every(image => {
+                    const bounds = image.getBoundingClientRect();
+                    return bounds.left >= left && bounds.right <= right;
+                });
+            }"""), width
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+        brand.focus()
+        assert brand.evaluate("link => link.matches(':focus-visible')")
+        page.screenshot(path=str(output / "header-keyboard-focus.png"))
+        browser.close()
