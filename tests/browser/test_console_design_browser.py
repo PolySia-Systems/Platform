@@ -363,7 +363,16 @@ def test_protected_favicon_has_opaque_background_and_manifest_digest(rich_consol
         href = page.locator('link[rel="icon"]').get_attribute("href")
         name = href.rsplit("/", 1)[-1]
         assert name.startswith("favicon-") and name.endswith(".png")
-        response = context.request.get(origin + href)
+        # Fetch through the page's HTTPS connection and Access context.
+        with page.expect_response(
+            lambda response: response.url == origin + href
+            and response.request.resource_type == "fetch",
+        ) as fetched:
+            page.evaluate(
+                "async href => { await (await fetch(href, {cache: 'no-store'})).arrayBuffer(); }",
+                href,
+            )
+        response = fetched.value
         assert response.ok and response.headers["content-type"] == "image/png"
         assert hashlib.sha256(response.body()).hexdigest() == manifest["files"][name]
         assert page.evaluate(
