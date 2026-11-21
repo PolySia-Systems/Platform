@@ -70,7 +70,7 @@ pathspec==1.1.1
 pip-api==0.0.35
 pip-audit==2.10.1
 pip-requirements-parser==32.0.1
-pip-tools==7.6.2
+pip-tools==7.7.0
 platformdirs==4.13.5
 playwright==1.65.0
 pluggy==1.7.0
@@ -124,5 +124,5 @@ websockets==15.0.1
 wheel==0.48.0
 
 # The following packages are considered to be unsafe in a requirements file:
-pip==26.2.1
+pip==26.3
 setuptools==84.2.1
