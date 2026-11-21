@@ -16,8 +16,8 @@
     "dev": "node dev/server.mjs"
   },
   "dependencies": {
-    "@mantine/core": "9.7.5",
-    "@mantine/hooks": "9.7.5",
+    "@mantine/core": "9.8.1",
+    "@mantine/hooks": "9.8.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
